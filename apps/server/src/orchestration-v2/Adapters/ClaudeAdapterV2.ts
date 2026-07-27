@@ -3279,16 +3279,57 @@ export function makeClaudeAdapterV2(
             return;
           }
 
-          // Task-notification-origin results can interleave during a normal
-          // user turn (for example a stale background stop after interrupt
-          // recovery). They must not finalize that turn or supply fallback
-          // assistant text. Provider continuation turns still consume them
-          // when draining buffered wake messages.
+          // A zero-turn task-notification-origin result is almost always
+          // lifecycle debris, so it must not finalize a normal turn or supply
+          // fallback assistant text. Provider continuation turns still consume
+          // it when draining buffered wake messages.
+          //
+          // "Almost always" is the honest word: num_turns is a workload count,
+          // not a causal link to the prompt this turn is waiting on. A genuine
+          // wake that fails before any model turn also reports zero, and is
+          // dropped here, so that turn hangs until query exit. Narrowing the
+          // drop to zero-turn results only shrinks a pre-existing drop; closing
+          // the residue needs a correlation id on the result, which the wire
+          // does not carry today.
+          if (
+            isClaudeTaskNotificationOriginResult(message) &&
+            !isClaudeProviderContinuationTurn(context.input) &&
+            message.num_turns === 0
+          ) {
+            // Routine lifecycle noise, so debug rather than warning: interrupt
+            // recovery produces this every time.
+            yield* Effect.logDebug("orchestration-v2.claude-task-notification-result-dropped", {
+              providerTurnId: context.providerTurnId,
+              num_turns: message.num_turns,
+              stop_reason: message.stop_reason,
+              terminal_reason: message.terminal_reason,
+              uuid: message.uuid,
+              session_id: message.session_id,
+              createdBy: context.input.message.createdBy,
+              creationSource: context.input.message.creationSource,
+            });
+            return;
+          }
+
+          // The converse of the drop above, and the case actually worth
+          // watching: a positive-turn task-notification result settling a turn
+          // T3 did not mark as a continuation. That is the hang fix working,
+          // but it is also the shape a stale result would take if one ever
+          // carried model turns, which nothing on the wire lets us rule out.
           if (
             isClaudeTaskNotificationOriginResult(message) &&
             !isClaudeProviderContinuationTurn(context.input)
           ) {
-            return;
+            yield* Effect.logInfo("orchestration-v2.claude-task-notification-result-accepted", {
+              providerTurnId: context.providerTurnId,
+              num_turns: message.num_turns,
+              stop_reason: message.stop_reason,
+              terminal_reason: message.terminal_reason,
+              uuid: message.uuid,
+              session_id: message.session_id,
+              createdBy: context.input.message.createdBy,
+              creationSource: context.input.message.creationSource,
+            });
           }
 
           // An is_error result's text is the error message; it belongs on the
