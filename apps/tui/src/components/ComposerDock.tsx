@@ -4,8 +4,10 @@ import { clip } from "../format.ts";
 import { usePalette } from "../theme.ts";
 
 export interface ComposerDockContext {
+  readonly project?: string;
   readonly workspace: string;
   readonly branch: string;
+  readonly onOpenProject?: () => void;
   readonly onOpenWorkspace?: () => void;
   readonly onOpenBranch?: () => void;
 }
@@ -40,31 +42,48 @@ export function ComposerDock({
           {children}
         </box>
         {context ? (
-          <box
-            width={surfaceWidth}
-            flexDirection="row"
-            justifyContent="space-between"
-            paddingLeft={1}
-            paddingRight={1}
-            flexShrink={0}
-          >
+          <>
+            {context.project ? (
+              <box
+                width={surfaceWidth}
+                justifyContent="center"
+                flexShrink={0}
+                {...(context.onOpenProject ? { onMouseDown: context.onOpenProject } : {})}
+              >
+                <text fg={palette.dim}>
+                  {clip(
+                    `project ${context.project}${context.onOpenProject ? " ▾" : ""}`,
+                    contextRoom,
+                  )}
+                </text>
+              </box>
+            ) : null}
             <box
+              width={surfaceWidth}
+              flexDirection="row"
+              justifyContent="space-between"
+              paddingLeft={1}
+              paddingRight={1}
               flexShrink={0}
-              {...(context.onOpenWorkspace ? { onMouseDown: context.onOpenWorkspace } : {})}
             >
-              <text fg={palette.dim}>
-                {clip(`${context.workspace}${context.onOpenWorkspace ? " ▾" : ""}`, contextRoom)}
-              </text>
+              <box
+                flexShrink={0}
+                {...(context.onOpenWorkspace ? { onMouseDown: context.onOpenWorkspace } : {})}
+              >
+                <text fg={palette.dim}>
+                  {clip(`${context.workspace}${context.onOpenWorkspace ? " ▾" : ""}`, contextRoom)}
+                </text>
+              </box>
+              <box
+                flexShrink={0}
+                {...(context.onOpenBranch ? { onMouseDown: context.onOpenBranch } : {})}
+              >
+                <text fg={palette.dim}>
+                  {clip(`branch ${context.branch}${context.onOpenBranch ? " ▾" : ""}`, contextRoom)}
+                </text>
+              </box>
             </box>
-            <box
-              flexShrink={0}
-              {...(context.onOpenBranch ? { onMouseDown: context.onOpenBranch } : {})}
-            >
-              <text fg={palette.dim}>
-                {clip(`branch ${context.branch}${context.onOpenBranch ? " ▾" : ""}`, contextRoom)}
-              </text>
-            </box>
-          </box>
+          </>
         ) : null}
       </box>
       <box width={rightWidth} flexShrink={0} />
