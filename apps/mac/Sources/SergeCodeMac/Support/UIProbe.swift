@@ -108,7 +108,8 @@
             // session.exited stderr disclosure.
             await probeSubagentStability(model: model, multi: multi, dir: dir)
             await probeGitActionFailure(model: model, dir: dir)
-            await probeLiveActivitySurfaces(model: model, multi: multi, dir: dir)
+            probeFailures.append(
+                contentsOf: await probeLiveActivitySurfaces(model: model, multi: multi, dir: dir))
 
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
@@ -652,18 +653,29 @@
             snapshot("2d-session-stderr", dir: dir)
         }
 
-        /// The two live-turn surfaces that only exist while something is
-        /// working, so no other scene can reach them: the activity dock on a
-        /// thread parked on a running tool (mock `thread-7`), and the
-        /// auto-review pet on a thread whose PR is under review (`thread-8`).
+        /// The live-turn surfaces that only exist while something is working,
+        /// so no other scene can reach them: the activity dock on a thread
+        /// parked on a running tool (mock `thread-7`), the auto-review pet on
+        /// a thread whose PR is under review (`thread-8`), and the dock's
+        /// thinking phase on a thread that has been silent long enough for
+        /// its copy to escalate (`thread-9`).
         ///
-        /// Both assert their gate in the log as well as the PNG — the pet in
+        /// Each asserts its gate as well as capturing a PNG — the pet in
         /// particular is a corner overlay that a full-window capture can
         /// easily *look* right without actually having mounted.
+        ///
+        /// Returns soft-failure slugs for the exit line, and that return is
+        /// the point: `UIProbe: done` with no `FAIL=` suffix is the
+        /// documented success signal, so a check that only prints cannot fail
+        /// a run and is decoration. Every gate here is asserted rather than
+        /// merely logged for the same reason — a dock that stopped mounting
+        /// entirely would otherwise log `phase=none`, write a perfectly
+        /// valid-looking PNG of a thread with no dock in it, and pass.
         private static func probeLiveActivitySurfaces(
             model: AppModel, multi: MultiDeviceModel, dir: String
-        ) async {
+        ) async -> [String] {
             let previousThreadID = model.selectedThreadID
+            var failures: [String] = []
 
             if model.threads.contains(where: { $0.id == "thread-7" }) {
                 multi.select(threadID: "thread-7", on: model.deviceID)
@@ -673,8 +685,11 @@
                     isStalled: false,
                     items: model.timeline(threadID: "thread-7"))
                 let phase: String
+                var isRunningCommand = false
                 switch activity?.phase {
-                case .tool(let tool): phase = "tool(\(tool.kind.rawValue))"
+                case .tool(let tool):
+                    phase = "tool(\(tool.kind.rawValue))"
+                    isRunningCommand = tool.kind == .command
                 case .thinking: phase = "thinking"
                 case .stalled: phase = "stalled"
                 case nil: phase = "none"
@@ -683,6 +698,17 @@
                     "UIProbe: activity dock phase=\(phase) "
                         + "tape=\(activity?.recentToolKinds.count ?? 0) "
                         + "playful=\(PlayfulMotionPreferences.isEnabled)")
+                // The fixture parks this thread on a running command with
+                // three finished calls behind it; anything else means the
+                // capture is not of the tool phase it claims to show.
+                if !isRunningCommand {
+                    print("UIProbe: FAIL activity dock expected the running-command tool phase")
+                    failures.append("activity-dock-tool-phase")
+                }
+                if (activity?.recentToolKinds.count ?? 0) < 2 {
+                    print("UIProbe: FAIL activity dock tool tape is empty")
+                    failures.append("activity-dock-tape")
+                }
                 snapshot("18-activity-dock", dir: dir)
             } else {
                 print("UIProbe: activity dock skipped (live backend run)")
@@ -705,8 +731,13 @@
                     "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
                         + "phase=\(petPhase?.rawValue ?? "none") "
                         + "chatSurface=\(onChatSurface)")
+                if petPhase != .reviewing {
+                    print("UIProbe: FAIL review pet expected the reviewing phase")
+                    failures.append("review-pet-phase")
+                }
                 if !onChatSurface {
                     print("UIProbe: FAIL review pet captured the diff pane, not the chat surface")
+                    failures.append("review-pet-wrong-surface")
                 }
                 snapshot("19-review-pet", dir: dir)
             } else {
@@ -725,6 +756,7 @@
                     isStalled: false,
                     items: model.timeline(threadID: "thread-9"))
                 let elapsed = thinking?.since.map { Date().timeIntervalSince($0) } ?? 0
+                let label = AgentActivityPresentation.thinkingLabel(elapsed: elapsed)
                 // Whichever presentation this run is configured for has to
                 // show the same escalated copy: the quiet fallback froze on
                 // "Thinking" when it was built once at body-evaluation time
@@ -733,8 +765,28 @@
                 let playful = Motion.playful.showsPlayfulSurfaces
                 print(
                     "UIProbe: activity dock thinking=\(thinking?.phase == .thinking) "
-                        + "label=\"\(AgentActivityPresentation.thinkingLabel(elapsed: elapsed))\" "
-                        + "playful=\(playful)")
+                        + "label=\"\(label)\" playful=\(playful)")
+                if thinking?.phase != .thinking {
+                    print("UIProbe: FAIL activity dock expected the thinking phase")
+                    failures.append("activity-dock-thinking-phase")
+                }
+                // Pinned to the *top* of the escalation ramp, expressed
+                // through the policy rather than a hardcoded string.
+                //
+                // Comparing against the zero-elapsed wording instead would be
+                // no check at all: the probe takes ~25s to reach this scene,
+                // which clears the first threshold on its own no matter how
+                // young the fixture is. Only the last threshold actually
+                // requires the aged timestamp, so only it can catch someone
+                // shortening the fixture out from under this capture.
+                let fullyEscalated = AgentActivityPresentation.thinkingLabel(
+                    elapsed: .greatestFiniteMagnitude)
+                if label != fullyEscalated {
+                    print(
+                        "UIProbe: FAIL activity dock thinking copy stopped at \"\(label)\", "
+                            + "expected \"\(fullyEscalated)\" (elapsed \(Int(elapsed))s)")
+                    failures.append("activity-dock-thinking-label")
+                }
                 snapshot(
                     playful ? "20-activity-dock-thinking" : "20-activity-dock-thinking-quiet",
                     dir: dir)
@@ -746,6 +798,7 @@
                 multi.select(threadID: previousThreadID, on: model.deviceID)
                 try? await Task.sleep(for: .seconds(1))
             }
+            return failures
         }
 
         /// Renders the VCS failure pill: every mock git action succeeds unless
