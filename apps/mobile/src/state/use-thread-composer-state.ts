@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+import { deriveTurnActivityTrace } from "@t3tools/shared/turnActivityTrace";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
@@ -127,6 +128,23 @@ export function useThreadComposerState() {
       null,
     );
   }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
+
+  const activeTurnActivityTrace = useMemo(() => {
+    const selectedThread = selectedThreadDetail ?? selectedThreadShell;
+    const latestTurn = selectedThread?.latestTurn ?? null;
+    const latestTurnSettled =
+      latestTurn !== null && latestTurn.completedAt !== null && latestTurn.state !== "running";
+    const activeTurnId =
+      selectedThread?.session?.activeTurnId ??
+      (latestTurn !== null && !latestTurnSettled ? latestTurn.turnId : null);
+
+    return deriveTurnActivityTrace({
+      threadActivities: selectedThreadDetail?.activities ?? [],
+      assistantMessages: selectedThreadDetail?.messages ?? [],
+      activeTurnId,
+      activeTurnStartedAt: activeWorkStartedAt,
+    });
+  }, [activeWorkStartedAt, selectedThreadDetail, selectedThreadShell]);
 
   const activeThreadBusy =
     !!selectedThread &&
@@ -293,6 +311,7 @@ export function useThreadComposerState() {
     selectedThreadFeed,
     selectedThreadQueueCount,
     activeWorkStartedAt,
+    activeTurnActivityTrace,
     draftMessage,
     draftAttachments,
     modelSelection,

@@ -13,6 +13,7 @@ import {
   type OrchestrationThreadActivity,
   type TurnId,
 } from "@t3tools/contracts";
+import { deriveTurnActivityTrace, type TurnActivityTrace } from "@t3tools/shared/turnActivityTrace";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -137,23 +138,6 @@ export type TimelineLatestTurn = Pick<
   OrchestrationLatestTurn,
   "turnId" | "state" | "startedAt" | "completedAt"
 >;
-
-export interface TurnActivityTraceEntry {
-  readonly id: string;
-  readonly createdAt: string;
-  readonly kind: string;
-  readonly summary: string;
-  readonly detail: string | null;
-  readonly tone: "info" | "tool" | "approval" | "error" | "assistant";
-}
-
-export interface TurnActivityTrace {
-  readonly turnId: TurnId | null;
-  readonly entries: ReadonlyArray<TurnActivityTraceEntry>;
-  readonly providerEventCount: number;
-  readonly toolCallCount: number;
-  readonly lastFeedbackAt: string | null;
-}
 
 export type MessagesTimelineRow =
   | {
@@ -302,134 +286,6 @@ function deriveUnsettledTurnId(
   }
   const isSettled = latestTurn.completedAt !== null && latestTurn.state !== "running";
   return isSettled ? null : latestTurn.turnId;
-}
-
-function parseTraceTimestamp(value: string): number | null {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function traceItemFallsWithinActiveTurn(input: {
-  itemTurnId: TurnId | null;
-  activeTurnId: TurnId | null;
-  createdAt: string;
-  activeTurnStartedAt: string | null;
-}): boolean {
-  if (
-    input.activeTurnId !== null &&
-    input.itemTurnId !== null &&
-    input.itemTurnId !== input.activeTurnId
-  ) {
-    return false;
-  }
-  if (input.activeTurnId !== null && input.itemTurnId === input.activeTurnId) {
-    return true;
-  }
-  if (input.activeTurnStartedAt === null) {
-    return false;
-  }
-  const itemCreatedAt = parseTraceTimestamp(input.createdAt);
-  const turnStartedAt = parseTraceTimestamp(input.activeTurnStartedAt);
-  return itemCreatedAt !== null && turnStartedAt !== null && itemCreatedAt >= turnStartedAt;
-}
-
-function compactTraceText(value: string, maxLength = 320): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  if (compact.length <= maxLength) {
-    return compact;
-  }
-  return `${compact.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
-function extractActivityTraceDetail(activity: OrchestrationThreadActivity): string | null {
-  const payload =
-    activity.payload && typeof activity.payload === "object"
-      ? (activity.payload as Record<string, unknown>)
-      : null;
-  if (!payload) {
-    return null;
-  }
-  const candidates = [payload.detail, payload.command, payload.title, payload.status];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") {
-      continue;
-    }
-    const detail = compactTraceText(candidate);
-    if (detail.length > 0 && detail !== activity.summary) {
-      return detail;
-    }
-  }
-  return null;
-}
-
-/**
- * Builds the deliberately on-demand diagnostic view for a live turn. It uses
- * the raw activity projection rather than the normal work log so lifecycle
- * events that are intentionally hidden from chat (tool/task starts, context
- * updates, checkpoint events) remain inspectable when a wait looks stuck.
- */
-export function deriveTurnActivityTrace(input: {
-  readonly threadActivities: ReadonlyArray<OrchestrationThreadActivity>;
-  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
-  readonly activeTurnId: TurnId | null;
-  readonly activeTurnStartedAt: string | null;
-}): TurnActivityTrace {
-  const activityEntries = input.threadActivities
-    .filter((activity) =>
-      traceItemFallsWithinActiveTurn({
-        itemTurnId: activity.turnId,
-        activeTurnId: input.activeTurnId,
-        createdAt: activity.createdAt,
-        activeTurnStartedAt: input.activeTurnStartedAt,
-      }),
-    )
-    .map(
-      (activity): TurnActivityTraceEntry => ({
-        id: activity.id,
-        createdAt: activity.createdAt,
-        kind: activity.kind,
-        summary: activity.summary,
-        detail: extractActivityTraceDetail(activity),
-        tone: activity.tone,
-      }),
-    );
-  const assistantEntries = input.timelineEntries.flatMap((entry): TurnActivityTraceEntry[] => {
-    if (
-      entry.kind !== "message" ||
-      entry.message.role !== "assistant" ||
-      !traceItemFallsWithinActiveTurn({
-        itemTurnId: entry.message.turnId,
-        activeTurnId: input.activeTurnId,
-        createdAt: entry.message.updatedAt,
-        activeTurnStartedAt: input.activeTurnStartedAt,
-      })
-    ) {
-      return [];
-    }
-    const detail = compactTraceText(entry.message.text);
-    return [
-      {
-        id: `assistant-feedback:${entry.message.id}`,
-        createdAt: entry.message.updatedAt,
-        kind: entry.message.streaming ? "assistant.streaming" : "assistant.updated",
-        summary: entry.message.streaming ? "Assistant update streaming" : "Assistant update",
-        detail: detail.length > 0 ? detail : null,
-        tone: "assistant",
-      },
-    ];
-  });
-  const entries = [...activityEntries, ...assistantEntries].toSorted(
-    (left, right) =>
-      right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
-  );
-
-  return {
-    turnId: input.activeTurnId,
-    entries,
-    providerEventCount: activityEntries.length,
-    toolCallCount: activityEntries.filter((entry) => entry.kind === "tool.started").length,
-    lastFeedbackAt: entries[0]?.createdAt ?? null,
-  };
 }
 
 /**
@@ -726,7 +582,9 @@ export function deriveMessagesTimelineRows(input: {
       createdAt: input.activeTurnStartedAt,
       activityTrace: deriveTurnActivityTrace({
         threadActivities: input.threadActivities ?? [],
-        timelineEntries: input.timelineEntries,
+        assistantMessages: input.timelineEntries.flatMap((entry) =>
+          entry.kind === "message" ? [entry.message] : [],
+        ),
         activeTurnId: unsettledTurnId,
         activeTurnStartedAt: input.activeTurnStartedAt,
       }),

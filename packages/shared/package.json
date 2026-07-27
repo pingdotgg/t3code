@@ -202,6 +202,10 @@
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
+    },
+    "./turnActivityTrace": {
+      "types": "./src/turnActivityTrace.ts",
+      "import": "./src/turnActivityTrace.ts"
     }
   },
   "scripts": {

@@ -4,6 +4,7 @@ import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
+import type { TurnActivityTrace } from "@t3tools/shared/turnActivityTrace";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -130,6 +131,7 @@ export interface ThreadFeedProps {
   readonly agentLabel: string;
   readonly latestTurn: ThreadFeedLatestTurn | null;
   readonly activeWorkStartedAt: string | null;
+  readonly activeTurnActivityTrace: TurnActivityTrace;
   readonly listRef: RefObject<LegendListRef | null>;
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
@@ -797,6 +799,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
   props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
+    readonly activeTurnActivityTrace: TurnActivityTrace;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -819,7 +822,12 @@ function renderFeedEntry(
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
   if (entry.type === "working") {
-    return <WorkingTimelineRow startedAt={entry.createdAt} />;
+    return (
+      <WorkingTimelineRow
+        startedAt={entry.createdAt}
+        activityTrace={props.activeTurnActivityTrace}
+      />
+    );
   }
 
   if (entry.type === "turn-fold") {
@@ -999,8 +1007,13 @@ function renderFeedEntry(
   );
 }
 
-const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
+const WorkingTimelineRow = memo(function WorkingTimelineRow(props: {
+  readonly startedAt: string;
+  readonly activityTrace: TurnActivityTrace;
+}) {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [expanded, setExpanded] = useState(false);
+  const iconSubtleColor = useThemeColor("--color-icon-subtle");
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -1009,18 +1022,130 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
     return () => clearInterval(intervalId);
   }, [props.startedAt]);
 
-  const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
+  const nowIso = new Date(nowMs).toISOString();
+  const durationLabel = formatElapsed(props.startedAt, nowIso) ?? "0s";
+  const requestAgeLabel = formatElapsed(props.startedAt, nowIso) ?? "0s";
+  const lastFeedbackAgeLabel = props.activityTrace.lastFeedbackAt
+    ? formatElapsed(props.activityTrace.lastFeedbackAt, nowIso)
+    : null;
+  const providerEventLabel =
+    props.activityTrace.providerEventCount === 1
+      ? "1 provider event"
+      : `${props.activityTrace.providerEventCount} provider events`;
+  const toolCallLabel =
+    props.activityTrace.toolCallCount === 1
+      ? "1 tool call"
+      : `${props.activityTrace.toolCallCount} tool calls`;
 
   return (
-    <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
-      <View className="flex-row items-center gap-1">
-        <View className="h-1 w-1 rounded-full bg-neutral-400 dark:bg-neutral-500" />
-        <View className="h-1 w-1 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
-        <View className="h-1 w-1 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
-      </View>
-      <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
-        Working for {durationLabel}
-      </Text>
+    <View className="mb-4 px-1.5">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? "Hide turn activity" : "Inspect turn activity"}
+        accessibilityState={{ expanded }}
+        hitSlop={4}
+        onPress={() => setExpanded((current) => !current)}
+        className="min-h-11 flex-row items-center gap-2 py-1"
+      >
+        <View className="flex-row items-center gap-1">
+          <View className="h-1 w-1 rounded-full bg-neutral-400 dark:bg-neutral-500" />
+          <View className="h-1 w-1 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
+          <View className="h-1 w-1 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
+        </View>
+        <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+          Working for {durationLabel}
+        </Text>
+        <Text className="text-xs text-neutral-500 dark:text-neutral-500">Details</Text>
+        <SymbolView
+          name={expanded ? "chevron.up" : "chevron.down"}
+          size={11}
+          tintColor={iconSubtleColor}
+          type="monochrome"
+        />
+      </Pressable>
+      {expanded ? (
+        <View
+          accessibilityLabel="Current turn activity"
+          className="rounded-xl border border-neutral-200/80 bg-neutral-100/50 p-3 dark:border-white/[0.08] dark:bg-white/[0.03]"
+        >
+          <View className="flex-row flex-wrap items-baseline justify-between gap-1">
+            <Text className="font-t3-medium text-sm text-foreground">Current turn activity</Text>
+            <Text className="text-xs text-foreground-muted">
+              {providerEventLabel} · {toolCallLabel}
+            </Text>
+          </View>
+          <View className="mt-2 gap-1.5">
+            <View className="flex-row items-baseline justify-between gap-3">
+              <Text className="text-xs text-foreground-muted">Request sent</Text>
+              <Text className="text-right text-xs tabular-nums text-foreground">
+                {requestAgeLabel} ago · {formatMessageTime(props.startedAt)}
+              </Text>
+            </View>
+            <View className="flex-row items-baseline justify-between gap-3">
+              <Text className="text-xs text-foreground-muted">Last feedback</Text>
+              <Text className="text-right text-xs tabular-nums text-foreground">
+                {props.activityTrace.lastFeedbackAt && lastFeedbackAgeLabel
+                  ? `${lastFeedbackAgeLabel} ago · ${formatMessageTime(props.activityTrace.lastFeedbackAt)}`
+                  : "No provider event received yet"}
+              </Text>
+            </View>
+            {props.activityTrace.turnId ? (
+              <View className="flex-row items-baseline justify-between gap-3">
+                <Text className="text-xs text-foreground-muted">Turn</Text>
+                <Text
+                  numberOfLines={1}
+                  selectable
+                  className="max-w-[70%] text-right font-mono text-[11px] text-foreground"
+                >
+                  {props.activityTrace.turnId}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          {props.activityTrace.entries.length > 0 ? (
+            <View className="mt-3 border-t border-neutral-200/80 pt-2 dark:border-white/[0.08]">
+              <Text className="mb-1.5 text-xs text-foreground-muted">
+                Received activity · newest first
+              </Text>
+              <ScrollView style={{ maxHeight: 256 }} nestedScrollEnabled>
+                {props.activityTrace.entries.map((entry) => (
+                  <View key={entry.id} className="flex-row gap-2 rounded-lg px-1.5 py-1.5">
+                    <Text className="w-16 text-[11px] tabular-nums text-foreground-muted">
+                      {formatMessageTime(entry.createdAt)}
+                    </Text>
+                    <View className="min-w-0 flex-1">
+                      <View className="flex-row flex-wrap items-baseline gap-x-1.5">
+                        <Text
+                          className={cn(
+                            "font-t3-medium text-xs text-foreground",
+                            entry.tone === "error" && "text-red-600 dark:text-red-400",
+                            entry.tone === "approval" && "text-amber-600 dark:text-amber-300",
+                          )}
+                        >
+                          {entry.summary}
+                        </Text>
+                        <Text className="font-mono text-[10px] text-foreground-muted">
+                          {entry.kind}
+                        </Text>
+                      </View>
+                      {entry.detail ? (
+                        <Text selectable className="mt-0.5 text-xs text-foreground-muted">
+                          {entry.detail}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          ) : (
+            <Text className="mt-3 border-t border-neutral-200/80 pt-2 text-xs text-foreground-muted dark:border-white/[0.08]">
+              T3 has sent the request, but it has not received a later provider event to explain the
+              wait yet.
+            </Text>
+          )}
+        </View>
+      ) : null}
     </View>
   );
 });
@@ -1389,6 +1514,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      activeTurnActivityTrace: props.activeTurnActivityTrace,
     }),
     [
       copiedRowId,
@@ -1398,6 +1524,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      props.activeTurnActivityTrace,
     ],
   );
   const reportHeaderMaterialVisibility = useCallback(
@@ -1640,6 +1767,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
         environmentId: props.environmentId,
+        activeTurnActivityTrace: props.activeTurnActivityTrace,
         copiedRowId,
         expandedWorkRows,
         terminalAssistantMessageIds,
@@ -1676,6 +1804,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.activeTurnActivityTrace,
       props.skills,
     ],
   );
