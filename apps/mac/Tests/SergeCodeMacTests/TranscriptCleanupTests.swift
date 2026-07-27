@@ -223,6 +223,45 @@ struct TranscriptCleanupTests {
         #expect(TranscriptCleanup.accepted(candidate: candidate, raw: raw) == candidate)
     }
 
+    @Test("a lead the speaker actually said is never treated as a wrapper")
+    func preambleStripSparesSpokenLead() {
+        // The strip's own contract, independent of the call site: a lead
+        // that sits in the utterance in order belongs to the speaker, even
+        // though it opens with "here is" and ends in a colon.
+        let reference = TranscriptCleanup.normalizedWords(
+            "here is the deal we ship on friday no matter what")
+        let dictated = "Here is the deal: we ship on Friday no matter what."
+        #expect(TranscriptCleanup.strippingPreamble(dictated, reference: reference) == dictated)
+
+        // Same shape, but the speaker never said those words.
+        let wrapper = "Here is the cleaned transcript: we ship on Friday no matter what."
+        #expect(
+            TranscriptCleanup.strippingPreamble(wrapper, reference: reference)
+                == "we ship on Friday no matter what.")
+    }
+
+    @Test("a spoken lead survives even when the reply around it fails vetting")
+    func spokenLeadIsNotStrippedIntoAcceptance() {
+        // The candidate has an appended clause, so it fails unstripped. The
+        // strip must not then rescue it by chopping words the speaker said.
+        let raw = "here is the deal we ship on friday no matter what"
+        let candidate = "Here is the deal: we ship on Friday no matter what, and I'd move the demo."
+        #expect(TranscriptCleanup.accepted(candidate: candidate, raw: raw) == nil)
+    }
+
+    @Test("a lead that reads as prose rather than a label is left alone")
+    func preambleStripIgnoresProseLead() {
+        let reference = TranscriptCleanup.normalizedWords("ship it")
+        // Closes a sentence before the colon, so it is speech, not a label —
+        // without that rule the lead would strip, since none of it was said.
+        let punctuated = "Here is the thing. Anyway: ship it."
+        #expect(
+            TranscriptCleanup.strippingPreamble(punctuated, reference: reference) == punctuated)
+        // Longer than a label ever runs.
+        let rambling = String(repeating: "here is another thing ", count: 4) + ": ship it."
+        #expect(TranscriptCleanup.strippingPreamble(rambling, reference: reference) == rambling)
+    }
+
     @Test("a dictated line ending in a colon is not mistaken for a preamble")
     func keepsDictatedColonLine() {
         let raw = """

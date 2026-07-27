@@ -76,7 +76,7 @@ enum TranscriptCleanup {
         let reference = collapsingRepeats(
             normalizedWords(raw).filter { !fillerWords.contains($0) })
         guard !reference.isEmpty else { return nil }
-        for variant in [stripped, strippingPreamble(stripped)]
+        for variant in [stripped, strippingPreamble(stripped, reference: reference)]
         where isRewrite(variant, of: reference)
             && !opensAsAssistant(variant, reference: reference) {
             return variant
@@ -191,13 +191,15 @@ enum TranscriptCleanup {
         "um", "uh", "uhm", "umm", "erm", "er", "ah", "hmm", "hm", "mhm", "mm",
     ]
 
-    /// Assistant preambles the model emits when it half-follows the format
-    /// rule ("Here's the cleaned transcript:").
-    private static let preamblePrefixes = [
+    /// Labels the model puts in front of its answer when it half-follows the
+    /// format rule ("Here's the cleaned transcript:"), tokenized the same way
+    /// candidates are.
+    private static let preamblePrefixes: [[String]] = [
         "here is", "here's", "here are", "sure", "certainly", "of course",
         "okay", "ok", "cleaned transcript", "cleaned text", "cleaned version",
-        "transcript", "output", "result",
-    ]
+        "corrected transcript", "corrected text", "transcript", "output",
+        "result",
+    ].map(normalizedWords)
 
     /// Openings that mark a reply to the transcript rather than a rewrite of
     /// it, tokenized the same way candidates are. Every one of these is also
@@ -245,21 +247,44 @@ enum TranscriptCleanup {
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Drops a leading "Here's the cleaned transcript:" run-up, whether the
-    /// model put it on its own line or inline. Only the text up to the first
-    /// colon is considered, and only when it is short and opens with a known
-    /// preamble.
-    static func strippingPreamble(_ text: String) -> String {
+    /// Drops a leading "Here's the cleaned transcript:" label, whether the
+    /// model put it on its own line or inline.
+    ///
+    /// A speaker can dictate a line ending in a colon as readily as the
+    /// model can label one, so matching a known opening is not enough on its
+    /// own. Everything below has to hold:
+    ///
+    /// - the lead opens with a known wrapper phrase,
+    /// - it is short, single-line, and carries no sentence-ending
+    ///   punctuation — a label, not a sentence,
+    /// - and the speaker did not say those words themselves.
+    ///
+    /// The last one does the real work, and it is the same gate
+    /// `opensAsAssistant` uses: "here is the plan for today: ship the
+    /// release" is dictation, its lead sits in the utterance in order, and
+    /// so it is left alone. Only a lead with no place in what was said is a
+    /// wrapper. Anything short of certainty leaves the text intact, which
+    /// costs at most a polish pass — the call site treats this as a fallback
+    /// after the reply has already failed vetting unstripped, so declining
+    /// to strip can never turn an acceptable reply into a rejected one.
+    static func strippingPreamble(_ text: String, reference: [String]) -> String {
         guard let colon = text.firstIndex(of: ":") else { return text }
-        let lead = text[text.startIndex..<colon]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard lead.count <= 80, !lead.contains("\n"),
-            preamblePrefixes.contains(where: { lead.hasPrefix($0) })
+        let lead = String(text[text.startIndex..<colon])
+        let leadWords = normalizedWords(lead)
+        guard (1...maximumPreambleWords).contains(leadWords.count),
+            !lead.contains(where: \.isNewline),
+            lead.rangeOfCharacter(from: sentenceEnders) == nil,
+            preamblePrefixes.contains(where: { leadWords.starts(with: $0) }),
+            align(leadWords, to: reference).inserted > 0
         else { return text }
         return text[text.index(after: colon)...]
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// A wrapper label is a handful of words. Past this the lead is prose,
+    /// and prose is the speaker's.
+    static let maximumPreambleWords = 8
+    private static let sentenceEnders = CharacterSet(charactersIn: ".!?")
 
     private static func strippingWrappingQuotes(_ text: String) -> String {
         let pairs: [(Character, Character)] = [("\"", "\""), ("\u{201C}", "\u{201D}"), ("'", "'")]
