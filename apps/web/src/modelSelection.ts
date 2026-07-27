@@ -150,10 +150,16 @@ export function getAppModelOptions(
   provider: ProviderDriverKind,
   _selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getProviderModels(providers, provider).map(toAppModelOption);
+  const liveModels = getProviderModels(providers, provider);
+  const options: AppModelOption[] = liveModels
+    .filter((model) => !model.isCustom)
+    .map(toAppModelOption);
+  const liveCustomModelsBySlug = new Map(
+    liveModels.filter((model) => model.isCustom).map((model) => [model.slug, model] as const),
+  );
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
-    Arr.filterMap(getProviderModels(providers, provider), (model) =>
+    Arr.filterMap(liveModels, (model) =>
       model.isCustom ? Result.failVoid : Result.succeed(model.slug),
     ),
   );
@@ -170,11 +176,16 @@ export function getAppModelOptions(
     }
 
     seen.add(slug);
-    options.push({
-      slug,
-      name: slug,
-      isCustom: true,
-    });
+    const liveCustomModel = liveCustomModelsBySlug.get(slug);
+    options.push(
+      liveCustomModel
+        ? toAppModelOption(liveCustomModel)
+        : {
+            slug,
+            name: slug,
+            isCustom: true,
+          },
+    );
   }
 
   return applyInstanceModelPreferences(
@@ -198,7 +209,12 @@ export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
   entry: ProviderInstanceEntry,
 ): AppModelOption[] {
-  const options: AppModelOption[] = entry.models.map(toAppModelOption);
+  const options: AppModelOption[] = entry.models
+    .filter((model) => !model.isCustom)
+    .map(toAppModelOption);
+  const liveCustomModelsBySlug = new Map(
+    entry.models.filter((model) => model.isCustom).map((model) => [model.slug, model] as const),
+  );
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
     Arr.filterMap(entry.models, (model) =>
@@ -213,7 +229,10 @@ export function getAppModelOptionsForInstance(
     }
 
     seen.add(slug);
-    options.push({ slug, name: slug, isCustom: true });
+    const liveCustomModel = liveCustomModelsBySlug.get(slug);
+    options.push(
+      liveCustomModel ? toAppModelOption(liveCustomModel) : { slug, name: slug, isCustom: true },
+    );
   }
 
   return applyInstanceModelPreferences(
