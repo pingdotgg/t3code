@@ -98,6 +98,178 @@ struct TimelineUpsertIndexTests {
         #expect(!indexByID.keys.contains("tool:3"))
     }
 
+    @Test("an uncorrelated completion folds through the running→settled rename")
+    func lifecycleRenameFolds() {
+        // Threads recorded before the server stamped `toolCallId` reach the
+        // client with a per-event row id and a renamed title ("Running
+        // command" -> "Ran command"): the completion must still replace the
+        // running row instead of stacking a duplicate that ticks forever.
+        let running = TimelineItem.toolEvent(
+            id: "activity-1", name: "Running command", detail: "Bash: ls", kind: .command,
+            status: .running, at: date(2), output: nil, outputIsError: false)
+        let completed = TimelineItem.toolEvent(
+            id: "activity-2", name: "Ran command", detail: "Bash: ls", kind: .command,
+            status: .succeeded, at: date(3), output: "README.md", outputIsError: false)
+
+        var reference: [TimelineItem] = [
+            .userMessage(id: "user-1", text: "list files", attachments: [], at: date(1))
+        ]
+        var indexed = reference
+        var indexByID: [String: Int] = ["user-1": 0]
+
+        for item in [running, completed] {
+            reference.upsertTimelineItem(item)
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+
+        #expect(signatures(indexed) == signatures(reference))
+        #expect(indexed.count == 2)
+        guard case .toolEvent(_, let name, _, _, let status, _, _, _) = indexed[1] else {
+            Issue.record("expected the tool row to survive the completion upsert")
+            return
+        }
+        #expect(name == "Ran command")
+        #expect(status == .succeeded)
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+
+        // Different invocations of the same surface still get their own rows.
+        let otherRunning = TimelineItem.toolEvent(
+            id: "activity-3", name: "Running command", detail: "Bash: git status",
+            kind: .command, status: .running, at: date(4), output: nil, outputIsError: false)
+        let otherCompleted = TimelineItem.toolEvent(
+            id: "activity-4", name: "Ran command", detail: "Bash: pwd", kind: .command,
+            status: .succeeded, at: date(5), output: "/tmp", outputIsError: false)
+        indexed.upsertTimelineItem(otherRunning, indexByID: &indexByID)
+        indexed.upsertTimelineItem(otherCompleted, indexByID: &indexByID)
+        #expect(indexed.count == 4)
+    }
+
+    @Test("a completion folds in when it appends a runtime marker to the detail")
+    func lifecycleDetailMarkerFolds() {
+        // The settled event restates the running row's detail with the exit
+        // marker attached; an exact-string check would call that a different
+        // invocation and leave the running row ticking.
+        let running = TimelineItem.toolEvent(
+            id: "activity-1", name: "Running command", detail: "Bash: ls", kind: .command,
+            status: .running, at: date(2), output: nil, outputIsError: false)
+        let completed = TimelineItem.toolEvent(
+            id: "activity-2", name: "Ran command", detail: "Bash: ls <exited with exit code 0>",
+            kind: .command, status: .succeeded, at: date(3), output: "README.md",
+            outputIsError: false)
+
+        var reference: [TimelineItem] = []
+        var indexed: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
+        for item in [running, completed] {
+            reference.upsertTimelineItem(item)
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+
+        #expect(signatures(indexed) == signatures(reference))
+        #expect(indexed.count == 1)
+        guard case .toolEvent(_, _, _, _, let status, _, _, _) = indexed[0] else {
+            Issue.record("expected a single settled tool row")
+            return
+        }
+        #expect(status == .succeeded)
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+    }
+
+    @Test("only the known lifecycle pairs fold; other titles stay case-exact")
+    func nonLifecycleTitlesStayExact() {
+        #expect(ToolLifecycleTitle.namesMatch("Running command", "Ran command"))
+        #expect(ToolLifecycleTitle.namesMatch("Reading file", "Read file"))
+        // A provider's own names are not ours to normalize: two MCP tools
+        // whose names differ only in case are two tools.
+        #expect(ToolLifecycleTitle.canonical("linear · create_issue") == "linear · create_issue")
+        #expect(!ToolLifecycleTitle.namesMatch("linear · Create_Issue", "linear · create_issue"))
+        #expect(!ToolLifecycleTitle.namesMatch("Skill: Review", "Skill: review"))
+
+        let running = TimelineItem.toolEvent(
+            id: "activity-1", name: "linear · Create_Issue", detail: "", kind: .mcpCall,
+            status: .running, at: date(2), output: nil, outputIsError: false)
+        let otherCompleted = TimelineItem.toolEvent(
+            id: "activity-2", name: "linear · create_issue", detail: "", kind: .mcpCall,
+            status: .succeeded, at: date(3), output: "SER-1", outputIsError: false)
+
+        var indexed: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
+        for item in [running, otherCompleted] {
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+        #expect(indexed.count == 2)
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+    }
+
+    @Test("angle brackets that are part of the command stay part of the detail")
+    func angleBracketDetailIsNotAMarker() {
+        // Only the runtime's exit marker is dropped when details are compared;
+        // a command that genuinely ends in angle brackets is still its own
+        // invocation and must not fold into an unrelated running row.
+        #expect(ToolRowDetail.canonical("Bash: echo <hello>") == "Bash: echo <hello>")
+        #expect(ToolRowDetail.canonical("Bash: ls <exited with exit code 0>") == "Bash: ls")
+        #expect(ToolRowDetail.canonical("Bash: ls <exited with exit code 137>") == "Bash: ls")
+        // Nothing but the marker keeps it: an empty detail is the separate
+        // "this event carried no detail" signal.
+        #expect(ToolRowDetail.canonical("<exited with exit code 0>") == "<exited with exit code 0>")
+
+        let running = TimelineItem.toolEvent(
+            id: "activity-1", name: "Running command", detail: "Bash: echo <hello>",
+            kind: .command, status: .running, at: date(2), output: nil, outputIsError: false)
+        let otherCompleted = TimelineItem.toolEvent(
+            id: "activity-2", name: "Ran command", detail: "Bash: echo <goodbye>",
+            kind: .command, status: .succeeded, at: date(3), output: "goodbye",
+            outputIsError: false)
+
+        var indexed: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
+        for item in [running, otherCompleted] {
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+        #expect(indexed.count == 2)
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+    }
+
+    @Test("a detail-less completion prefers the row whose detail matches")
+    func detaillessCompletionPrefersExactRow() {
+        // Two calls in flight: the completion carries no detail of its own,
+        // so it may only take the row that cannot be claimed by an exact
+        // match — otherwise it steals the most recent sibling's row and both
+        // calls end up misreported.
+        let first = TimelineItem.toolEvent(
+            id: "activity-1", name: "Running command", detail: "Bash: ls", kind: .command,
+            status: .running, at: date(2), output: nil, outputIsError: false)
+        let second = TimelineItem.toolEvent(
+            id: "activity-2", name: "Running command", detail: "Bash: git status",
+            kind: .command, status: .running, at: date(3), output: nil, outputIsError: false)
+        let secondCompleted = TimelineItem.toolEvent(
+            id: "activity-3", name: "Ran command", detail: "Bash: git status", kind: .command,
+            status: .succeeded, at: date(4), output: "clean", outputIsError: false)
+        let firstCompleted = TimelineItem.toolEvent(
+            id: "activity-4", name: "Ran command", detail: "", kind: .command,
+            status: .succeeded, at: date(5), output: "README.md", outputIsError: false)
+
+        var indexed: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
+        for item in [first, second, secondCompleted, firstCompleted] {
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+
+        #expect(indexed.count == 2)
+        guard case .toolEvent(_, _, let firstDetail, _, let firstStatus, _, _, _) = indexed[0],
+            case .toolEvent(_, _, let secondDetail, _, let secondStatus, _, _, _) = indexed[1]
+        else {
+            Issue.record("expected both tool rows to survive")
+            return
+        }
+        #expect(firstStatus == .succeeded)
+        #expect(secondStatus == .succeeded)
+        // The completion without a detail keeps what its running row showed.
+        #expect(firstDetail == "Bash: ls")
+        #expect(secondDetail == "Bash: git status")
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+    }
+
     @Test("a stale index slot self-repairs before replacing an id hit")
     func staleIndexRepairs() {
         let user = TimelineItem.userMessage(id: "user-1", text: "first", attachments: [], at: date(1))

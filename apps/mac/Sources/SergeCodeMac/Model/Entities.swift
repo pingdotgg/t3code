@@ -634,6 +634,88 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Tool row titles are lifecycle-dependent: the server names a call for what
+/// it is doing while it runs and for what it did once it settles ("Running
+/// command" -> "Ran command", "Reading file" -> "Read file"). Rows that reach
+/// the client without a `toolCallId` — threads recorded before the server
+/// stamped one, and providers that emit tool items with no runtime item id —
+/// correlate by name, so the two halves of one invocation must compare equal.
+/// Otherwise the completion appends a second row and the original keeps
+/// ticking as "running" forever.
+public enum ToolLifecycleTitle {
+    /// Mirror of `TOOL_LIFECYCLE_TITLES` in `@t3tools/shared/toolPresentation`,
+    /// which owns these pairs. Swift cannot read that module, so the table is
+    /// copied here and `toolPresentation.test.ts` fails the moment the two
+    /// disagree — a silently stale copy is exactly what brings the duplicate
+    /// rows back. Keep the `"<title>": "<surface>",` line shape: that test
+    /// parses this literal.
+    static let lifecycleTitles: [String: String] = [
+        "running command": "command",
+        "ran command": "command",
+        "reading file": "file_read",
+        "read file": "file_read",
+        "changing files": "file_change",
+        "changed files": "file_change",
+        "searching files": "file_search",
+        "searched files": "file_search",
+        "searching the web": "web_search",
+        "web search": "web_search",
+        "fetching page": "web_fetch",
+        "fetched page": "web_fetch",
+        "viewing image": "image",
+        "viewed image": "image",
+        "updating plan": "todo",
+        "updated plan": "todo",
+    ]
+
+    /// Identity of a tool title across the running -> settled rename.
+    ///
+    /// Only the pairs above fold. Titles the server does not rewrite (skills,
+    /// MCP calls, raw tool names) come back as they came in, case included —
+    /// those names are the provider's, and two that differ only in case are
+    /// two different tools rather than one row to merge.
+    public static func canonical(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return lifecycleTitles[trimmed.lowercased()] ?? trimmed
+    }
+
+    /// Whether two tool row titles can name the same invocation.
+    public static func namesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        lhs == rhs || canonical(lhs) == canonical(rhs)
+    }
+}
+
+/// Comparison form of a tool row's detail line, for correlating a settled
+/// event with the running row it belongs to when neither carries a
+/// `toolCallId`.
+public enum ToolRowDetail {
+    /// The one marker a settled event appends to what the running row showed:
+    /// "Bash: ls" becomes "Bash: ls <exited with exit code 0>" once the
+    /// process reports. Matches `stripTrailingExitCode` in T3Kit's
+    /// `ActivityRows` and `@t3tools/shared/toolPresentation`.
+    private static let exitMarkerPattern = #"\s*<exited with exit code \d+>\s*$"#
+
+    /// Drops that marker so the two halves of one invocation compare equal.
+    /// Only this exact suffix goes: a command that genuinely ends in angle
+    /// brackets (`Bash: echo <hello>`) keeps them and stays distinct from
+    /// another call, which is the whole point of comparing details at all.
+    public static func canonical(_ detail: String) -> String {
+        let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let marker = trimmed.range(
+                of: exitMarkerPattern, options: [.regularExpression, .caseInsensitive])
+        else {
+            return trimmed
+        }
+        let head = String(trimmed[..<marker.lowerBound]).trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        // A detail that is nothing but the marker has no invocation left to
+        // compare; keep it rather than collapsing it to empty, which is the
+        // "no detail at all" signal the weak-match tier reads.
+        return head.isEmpty ? trimmed : head
+    }
+}
+
 extension Array where Element == TimelineItem {
     /// True once the agent has finished at least one answer here. A chat that
     /// has never answered is not a chat with work to follow up on, so the
@@ -645,14 +727,57 @@ extension Array where Element == TimelineItem {
         }
     }
 
+    /// Index of the still-running tool row an uncorrelated lifecycle event
+    /// belongs to, or nil when the event starts a row of its own.
+    ///
+    /// Searches backwards past interleaved rows (reasoning updates land
+    /// between a tool's start and its completion), not just `last` — otherwise
+    /// the completion appends a duplicate and the original row is stuck
+    /// "running" forever. Bounded at the current turn: crossing a user message
+    /// (or checkpoint, which marks a turn end) could fold a fresh same-name
+    /// invocation into a stale row from an old turn.
+    ///
+    /// Two tiers, because a settled event is not obliged to restate what the
+    /// running row already showed: an exact detail match wins outright, and a
+    /// weaker signal (an event that carries no detail at all, or an
+    /// uncorrelated event following a correlated row) is only taken when no
+    /// row matches exactly. Without that ordering a detail-less completion
+    /// would steal the row of whichever sibling call happened to start last
+    /// and leave its own row running forever.
+    fileprivate func foldableToolRowIndex(id: String, name: String, detail: String) -> Int? {
+        let incomingDetail = ToolRowDetail.canonical(detail)
+        var weakMatch: Int?
+        search: for index in indices.reversed() {
+            switch self[index] {
+            case .userMessage, .checkpoint:
+                break search
+            case .toolEvent(
+                let existingID, let existingName, let existingDetail, _, .running, _, _, _):
+                guard ToolLifecycleTitle.namesMatch(existingName, name) else { continue }
+                let runningDetail = ToolRowDetail.canonical(existingDetail)
+                if runningDetail == incomingDetail {
+                    return index
+                }
+                guard weakMatch == nil else { continue }
+                if incomingDetail.isEmpty || runningDetail.isEmpty
+                    || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))
+                {
+                    weakMatch = index
+                }
+            default:
+                continue
+            }
+        }
+        return weakMatch
+    }
+
     /// Coalescing append: an item whose id already exists replaces that row
     /// in place (tool lifecycle updates, streaming reasoning text) instead of
     /// stacking a duplicate. A tool row without a correlation id still folds
     /// into the trailing running row when it is plainly the same invocation
-    /// (mirrors the web client's consecutive-merge in session-logic.ts):
-    /// same name plus same detail, or a correlated row followed by an
-    /// uncorrelated event of the same name. Two uncorrelated tools that
-    /// merely share a name stay separate rows.
+    /// (mirrors the web client's consecutive-merge in session-logic.ts) —
+    /// see `foldableToolRowIndex`. Two uncorrelated tools that merely share a
+    /// name and both carry their own distinct detail stay separate rows.
     public mutating func upsertTimelineItem(_ item: TimelineItem) {
         if let index = lastIndex(where: { $0.id == item.id }) {
             let existing = self[index]
@@ -661,31 +786,14 @@ extension Array where Element == TimelineItem {
                 .preservingFirstLifecycleTimestamp(of: existing)
             return
         }
-        // Searches backwards past interleaved rows (reasoning updates land
-        // between a tool's start and its completion), not just `last` —
-        // otherwise the completion appends a duplicate and the original row
-        // is stuck "running" forever. Bounded at the current turn: crossing
-        // a user message (or checkpoint, which marks a turn end) could fold
-        // a fresh same-name invocation into a stale row from an old turn.
-        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item {
-            search: for index in indices.reversed() {
-                switch self[index] {
-                case .userMessage, .checkpoint:
-                    break search
-                case .toolEvent(
-                    let existingID, let existingName, let existingDetail, _, .running, _, _, _)
-                where existingName == name
-                    && (existingDetail == detail
-                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
-                    let existing = self[index]
-                    self[index] = item
-                        .preservingToolMetadata(of: existing)
-                        .preservingFirstLifecycleTimestamp(of: existing)
-                    return
-                default:
-                    continue
-                }
-            }
+        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item,
+            let index = foldableToolRowIndex(id: id, name: name, detail: detail)
+        {
+            let existing = self[index]
+            self[index] = item
+                .preservingToolMetadata(of: existing)
+                .preservingFirstLifecycleTimestamp(of: existing)
+            return
         }
         append(item)
     }
@@ -713,34 +821,17 @@ extension Array where Element == TimelineItem {
                 .preservingFirstLifecycleTimestamp(of: existing)
             return
         }
-        // Searches backwards past interleaved rows (reasoning updates land
-        // between a tool's start and its completion), not just `last` —
-        // otherwise the completion appends a duplicate and the original row
-        // is stuck "running" forever. Bounded at the current turn: crossing
-        // a user message (or checkpoint, which marks a turn end) could fold
-        // a fresh same-name invocation into a stale row from an old turn.
-        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item {
-            search: for index in indices.reversed() {
-                switch self[index] {
-                case .userMessage, .checkpoint:
-                    break search
-                case .toolEvent(
-                    let existingID, let existingName, let existingDetail, _, .running, _, _, _)
-                where existingName == name
-                    && (existingDetail == detail
-                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
-                    let existing = self[index]
-                    let replacedID = existing.id
-                    self[index] = item
-                        .preservingToolMetadata(of: existing)
-                        .preservingFirstLifecycleTimestamp(of: existing)
-                    indexByID.removeValue(forKey: replacedID)
-                    indexByID[item.id] = index
-                    return
-                default:
-                    continue
-                }
-            }
+        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item,
+            let index = foldableToolRowIndex(id: id, name: name, detail: detail)
+        {
+            let existing = self[index]
+            let replacedID = existing.id
+            self[index] = item
+                .preservingToolMetadata(of: existing)
+                .preservingFirstLifecycleTimestamp(of: existing)
+            indexByID.removeValue(forKey: replacedID)
+            indexByID[item.id] = index
+            return
         }
         append(item)
         indexByID[item.id] = count - 1

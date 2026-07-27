@@ -1458,6 +1458,128 @@ describe("ProviderRuntimeIngestion", () => {
     expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
   });
 
+  it("stamps the item id as toolCallId on every tool lifecycle activity", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const toolData = {
+      toolName: "Bash",
+      input: { command: "ls" },
+    };
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-claude-tool-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-tool"),
+      itemId: asItemId("toolu_claude_1"),
+      payload: {
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "Bash",
+        data: toolData,
+      },
+    });
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-claude-tool-updated"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-tool"),
+      itemId: asItemId("toolu_claude_1"),
+      payload: {
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "Bash",
+        data: toolData,
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-claude-tool-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-claude-tool"),
+      itemId: asItemId("toolu_claude_1"),
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Bash",
+        data: toolData,
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-claude-tool-completed",
+      ),
+    );
+    const toolCallIdOf = (activityId: string): unknown => {
+      const activity = thread.activities.find(
+        (entry: ProviderRuntimeTestActivity) => entry.id === activityId,
+      );
+      const payload =
+        activity?.payload && typeof activity.payload === "object"
+          ? (activity.payload as Record<string, unknown>)
+          : undefined;
+      const data =
+        payload?.data && typeof payload.data === "object"
+          ? (payload.data as Record<string, unknown>)
+          : undefined;
+      return data?.toolCallId;
+    };
+
+    // Without a shared correlation id, clients key tool rows on the per-event
+    // activity id: the completion appends a second row and the running one
+    // ticks forever.
+    expect(toolCallIdOf("evt-claude-tool-started")).toBe("toolu_claude_1");
+    expect(toolCallIdOf("evt-claude-tool-updated")).toBe("toolu_claude_1");
+    expect(toolCallIdOf("evt-claude-tool-completed")).toBe("toolu_claude_1");
+  });
+
+  it("keeps a provider-supplied toolCallId instead of the runtime item id", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-acp-tool-completed"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-acp-tool"),
+      itemId: asItemId("item-acp-tool"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "completed",
+        title: "Read file",
+        data: { toolCallId: "acp-call-1" },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-acp-tool-completed",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-acp-tool-completed",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+    const data =
+      payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : undefined;
+
+    expect(data?.toolCallId).toBe("acp-call-1");
+  });
+
   it("attaches a typed skill presentation to tool activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
