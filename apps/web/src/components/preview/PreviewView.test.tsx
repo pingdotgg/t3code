@@ -8,6 +8,16 @@ const mocks = vi.hoisted(() => ({
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
   emptyStateUrl: null as ((url: string) => void) | null,
+  togglePictureInPicture: null as (() => void) | null,
+  toggleNativePictureInPicture: null as (() => void) | null,
+  pictureInPicturePressed: false,
+  miniPlayerTabId: null as string | null,
+  openMiniPlayer: vi.fn(),
+  closeMiniPlayer: vi.fn(),
+  closeRightPanel: vi.fn(),
+  openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  pictureInPicture: false,
   showEmptyState: false,
 }));
 
@@ -36,10 +46,12 @@ vi.mock("~/previewStateStore", () => ({
     activeTabId: "tab-1",
     desktopByTabId: {
       "tab-1": {
+        hasWebContents: true,
         canGoBack: false,
         canGoForward: false,
         loading: false,
         zoomFactor: 1,
+        pictureInPicture: mocks.pictureInPicture,
         colorScheme: "system",
         controller: "none",
       },
@@ -80,7 +92,7 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("~/browser/browserRecording", () => ({
   startBrowserRecording: vi.fn(),
   stopBrowserRecording: vi.fn(),
-  useActiveBrowserRecordingTabId: () => null,
+  useActiveBrowserRecordingTabIds: () => new Set(),
 }));
 
 vi.mock("~/browser/browserSurfaceStore", () => ({
@@ -89,18 +101,69 @@ vi.mock("~/browser/browserSurfaceStore", () => ({
   ) => select({ byTabId: {} }),
 }));
 
+vi.mock("~/previewMiniPlayerStore", () => {
+  const usePreviewMiniPlayerStore = Object.assign(
+    (select: (state: unknown) => unknown) =>
+      select({
+        byThreadKey: mocks.miniPlayerTabId
+          ? {
+              "environment-1:thread-1": {
+                tabId: mocks.miniPlayerTabId,
+                position: null,
+              },
+            }
+          : {},
+      }),
+    {
+      getState: () => ({
+        open: mocks.openMiniPlayer,
+        close: mocks.closeMiniPlayer,
+      }),
+    },
+  );
+  return {
+    selectThreadPreviewMiniPlayer: (
+      byThreadKey: Record<string, { tabId: string; position: null }>,
+    ) => byThreadKey["environment-1:thread-1"] ?? null,
+    usePreviewMiniPlayerStore,
+  };
+});
+
+vi.mock("~/rightPanelStore", () => ({
+  useRightPanelStore: {
+    getState: () => ({ close: mocks.closeRightPanel }),
+  },
+}));
+
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: vi.fn(),
   toastManager: { add: vi.fn() },
 }));
 
 vi.mock("./previewBridge", () => ({
-  previewBridge: { navigate: mocks.navigate },
+  previewBridge: {
+    navigate: mocks.navigate,
+    pictureInPicture: {
+      open: mocks.openPictureInPicture,
+      close: mocks.closePictureInPicture,
+    },
+  },
 }));
 
 vi.mock("./PreviewChromeRow", () => ({
-  PreviewChromeRow: (props: { onSubmit: (url: string) => void }) => {
+  PreviewChromeRow: (props: {
+    onSubmit: (url: string) => void;
+    onPictureInPicture?: () => void;
+    pictureInPicture?: boolean;
+    trailingActions?: {
+      props: { onNativePictureInPicture?: () => void };
+    };
+  }) => {
     mocks.submittedUrl = props.onSubmit;
+    mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
+    mocks.toggleNativePictureInPicture =
+      props.trailingActions?.props.onNativePictureInPicture ?? null;
+    mocks.pictureInPicturePressed = props.pictureInPicture ?? false;
     return null;
   },
 }));
@@ -111,7 +174,12 @@ vi.mock("./PreviewEmptyState", () => ({
     return null;
   },
 }));
-vi.mock("./PreviewMoreMenu", () => ({ PreviewMoreMenu: () => null }));
+vi.mock("./PreviewMoreMenu", () => ({
+  PreviewMoreMenu: (props: { onNativePictureInPicture: () => void }) => {
+    mocks.toggleNativePictureInPicture = props.onNativePictureInPicture;
+    return null;
+  },
+}));
 vi.mock("./PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
 vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
@@ -128,6 +196,16 @@ describe("PreviewView navigation", () => {
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
     mocks.emptyStateUrl = null;
+    mocks.togglePictureInPicture = null;
+    mocks.toggleNativePictureInPicture = null;
+    mocks.pictureInPicturePressed = false;
+    mocks.miniPlayerTabId = null;
+    mocks.openMiniPlayer.mockClear();
+    mocks.closeMiniPlayer.mockClear();
+    mocks.closeRightPanel.mockClear();
+    mocks.openPictureInPicture.mockClear();
+    mocks.closePictureInPicture.mockClear();
+    mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
   });
 
@@ -191,5 +269,48 @@ describe("PreviewView navigation", () => {
       },
       "http://172.25.85.75:5173/app?mode=test#top",
     );
+  });
+
+  it("opens and closes a thread-scoped floating preview for the active tab", async () => {
+    const props = {
+      threadRef: {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+      },
+      tabId: "tab-1",
+      visible: true,
+    } as const;
+
+    renderToStaticMarkup(<PreviewView {...props} />);
+    expect(mocks.pictureInPicturePressed).toBe(false);
+    mocks.togglePictureInPicture?.();
+    expect(mocks.openMiniPlayer).toHaveBeenCalledWith(props.threadRef, "tab-1");
+    expect(mocks.closeRightPanel).toHaveBeenCalledWith(props.threadRef);
+
+    mocks.miniPlayerTabId = "tab-1";
+    renderToStaticMarkup(<PreviewView {...props} />);
+    expect(mocks.pictureInPicturePressed).toBe(true);
+    mocks.togglePictureInPicture?.();
+    expect(mocks.closeMiniPlayer).toHaveBeenCalledWith(props.threadRef);
+  });
+
+  it("keeps the native preview window as a secondary action", async () => {
+    const props = {
+      threadRef: {
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+      },
+      tabId: "tab-1",
+      visible: true,
+    } as const;
+
+    renderToStaticMarkup(<PreviewView {...props} />);
+    mocks.toggleNativePictureInPicture?.();
+    await vi.waitFor(() => expect(mocks.openPictureInPicture).toHaveBeenCalledWith("tab-1"));
+
+    mocks.pictureInPicture = true;
+    renderToStaticMarkup(<PreviewView {...props} />);
+    mocks.toggleNativePictureInPicture?.();
+    await vi.waitFor(() => expect(mocks.closePictureInPicture).toHaveBeenCalledWith("tab-1"));
   });
 });

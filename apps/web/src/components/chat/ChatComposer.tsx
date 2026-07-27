@@ -51,13 +51,29 @@ import {
   type ComposerImageAttachment,
   type DraftId,
   type PersistedComposerImageAttachment,
+  hydrateImagesFromPersisted,
   useComposerDraftStore,
   useComposerThreadDraft,
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
 import {
+  EMPTY_PROMPT_STASH_QUEUE,
+  MAX_STASH_ENTRIES_PER_QUEUE,
+  partitionStashAttachments,
+  promptStashScopeKey,
+  usePromptStashStore,
+  type PromptStashEntry,
+} from "../../promptStashStore";
+import { ComposerStashBadge } from "./ComposerStashBadge";
+import { ComposerStashMenu } from "./ComposerStashMenu";
+import { compressImageForStash } from "../../lib/stashImageCompression";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { getTerminalFocusOwner } from "../../lib/terminalFocus";
+import { resolveShortcutCommand } from "../../keybindings";
+import {
   type TerminalContextDraft,
   type TerminalContextSelection,
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
@@ -723,6 +739,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
   );
+  const clearComposerDraftPromptAndImages = useComposerDraftStore(
+    (store) => store.clearComposerPromptAndImages,
+  );
+  const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
@@ -961,6 +981,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
+  const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
+  const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
+    key: 0,
+    active: false,
+  });
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
@@ -980,6 +1005,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
+  const stashPulseKeyRef = useRef(0);
+  const stashPulseTimeoutRef = useRef<number | null>(null);
+  /**
+   * Snapshots currently being encoded, keyed by target+prompt+image ids.
+   * Keyed rather than boolean so a genuinely different prompt (or a different
+   * thread) can still be stashed while an earlier encode is running.
+   */
+  const stashInFlightRef = useRef<Set<string>>(new Set());
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1862,6 +1895,400 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   // ------------------------------------------------------------------
+  // Prompt stash (⌘S)
+  // ------------------------------------------------------------------
+  const stashScopeInstanceId = noProviderAvailable ? null : selectedInstanceId;
+  const stashScope = promptStashScopeKey(stashScopeInstanceId);
+  const stashQueue = usePromptStashStore(
+    (state) => state.queuesByScopeKey[stashScope] ?? EMPTY_PROMPT_STASH_QUEUE,
+  );
+  const stashOtherScopesCount = usePromptStashStore((state) =>
+    Object.entries(state.queuesByScopeKey).reduce(
+      (total, [key, queue]) => (key === stashScope ? total : total + queue.length),
+      0,
+    ),
+  );
+  const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
+  const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
+  const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
+  const stashProviderLabel = noProviderAvailable
+    ? "No provider"
+    : getProviderDisplayName(providerStatuses, selectedProvider);
+
+  useEffect(() => {
+    return () => {
+      if (stashPulseTimeoutRef.current !== null) {
+        window.clearTimeout(stashPulseTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  /** Briefly highlight the badge so the save registers without a flourish. */
+  const pulseStashBadge = useCallback(() => {
+    stashPulseKeyRef.current += 1;
+    setStashPulse({ key: stashPulseKeyRef.current, active: true });
+    if (stashPulseTimeoutRef.current !== null) {
+      window.clearTimeout(stashPulseTimeoutRef.current);
+    }
+    stashPulseTimeoutRef.current = window.setTimeout(() => {
+      stashPulseTimeoutRef.current = null;
+      setStashPulse((current) => ({ ...current, active: false }));
+    }, 1200);
+  }, []);
+
+  const restoreStashEntry = useCallback(
+    (entry: PromptStashEntry) => {
+      // Remove first so a double activation (click + Enter) can't restore twice.
+      const { entry: taken, durable } = takeStashEntry(
+        promptStashScopeKey(entry.providerInstanceId),
+        entry.id,
+      );
+      if (!taken) return;
+      if (!durable) {
+        toastManager.add({
+          type: "warning",
+          title: "Restored prompt may reappear in the stash",
+          description:
+            "Browser storage rejected the update, so this entry could still be there after a reload.",
+          data: { hideCopyButton: true },
+        });
+      }
+      setIsStashMenuOpen(false);
+
+      const currentPrompt = promptRef.current;
+      // An image-only stash must not append blank lines to whatever is
+      // already in the composer.
+      const nextPrompt =
+        entry.prompt.length === 0
+          ? currentPrompt
+          : currentPrompt.trim().length
+            ? `${currentPrompt.replace(/\s+$/, "")}\n\n${entry.prompt}`
+            : entry.prompt;
+      const promptChanged = nextPrompt !== currentPrompt;
+      if (promptChanged) {
+        promptRef.current = nextPrompt;
+        setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+        setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+        setComposerTrigger(null);
+      }
+
+      let unrestoredImageNames: string[] = [];
+      if (entry.attachments.length > 0) {
+        const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
+        // The draft store also dedupes by mimeType+sizeBytes+name, so filter
+        // on the same key here. Counting a duplicate against capacity would
+        // burn a slot the store then refuses to fill, pushing a genuinely
+        // unique image into the overflow list for nothing.
+        const existingDedupKeys = new Set(
+          composerImagesRef.current.map(
+            (image) => `${image.mimeType} ${image.sizeBytes} ${image.name}`,
+          ),
+        );
+        const capacity = Math.max(
+          0,
+          PROVIDER_SEND_TURN_MAX_ATTACHMENTS - composerImagesRef.current.length,
+        );
+        const pending = entry.attachments.filter(
+          (attachment) =>
+            !existingIds.has(attachment.id) &&
+            !existingDedupKeys.has(
+              `${attachment.mimeType} ${attachment.sizeBytes} ${attachment.name}`,
+            ),
+        );
+        // Anything past the attachment limit cannot be restored. The entry is
+        // already out of the queue, so report the overflow by name instead of
+        // discarding it silently.
+        unrestoredImageNames = pending.slice(capacity).map((attachment) => attachment.name);
+        const restoredImages = hydrateImagesFromPersisted(pending.slice(0, capacity));
+        if (restoredImages.length > 0) {
+          addComposerDraftImages(composerDraftTarget, restoredImages);
+        }
+      }
+
+      const restorableSelection =
+        entry.modelSelection &&
+        providerInstanceEntries.some(
+          (candidate) =>
+            candidate.instanceId === entry.modelSelection?.instanceId &&
+            candidate.enabled &&
+            candidate.isAvailable,
+        )
+          ? entry.modelSelection
+          : null;
+      if (restorableSelection) {
+        setComposerDraftModelSelection(composerDraftTarget, restorableSelection, {
+          replaceOptions: true,
+        });
+      }
+
+      // Each cause gets its own sentence so "too large" is never blamed for a
+      // file that actually failed to decode, or for one the composer simply
+      // had no room to take back.
+      const missingImageReasons: string[] = [];
+      if (entry.droppedImageNames.length > 0) {
+        missingImageReasons.push(
+          `${entry.droppedImageNames.join(", ")} exceeded the stash size limit when this prompt was saved.`,
+        );
+      }
+      if (entry.unreadableImageNames && entry.unreadableImageNames.length > 0) {
+        missingImageReasons.push(
+          `${entry.unreadableImageNames.join(", ")} could not be read when this prompt was saved.`,
+        );
+      }
+      if (unrestoredImageNames.length > 0) {
+        missingImageReasons.push(
+          `${unrestoredImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-image limit.`,
+        );
+      }
+      if (missingImageReasons.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Some images were not restored",
+          description: missingImageReasons.join(" "),
+        });
+      }
+
+      // Only yank the caret to the end when text was actually inserted;
+      // restoring images alone should leave the user where they were typing.
+      if (promptChanged) {
+        window.requestAnimationFrame(() => {
+          composerEditorRef.current?.focusAtEnd();
+        });
+      }
+    },
+    [
+      addComposerDraftImages,
+      composerDraftTarget,
+      composerImagesRef,
+      promptRef,
+      providerInstanceEntries,
+      setComposerDraftModelSelection,
+      setComposerDraftPrompt,
+      takeStashEntry,
+    ],
+  );
+
+  const deleteStashEntry = useCallback(
+    (entry: PromptStashEntry) => {
+      const { durable } = takeStashEntry(promptStashScopeKey(entry.providerInstanceId), entry.id);
+      if (!durable) {
+        toastManager.add({
+          type: "warning",
+          title: "Stash entry may come back",
+          description:
+            "Browser storage rejected the delete, so this prompt could reappear after a reload.",
+          data: { hideCopyButton: true },
+        });
+      }
+    },
+    [takeStashEntry],
+  );
+
+  const stashCurrentPrompt = useCallback(async () => {
+    // Terminal-context placeholders reference live sessions the stash can't
+    // round-trip, so they are stripped from the stashed prompt.
+    const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
+    const images = [...composerImagesRef.current];
+    if (prompt.length === 0 && images.length === 0) {
+      setIsStashMenuOpen((open) => !open);
+      return;
+    }
+    // A repeat ⌘S on the *same* still-unencoded snapshot would stash it
+    // twice. Guard on the snapshot itself rather than a bare boolean: once
+    // the composer has been cleared the user can type something genuinely
+    // new (or switch threads) while encoding continues, and that deserves its
+    // own entry.
+    const snapshotKey = `${String(composerDraftTarget)} ${prompt} ${images
+      .map((image) => image.id)
+      .join(",")}`;
+    if (stashInFlightRef.current.has(snapshotKey)) return;
+    stashInFlightRef.current.add(snapshotKey);
+
+    const stashTarget = composerDraftTarget;
+    const entryId = randomUUID();
+    const scopeKey = promptStashScopeKey(stashScopeInstanceId);
+    try {
+      // Persist the text-only entry *first*, then clear. Ordering matters in
+      // both directions: writing before clearing means a crash or closed tab
+      // mid-encode still leaves the prompt recoverable, while clearing before
+      // the async image work means edits typed during encoding are not wiped.
+      // Images are appended to the stored entry as they finish encoding.
+      const { evicted, durable } = stashEntryToQueue({
+        id: entryId,
+        createdAt: new Date().toISOString(),
+        prompt,
+        attachments: [],
+        providerInstanceId: stashScopeInstanceId,
+        modelSelection: noProviderAvailable ? null : selectedModelSelection,
+        droppedImageNames: [],
+        unreadableImageNames: [],
+        pendingImageCount: images.length,
+      });
+
+      // Clearing the composer is only safe once the entry is durable. If the
+      // write was rejected (quota, blocked storage) the store has already
+      // rolled itself back, so leave the composer untouched rather than
+      // making it the second casualty of a reload.
+      if (!durable) {
+        toastManager.add({
+          type: "error",
+          title: "Could not stash this prompt",
+          description:
+            "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
+          data: { hideCopyButton: true },
+        });
+        return;
+      }
+
+      // Only the prompt and images are cleared — terminal/element contexts,
+      // preview annotations, and review comments are not stashable, so
+      // destroying them here would be unrecoverable.
+      promptRef.current = "";
+      clearComposerDraftPromptAndImages(stashTarget);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      pulseStashBadge();
+
+      if (evicted) {
+        toastManager.add({
+          type: "warning",
+          title: "Oldest stashed prompt discarded",
+          description: `The ${stashProviderLabel} stash holds ${MAX_STASH_ENTRIES_PER_QUEUE} prompts; the oldest was removed to make room.`,
+          data: { hideCopyButton: true },
+        });
+      }
+
+      // Images are re-encoded for the stash rather than stored verbatim: the
+      // composer allows up to 10MB per image, but localStorage gives the whole
+      // origin ~5MB. Only the stashed copy shrinks; the live attachment (and
+      // anything sent without stashing) keeps the original file.
+      const candidateAttachments: PersistedComposerImageAttachment[] = [];
+      const oversizedImageNames: string[] = [];
+      const unreadableImageNames: string[] = [];
+      for (const image of images) {
+        const result = await compressImageForStash(image.file);
+        if (!result.ok) {
+          // "too large" and "could not be read" are distinct outcomes; the
+          // menu and restore toast report them separately.
+          (result.reason === "too-large" ? oversizedImageNames : unreadableImageNames).push(
+            image.name,
+          );
+          continue;
+        }
+        candidateAttachments.push({
+          id: image.id,
+          name: image.name,
+          mimeType: result.image.mimeType,
+          sizeBytes: result.image.sizeBytes,
+          dataUrl: result.image.dataUrl,
+        });
+      }
+      const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
+
+      const { attached, durable: imagesDurable } = finalizeStashEntryImages(scopeKey, entryId, {
+        attachments: kept,
+        droppedImageNames: [...oversizedImageNames, ...droppedNames],
+        unreadableImageNames,
+      });
+      if (attached) {
+        // The second phase can be rejected on its own: the text-only entry
+        // fit, but adding image payloads pushed past the quota. Disk would
+        // then still hold the phase-one entry with pendingImageCount set,
+        // which reads as an orphan after reload — so say so now.
+        if (!imagesDurable && images.length > 0) {
+          toastManager.add({
+            type: "warning",
+            title: "Stashed images were not saved",
+            description:
+              "The prompt was stashed, but browser storage rejected its images. They will be missing if you reload.",
+            data: { hideCopyButton: true },
+          });
+        }
+      } else if (kept.length > 0) {
+        // The entry was restored or deleted before its images finished
+        // encoding, so they have nowhere to land. Say so rather than letting
+        // them evaporate.
+        toastManager.add({
+          type: "warning",
+          title: "Stashed images did not attach",
+          description: `That prompt was restored or deleted before ${kept.length} image${kept.length === 1 ? "" : "s"} finished saving. Re-attach ${kept.length === 1 ? "it" : "them"} if you still need ${kept.length === 1 ? "it" : "them"}.`,
+          data: { hideCopyButton: true },
+        });
+      }
+    } finally {
+      // Must clear on every path: a throw that left this set would wedge this
+      // snapshot's ⌘S until the composer remounts.
+      stashInFlightRef.current.delete(snapshotKey);
+    }
+  }, [
+    clearComposerDraftPromptAndImages,
+    composerDraftTarget,
+    composerImagesRef,
+    finalizeStashEntryImages,
+    noProviderAvailable,
+    promptRef,
+    pulseStashBadge,
+    selectedModelSelection,
+    stashEntryToQueue,
+    stashProviderLabel,
+    stashScopeInstanceId,
+  ]);
+
+  const toggleStashMenu = useCallback(() => {
+    setIsStashMenuOpen((open) => !open);
+  }, []);
+
+  // Close the stash menu whenever the trigger-driven command menu opens so
+  // the two popovers never stack in the same layer, and when the user
+  // resumes typing (the menu is a transient picker, not a panel).
+  useEffect(() => {
+    if (composerMenuOpen) {
+      setIsStashMenuOpen(false);
+    }
+  }, [composerMenuOpen]);
+  useEffect(() => {
+    setIsStashMenuOpen(false);
+  }, [prompt]);
+
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+        },
+      });
+      if (command !== "composer.stash") return;
+      // Always claim the shortcut so the browser save dialog never opens,
+      // even when the composer is in a state that can't stash.
+      event.preventDefault();
+      event.stopPropagation();
+      if (
+        isCommandPaletteOpen() ||
+        isComposerApprovalState ||
+        pendingUserInputs.length > 0 ||
+        projectSelectionRequired ||
+        activePendingProgress !== null
+      ) {
+        return;
+      }
+      void stashCurrentPrompt();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [
+    activePendingProgress,
+    isComposerApprovalState,
+    isComposerModelPickerOpen,
+    keybindings,
+    pendingUserInputs.length,
+    projectSelectionRequired,
+    stashCurrentPrompt,
+    terminalOpen,
+  ]);
+
+  // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
   const addComposerImages = (files: File[]) => {
@@ -2402,6 +2829,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               isComposerCollapsedMobile && "hidden",
             )}
           >
+            <ComposerStashBadge
+              count={stashQueue.length}
+              pulseKey={stashPulse.key}
+              pulsing={stashPulse.active}
+              menuOpen={isStashMenuOpen}
+              onToggleMenu={toggleStashMenu}
+            />
+
+            {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
+              <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                <ComposerStashMenu
+                  entries={stashQueue}
+                  providerLabel={stashProviderLabel}
+                  otherScopesCount={stashOtherScopesCount}
+                  onRestore={restoreStashEntry}
+                  onDelete={deleteStashEntry}
+                  onClose={() => setIsStashMenuOpen(false)}
+                />
+              </ComposerCommandMenuLayer>
+            )}
+
             {composerMenuOpen && !isComposerApprovalState && (
               <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                 <ComposerCommandMenu
