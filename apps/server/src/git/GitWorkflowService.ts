@@ -119,6 +119,9 @@ export class GitWorkflowService extends Context.Service<
      * creation. Repeat calls for the same branch within
      * {@link REMOTE_BASE_REFRESH_TTL} reuse the previous fetch, and concurrent
      * calls share one.
+     *
+     * Routes `cwd` through the VCS registry first, so a path that is not a Git
+     * repository is skipped rather than handed to `git fetch`.
      */
     readonly refreshRemoteBase: (input: {
       readonly cwd: string;
@@ -344,15 +347,35 @@ export const make = Effect.gen(function* () {
     timeToLive: (exit) => (Exit.isSuccess(exit) ? REMOTE_BASE_REFRESH_TTL : Duration.zero),
   });
 
-  const refreshRemoteBase = (ref: RemoteBaseRef): Effect.Effect<void, never> =>
+  // For callers that have already routed `cwd` through the VCS registry.
+  const refreshRoutedRemoteBase = (ref: RemoteBaseRef): Effect.Effect<void, never> =>
     Cache.get(remoteBaseRefreshCache, remoteBaseCacheKey(ref));
+
+  // The public entry point cannot assume its caller routed `cwd` first. A
+  // non-Git or unresolvable working directory must stop at the route rather
+  // than reach `git fetch`: spawning a doomed process is exactly the cost on
+  // the thread-open path this cache exists to remove, and it would report the
+  // miss as a fetch failure instead of as the repository problem it is.
+  const refreshRemoteBase = (ref: RemoteBaseRef): Effect.Effect<void, never> =>
+    ensureGitCommand("GitWorkflowService.refreshRemoteBase", ref.cwd).pipe(
+      Effect.andThen(refreshRoutedRemoteBase(ref)),
+      Effect.catch((error) =>
+        Effect.logWarning("Skipped the remote base refresh; no Git repository at this path", {
+          cwd: ref.cwd,
+          remoteRef: `${ref.remoteName}/${ref.remoteBranch}`,
+          detail: error.detail,
+        }),
+      ),
+    );
 
   const refreshRemoteTrackingBase = (input: VcsCreateWorktreeInput): Effect.Effect<void, never> => {
     const remoteBranch = REMOTE_TRACKING_REF_PATTERN.exec(input.refName)?.[1];
     if (!remoteBranch) {
       return Effect.void;
     }
-    return refreshRemoteBase({ cwd: input.cwd, remoteName: "origin", remoteBranch });
+    // `createWorktree` has already routed this cwd; resolving it again here
+    // would just repeat the registry lookup.
+    return refreshRoutedRemoteBase({ cwd: input.cwd, remoteName: "origin", remoteBranch });
   };
 
   return GitWorkflowService.of({

@@ -199,14 +199,21 @@ describe("GitWorkflowService", () => {
     driver: {},
   } as unknown as VcsDriverRegistry.VcsDriverHandle;
 
+  const nonGitHandle = {
+    kind: "jj",
+    repository: {},
+    driver: {},
+  } as unknown as VcsDriverRegistry.VcsDriverHandle;
+
   function makeGitRepoLayer(input: {
     readonly fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"];
     readonly createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"];
+    readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
   }) {
     return GitWorkflowService.layer.pipe(
       Layer.provide(
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-          resolve: () => Effect.succeed(gitHandle),
+          resolve: input.resolve ?? (() => Effect.succeed(gitHandle)),
         }),
       ),
       Layer.provide(
@@ -451,6 +458,67 @@ describe("GitWorkflowService", () => {
 
       assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 1);
       assert.equal(createWorktree.mock.calls.length, 2);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree }),
+          TestClock.layer(),
+        ),
+      ),
+    );
+  });
+
+  it.effect("skips the standalone remote base refresh when the path is not a Git repo", () => {
+    const fetchRemoteTrackingBranch = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
+        Effect.void,
+    );
+    const createWorktree = succeedingCreateWorktree();
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+
+      // Must resolve rather than fail: the refresh is best-effort, and callers
+      // rely on it never breaking their own fallback path.
+      yield* workflow.refreshRemoteBase({
+        cwd: "/tmp/not-a-git-repo",
+        remoteName: "origin",
+        remoteBranch: "main",
+      });
+
+      // The route says this is not Git, so `git fetch` is never spawned.
+      assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(
+        makeGitRepoLayer({
+          fetchRemoteTrackingBranch,
+          createWorktree,
+          resolve: () => Effect.succeed(nonGitHandle),
+        }),
+      ),
+    );
+  });
+
+  it.effect("refreshes the remote base for a routed Git repo", () => {
+    const fetchRemoteTrackingBranch = vi.fn(
+      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
+        Effect.void,
+    );
+    const createWorktree = succeedingCreateWorktree();
+
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      yield* workflow.refreshRemoteBase({
+        cwd: "/tmp/project",
+        remoteName: "origin",
+        remoteBranch: "main",
+      });
+
+      assert.deepEqual(fetchRemoteTrackingBranch.mock.calls[0]?.[0], {
+        cwd: "/tmp/project",
+        remoteName: "origin",
+        remoteBranch: "main",
+      });
     }).pipe(
       Effect.provide(
         Layer.merge(
