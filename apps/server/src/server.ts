@@ -85,12 +85,8 @@ import {
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import {
-  disableTailscaleServe,
-  ensureTailscaleServe,
-  resolveTailscaleHttpsBaseUrl,
-} from "@t3tools/tailscale";
 import * as TailnetAccess from "./tailnetAccess.ts";
+import { configureTailscaleServe, teardownTailscaleServe } from "./tailscaleServe.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -335,7 +331,9 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provideMerge(TailnetAccess.layer),
-  Layer.provide(NetService.layer),
+  // Merged (not just provided): the Tailscale Serve layer needs it to tell a
+  // live serve mount from one a crashed sidecar left behind.
+  Layer.provideMerge(NetService.layer),
 );
 
 const RuntimeServicesLive = ServerRuntimeStartup.layer.pipe(
@@ -396,6 +394,7 @@ export const makeServerLayer = Layer.unwrap(
           Effect.acquireRelease(
             Effect.gen(function* () {
               const tailnetAccess = yield* TailnetAccess.TailnetAccess;
+              const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
               const server = yield* HttpServer.HttpServer;
               const address = server.address;
               if (typeof address === "string" || !("port" in address)) {
@@ -404,28 +403,11 @@ export const makeServerLayer = Layer.unwrap(
               }
 
               const localPort = address.port;
-              return yield* ensureTailscaleServe({
+              return yield* configureTailscaleServe({
                 localPort,
-                servePort: config.tailscaleServePort,
-                localHost: "127.0.0.1",
+                preferredServePort: config.tailscaleServePort,
+                environmentId: yield* serverEnvironment.getEnvironmentId,
               }).pipe(
-                Effect.andThen(
-                  resolveTailscaleHttpsBaseUrl({ servePort: config.tailscaleServePort }).pipe(
-                    Effect.orElseSucceed(() => null),
-                  ),
-                ),
-                Effect.tap((tailnetHttpsBaseUrl) =>
-                  tailnetAccess.recordTailnetHttpsBaseUrl(tailnetHttpsBaseUrl).pipe(
-                    Effect.andThen(
-                      Effect.logInfo("Tailscale Serve configured", {
-                        localPort,
-                        servePort: config.tailscaleServePort,
-                        tailnetHttpsBaseUrl,
-                      }),
-                    ),
-                  ),
-                ),
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
                 Effect.catch((cause) =>
                   Effect.logWarning("Failed to configure Tailscale Serve", {
                     cause,
@@ -438,22 +420,7 @@ export const makeServerLayer = Layer.unwrap(
                 ),
               );
             }),
-            (configured) =>
-              configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                    Effect.tap(() =>
-                      Effect.logInfo("Tailscale Serve disabled", {
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to disable Tailscale Serve", {
-                        cause,
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                  )
-                : Effect.void,
+            teardownTailscaleServe,
           ),
         )
       : Layer.effectDiscard(

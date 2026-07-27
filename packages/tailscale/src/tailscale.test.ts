@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -7,8 +8,10 @@ import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { TailscaleExecutableProbe } from "./executable.ts";
 import {
   buildTailscaleHttpsBaseUrl,
   disableTailscaleServe,
@@ -16,6 +19,8 @@ import {
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
+  probeTailscaleServeEndpoint,
+  readTailscaleServeConfig,
   readTailscaleStatus,
   TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
@@ -24,9 +29,14 @@ import {
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
+// Discovery is exercised in executable.test.ts; pin it to "not found" here so
+// these assertions describe the command, not the host the suite runs on.
+const noInstalledCli = Layer.succeed(TailscaleExecutableProbe, () => false);
+
 const encoder = new TextEncoder();
 const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
 const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+const tailscaleServeStatusJson = `{"Web":{"m1-dev.tail.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:80"}}}}}`;
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -66,15 +76,18 @@ function mockSpawnerLayer(
     args: ReadonlyArray<string>,
   ) => { stdout?: string; stderr?: string; code?: number },
 ) {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const childProcess = command as unknown as {
-        readonly command: string;
-        readonly args: ReadonlyArray<string>;
-      };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
-    }),
+  return Layer.merge(
+    noInstalledCli,
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      }),
+    ),
   );
 }
 
@@ -156,9 +169,12 @@ describe("tailscale", () => {
       method: "spawn",
       cause: systemCause,
     });
-    const layer = Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() => Effect.fail(cause)),
+    const layer = Layer.merge(
+      noInstalledCli,
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.fail(cause)),
+      ),
     );
 
     return Effect.gen(function* () {
@@ -198,8 +214,9 @@ describe("tailscale", () => {
   });
 
   it.effect("times out tailscale status through TestClock", () => {
-    const layer = Layer.merge(
+    const layer = Layer.mergeAll(
       TestClock.layer(),
+      noInstalledCli,
       Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() => Effect.succeed(neverFinishingMockHandle())),
@@ -274,5 +291,134 @@ describe("tailscale", () => {
         { command: "tailscale", args: ["serve", "--https=8443", "off"] },
       ]);
     });
+  });
+
+  it.effect("spawns the discovered CLI path when tailscale is off PATH", () => {
+    const macAppCli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+    const layer = Layer.merge(
+      Layer.succeed(TailscaleExecutableProbe, (candidate) => candidate === macAppCli),
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const childProcess = command as unknown as { readonly command: string };
+          assert.equal(childProcess.command, macAppCli);
+          return Effect.succeed(mockHandle({ stdout: tailscaleStatusJson }));
+        }),
+      ),
+    );
+
+    return readTailscaleStatus.pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcessEnvironment, { PATH: "/usr/bin:/bin" }),
+      Effect.provide(layer),
+      Effect.asVoid,
+    );
+  });
+
+  it.effect("reads the existing serve config", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["serve", "status", "--json"]);
+      return { stdout: tailscaleServeStatusJson };
+    });
+
+    return Effect.gen(function* () {
+      const mounts = yield* readTailscaleServeConfig.pipe(Effect.provide(layer));
+      assert.deepEqual(mounts, [{ port: 443, proxyTargets: ["http://127.0.0.1:80"] }]);
+    });
+  });
+
+  describe("serve endpoint probe", () => {
+    const probeLayer = (respond: (url: string) => Response) =>
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, respond(request.url))),
+        ),
+      );
+
+    const jsonResponse = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+
+    it.effect("accepts the endpoint when this environment answers", () =>
+      Effect.gen(function* () {
+        const result = yield* probeTailscaleServeEndpoint({
+          baseUrl: "https://m1-dev.tail.ts.net/",
+          expectedEnvironmentId: "env-1",
+        }).pipe(
+          Effect.provide(
+            probeLayer((url) => {
+              assert.equal(url, "https://m1-dev.tail.ts.net/.well-known/t3/environment");
+              return jsonResponse({ environmentId: "env-1" });
+            }),
+          ),
+        );
+
+        assert.deepEqual(result, { ok: true });
+      }),
+    );
+
+    // Exactly the reported symptom: nginx owns the MagicDNS name's :443.
+    it.effect("rejects a host serving something else", () =>
+      Effect.gen(function* () {
+        const result = yield* probeTailscaleServeEndpoint({
+          baseUrl: "https://m1-dev.tail.ts.net/",
+          expectedEnvironmentId: "env-1",
+        }).pipe(
+          Effect.provide(
+            probeLayer(() => new Response("<html>404 Not Found</html>", { status: 404 })),
+          ),
+        );
+
+        assert.deepEqual(result, { ok: false, reason: "http-status", status: 404 });
+      }),
+    );
+
+    it.effect("rejects a 200 that is not an environment descriptor", () =>
+      Effect.gen(function* () {
+        const result = yield* probeTailscaleServeEndpoint({
+          baseUrl: "https://m1-dev.tail.ts.net/",
+          expectedEnvironmentId: "env-1",
+        }).pipe(Effect.provide(probeLayer(() => new Response("<html>hi</html>", { status: 200 }))));
+
+        assert.deepEqual(result, { ok: false, reason: "not-an-environment", status: 200 });
+      }),
+    );
+
+    it.effect("rejects a different environment answering on this hostname", () =>
+      Effect.gen(function* () {
+        const result = yield* probeTailscaleServeEndpoint({
+          baseUrl: "https://m1-dev.tail.ts.net/",
+          expectedEnvironmentId: "env-1",
+        }).pipe(Effect.provide(probeLayer(() => jsonResponse({ environmentId: "env-2" }))));
+
+        assert.deepEqual(result, {
+          ok: false,
+          reason: "environment-mismatch",
+          environmentId: "env-2",
+        });
+      }),
+    );
+
+    it.effect("treats a transport failure as unreachable", () =>
+      Effect.gen(function* () {
+        const result = yield* probeTailscaleServeEndpoint({
+          baseUrl: "https://m1-dev.tail.ts.net/",
+          expectedEnvironmentId: "env-1",
+        }).pipe(
+          Effect.provide(
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die(new Error("connection refused"))),
+            ),
+          ),
+        );
+
+        assert.deepEqual(result, { ok: false, reason: "unreachable" });
+      }),
+    );
   });
 });
