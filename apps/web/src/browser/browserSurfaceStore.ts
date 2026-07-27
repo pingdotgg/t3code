@@ -46,6 +46,21 @@ export interface BrowserSurfaceLease {
   readonly release: () => void;
 }
 
+export function selectBrowserSurfaceRenderState(
+  state: {
+    readonly byTabId: Record<string, BrowserSurfacePresentation>;
+    readonly backgroundCaptureCountByTabId: Record<string, number>;
+  },
+  tabId: string,
+) {
+  const current = state.byTabId[tabId];
+  return {
+    byTabId: state.byTabId,
+    backgroundCapture: (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0,
+    visible: current?.visible ?? false,
+  };
+}
+
 export function resolveBrowserSurfacePanelRect(
   byTabId: Readonly<Record<string, BrowserSurfacePresentation>>,
   tabId: string,

@@ -20,6 +20,11 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
 const {
+  BrowserWindow,
+  bridgeAttach,
+  bridgeDestroy,
+  bridgeIsDestroyed,
+  bridgeSendCommand,
   createFromBuffer,
   createFromPath,
   fromId,
@@ -30,6 +35,22 @@ const {
   writeFile,
   writeImage,
 } = vi.hoisted(() => ({
+  BrowserWindow: vi.fn(function () {
+    return {
+      isDestroyed: bridgeIsDestroyed,
+      destroy: bridgeDestroy,
+      webContents: {
+        debugger: {
+          attach: bridgeAttach,
+          sendCommand: bridgeSendCommand,
+        },
+      },
+    };
+  }),
+  bridgeAttach: vi.fn(),
+  bridgeDestroy: vi.fn(),
+  bridgeIsDestroyed: vi.fn(() => false),
+  bridgeSendCommand: vi.fn(),
   createFromBuffer: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
   fromId: vi.fn(() => null),
@@ -42,6 +63,7 @@ const {
 }));
 
 vi.mock("electron", () => ({
+  BrowserWindow,
   clipboard: {
     writeImage,
   },
@@ -111,6 +133,12 @@ const withManager = <A>(
 
 describe("PreviewManager", () => {
   beforeEach(() => {
+    BrowserWindow.mockClear();
+    bridgeAttach.mockClear();
+    bridgeDestroy.mockClear();
+    bridgeIsDestroyed.mockReset();
+    bridgeIsDestroyed.mockReturnValue(false);
+    bridgeSendCommand.mockReset();
     fromId.mockClear();
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
@@ -189,6 +217,9 @@ describe("PreviewManager", () => {
             if (method === "Accessibility.getFullAXTree") {
               return { nodes: [] };
             }
+            if (method === "Target.getTargetInfo") {
+              return { targetInfo: { targetId: "target-42" } };
+            }
             if (method === "Page.captureScreenshot") {
               if (captureMode === "failure") throw new Error("UnknownVizError");
               if (captureMode === "timeout") return await new Promise<never>(() => undefined);
@@ -196,6 +227,20 @@ describe("PreviewManager", () => {
             }
             return undefined;
           });
+          bridgeSendCommand.mockImplementation(
+            async (method: string, _params?: unknown, sessionId?: string): Promise<unknown> => {
+              if (method === "Target.attachToTarget") {
+                return { sessionId: "target-session-42" };
+              }
+              if (method === "Page.captureScreenshot") {
+                expect(sessionId).toBe("target-session-42");
+                if (captureMode === "failure") throw new Error("UnknownVizError");
+                if (captureMode === "timeout") return await new Promise<never>(() => undefined);
+                return { data: png.toString("base64") };
+              }
+              return {};
+            },
+          );
           fromId.mockReturnValue({
             id: 42,
             isDestroyed: () => false,
@@ -250,11 +295,28 @@ describe("PreviewManager", () => {
 
           const backgroundCdpCaptured = yield* manager.automationSnapshot("tab_snapshot", true);
           expect(backgroundCdpCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
-          expect(sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", {
-            format: "png",
-            fromSurface: true,
-            captureBeyondViewport: false,
+          expect(BrowserWindow).toHaveBeenCalledWith({
+            show: false,
+            webPreferences: { sandbox: true },
           });
+          expect(bridgeAttach).toHaveBeenCalledWith("1.3");
+          expect(bridgeSendCommand).toHaveBeenCalledWith("Target.attachToTarget", {
+            targetId: "target-42",
+            flatten: true,
+          });
+          expect(bridgeSendCommand).toHaveBeenCalledWith(
+            "Page.captureScreenshot",
+            {
+              format: "png",
+              fromSurface: true,
+              captureBeyondViewport: false,
+            },
+            "target-session-42",
+          );
+          expect(bridgeSendCommand).toHaveBeenCalledWith("Target.detachFromTarget", {
+            sessionId: "target-session-42",
+          });
+          expect(bridgeDestroy).toHaveBeenCalledOnce();
           expect(sendCommand).not.toHaveBeenCalledWith("Page.bringToFront", undefined);
           expect(capturePage).not.toHaveBeenCalled();
 
@@ -266,6 +328,7 @@ describe("PreviewManager", () => {
           expect(backgroundFallbackCaptured.screenshot).toMatchObject({ width: 640, height: 360 });
           expect(capturePage).toHaveBeenCalledOnce();
           expect(capturePage).toHaveBeenCalledWith(undefined, { stayHidden: true });
+          expect(bridgeDestroy).toHaveBeenCalledTimes(2);
 
           capturePage.mockClear();
           const foregroundFallbackCaptured = yield* manager.automationSnapshot("tab_snapshot");

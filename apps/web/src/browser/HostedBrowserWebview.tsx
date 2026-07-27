@@ -12,6 +12,7 @@ import { stopBrowserRecording, useActiveBrowserRecordingTabId } from "./browserR
 import {
   resolveBrowserSurfaceBackgroundCaptureRect,
   resolveBrowserSurfacePanelRect,
+  selectBrowserSurfaceRenderState,
   useBrowserSurfaceStore,
 } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
@@ -52,22 +53,19 @@ export function HostedBrowserWebview(props: {
   const webviewRef = useRef<ElectronWebview | null>(null);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
   const activeRecordingTabId = useActiveBrowserRecordingTabId();
-  const presentation = useBrowserSurfaceStore(
-    useShallow((state) => {
-      const current = state.byTabId[tabId];
-      const backgroundCapture = (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0;
-      return {
-        backgroundCapture,
-        rect: backgroundCapture
-          ? resolveBrowserSurfaceBackgroundCaptureRect(state.byTabId, tabId, {
-              width: window.innerWidth,
-              height: window.innerHeight,
-            })
-          : resolveBrowserSurfacePanelRect(state.byTabId, tabId),
-        visible: current?.visible ?? false,
-      };
-    }),
+  const surface = useBrowserSurfaceStore(
+    useShallow((state) => selectBrowserSurfaceRenderState(state, tabId)),
   );
+  const presentation = {
+    backgroundCapture: surface.backgroundCapture,
+    rect: surface.backgroundCapture
+      ? resolveBrowserSurfaceBackgroundCaptureRect(surface.byTabId, tabId, {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        })
+      : resolveBrowserSurfacePanelRect(surface.byTabId, tabId),
+    visible: surface.visible,
+  };
   usePreviewBridge({ threadRef, tabId });
 
   useEffect(() => {

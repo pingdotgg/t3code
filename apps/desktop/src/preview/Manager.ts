@@ -28,14 +28,7 @@ import type {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import {
-  type BrowserWindow,
-  type Session,
-  clipboard,
-  nativeImage,
-  shell,
-  webContents,
-} from "electron";
+import { BrowserWindow, type Session, clipboard, nativeImage, shell, webContents } from "electron";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -104,7 +97,7 @@ const MAX_SCREENSHOT_WIDTH = 1280;
 const DEFAULT_AUTOMATION_TIMEOUT_MS = 15_000;
 const AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS = 250;
 const AUTOMATION_SCREENSHOT_TIMEOUT_MS = 5_000;
-const AUTOMATION_BACKGROUND_CDP_SCREENSHOT_TIMEOUT_MS = 2_000;
+const AUTOMATION_BACKGROUND_TARGET_SCREENSHOT_TIMEOUT_MS = 2_000;
 const AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS = 3_000;
 const automationExecutionBudget = (timeoutMs: number): number =>
   timeoutMs > AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS * 2
@@ -2064,6 +2057,126 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     },
   );
 
+  const captureAutomationTargetScreenshot = Effect.fn(
+    "PreviewManager.captureAutomationTargetScreenshot",
+  )(function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
+    // Electron's debugger session for a staged <webview> can keep serving
+    // Runtime and Accessibility commands while Page.captureScreenshot never
+    // resolves. Attach a short-lived debugger hosted by an invisible window
+    // to the exact guest target instead. This uses Electron's in-process CDP
+    // API and does not expose a remote debugging port.
+    const targetInfoResponse = yield* send("Target.getTargetInfo");
+    const targetId =
+      typeof targetInfoResponse === "object" &&
+      targetInfoResponse !== null &&
+      "targetInfo" in targetInfoResponse &&
+      typeof targetInfoResponse.targetInfo === "object" &&
+      targetInfoResponse.targetInfo !== null &&
+      "targetId" in targetInfoResponse.targetInfo &&
+      typeof targetInfoResponse.targetInfo.targetId === "string"
+        ? targetInfoResponse.targetInfo.targetId
+        : null;
+    if (targetId === null) {
+      return yield* new PreviewOperationError({
+        operation: "automationSnapshot.resolveTarget",
+        tabId,
+        webContentsId: wc.id,
+        cause: new Error("Target.getTargetInfo returned no target id"),
+      });
+    }
+
+    const bridgeWindow = yield* attempt(
+      {
+        operation: "automationSnapshot.createTargetBridge",
+        tabId,
+        webContentsId: wc.id,
+      },
+      () =>
+        new BrowserWindow({
+          show: false,
+          webPreferences: {
+            sandbox: true,
+          },
+        }),
+    );
+    const response = yield* attemptPromise(
+      {
+        operation: "automationSnapshot.captureTarget",
+        tabId,
+        webContentsId: wc.id,
+      },
+      async () => {
+        const bridgeDebugger = bridgeWindow.webContents.debugger;
+        bridgeDebugger.attach("1.3");
+        const attached = (await bridgeDebugger.sendCommand("Target.attachToTarget", {
+          targetId,
+          flatten: true,
+        })) as { sessionId?: unknown };
+        if (typeof attached.sessionId !== "string") {
+          throw new Error("Target.attachToTarget returned no session id");
+        }
+        try {
+          return await bridgeDebugger.sendCommand(
+            "Page.captureScreenshot",
+            {
+              format: "png",
+              fromSurface: true,
+              captureBeyondViewport: false,
+            },
+            attached.sessionId,
+          );
+        } finally {
+          await bridgeDebugger
+            .sendCommand("Target.detachFromTarget", { sessionId: attached.sessionId })
+            .catch(() => undefined);
+        }
+      },
+    ).pipe(
+      Effect.ensuring(
+        attempt(
+          {
+            operation: "automationSnapshot.destroyTargetBridge",
+            tabId,
+            webContentsId: wc.id,
+          },
+          () => {
+            if (!bridgeWindow.isDestroyed()) bridgeWindow.destroy();
+          },
+        ).pipe(Effect.ignore),
+      ),
+    );
+    const data =
+      typeof response === "object" &&
+      response !== null &&
+      "data" in response &&
+      typeof response.data === "string" &&
+      response.data.length > 0
+        ? response.data
+        : null;
+    if (data === null) {
+      return yield* new PreviewOperationError({
+        operation: "automationSnapshot.decodeTargetScreenshot",
+        tabId,
+        webContentsId: wc.id,
+        cause: new Error("Target Page.captureScreenshot returned no PNG data"),
+      });
+    }
+    const sourceImage = yield* attempt(
+      {
+        operation: "automationSnapshot.createTargetImage",
+        tabId,
+        webContentsId: wc.id,
+      },
+      () => nativeImage.createFromBuffer(Buffer.from(data, "base64")),
+    );
+    return yield* encodeAutomationScreenshot(
+      tabId,
+      wc,
+      sourceImage,
+      "automationSnapshot.createTargetImage",
+    );
+  });
+
   const captureBackgroundPage = Effect.fn("PreviewManager.captureBackgroundPage")(function* (
     tabId: string,
     wc: Electron.WebContents,
@@ -2158,25 +2271,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
       ]);
-      const cdpScreenshotTimeoutMs = background
-        ? AUTOMATION_BACKGROUND_CDP_SCREENSHOT_TIMEOUT_MS
+      const primaryScreenshotTimeoutMs = background
+        ? AUTOMATION_BACKGROUND_TARGET_SCREENSHOT_TIMEOUT_MS
         : AUTOMATION_SCREENSHOT_TIMEOUT_MS;
-      const cdpScreenshotResult = yield* captureAutomationScreenshot(tabId, wc, send).pipe(
-        Effect.timeoutOption(cdpScreenshotTimeoutMs),
-        Effect.exit,
-      );
+      const primaryScreenshotResult = yield* (
+        background
+          ? captureAutomationTargetScreenshot(tabId, wc, send)
+          : captureAutomationScreenshot(tabId, wc, send)
+      ).pipe(Effect.timeoutOption(primaryScreenshotTimeoutMs), Effect.exit);
       let screenshot: PreviewAutomationSnapshot["screenshot"] =
-        Exit.isSuccess(cdpScreenshotResult) && Option.isSome(cdpScreenshotResult.value)
-          ? cdpScreenshotResult.value.value
+        Exit.isSuccess(primaryScreenshotResult) && Option.isSome(primaryScreenshotResult.value)
+          ? primaryScreenshotResult.value.value
           : null;
       const detachAfterCapture =
-        Exit.isSuccess(cdpScreenshotResult) && Option.isNone(cdpScreenshotResult.value);
+        Exit.isSuccess(primaryScreenshotResult) && Option.isNone(primaryScreenshotResult.value);
       if (screenshot === null) {
-        const cdpFailure = Exit.isFailure(cdpScreenshotResult)
-          ? cdpScreenshotResult.cause
+        const primaryFailure = Exit.isFailure(primaryScreenshotResult)
+          ? primaryScreenshotResult.cause
           : new PreviewAutomationTimeoutError({
               tabId,
-              timeoutMs: cdpScreenshotTimeoutMs,
+              timeoutMs: primaryScreenshotTimeoutMs,
             });
         const backgroundScreenshotResult = yield* captureBackgroundPage(tabId, wc, background).pipe(
           Effect.timeoutOption(AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS),
@@ -2198,7 +2312,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             tabId,
             webContentsId: wc.id,
             background,
-            cdpCause: cdpFailure,
+            primaryCause: primaryFailure,
             backgroundCause: backgroundFailure,
           });
         }

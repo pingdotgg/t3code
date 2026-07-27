@@ -165,7 +165,7 @@ describe("preview automation presentation", () => {
     }
   });
 
-  it("releases a background capture lease when compositor frames remain paused", async () => {
+  it("falls back to frame timers when compositor animation frames remain paused", async () => {
     vi.useFakeTimers();
     const cancelAnimationFrame = vi.fn();
     vi.stubGlobal("document", {
@@ -183,7 +183,7 @@ describe("preview automation presentation", () => {
       requestAnimationFrame: () => 1,
       cancelAnimationFrame,
     });
-    const use = vi.fn();
+    const use = vi.fn(async (background: boolean) => background);
     try {
       const operation = withPreviewAutomationBackgroundPresentation(
         threadRef,
@@ -192,21 +192,17 @@ describe("preview automation presentation", () => {
         40,
         use,
       );
-      const rejection = expect(operation).rejects.toMatchObject({
-        _tag: "PreviewAutomationBackgroundPresentationTimeoutError",
-        requestId: "request-paused-frame",
-        tabId: "tab-background",
-        timeoutMs: 40,
-      });
       expect(
         useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
       ).toBe(1);
 
-      await vi.advanceTimersByTimeAsync(40);
-      await rejection;
+      await vi.advanceTimersByTimeAsync(32);
+      await expect(operation).resolves.toBe(true);
 
-      expect(use).not.toHaveBeenCalled();
-      expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+      expect(use).toHaveBeenCalledWith(true);
+      expect(cancelAnimationFrame).toHaveBeenCalledTimes(2);
+      expect(cancelAnimationFrame).toHaveBeenNthCalledWith(1, 1);
+      expect(cancelAnimationFrame).toHaveBeenNthCalledWith(2, 1);
       expect(
         useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
       ).toBeUndefined();

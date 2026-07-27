@@ -16,6 +16,8 @@ interface PreviewAutomationBackgroundPresentationInput {
   readonly timeoutMs: number;
 }
 
+const PREVIEW_AUTOMATION_COMPOSITOR_FRAME_FALLBACK_MS = 16;
+
 function backgroundPresentationTimeoutError(
   input: PreviewAutomationBackgroundPresentationInput,
 ): PreviewAutomationBackgroundPresentationTimeoutError {
@@ -35,21 +37,23 @@ async function waitForPreviewAutomationCompositorFrame(
   const remainingMs = deadline - Date.now();
   if (remainingMs <= 0) throw timeoutError();
 
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve) => {
     let settled = false;
     let animationFrameId: number | undefined;
-    const timer = globalThis.setTimeout(() => {
+    const complete = () => {
       if (settled) return;
       settled = true;
       if (animationFrameId !== undefined) window.cancelAnimationFrame?.(animationFrameId);
-      reject(timeoutError());
-    }, remainingMs);
-    animationFrameId = window.requestAnimationFrame(() => {
-      if (settled) return;
-      settled = true;
       globalThis.clearTimeout(timer);
       resolve();
-    });
+    };
+    const timer = globalThis.setTimeout(
+      () => {
+        complete();
+      },
+      Math.min(PREVIEW_AUTOMATION_COMPOSITOR_FRAME_FALLBACK_MS, remainingMs),
+    );
+    animationFrameId = window.requestAnimationFrame(complete);
   });
 }
 
@@ -85,6 +89,8 @@ export async function waitForPreviewAutomationBackgroundPresentation(
     if (wrapper) {
       // Force the staged wrapper through layout, then allow Chromium two
       // compositor frames before asking the guest WebContents for pixels.
+      // Electron can pause the host renderer's animation frames after placing
+      // a native guest over it, so each wait falls back to one frame interval.
       void wrapper.offsetWidth;
       await waitForPreviewAutomationCompositorFrame(deadline, timeoutError);
       await waitForPreviewAutomationCompositorFrame(deadline, timeoutError);

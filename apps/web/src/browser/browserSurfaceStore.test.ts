@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { shallow } from "zustand/shallow";
 
 import {
   acquireBrowserSurface,
   acquireBrowserSurfaceBackgroundCapture,
   resolveBrowserSurfaceBackgroundCaptureRect,
   resolveBrowserSurfacePanelRect,
+  selectBrowserSurfaceRenderState,
   useBrowserSurfaceStore,
 } from "./browserSurfaceStore";
 
@@ -31,6 +33,22 @@ describe("browserSurfaceStore", () => {
     expect(
       useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
     ).toBeUndefined();
+  });
+
+  it("selects stable inputs while a background capture rect is derived", () => {
+    const release = acquireBrowserSurfaceBackgroundCapture("tab-background");
+    const state = useBrowserSurfaceStore.getState();
+    const first = selectBrowserSurfaceRenderState(state, "tab-background");
+    const second = selectBrowserSurfaceRenderState(state, "tab-background");
+
+    expect(shallow(first, second)).toBe(true);
+    expect(first).toEqual({
+      byTabId: state.byTabId,
+      backgroundCapture: true,
+      visible: false,
+    });
+    expect(first).not.toHaveProperty("rect");
+    release();
   });
 
   it("tracks content dimensions for a browser that has never been visible", () => {
