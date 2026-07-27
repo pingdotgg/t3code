@@ -12,7 +12,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScopedThreadRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -119,7 +123,10 @@ import {
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
 } from "./Sidebar.logic";
-import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
+import {
+  resolveEnvironmentOptionLabel,
+  resolveLocalCheckoutBranchMismatch,
+} from "./BranchToolbar.logic";
 import {
   prStatusIndicator,
   resolveThreadPr,
@@ -1176,15 +1183,62 @@ export default function SidebarV2() {
     [],
   );
 
+  const environmentScopeOptions = useMemo(
+    () =>
+      environments
+        .map((environment) => {
+          const isPrimary = environment.environmentId === primaryEnvironmentId;
+          return {
+            environmentId: environment.environmentId,
+            label: resolveEnvironmentOptionLabel({
+              isPrimary,
+              environmentId: environment.environmentId,
+              runtimeLabel: environment.label,
+            }),
+            description: isPrimary ? "This device" : environment.environmentId,
+            isPrimary,
+          };
+        })
+        .toSorted((left, right) => {
+          if (left.isPrimary !== right.isPrimary) {
+            return left.isPrimary ? -1 : 1;
+          }
+          return left.label.localeCompare(right.label);
+        }),
+    [environments, primaryEnvironmentId],
+  );
+  const [environmentScopeId, setEnvironmentScopeId] = useState<EnvironmentId | null>(null);
+  const scopedEnvironment = useMemo(
+    () =>
+      environmentScopeOptions.find((option) => option.environmentId === environmentScopeId) ?? null,
+    [environmentScopeId, environmentScopeOptions],
+  );
+  useEffect(() => {
+    if (environmentScopeId !== null && scopedEnvironment === null) {
+      setEnvironmentScopeId(null);
+    }
+  }, [environmentScopeId, scopedEnvironment]);
+
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
   const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
+  const visibleProjectGroups = useMemo(
+    () =>
+      environmentScopeId === null
+        ? projectGroups
+        : projectGroups.filter((project) =>
+            project.memberProjectRefs.some(
+              (projectRef) => projectRef.environmentId === environmentScopeId,
+            ),
+          ),
+    [environmentScopeId, projectGroups],
+  );
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
         ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
+        : (visibleProjectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [projectScopeKey, visibleProjectGroups],
   );
   const scopedProjectKeys = useMemo(
     () =>
@@ -1206,7 +1260,7 @@ export default function SidebarV2() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, environmentScopeId, projectScopeKey]);
 
   const handleRemoveProjectMembers = useCallback(
     async (projectGroup: SidebarProjectSnapshot, members: readonly SidebarProjectGroupMember[]) => {
@@ -1376,6 +1430,7 @@ export default function SidebarV2() {
     const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        (environmentScopeId === null || thread.environmentId === environmentScopeId) &&
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
@@ -1421,6 +1476,7 @@ export default function SidebarV2() {
   }, [
     autoSettleAfterDays,
     changeRequestStateByKey,
+    environmentScopeId,
     nowMinute,
     scopedProjectKeys,
     serverConfigs,
@@ -1451,7 +1507,7 @@ export default function SidebarV2() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = `${environmentScopeId ?? "all"}:${projectScopeKey ?? "all"}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -2271,6 +2327,55 @@ export default function SidebarV2() {
             </div>
           </div>
         </SidebarGroup>
+        {environmentScopeOptions.length > 1 ? (
+          <SidebarGroup className="px-2 pb-2 pt-0">
+            <Menu>
+              <MenuTrigger
+                aria-label="Filter threads by environment"
+                className="flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+              >
+                <ServerIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+                <span className="min-w-0 flex-1 truncate">
+                  {scopedEnvironment?.label ?? "All environments"}
+                </span>
+                <ChevronDownIcon className="size-4 shrink-0 text-sidebar-muted-foreground/70" />
+              </MenuTrigger>
+              <MenuPopup align="start" className="w-(--anchor-width)">
+                <MenuRadioGroup
+                  value={environmentScopeId ?? "all"}
+                  onValueChange={(value) =>
+                    setEnvironmentScopeId(value === "all" ? null : (value as EnvironmentId))
+                  }
+                >
+                  <MenuRadioItem
+                    value="all"
+                    closeOnClick
+                    className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                  >
+                    <ServerIcon className="size-4 shrink-0" />
+                    <span className="min-w-0 truncate text-sm">All environments</span>
+                  </MenuRadioItem>
+                  {environmentScopeOptions.map((option) => (
+                    <MenuRadioItem
+                      key={option.environmentId}
+                      value={option.environmentId}
+                      closeOnClick
+                      className="px-1 py-1 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                    >
+                      <ServerIcon className="size-4 shrink-0" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm">{option.label}</span>
+                        <span className="truncate text-xs font-normal text-sidebar-muted-foreground">
+                          {option.description}
+                        </span>
+                      </span>
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuPopup>
+            </Menu>
+          </SidebarGroup>
+        ) : null}
         {projectGroups.length > 0 ? (
           <SidebarGroup className="px-2 pb-2 pt-0">
             <div className="flex items-center gap-1">
@@ -2308,7 +2413,7 @@ export default function SidebarV2() {
                       <FolderIcon className="size-4 shrink-0" />
                       <span className="min-w-0 truncate text-sm">All projects</span>
                     </MenuRadioItem>
-                    {projectGroups.map((project) => {
+                    {visibleProjectGroups.map((project) => {
                       const scopeKey = project.projectKey;
                       return (
                         <MenuRadioItem
