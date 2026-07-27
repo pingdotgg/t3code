@@ -200,11 +200,20 @@ struct ModelPickerPopoverContent: View {
 
     private var visibleItems: [ModelPickerItem] { results.items }
 
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The clear row is a standing choice, not a search result, so a query
+    /// hides it. Leaving it in would put "None" above every ranked match and
+    /// hand Return to it.
+    private var showsClearRow: Bool { clearRow != nil && !isSearching }
+
     /// Sections in display order. While searching, ranking beats grouping, so
     /// the results arrive as one flat list.
     private var sections: [ModelPickerSection] {
         let items = visibleItems
-        guard searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !isSearching else {
             return [ModelPickerSection(id: "results", title: nil, icon: nil, items: items)]
         }
 
@@ -236,7 +245,7 @@ struct ModelPickerPopoverContent: View {
 
     /// Every row the keyboard can land on, in display order.
     private var navigableKeys: [String] {
-        var keys = clearRow == nil ? [] : [Self.clearRowKey]
+        var keys = showsClearRow ? [Self.clearRowKey] : []
         keys.append(contentsOf: sections.flatMap { $0.items.map(\.id) })
         return keys
     }
@@ -449,7 +458,7 @@ struct ModelPickerPopoverContent: View {
                 Divider().opacity(0.45)
             }
 
-            if visibleItems.isEmpty && clearRow == nil {
+            if visibleItems.isEmpty && !showsClearRow {
                 emptyState
             } else {
                 modelList
@@ -591,7 +600,7 @@ struct ModelPickerPopoverContent: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3, pinnedViews: [.sectionHeaders]) {
-                    if let clearRow {
+                    if let clearRow, showsClearRow {
                         ComposerPickerChoiceRow(
                             icon: clearRow.icon,
                             title: clearRow.title,
@@ -727,7 +736,8 @@ struct ModelPickerPopoverContent: View {
     }
 
     private func resetHighlightToFirstRow() {
-        highlightedKey = navigableKeys.first
+        highlightedKey = ModelPickerCatalog.firstModelRowKey(
+            in: navigableKeys, clearRowKey: Self.clearRowKey)
         if let scrollProxy, let highlightedKey {
             withAnimation(nil) { scrollProxy.scrollTo(highlightedKey, anchor: .center) }
         }

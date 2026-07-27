@@ -106,6 +106,14 @@ enum ModelPickerCatalog {
         return ModelPickerSearchResults(items: widened, didWidenToAllModels: !widened.isEmpty)
     }
 
+    /// Where the keyboard highlight starts. Pickers that offer a "none" row
+    /// list it first, but it is a standing choice rather than a result, so a
+    /// reset lands on the first model row and Return picks a model. Falls back
+    /// to the clear row only when there is nothing else to land on.
+    static func firstModelRowKey(in keys: [String], clearRowKey: String) -> String? {
+        keys.first { $0 != clearRowKey } ?? keys.first
+    }
+
     /// Where the keyboard highlight lands after the highlighted row leaves the
     /// list — unfavoriting from the Favorites scope drops the row out from
     /// under the arrow keys. Takes the row that inherited its position, so

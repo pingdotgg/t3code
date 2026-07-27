@@ -341,6 +341,25 @@ struct ModelPickerCatalogTests {
         #expect(allScope.didWidenToAllModels == false)
     }
 
+    @Test("a highlight reset lands on a model row, not the clear row")
+    func highlightResetSkipsClearRow() {
+        let clearKey = "model-picker-clear"
+
+        // Return after typing must pick a model, never the "none" choice that
+        // pickers with a clear row list first.
+        #expect(
+            ModelPickerCatalog.firstModelRowKey(
+                in: [clearKey, "codex/gpt-5", "claude/sonnet-5"], clearRowKey: clearKey)
+                == "codex/gpt-5")
+        #expect(
+            ModelPickerCatalog.firstModelRowKey(in: ["codex/gpt-5"], clearRowKey: clearKey)
+                == "codex/gpt-5")
+        // With nothing else on offer the clear row is still a valid target.
+        #expect(
+            ModelPickerCatalog.firstModelRowKey(in: [clearKey], clearRowKey: clearKey) == clearKey)
+        #expect(ModelPickerCatalog.firstModelRowKey(in: [], clearRowKey: clearKey) == nil)
+    }
+
     @Test("the keyboard highlight moves to the row that took the removed row's place")
     func highlightFollowsRemovedRow() {
         let before = ["a", "b", "c"]
