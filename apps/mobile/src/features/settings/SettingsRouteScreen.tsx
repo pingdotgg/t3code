@@ -8,7 +8,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -584,6 +584,7 @@ type UpdateCheckState = "idle" | "checking" | "downloading" | "restarting" | "cu
 function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
   const [updateState, setUpdateState] = useState<UpdateCheckState>("idle");
+  const updateInFlight = useRef(false);
 
   const version = Constants.expoConfig?.version ?? "0.0.0";
   // Fall back to "production" to match resolveAppVariant in app.config.ts, so a
@@ -614,37 +615,14 @@ function AppSettingsSection() {
   }, [updateState]);
 
   const checkForUpdate = useCallback(async () => {
-    setUpdateState("checking");
-    const check = await settlePromise(() => Updates.checkForUpdateAsync());
-    if (check._tag === "Failure") {
-      reportUpdateFailure(check, "Could not check for updates.");
-      setUpdateState("idle");
-      return;
-    }
-    if (!check.value.isAvailable) {
-      setUpdateState("current");
-      return;
-    }
-
-    setUpdateState("downloading");
-    const fetched = await settlePromise(() => Updates.fetchUpdateAsync());
-    if (fetched._tag === "Failure") {
-      reportUpdateFailure(fetched, "Could not download the update.");
-      setUpdateState("idle");
-      return;
-    }
-    if (!fetched.value.isNew) {
-      setUpdateState("current");
-      return;
-    }
-
-    setUpdateState("restarting");
-    // reloadAsync never resolves on success — the JS context is torn down — so
-    // reaching the failure branch below is the only way this returns.
-    const reloaded = await settlePromise(() => Updates.reloadAsync());
-    if (reloaded._tag === "Failure") {
-      reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.");
-      setUpdateState("idle");
+    // `disabled={busy}` only takes effect on the next render, so two taps in the
+    // same frame would both get through. The ref closes that window.
+    if (updateInFlight.current) return;
+    updateInFlight.current = true;
+    try {
+      await runUpdateCheck(setUpdateState);
+    } finally {
+      updateInFlight.current = false;
     }
   }, []);
 
@@ -711,6 +689,45 @@ function AppSettingsSection() {
       )}
     </SettingsSection>
   );
+}
+
+async function runUpdateCheck(setUpdateState: (state: UpdateCheckState) => void): Promise<void> {
+  setUpdateState("checking");
+  const check = await settlePromise(() => Updates.checkForUpdateAsync());
+  if (check._tag === "Failure") {
+    reportUpdateFailure(check, "Could not check for updates.");
+    setUpdateState("idle");
+    return;
+  }
+  // A rollback directive (`eas update:rollback`) arrives as isAvailable: false
+  // with isRollBackToEmbedded: true — there is nothing newer to install, but the
+  // running OTA still has to be dropped for the embedded bundle.
+  if (!check.value.isAvailable && !check.value.isRollBackToEmbedded) {
+    setUpdateState("current");
+    return;
+  }
+
+  setUpdateState("downloading");
+  const fetched = await settlePromise(() => Updates.fetchUpdateAsync());
+  if (fetched._tag === "Failure") {
+    reportUpdateFailure(fetched, "Could not download the update.");
+    setUpdateState("idle");
+    return;
+  }
+  // isNew is always false for a rollback, so it can't be the sole gate here either.
+  if (!fetched.value.isNew && !fetched.value.isRollBackToEmbedded) {
+    setUpdateState("current");
+    return;
+  }
+
+  setUpdateState("restarting");
+  // reloadAsync never resolves on success — the JS context is torn down — so
+  // reaching the failure branch below is the only way this returns.
+  const reloaded = await settlePromise(() => Updates.reloadAsync());
+  if (reloaded._tag === "Failure") {
+    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.");
+    setUpdateState("idle");
+  }
 }
 
 function reportUpdateFailure(result: AtomCommandResult<unknown, unknown>, fallback: string): void {
