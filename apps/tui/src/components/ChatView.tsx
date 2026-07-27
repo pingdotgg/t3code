@@ -332,6 +332,7 @@ export function ChatView({
   // list can't leave it pointing past the end (projects[projectIndex] = undefined).
   const activeProjectIndex = projects.length > 0 ? Math.min(projectIndex, projects.length - 1) : 0;
   const activeNewThreadProject = projects[activeProjectIndex] ?? null;
+  const selectedProjectId = state.selection?.kind === "project" ? state.selection.id : null;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
   const selectionKey = state.selection ? `${state.selection.kind}:${state.selection.id}` : "none";
   const rows = React.useMemo(
@@ -663,17 +664,14 @@ export function ChatView({
     }
   };
 
-  const openNewThread = () => {
+  const openNewThread = React.useCallback(() => {
     if (focus === "new") return;
     newDraftOriginSelectionRef.current = selectionKey;
     const context = resolveNewThreadContext({
       projects,
       selectedProjectId:
-        state.selection?.kind === "project"
-          ? state.selection.id
-          : state.selection?.kind === "thread"
-            ? (detail?.projectId ?? null)
-            : null,
+        selectedProjectId ??
+        (state.selection?.kind === "thread" ? (detail?.projectId ?? null) : null),
       thread: detail,
       defaultEnvironmentMode: newThreadSettings.defaultThreadEnvMode,
     });
@@ -693,7 +691,22 @@ export function ChatView({
     setNewComposerImages([]);
     setComposerEpoch((epoch) => epoch + 1);
     setFocus("new");
-  };
+  }, [
+    detail,
+    focus,
+    modelOptions,
+    newThreadSettings.defaultThreadEnvMode,
+    projects,
+    selectedProjectId,
+    selectionKey,
+    state.selection?.kind,
+  ]);
+
+  React.useEffect(() => {
+    if (focus !== "compose" || selectedProjectId === null) return;
+    if (!state.expanded.has(selectedProjectId)) store.toggleProject(selectedProjectId);
+    openNewThread();
+  }, [focus, openNewThread, selectedProjectId, state.expanded, store]);
 
   const implementPlan = () => {
     if (!detail || !actionablePlan) return;
@@ -2198,10 +2211,11 @@ export function ChatView({
         }
         setDraft("");
         setNewComposerImages([]);
+        setComposerEpoch((epoch) => epoch + 1);
+        if (selectedProjectId !== null) return;
         setNewBranch(null);
         setNewContextWorktreePath(null);
         newDraftOriginSelectionRef.current = null;
-        setComposerEpoch((epoch) => epoch + 1);
         setFocus("compose");
         return;
       }
@@ -2241,7 +2255,7 @@ export function ChatView({
     "^K commands",
     "^F find",
     `^L panel ${rightPanelOpen ? "▾" : "▸"}`,
-    ...(composerWorking ? ["Esc stop"] : focus === "new" ? ["Esc cancel"] : []),
+    ...(composerWorking ? ["Esc stop"] : focus === "new" ? ["Esc clear"] : []),
     "^C quit",
   ].join(" · ");
   const hint = expandedImage

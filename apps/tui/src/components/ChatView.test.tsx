@@ -212,10 +212,9 @@ async function selectThread(
   });
   await setup.waitForFrame((frame) => frame.includes("Project one"));
 
-  // The initial selection is the collapsed project. Empty Enter expands it;
-  // Alt+Down then selects the first thread and attaches its live detail.
+  // Selecting a project automatically opens its new-thread composer and expands
+  // the project, so Alt+Down can move directly into its first thread.
   await React.act(async () => {
-    setup.mockInput.pressEnter();
     setup.mockInput.pressKey("\x1b\x1b[B");
     await setup.renderOnce();
   });
@@ -1186,7 +1185,7 @@ describe("ChatView new-thread parity", () => {
     setup.renderer.destroy();
   });
 
-  it("Given a project header is selected, when a new-thread draft is opened, then the prompt and created thread use that project", async () => {
+  it("Given a project header is selected, when the shell loads, then its new-thread composer opens automatically", async () => {
     const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
     const fake = fakeClient({
       detail: thread(),
@@ -1223,10 +1222,6 @@ describe("ChatView new-thread parity", () => {
       await setup.flush();
     });
     await setup.waitForFrame((frame) => frame.includes("Project two"));
-    await React.act(async () => {
-      setup.mockInput.pressKey("n", { ctrl: true });
-      await setup.renderOnce();
-    });
     await setup.waitForFrame(
       (frame) =>
         frame.includes("What should we build in Project two?") &&
