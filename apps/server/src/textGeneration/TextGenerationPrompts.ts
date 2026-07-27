@@ -25,12 +25,12 @@ export interface CommitMessagePromptInput {
   branch: string | null;
   stagedSummary: string;
   stagedPatch: string;
-  includeBranch: boolean;
+  includeBranch?: boolean;
   policy?: TextGenerationPolicy | undefined;
 }
 
 export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
-  const wantsBranch = input.includeBranch;
+  const wantsBranch = input.includeBranch === true;
 
   const prompt = [
     "You write concise git commit messages.",
@@ -76,7 +76,7 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
 }
 
 // ---------------------------------------------------------------------------
-// PR content
+// Change request content
 // ---------------------------------------------------------------------------
 
 export interface PrContentPromptInput {
@@ -85,19 +85,34 @@ export interface PrContentPromptInput {
   commitSummary: string;
   diffSummary: string;
   diffPatch: string;
+  changeRequestTemplate?: string | undefined;
   policy?: TextGenerationPolicy | undefined;
 }
 
 export function buildPrContentPrompt(input: PrContentPromptInput) {
+  const changeRequestTemplate = input.changeRequestTemplate?.trim();
+  const bodyRules = changeRequestTemplate
+    ? [
+        "- body must be markdown and follow the repository change request template structure",
+        "- fill in the template sections appropriately for this change",
+        "- drop HTML comments from the template in the generated body",
+        "- keep the template's markdown structure",
+      ]
+    : [
+        "- body must be markdown and include headings '## Summary' and '## Testing'",
+        "- under Summary, provide short bullet points",
+        "- under Testing, include bullet points with concrete checks or 'Not run' where appropriate",
+      ];
   const prompt = [
-    "You write GitHub pull request content.",
+    "You write source control change request content.",
     "Return a JSON object with keys: title, body.",
     "Rules:",
     "- title should be concise and specific",
-    "- body must be markdown and include headings '## Summary' and '## Testing'",
-    "- under Summary, provide short bullet points",
-    "- under Testing, include bullet points with concrete checks or 'Not run' where appropriate",
+    ...bodyRules,
     ...policyInstruction(input.policy?.changeRequestInstructions),
+    ...(changeRequestTemplate
+      ? ["", "Repository change request template:", limitSection(changeRequestTemplate, 8_000)]
+      : []),
     "",
     `Base branch: ${input.baseBranch}`,
     `Head branch: ${input.headBranch}`,

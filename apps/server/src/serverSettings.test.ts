@@ -325,6 +325,73 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect(
+    "preserves the source control writer selection when its provider instance is disabled",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const instanceId = ProviderInstanceId.make("codex_writer");
+        const sourceControlWriterModelSelection = {
+          instanceId,
+          model: "gpt-5.4-mini",
+        };
+
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: true,
+              config: {},
+            },
+          },
+          sourceControlWriterModelSelection,
+        });
+
+        const next = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: false,
+              config: {},
+            },
+          },
+        });
+
+        assert.deepEqual(next.sourceControlWriterModelSelection, sourceControlWriterModelSelection);
+        assert.deepEqual(
+          ServerSettingsModule.resolveSourceControlWriterModelSelection(next),
+          next.textGenerationModelSelection,
+        );
+        assert.deepEqual(
+          (yield* serverSettings.getSettings).sourceControlWriterModelSelection,
+          sourceControlWriterModelSelection,
+        );
+
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.deepEqual(
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.parse(raw).sourceControlWriterModelSelection,
+          sourceControlWriterModelSelection,
+        );
+
+        const restored = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: true,
+              config: {},
+            },
+          },
+        });
+        assert.deepEqual(
+          ServerSettingsModule.resolveSourceControlWriterModelSelection(restored),
+          sourceControlWriterModelSelection,
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("drops stale text generation options when resetting model selection", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

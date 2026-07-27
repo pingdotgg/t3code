@@ -48,6 +48,7 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -195,7 +196,7 @@ function itemSummary({
         <span>
           {item.label} is not authenticated on this server. Sign in or configure credentials using
           the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable pull request features.
+          tool on the server host to enable change request features.
         </span>
       );
     }
@@ -513,6 +514,8 @@ export function SourceControlSettingsPanel() {
           onScan={handleScan}
         />
       )}
+
+      {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }
