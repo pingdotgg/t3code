@@ -15,6 +15,10 @@ struct MotionTests {
         #expect(profile.delightDuration <= 0.42)
         // Playful, but short enough that rapid switching never queues ripples.
         #expect(profile.burstDuration <= 0.65)
+        // The effort knob settles fast enough to keep dragging through, and
+        // bounces enough that a detent reads as a landing.
+        #expect(profile.knobSnapDuration <= 0.4)
+        #expect(profile.knobSnapBounce > 0.2 && profile.knobSnapBounce < 0.5)
     }
 
     @Test("reduced motion removes movement and decorative effects")

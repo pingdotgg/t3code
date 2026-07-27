@@ -14,6 +14,11 @@ struct MotionProfile: Equatable, Sendable {
     /// One-shot effort-change burst: long enough to read as playful, short
     /// enough that rapid switching never queues overlapping ripples.
     let burstDuration = 0.60
+    /// A dragged knob settling onto its detent. Short, and bouncy on purpose:
+    /// the effort ramp is the one composer control you drag, and the small
+    /// overshoot is what makes its detents feel physical rather than snapped.
+    let knobSnapDuration = 0.34
+    let knobSnapBounce = 0.34
 
     var changeDuration: Double { reduceMotion ? 0.12 : revealDuration }
     var usesMovement: Bool { !reduceMotion }
@@ -81,6 +86,15 @@ enum Motion {
     /// `profile.allowsDecorativeEffects`; this curve is its timing.
     static var burst: Animation {
         .easeOut(duration: reduceMotion ? profile.changeDuration : profile.burstDuration)
+    }
+
+    /// A knob landing on a detent (the reasoning-effort ramp). Reduce Motion
+    /// keeps the position change but drops the overshoot, so the knob still
+    /// travels — it just stops dead where it arrives.
+    static var knob: Animation {
+        reduceMotion
+            ? reducedChange
+            : .spring(duration: profile.knobSnapDuration, bounce: profile.knobSnapBounce)
     }
 
     /// Asynchronous status tint, opacity, and meter changes.
