@@ -270,8 +270,8 @@ export function resolveAppModelSelectionForInstance(
     resolveSelectableModel(entry.driverKind, selectedModel, options) ??
     options.find((option) => option.isDefault)?.slug ??
     options[0]?.slug ??
-    entry.models.find((model) => model.isDefault)?.slug ??
-    entry.models[0]?.slug ??
+    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    entry.models.find((model) => !model.isCustom)?.slug ??
     null
   );
 }

@@ -221,6 +221,42 @@ describe("instance-scoped model selection", () => {
     ).toBe("claude-sonnet-4-6");
   });
 
+  it("does not fall back to a stale custom model when no configured models remain", () => {
+    const baseProvider = provider({ instanceId: "claudeAgent" });
+    const staleProviders: ServerProvider[] = [
+      {
+        ...baseProvider,
+        models: [
+          {
+            slug: "removed-preview-model",
+            name: "Removed Preview Model",
+            isCustom: true,
+            capabilities: {},
+          },
+        ],
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: [] },
+        },
+      },
+    };
+
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claudeAgent"),
+        settings,
+        staleProviders,
+        "removed-preview-model",
+      ),
+    ).toBeNull();
+  });
+
   it("hides server models from the instance option list", () => {
     const providers = [
       provider({
