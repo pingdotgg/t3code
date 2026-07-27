@@ -58,6 +58,21 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
+export const ServerProviderRateLimitWindow = Schema.Struct({
+  label: Schema.optional(TrimmedNonEmptyString),
+  usedPercent: Schema.Number,
+  resetsAt: Schema.optional(IsoDateTime),
+});
+export type ServerProviderRateLimitWindow = typeof ServerProviderRateLimitWindow.Type;
+
+export const ServerProviderRateLimits = Schema.Struct({
+  planType: Schema.optional(TrimmedNonEmptyString),
+  /** Stamped whenever a window changes, so the client can show staleness. */
+  updatedAt: Schema.optional(IsoDateTime),
+  windows: Schema.Array(ServerProviderRateLimitWindow),
+});
+export type ServerProviderRateLimits = typeof ServerProviderRateLimits.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -190,6 +205,7 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  rateLimits: Schema.optionalKey(ServerProviderRateLimits),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

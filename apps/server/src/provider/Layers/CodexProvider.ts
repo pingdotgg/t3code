@@ -17,6 +17,7 @@ import type {
   CodexSettings,
   ServerProvider,
   ServerProviderState,
+  ServerProviderRateLimits,
   ModelCapabilities,
   ProviderOptionDescriptor,
   ServerProviderModel,
@@ -33,6 +34,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { normalizeCodexRateLimitSnapshot, stampUpdatedAt } from "../providerRateLimits.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
@@ -48,6 +50,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly rateLimits?: ServerProviderRateLimits;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -389,15 +392,29 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimitsResponse] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      // Best-effort: older Codex CLI builds or non-ChatGPT auth modes may not
+      // support this request, so a failure here shouldn't fail the whole probe.
+      client.request("account/rateLimits/read", undefined).pipe(Effect.option),
     ],
     { concurrency: "unbounded" },
   );
+  // ponytail: verification logging for the percent scale — see plan Phase 0.
+  yield* Option.match(rateLimitsResponse, {
+    onNone: () => Effect.void,
+    onSome: (response) =>
+      Effect.logInfo("Codex account rate limits read.", { rawRateLimits: response.rateLimits }),
+  });
+  const normalizedRateLimits = Option.match(rateLimitsResponse, {
+    onNone: () => undefined,
+    onSome: (response) => normalizeCodexRateLimitSnapshot(response.rateLimits),
+  });
+  const rateLimits = normalizedRateLimits ? yield* stampUpdatedAt(normalizedRateLimits) : undefined;
 
   return {
     account: accountResponse,
@@ -406,6 +423,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    ...(rateLimits ? { rateLimits } : {}),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -601,6 +619,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      ...(snapshot.rateLimits ? { rateLimits: snapshot.rateLimits } : {}),
     },
   });
 });

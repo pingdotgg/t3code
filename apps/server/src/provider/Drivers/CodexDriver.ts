@@ -179,6 +179,9 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         initialSnapshot: (settings) =>
           makePendingCodexProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
+        // Codex rate limits come from the `account/rateLimits/read` request in
+        // `checkCodexProviderStatus` — both windows in one snapshot, refreshed
+        // on every probe — so there is no event stream to subscribe to here.
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,

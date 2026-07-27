@@ -15,6 +15,7 @@ import {
   type PermissionUpdate,
   type SDKMessage,
   type SDKControlGetContextUsageResponse,
+  type SDKControlGetUsageResponse,
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
@@ -62,6 +63,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -210,6 +212,11 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+  // The structured data behind `/usage`: all plan rate-limit windows at once.
+  // Optional and feature-detected — the SDK documents that this name changes
+  // when the API stabilizes, so a bump degrades to the `rate_limit_event`
+  // path rather than breaking.
+  readonly usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<SDKControlGetUsageResponse>;
   readonly close: () => void;
 }
 
@@ -1368,6 +1375,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  // Broadcast side channel: `runtimeEventQueue` has a single destructive
+  // consumer (`ProviderService`), so snapshot enrichment reads rate limits
+  // from here instead of competing for turn events.
+  const rateLimitEventPubSub = yield* PubSub.unbounded<unknown>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -1793,6 +1804,36 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return normalizeClaudeContextUsageApiSnapshot(usage, totalProcessedTokens);
   });
 
+  /**
+   * Reads every plan rate-limit window at once and publishes it to the rate
+   * limit side channel. `rate_limit_event` only ever carries a single window,
+   * so without this the 5h and weekly meters fill in one at a time as each
+   * window happens to be reported.
+   */
+  const publishAccountRateLimits = Effect.fn("publishAccountRateLimits")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    const readUsage = context.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    if (!readUsage) {
+      return;
+    }
+
+    const usage = yield* Effect.promise(async () => {
+      try {
+        return await readUsage.call(context.query);
+      } catch {
+        return undefined;
+      }
+    });
+    if (!usage) {
+      return;
+    }
+
+    // ponytail: verification logging for the percent scale — see plan Phase 0.
+    yield* Effect.logInfo("Claude account usage read.", { rawUsage: usage.rate_limits });
+    yield* PubSub.publish(rateLimitEventPubSub, usage);
+  });
+
   const emitProposedPlanCompleted = Effect.fn("emitProposedPlanCompleted")(function* (
     context: ClaudeSessionContext,
     input: {
@@ -1897,6 +1938,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context,
       accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
     );
+    yield* publishAccountRateLimits(context);
     const resultUsageRecord =
       result?.usage && typeof result.usage === "object" && !Array.isArray(result.usage)
         ? (result.usage as Record<string, unknown>)
@@ -2911,6 +2953,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           rateLimits: message,
         },
       });
+      // ponytail: verification logging for the percent scale — see plan Phase 0.
+      yield* Effect.logInfo("Claude rate limit event.", {
+        rawRateLimitInfo: message.rate_limit_info,
+      });
+      yield* PubSub.publish(rateLimitEventPubSub, message);
       return;
     }
   });
@@ -3921,7 +3968,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       Effect.catch((cause) =>
         Effect.logError("Failed to emit Claude session shutdown event.", { cause }),
       ),
-      Effect.tap(() => Queue.shutdown(runtimeEventQueue)),
+      Effect.tap(() =>
+        Effect.all([Queue.shutdown(runtimeEventQueue), PubSub.shutdown(rateLimitEventPubSub)]),
+      ),
     ),
   );
 
@@ -3943,6 +3992,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     stopAll,
     get streamEvents() {
       return Stream.fromQueue(runtimeEventQueue);
+    },
+    get rateLimitEvents() {
+      return Stream.fromPubSub(rateLimitEventPubSub);
     },
   } satisfies ClaudeAdapterShape;
 });

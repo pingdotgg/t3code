@@ -123,4 +123,15 @@ export interface ProviderAdapterShape<TError> {
    * Canonical runtime event stream emitted by this adapter.
    */
   readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
+
+  /**
+   * Account rate-limit payloads, as a PubSub-backed side channel.
+   *
+   * `streamEvents` is backed by a Queue for some adapters, so taking from it
+   * is destructive and it supports exactly one consumer (`ProviderService`).
+   * Rate limits are account-scoped rather than thread-scoped and are consumed
+   * by the driver's snapshot enrichment, so they get their own broadcast
+   * channel instead. Payloads are provider-native and normalized per driver.
+   */
+  readonly rateLimitEvents?: Stream.Stream<unknown>;
 }
