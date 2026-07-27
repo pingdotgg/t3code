@@ -58,7 +58,6 @@ import {
 } from "../../composerDraftStore";
 import {
   EMPTY_PROMPT_STASH_QUEUE,
-  flushPromptStashStorage,
   MAX_STASH_ENTRIES_PER_QUEUE,
   partitionStashAttachments,
   promptStashScopeKey,
@@ -1912,8 +1911,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
   const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
-  const readStashQueueSnapshot = usePromptStashStore((state) => state.readQueueSnapshot);
-  const restoreStashQueueSnapshot = usePromptStashStore((state) => state.restoreQueueSnapshot);
   const stashProviderLabel = noProviderAvailable
     ? "No provider"
     : getProviderDisplayName(providerStatuses, selectedProvider);
@@ -1942,9 +1939,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const restoreStashEntry = useCallback(
     (entry: PromptStashEntry) => {
       // Remove first so a double activation (click + Enter) can't restore twice.
-      const taken = takeStashEntry(promptStashScopeKey(entry.providerInstanceId), entry.id);
+      const { entry: taken, durable } = takeStashEntry(
+        promptStashScopeKey(entry.providerInstanceId),
+        entry.id,
+      );
       if (!taken) return;
-      flushPromptStashStorage();
+      if (!durable) {
+        toastManager.add({
+          type: "warning",
+          title: "Restored prompt may reappear in the stash",
+          description:
+            "Browser storage rejected the update, so this entry could still be there after a reload.",
+          data: { hideCopyButton: true },
+        });
+      }
       setIsStashMenuOpen(false);
 
       const currentPrompt = promptRef.current;
@@ -2062,8 +2070,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const deleteStashEntry = useCallback(
     (entry: PromptStashEntry) => {
-      takeStashEntry(promptStashScopeKey(entry.providerInstanceId), entry.id);
-      flushPromptStashStorage();
+      const { durable } = takeStashEntry(promptStashScopeKey(entry.providerInstanceId), entry.id);
+      if (!durable) {
+        toastManager.add({
+          type: "warning",
+          title: "Stash entry may come back",
+          description:
+            "Browser storage rejected the delete, so this prompt could reappear after a reload.",
+          data: { hideCopyButton: true },
+        });
+      }
     },
     [takeStashEntry],
   );
@@ -2091,17 +2107,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const stashTarget = composerDraftTarget;
     const entryId = randomUUID();
     const scopeKey = promptStashScopeKey(stashScopeInstanceId);
-    // Captured before the write so a rejected persist can be rolled back
-    // whole. Removing just the new entry would strand an older one that the
-    // 20-entry cap evicted to make room for it.
-    const queueBeforeStash = readStashQueueSnapshot(scopeKey);
     try {
       // Persist the text-only entry *first*, then clear. Ordering matters in
       // both directions: writing before clearing means a crash or closed tab
       // mid-encode still leaves the prompt recoverable, while clearing before
       // the async image work means edits typed during encoding are not wiped.
       // Images are appended to the stored entry as they finish encoding.
-      const evicted = stashEntryToQueue({
+      const { evicted, durable } = stashEntryToQueue({
         id: entryId,
         createdAt: new Date().toISOString(),
         prompt,
@@ -2114,11 +2126,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
 
       // Clearing the composer is only safe once the entry is durable. If the
-      // write was rejected (quota, blocked storage) the stash exists only in
-      // memory, so leave the composer untouched rather than making it the
-      // second casualty of a reload.
-      if (!flushPromptStashStorage()) {
-        restoreStashQueueSnapshot(scopeKey, queueBeforeStash);
+      // write was rejected (quota, blocked storage) the store has already
+      // rolled itself back, so leave the composer untouched rather than
+      // making it the second casualty of a reload.
+      if (!durable) {
         toastManager.add({
           type: "error",
           title: "Could not stash this prompt",
@@ -2174,17 +2185,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
 
-      const finalized = finalizeStashEntryImages(scopeKey, entryId, {
+      const { attached, durable: imagesDurable } = finalizeStashEntryImages(scopeKey, entryId, {
         attachments: kept,
         droppedImageNames: [...oversizedImageNames, ...droppedNames],
         unreadableImageNames,
       });
-      if (finalized) {
+      if (attached) {
         // The second phase can be rejected on its own: the text-only entry
         // fit, but adding image payloads pushed past the quota. Disk would
         // then still hold the phase-one entry with pendingImageCount set,
         // which reads as an orphan after reload — so say so now.
-        if (!flushPromptStashStorage() && images.length > 0) {
+        if (!imagesDurable && images.length > 0) {
           toastManager.add({
             type: "warning",
             title: "Stashed images were not saved",
@@ -2217,8 +2228,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     noProviderAvailable,
     promptRef,
     pulseStashBadge,
-    readStashQueueSnapshot,
-    restoreStashQueueSnapshot,
     selectedModelSelection,
     stashEntryToQueue,
     stashProviderLabel,

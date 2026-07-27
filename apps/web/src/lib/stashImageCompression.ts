@@ -211,18 +211,26 @@ export async function compressImageForStash(
     // images already smaller than that ceiling — the fallback passes would
     // all resolve to the source size and never actually reduce resolution.
     const baseDimension = Math.min(MAX_DIMENSION, Math.max(bitmap.width, bitmap.height));
+    // Tracks whether the *last* attempt threw, so a run of encoder failures
+    // is reported as unreadable while a run of merely-too-big results is
+    // reported as too-large.
+    let encodeFailed = false;
     for (const dimensionScale of [1, ...FALLBACK_SCALE_STEPS]) {
       const targetDimension = Math.max(1, Math.round(baseDimension * dimensionScale));
       let encoded: { dataUrl: string; mimeType: string } | null;
       try {
         encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars);
       } catch {
-        // Canvas allocation, drawing, or the codec itself can throw (OOM on a
-        // huge bitmap, a hostile decoder). Never let that escape: the caller
-        // finalizes the stash entry after this returns, and an exception here
-        // would strand the entry as permanently "still saving".
-        return { ok: false, reason: "unreadable" };
+        // Canvas allocation, drawing, or the codec itself can throw — often
+        // precisely *because* the target is too big (OOM on a large bitmap).
+        // Keep trying the smaller fallback scales rather than giving up: a
+        // reduced pass may well succeed. The exception must never escape,
+        // though, since the caller finalizes the entry after this returns and
+        // a throw would strand it as permanently "still saving".
+        encodeFailed = true;
+        continue;
       }
+      encodeFailed = false;
       if (encoded && encoded.dataUrl.length <= budgetChars) {
         return {
           ok: true,
@@ -235,7 +243,7 @@ export async function compressImageForStash(
         };
       }
     }
-    return { ok: false, reason: "too-large" };
+    return { ok: false, reason: encodeFailed ? "unreadable" : "too-large" };
   } finally {
     bitmap.close();
   }

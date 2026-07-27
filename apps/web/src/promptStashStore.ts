@@ -1,14 +1,12 @@
 import { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 
 import { PersistedComposerImageAttachment } from "./composerDraftStore";
-import { createDebouncedStorage, createMemoryStorage, type StateStorage } from "./lib/storage";
+import { createMemoryStorage, type StateStorage } from "./lib/storage";
 
 export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v1";
 const PROMPT_STASH_STORAGE_VERSION = 1;
-const PROMPT_STASH_PERSIST_DEBOUNCE_MS = 300;
 
 /**
  * Queue bucket for prompts stashed while no provider instance is selected.
@@ -142,74 +140,35 @@ export function partitionStashAttachments(
 }
 
 /**
- * Tracks whether the most recent write actually reached disk. Callers clear
- * the composer on the strength of a stash write, so "the write silently
- * failed" has to be observable rather than only logged.
- */
-let lastWriteFailed = false;
-
-/**
- * Base64 image payloads can hit the origin's localStorage quota. A quota
- * failure must not become an uncaught exception inside the debounce timer:
- * the in-memory queue still works for the session, so record it and move on.
- */
-function createQuotaSafeStorage(base: StateStorage): StateStorage {
-  return {
-    getItem: (name) => base.getItem(name),
-    setItem: (name, value) => {
-      try {
-        base.setItem(name, value);
-        lastWriteFailed = false;
-      } catch (error) {
-        lastWriteFailed = true;
-        console.error("[PROMPT-STASH] Could not persist stash (storage quota?).", error);
-      }
-    },
-    removeItem: (name) => {
-      try {
-        base.removeItem(name);
-      } catch (error) {
-        console.error("[PROMPT-STASH] Could not remove stash entry.", error);
-      }
-    },
-  };
-}
-
-/**
  * Reading the `localStorage` property itself can throw `SecurityError` when
  * storage is blocked by policy or the page is a sandboxed iframe — so the
  * access has to be guarded, not just the get/set calls on it. Otherwise
  * importing this module would crash the app at load.
+ *
+ * `durable` is false for the in-memory fallback: writes there "succeed" but
+ * vanish on reload, and callers clear the composer on the strength of a
+ * successful stash, so they must be told the difference.
  */
-function resolveBaseStorage(): StateStorage {
+function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
   try {
     if (typeof localStorage !== "undefined") {
-      return localStorage;
+      return { storage: localStorage, durable: true };
     }
   } catch {
-    // Fall through to the in-memory store: the stash still works for the
-    // session, it just will not survive a reload.
+    // Fall through to the in-memory store.
   }
-  return createMemoryStorage();
+  return { storage: createMemoryStorage(), durable: false };
 }
 
-const baseStashStorage = resolveBaseStorage();
-
-const promptStashDebouncedStorage = createDebouncedStorage(
-  createQuotaSafeStorage(baseStashStorage),
-  PROMPT_STASH_PERSIST_DEBOUNCE_MS,
-);
-
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  window.addEventListener("beforeunload", () => {
-    promptStashDebouncedStorage.flush();
-  });
-}
+const { storage: baseStashStorage, durable: storageIsDurable } = resolveBaseStorage();
 
 /**
- * Reads the queues currently on disk. Every mutation persists this tab's whole
- * `queuesByScopeKey`, so acting on a stale in-memory copy would silently drop
- * entries written by another tab. Callers re-read first and merge.
+ * Reads the queues currently on disk, settling any stale pending counts.
+ *
+ * Disk — not this tab's memory — is the source of truth for every mutation.
+ * A union of the two could never distinguish "another tab added this entry"
+ * from "this tab deleted it", which would resurrect deletions; reading the
+ * live state and mutating *that* sidesteps the question entirely.
  */
 function readPersistedQueues(): Record<string, ReadonlyArray<PromptStashEntry>> | null {
   try {
@@ -221,44 +180,63 @@ function readPersistedQueues(): Record<string, ReadonlyArray<PromptStashEntry>> 
     const parsed: unknown = JSON.parse(raw);
     const state = (parsed as { state?: unknown } | null)?.state;
     if (!state) return null;
-    return decodePersistedPromptStashState(state).queuesByScopeKey;
+    return clearOrphanedPendingImages(decodePersistedPromptStashState(state).queuesByScopeKey);
   } catch {
     return null;
   }
 }
 
-/**
- * Union of the on-disk queues and this tab's, keyed by entry id. Entries are
- * immutable once finalized, so a plain id-union is sufficient: whichever copy
- * has images attached wins, and ordering stays newest-first by `createdAt`.
- */
-function mergeQueuesWithStorage(
-  local: Record<string, ReadonlyArray<PromptStashEntry>>,
-): Record<string, ReadonlyArray<PromptStashEntry>> {
-  const persisted = readPersistedQueues();
-  if (!persisted) return local;
-
-  const merged: Record<string, ReadonlyArray<PromptStashEntry>> = { ...local };
-  for (const scopeKey of new Set([...Object.keys(persisted), ...Object.keys(local)])) {
-    const fromDisk = readQueue(persisted, scopeKey);
-    const fromMemory = readQueue(local, scopeKey);
-    const byId = new Map<string, PromptStashEntry>();
-    for (const entry of fromDisk) byId.set(entry.id, entry);
-    for (const entry of fromMemory) {
-      const existing = byId.get(entry.id);
-      // Prefer whichever copy already has its images attached.
-      if (!existing || !entry.pendingImageCount) byId.set(entry.id, entry);
-    }
-    const combined = [...byId.values()].sort((left, right) =>
-      right.createdAt.localeCompare(left.createdAt),
+/** Serializes queues in the exact envelope zustand's persist middleware uses. */
+function writePersistedQueues(queues: Record<string, ReadonlyArray<PromptStashEntry>>): boolean {
+  try {
+    baseStashStorage.setItem(
+      PROMPT_STASH_STORAGE_KEY,
+      JSON.stringify({
+        version: PROMPT_STASH_STORAGE_VERSION,
+        state: { queuesByScopeKey: queues },
+      }),
     );
-    if (combined.length === 0) {
-      delete merged[scopeKey];
-    } else {
-      merged[scopeKey] = combined.slice(0, MAX_STASH_ENTRIES_PER_QUEUE);
-    }
+    return true;
+  } catch (error) {
+    console.error("[PROMPT-STASH] Could not persist stash (storage quota?).", error);
+    return false;
   }
-  return merged;
+}
+
+/**
+ * Applies `mutate` to the queues currently on disk and writes the result back
+ * synchronously, so concurrent tabs cannot clobber each other: each mutation
+ * starts from whatever the other tab last wrote.
+ *
+ * Writes are immediate rather than debounced. Stashing is a deliberate,
+ * infrequent keystroke — not a per-character autosave — so there is nothing to
+ * coalesce, and a debounce window is exactly where cross-tab races live.
+ *
+ * Returns the mutation's own result plus whether the write reached disk.
+ */
+function commitQueues<T>(
+  localQueues: Record<string, ReadonlyArray<PromptStashEntry>>,
+  mutate: (queues: Record<string, ReadonlyArray<PromptStashEntry>>) => {
+    next: Record<string, ReadonlyArray<PromptStashEntry>>;
+    result: T;
+  },
+): {
+  next: Record<string, ReadonlyArray<PromptStashEntry>>;
+  result: T;
+  /** The write itself succeeded (possibly only in memory). */
+  written: boolean;
+  /** The write will survive a reload. */
+  durable: boolean;
+} {
+  // Fall back to this tab's state only when there is nothing readable on disk
+  // (first write of the session, blocked storage, corrupt payload).
+  const base = readPersistedQueues() ?? localQueues;
+  const { next, result } = mutate(base);
+  // The write still happens against the in-memory fallback so the stash works
+  // within the session; `durable` reports only whether it will survive a
+  // reload, which is what callers gate composer-clearing on.
+  const written = writePersistedQueues(next);
+  return { next, result, written, durable: written && storageIsDurable };
 }
 
 interface PromptStashStoreState {
@@ -267,22 +245,25 @@ interface PromptStashStoreState {
    * Prepends an entry to its scope's queue, evicting the oldest entry past
    * the per-queue cap. Returns the evicted entry (for messaging) if any.
    */
-  stashEntry: (entry: PromptStashEntry) => PromptStashEntry | null;
-  /** Removes and returns an entry from a scope's queue (restore + delete). */
-  takeEntry: (scopeKey: string, entryId: string) => PromptStashEntry | null;
-  /** Snapshot of a scope's queue, for rolling back a failed write. */
-  readQueueSnapshot: (scopeKey: string) => ReadonlyArray<PromptStashEntry>;
+  stashEntry: (entry: PromptStashEntry) => {
+    evicted: PromptStashEntry | null;
+    /** False when the write did not reach durable storage; nothing was kept. */
+    durable: boolean;
+  };
   /**
-   * Restores a queue captured by `readQueueSnapshot`. Used when a stash write
-   * is rejected by storage: rolling back only the new entry would leave an
-   * entry evicted by the cap permanently lost.
+   * Removes and returns an entry from a scope's queue (restore + delete).
+   * `durable` is false when the removal could not be persisted, meaning a
+   * reload would resurrect the entry.
    */
-  restoreQueueSnapshot: (scopeKey: string, queue: ReadonlyArray<PromptStashEntry>) => void;
+  takeEntry: (
+    scopeKey: string,
+    entryId: string,
+  ) => { entry: PromptStashEntry | null; durable: boolean };
   /**
    * Attaches the encoded images to an entry written earlier by `stashEntry`,
-   * clearing its pending count. Returns false when the entry is gone (restored
-   * or deleted while encoding was still running) so the caller can tell the
-   * user their images did not make it.
+   * clearing its pending count. Returns attached=false when the entry is gone
+   * (restored or deleted while encoding was still running) so the caller can
+   * tell the user their images did not make it.
    */
   finalizeEntryImages: (
     scopeKey: string,
@@ -292,127 +273,94 @@ interface PromptStashStoreState {
       droppedImageNames: ReadonlyArray<string>;
       unreadableImageNames: ReadonlyArray<string>;
     },
-  ) => boolean;
+  ) => { attached: boolean; durable: boolean };
 }
 
-export const usePromptStashStore = create<PromptStashStoreState>()(
-  persist(
-    (set, get) => ({
-      queuesByScopeKey: {},
-      stashEntry: (entry) => {
-        const scopeKey = promptStashScopeKey(entry.providerInstanceId);
-        // Re-read from storage first: another tab may have stashed since this
-        // one hydrated, and persisting our whole map would erase its entries.
-        const mergedQueues = mergeQueuesWithStorage(get().queuesByScopeKey);
-        const queue = readQueue(mergedQueues, scopeKey);
-        const nextQueue = [entry, ...queue];
-        const evicted =
-          nextQueue.length > MAX_STASH_ENTRIES_PER_QUEUE ? (nextQueue.pop() ?? null) : null;
-        set(() => ({
-          queuesByScopeKey: { ...mergedQueues, [scopeKey]: nextQueue },
-        }));
-        return evicted;
-      },
-      takeEntry: (scopeKey, entryId) => {
-        const queue = readQueue(get().queuesByScopeKey, scopeKey);
-        const entry = queue.find((candidate) => candidate.id === entryId) ?? null;
-        if (!entry) return null;
-        set((state) => {
-          const nextQueue = readQueue(state.queuesByScopeKey, scopeKey).filter(
-            (candidate) => candidate.id !== entryId,
-          );
-          const nextQueues = { ...state.queuesByScopeKey };
-          if (nextQueue.length === 0) {
-            delete nextQueues[scopeKey];
-          } else {
-            nextQueues[scopeKey] = nextQueue;
-          }
-          return { queuesByScopeKey: nextQueues };
-        });
-        return entry;
-      },
-      readQueueSnapshot: (scopeKey) => readQueue(get().queuesByScopeKey, scopeKey),
-      restoreQueueSnapshot: (scopeKey, queue) => {
-        set((state) => {
-          const nextQueues = { ...state.queuesByScopeKey };
-          if (queue.length === 0) {
-            delete nextQueues[scopeKey];
-          } else {
-            nextQueues[scopeKey] = [...queue];
-          }
-          return { queuesByScopeKey: nextQueues };
-        });
-      },
-      finalizeEntryImages: (scopeKey, entryId, images) => {
-        // Read before the update so the caller learns whether the entry
-        // survived long enough to receive its images.
-        const found = readQueue(get().queuesByScopeKey, scopeKey).some(
-          (candidate) => candidate.id === entryId,
-        );
-        if (!found) return false;
-        set((state) => {
-          const queue = readQueue(state.queuesByScopeKey, scopeKey);
-          const index = queue.findIndex((candidate) => candidate.id === entryId);
-          // Restored or deleted mid-encode: nothing to attach to.
-          if (index === -1) return state;
-          const existing = queue[index];
-          if (!existing) return state;
-          const nextEntry: PromptStashEntry = {
-            ...existing,
-            attachments: images.attachments,
-            droppedImageNames: images.droppedImageNames,
-            unreadableImageNames: images.unreadableImageNames,
-            pendingImageCount: 0,
-          };
-          const nextQueue = [...queue];
-          nextQueue[index] = nextEntry;
-          return { queuesByScopeKey: { ...state.queuesByScopeKey, [scopeKey]: nextQueue } };
-        });
-        return true;
-      },
-    }),
-    {
-      name: PROMPT_STASH_STORAGE_KEY,
-      version: PROMPT_STASH_STORAGE_VERSION,
-      storage: createJSONStorage(() => promptStashDebouncedStorage),
-      partialize: (state): PersistedPromptStashState => ({
-        queuesByScopeKey: state.queuesByScopeKey,
-      }),
-      merge: (persistedState, currentState) => {
-        try {
-          const decoded = decodePersistedPromptStashState(persistedState);
-          return {
-            ...currentState,
-            queuesByScopeKey: clearOrphanedPendingImages(decoded.queuesByScopeKey),
-          };
-        } catch {
-          // Corrupt or incompatible payload: start empty rather than crash.
-          return currentState;
-        }
-      },
-    },
-  ),
-);
+export const usePromptStashStore = create<PromptStashStoreState>()((set, get) => ({
+  queuesByScopeKey: {},
+  stashEntry: (entry) => {
+    const scopeKey = promptStashScopeKey(entry.providerInstanceId);
+    const { next, result, written, durable } = commitQueues(get().queuesByScopeKey, (queues) => {
+      const nextQueue = [entry, ...readQueue(queues, scopeKey)];
+      const evicted =
+        nextQueue.length > MAX_STASH_ENTRIES_PER_QUEUE ? (nextQueue.pop() ?? null) : null;
+      return { next: { ...queues, [scopeKey]: nextQueue }, result: evicted };
+    });
+    // A rejected write must not leave the entry visible in this tab: the
+    // caller keeps the composer intact on failure, so showing a stashed
+    // copy too would duplicate the prompt.
+    set(() => ({ queuesByScopeKey: written ? next : (readPersistedQueues() ?? {}) }));
+    return { evicted: written ? result : null, durable };
+  },
+  takeEntry: (scopeKey, entryId) => {
+    const { next, result, durable } = commitQueues(get().queuesByScopeKey, (queues) => {
+      const queue = readQueue(queues, scopeKey);
+      const entry = queue.find((candidate) => candidate.id === entryId) ?? null;
+      if (!entry) return { next: queues, result: null };
+      const nextQueue = queue.filter((candidate) => candidate.id !== entryId);
+      const nextQueues = { ...queues };
+      if (nextQueue.length === 0) {
+        delete nextQueues[scopeKey];
+      } else {
+        nextQueues[scopeKey] = nextQueue;
+      }
+      return { next: nextQueues, result: entry };
+    });
+    set(() => ({ queuesByScopeKey: next }));
+    return { entry: result, durable };
+  },
+  finalizeEntryImages: (scopeKey, entryId, images) => {
+    const { next, result, durable } = commitQueues(get().queuesByScopeKey, (queues) => {
+      const queue = readQueue(queues, scopeKey);
+      const index = queue.findIndex((candidate) => candidate.id === entryId);
+      const existing = index === -1 ? undefined : queue[index];
+      // Restored or deleted mid-encode: nothing to attach to.
+      if (!existing) return { next: queues, result: false };
+      const nextQueue = [...queue];
+      nextQueue[index] = {
+        ...existing,
+        attachments: images.attachments,
+        droppedImageNames: images.droppedImageNames,
+        unreadableImageNames: images.unreadableImageNames,
+        pendingImageCount: 0,
+      };
+      return { next: { ...queues, [scopeKey]: nextQueue }, result: true };
+    });
+    set(() => ({ queuesByScopeKey: next }));
+    return { attached: result, durable };
+  },
+}));
 
 /**
- * Flushes pending stash writes immediately (e.g. right after a stash) and
- * reports whether the write landed. Returns false when storage rejected it
- * (quota, blocked storage), meaning the queue exists only in memory and will
- * not survive a reload.
+ * Refreshes the in-memory queues from disk. Mutations already read-modify-write
+ * synchronously, so this only matters for picking up another tab's changes.
  */
-export function flushPromptStashStorage(): boolean {
-  lastWriteFailed = false;
-  promptStashDebouncedStorage.flush();
-  return !lastWriteFailed;
+function syncQueuesFromStorage(): void {
+  const persisted = readPersistedQueues();
+  if (persisted) {
+    usePromptStashStore.setState({ queuesByScopeKey: persisted });
+  }
+}
+
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  // Hydrate once at startup, then follow other tabs. `storage` fires only in
+  // *other* tabs, which is exactly the case this tab cannot observe itself.
+  syncQueuesFromStorage();
+  window.addEventListener("storage", (event) => {
+    if (event.key === null || event.key === PROMPT_STASH_STORAGE_KEY) {
+      syncQueuesFromStorage();
+    }
+  });
 }
 
 export const EMPTY_PROMPT_STASH_QUEUE: ReadonlyArray<PromptStashEntry> = [];
 
 /**
  * Test seam: writes the raw persisted payload through the same storage the
- * store reads, so cross-tab merging can be exercised without a real
- * `localStorage` global.
+ * store reads, so cross-tab behavior can be exercised without a real
+ * `localStorage` global. Pass an empty string to clear.
  */
 export function writePromptStashStorageForTest(raw: string): void {
   baseStashStorage.setItem(PROMPT_STASH_STORAGE_KEY, raw);
+  syncQueuesFromStorage();
 }

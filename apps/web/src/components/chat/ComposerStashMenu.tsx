@@ -75,12 +75,6 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         if (event.target instanceof HTMLElement && event.target.closest("button[aria-label]")) {
           return;
         }
-        // Still encoding: restoring now would strand the pending images.
-        if (highlightedEntry?.pendingImageCount) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
         if (!highlightedEntry) return;
         event.preventDefault();
         event.stopPropagation();
@@ -127,11 +121,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                   onMouseDown={(event) => {
                     event.preventDefault();
                   }}
-                  aria-disabled={Boolean(entry.pendingImageCount)}
                   onClick={() => {
-                    // Restoring mid-encode would strand the images that are
-                    // still being written into this entry.
-                    if (entry.pendingImageCount) return;
                     onRestore(entry);
                   }}
                 >

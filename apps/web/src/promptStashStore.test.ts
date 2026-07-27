@@ -149,9 +149,9 @@ describe("promptStashStore", () => {
   it("evicts the oldest entry past the per-queue cap and returns it", () => {
     const store = usePromptStashStore.getState();
     for (let index = 0; index < MAX_STASH_ENTRIES_PER_QUEUE; index += 1) {
-      expect(store.stashEntry(makeEntry({ id: `entry-${index}` }))).toBeNull();
+      expect(store.stashEntry(makeEntry({ id: `entry-${index}` })).evicted).toBeNull();
     }
-    const evicted = store.stashEntry(makeEntry({ id: "overflow" }));
+    const { evicted } = store.stashEntry(makeEntry({ id: "overflow" }));
     expect(evicted?.id).toBe("entry-0");
     const queue =
       usePromptStashStore.getState().queuesByScopeKey[promptStashScopeKey(CLAUDE_AGENT_INSTANCE)] ??
@@ -164,8 +164,10 @@ describe("promptStashStore", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "keep" }));
     store.stashEntry(makeEntry({ id: "take" }));
-    expect(store.takeEntry(promptStashScopeKey(CLAUDE_AGENT_INSTANCE), "take")?.id).toBe("take");
-    expect(store.takeEntry(promptStashScopeKey(CLAUDE_AGENT_INSTANCE), "take")).toBeNull();
+    expect(store.takeEntry(promptStashScopeKey(CLAUDE_AGENT_INSTANCE), "take").entry?.id).toBe(
+      "take",
+    );
+    expect(store.takeEntry(promptStashScopeKey(CLAUDE_AGENT_INSTANCE), "take").entry).toBeNull();
     const queue =
       usePromptStashStore.getState().queuesByScopeKey[promptStashScopeKey(CLAUDE_AGENT_INSTANCE)] ??
       [];
@@ -182,7 +184,7 @@ describe("promptStashStore", () => {
     });
     const store = usePromptStashStore.getState();
     expect(() => store.takeEntry("__proto__", "missing")).not.toThrow();
-    expect(store.takeEntry("__proto__", "missing")).toBeNull();
+    expect(store.takeEntry("__proto__", "missing").entry).toBeNull();
   });
 
   it("finalizeEntryImages attaches images and clears the pending count", () => {
@@ -190,7 +192,7 @@ describe("promptStashStore", () => {
     const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
     store.stashEntry({ ...makeEntry({ id: "pending" }), pendingImageCount: 2 });
 
-    const attached = store.finalizeEntryImages(scopeKey, "pending", {
+    const { attached } = store.finalizeEntryImages(scopeKey, "pending", {
       attachments: [
         {
           id: "img-1",
@@ -218,7 +220,7 @@ describe("promptStashStore", () => {
     // Restored (or deleted) while its images were still encoding.
     store.takeEntry(scopeKey, "racing");
 
-    const attached = store.finalizeEntryImages(scopeKey, "racing", {
+    const { attached } = store.finalizeEntryImages(scopeKey, "racing", {
       attachments: [],
       droppedImageNames: [],
       unreadableImageNames: [],
@@ -227,50 +229,71 @@ describe("promptStashStore", () => {
     expect(attached).toBe(false);
   });
 
-  it("restoreQueueSnapshot rolls back an eviction caused by a failed write", () => {
-    const store = usePromptStashStore.getState();
-    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
-    for (let index = 0; index < MAX_STASH_ENTRIES_PER_QUEUE; index += 1) {
-      store.stashEntry(makeEntry({ id: `entry-${index}` }));
-    }
-    const snapshot = store.readQueueSnapshot(scopeKey);
-
-    // A stash at the cap evicts the oldest entry...
-    const evicted = store.stashEntry(makeEntry({ id: "overflow" }));
-    expect(evicted?.id).toBe("entry-0");
-
-    // ...so a rejected write has to restore the whole queue, not just remove
-    // the new entry, or the evicted one is lost for nothing.
-    store.restoreQueueSnapshot(scopeKey, snapshot);
-    const queue = usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? [];
-    expect(queue.map((entry) => entry.id)).toEqual(snapshot.map((entry) => entry.id));
-    expect(queue.some((entry) => entry.id === "entry-0")).toBe(true);
-    expect(queue.some((entry) => entry.id === "overflow")).toBe(false);
-  });
-
-  it("merges another tab's entries instead of overwriting them", () => {
-    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
-    // Simulate a second tab having written an entry after this tab hydrated,
-    // through the same storage the module reads (the node test project has no
-    // localStorage global, so it resolves to the in-memory fallback).
+  /** Writes a queue straight to storage, as another tab would. */
+  function seedStorage(scopeKey: string, entries: ReadonlyArray<PromptStashEntry>) {
     writePromptStashStorageForTest(
-      JSON.stringify({
-        version: 1,
-        state: {
-          queuesByScopeKey: {
-            [scopeKey]: [{ ...makeEntry({ id: "from-other-tab" }), createdAt: OLDER_TIMESTAMP }],
-          },
-        },
-      }),
+      JSON.stringify({ version: 1, state: { queuesByScopeKey: { [scopeKey]: entries } } }),
     );
+  }
+
+  it("keeps another tab's entries when stashing", () => {
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    seedStorage(scopeKey, [{ ...makeEntry({ id: "from-other-tab" }), createdAt: OLDER_TIMESTAMP }]);
 
     usePromptStashStore.getState().stashEntry(makeEntry({ id: "from-this-tab" }));
 
     const ids = (usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? []).map(
       (entry) => entry.id,
     );
-    expect(ids).toContain("from-other-tab");
-    expect(ids).toContain("from-this-tab");
+    expect(ids).toEqual(["from-this-tab", "from-other-tab"]);
+  });
+
+  // The previous id-union merge could not tell "another tab created this"
+  // from "this tab deleted it", so deletes came back. Reading disk as the
+  // source of truth removes the ambiguity.
+  it("does not resurrect an entry another tab deleted", () => {
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    const store = usePromptStashStore.getState();
+    store.stashEntry(makeEntry({ id: "doomed" }));
+    // The other tab deletes it and writes the emptied queue.
+    seedStorage(scopeKey, []);
+
+    store.stashEntry(makeEntry({ id: "fresh" }));
+
+    const ids = (usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? []).map(
+      (entry) => entry.id,
+    );
+    expect(ids).toEqual(["fresh"]);
+    expect(ids).not.toContain("doomed");
+  });
+
+  it("does not clobber another tab's finalized images when taking an entry", () => {
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    const store = usePromptStashStore.getState();
+    store.stashEntry(makeEntry({ id: "mine" }));
+    // Another tab adds an entry after this one's in-memory state was built.
+    seedStorage(scopeKey, [
+      { ...makeEntry({ id: "mine" }), createdAt: OLDER_TIMESTAMP },
+      { ...makeEntry({ id: "theirs" }), createdAt: OLDER_TIMESTAMP },
+    ]);
+
+    store.takeEntry(scopeKey, "mine");
+
+    const ids = (usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? []).map(
+      (entry) => entry.id,
+    );
+    expect(ids).toEqual(["theirs"]);
+  });
+
+  it("settles a pending count left behind by a closed tab", () => {
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    seedStorage(scopeKey, [{ ...makeEntry({ id: "orphan" }), pendingImageCount: 2 }]);
+
+    // Any read of persisted state must settle the stale count, or the entry
+    // would stay stuck showing "saving…" and refuse to restore.
+    const entry = usePromptStashStore.getState().queuesByScopeKey[scopeKey]?.[0];
+    expect(entry?.pendingImageCount).toBe(0);
+    expect(entry?.unreadableImageNames).toHaveLength(2);
   });
 
   it("drops the scope key entirely when its queue empties", () => {
