@@ -46,8 +46,10 @@ const makeCookieRequest = (
   ({
     cookies: {
       // Derived, not hardcoded: the name is port-scoped so concurrent servers
-      // on one hostname don't share a cookie.
-      [resolveSessionCookieName({ port: TEST_SERVER_PORT, devUrl: undefined })]: sessionToken,
+      // on one hostname don't share a cookie. Mode and devUrl mirror
+      // ServerConfig.layerTest, so this resolves to whatever the server reads.
+      [resolveSessionCookieName({ mode: "web", port: TEST_SERVER_PORT, devUrl: undefined })]:
+        sessionToken,
     },
     headers: {},
   }) as unknown as Parameters<

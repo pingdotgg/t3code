@@ -468,6 +468,7 @@ export const make = Effect.gen(function* () {
   const connectedSessionsRef = yield* Ref.make(new Map<string, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
   const cookieName = resolveSessionCookieName({
+    mode: serverConfig.mode,
     port: serverConfig.port,
     devUrl: serverConfig.devUrl,
   });

@@ -1329,7 +1329,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "bearer-access-token",
         "dpop-access-token",
       ]);
-      assert.equal(body.auth.sessionCookieName, "t3_session");
+      // Desktop, so port-scoped: instances scan for a free port and share
+      // 127.0.0.1, and cookies are not scoped by port.
+      assert.isTrue(body.auth.sessionCookieName.startsWith("t3_session_"));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
