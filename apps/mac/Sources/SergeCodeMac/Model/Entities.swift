@@ -686,23 +686,30 @@ public enum ToolLifecycleTitle {
 /// event with the running row it belongs to when neither carries a
 /// `toolCallId`.
 public enum ToolRowDetail {
-    /// Drops the runtime marker a settled event appends to what the running
-    /// row showed — "Bash: ls" becomes "Bash: ls <exited with exit code 0>"
-    /// once the process reports, which is the same invocation and must not
-    /// read as a different one. Only a trailing `<…>` is dropped, so a detail
-    /// that merely contains angle brackets keeps them, and the same rule
-    /// applies to both sides of a comparison anyway.
+    /// The one marker a settled event appends to what the running row showed:
+    /// "Bash: ls" becomes "Bash: ls <exited with exit code 0>" once the
+    /// process reports. Matches `stripTrailingExitCode` in T3Kit's
+    /// `ActivityRows` and `@t3tools/shared/toolPresentation`.
+    private static let exitMarkerPattern = #"\s*<exited with exit code \d+>\s*$"#
+
+    /// Drops that marker so the two halves of one invocation compare equal.
+    /// Only this exact suffix goes: a command that genuinely ends in angle
+    /// brackets (`Bash: echo <hello>`) keeps them and stays distinct from
+    /// another call, which is the whole point of comparing details at all.
     public static func canonical(_ detail: String) -> String {
-        var trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-        while trimmed.hasSuffix(">"), let marker = trimmed.lastIndex(of: "<") {
-            let head = trimmed[..<marker].trimmingCharacters(in: .whitespacesAndNewlines)
-            // A detail that is nothing but the marker has no invocation left
-            // to compare; keep it rather than collapsing it to empty, which
-            // is the "no detail at all" signal.
-            if head.isEmpty { break }
-            trimmed = head
+        let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let marker = trimmed.range(
+                of: exitMarkerPattern, options: [.regularExpression, .caseInsensitive])
+        else {
+            return trimmed
         }
-        return trimmed
+        let head = String(trimmed[..<marker.lowerBound]).trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        // A detail that is nothing but the marker has no invocation left to
+        // compare; keep it rather than collapsing it to empty, which is the
+        // "no detail at all" signal the weak-match tier reads.
+        return head.isEmpty ? trimmed : head
     }
 }
 

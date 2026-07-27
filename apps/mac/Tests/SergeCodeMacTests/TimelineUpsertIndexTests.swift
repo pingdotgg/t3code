@@ -175,6 +175,35 @@ struct TimelineUpsertIndexTests {
         assertIndexMatchesArray(indexed, indexByID: indexByID)
     }
 
+    @Test("angle brackets that are part of the command stay part of the detail")
+    func angleBracketDetailIsNotAMarker() {
+        // Only the runtime's exit marker is dropped when details are compared;
+        // a command that genuinely ends in angle brackets is still its own
+        // invocation and must not fold into an unrelated running row.
+        #expect(ToolRowDetail.canonical("Bash: echo <hello>") == "Bash: echo <hello>")
+        #expect(ToolRowDetail.canonical("Bash: ls <exited with exit code 0>") == "Bash: ls")
+        #expect(ToolRowDetail.canonical("Bash: ls <exited with exit code 137>") == "Bash: ls")
+        // Nothing but the marker keeps it: an empty detail is the separate
+        // "this event carried no detail" signal.
+        #expect(ToolRowDetail.canonical("<exited with exit code 0>") == "<exited with exit code 0>")
+
+        let running = TimelineItem.toolEvent(
+            id: "activity-1", name: "Running command", detail: "Bash: echo <hello>",
+            kind: .command, status: .running, at: date(2), output: nil, outputIsError: false)
+        let otherCompleted = TimelineItem.toolEvent(
+            id: "activity-2", name: "Ran command", detail: "Bash: echo <goodbye>",
+            kind: .command, status: .succeeded, at: date(3), output: "goodbye",
+            outputIsError: false)
+
+        var indexed: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
+        for item in [running, otherCompleted] {
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+        #expect(indexed.count == 2)
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+    }
+
     @Test("a detail-less completion prefers the row whose detail matches")
     func detaillessCompletionPrefersExactRow() {
         // Two calls in flight: the completion carries no detail of its own,
