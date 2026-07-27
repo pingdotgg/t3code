@@ -725,14 +725,17 @@ const make = Effect.gen(function* () {
         const { keybindings: customConfig } = yield* loadRuntimeCustomKeybindingsConfig();
         const preservedScripts = customConfig.filter((entry) => isScriptKeybindingRule(entry));
         // Truncate the preserved scripts, never the defaults — a reset that
-        // dropped default rules to stay under the cap would defeat itself.
+        // dropped default rules to stay under the cap would defeat itself. Drop
+        // from the front, because later rules have higher precedence, so the
+        // trailing scripts are the ones actually in effect.
         const scriptBudget = Math.max(0, MAX_KEYBINDINGS_COUNT - DEFAULT_KEYBINDINGS.length);
-        const cappedConfig = [...DEFAULT_KEYBINDINGS, ...preservedScripts.slice(0, scriptBudget)];
-        if (preservedScripts.length > scriptBudget) {
+        const droppedScripts = Math.max(0, preservedScripts.length - scriptBudget);
+        const cappedConfig = [...DEFAULT_KEYBINDINGS, ...preservedScripts.slice(droppedScripts)];
+        if (droppedScripts > 0) {
           yield* Effect.logWarning("dropping script keybindings to stay under max entries", {
             path: keybindingsConfigPath,
             maxEntries: MAX_KEYBINDINGS_COUNT,
-            dropped: preservedScripts.length - scriptBudget,
+            dropped: droppedScripts,
           });
         }
         yield* writeConfigAtomically(cappedConfig);

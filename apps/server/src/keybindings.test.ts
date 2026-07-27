@@ -549,6 +549,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         Keybindings.DEFAULT_KEYBINDINGS.map(({ key, command }) => ({ key, command })),
       );
       assert.equal(persisted.length, MAX_KEYBINDINGS_COUNT);
+      // Later rules win, so the surviving scripts must be the trailing ones.
+      assert.deepEqual(
+        persisted
+          .filter((rule) => String(rule.command).startsWith("script."))
+          .map((rule) => rule.command),
+        scriptRules.slice(5).map((rule) => rule.command),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 

@@ -1243,7 +1243,14 @@ export function KeybindingsSettingsPanel() {
       if (!confirmed) return;
       // The primary environment can change while the dialog is open, and this
       // discards every customization — target only what the user was shown.
-      if (primaryEnvironmentRef.current?.environmentId !== environmentId) return;
+      if (primaryEnvironmentRef.current?.environmentId !== environmentId) {
+        toastManager.add({
+          title: "Keybindings were not reset",
+          description: "The active environment changed while the confirmation was open.",
+          type: "error",
+        });
+        return;
+      }
       setIsResetting(true);
       const result = await resetKeybindingsMutation({
         environmentId,
