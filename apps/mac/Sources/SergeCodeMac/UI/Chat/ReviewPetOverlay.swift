@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// A marmot that pops out of a burrow in the corner of the transcript while
-/// the server-side auto-reviewer is working, says what it is doing, and ducks
-/// back down when it finishes.
+/// A fat, lazy Boston terrier that hauls himself up from behind his dog bed
+/// in the corner of the transcript while the server-side auto-reviewer is
+/// working, says what it is doing, and flops back down when it finishes.
 ///
 /// It mounts only for `.reviewing` / `.fixing` / `.readyToMerge` (see
 /// `ReviewPetPhase`), which are rare and mostly short, so the whole thing
@@ -11,7 +11,7 @@ import SwiftUI
 /// fixed on-screen life and the pet leaves on its own.
 ///
 /// Reduce Motion keeps the pet but freezes it into a composed resting pose:
-/// the announcement is the point, the bobbing is not. Turning playful motion
+/// the announcement is the point, the panting is not. Turning playful motion
 /// off removes it entirely — the header badge and sidebar glyph already carry
 /// the same state for anyone who does not want a character on screen.
 struct ReviewPetOverlay: View {
@@ -65,8 +65,8 @@ struct ReviewPetOverlay: View {
         .playfulMotionInvalidated($playfulRevision)
     }
 
-    /// Drives one appearance: show, let the pet climb out, and — for the
-    /// phases that do not end on their own — retire it after its dwell.
+    /// Drives one appearance: show, let the dog haul himself up, and — for
+    /// the phases that do not end on their own — retire it after its dwell.
     /// `.task(id:)` rather than a detached Task so a phase change mid-dwell
     /// cancels the pending exit instead of racing it.
     private func run() async {
@@ -88,8 +88,8 @@ struct ReviewPetOverlay: View {
         dismiss()
     }
 
-    /// Duck back into the burrow, then unmount. Two steps so the exit is the
-    /// entrance played backwards rather than a fade from mid-air.
+    /// Flop back down behind the bed, then unmount. Two steps so the exit is
+    /// the entrance played backwards rather than a fade from mid-air.
     ///
     /// The delayed half checks that its own appearance is still current: a
     /// phase change landing inside the 260ms would otherwise have the old
@@ -119,7 +119,7 @@ private struct ReviewPetCard: View {
                 .opacity(emerged ? 1 : 0)
                 .offset(x: emerged ? 0 : 10)
                 .animation(Motion.reveal.delay(emerged ? 0.16 : 0), value: emerged)
-            BurrowedMarmot(phase: phase, emerged: emerged)
+            BeddedTerrier(phase: phase, emerged: emerged)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(ReviewPetPresentation.accessibilityLabel(for: phase))
@@ -162,7 +162,7 @@ private struct SpeechBubble: View {
     }
 }
 
-/// Rounded plate with a right-pointing tail aimed at the marmot's head, as a
+/// Rounded plate with a right-pointing tail aimed at the terrier's head, as a
 /// single closed path.
 ///
 /// Opaque rather than a material on purpose: the bubble floats over scenery
@@ -212,62 +212,67 @@ private struct SpeechBubbleShape: Shape {
     }
 }
 
-// MARK: - The marmot
+// MARK: - The terrier
 
-private struct BurrowedMarmot: View {
+private struct BeddedTerrier: View {
     let phase: ReviewPetPhase
     let emerged: Bool
 
-    /// Design box for the animal. The burrow mound sits over its bottom
-    /// edge, so anything below this line is "underground".
-    private static let boxSize = CGSize(width: 78, height: 64)
-    /// How far down the marmot sits when hidden — past the mound with room to
+    /// Design box for the animal. The dog bed sits over its bottom edge, so
+    /// anything below this line is "in the bed". A little wider than the
+    /// marmot's box was — the belly needs the room.
+    private static let boxSize = CGSize(width: 86, height: 66)
+    /// How far down the dog sits when hidden — past the bed rim with room to
     /// spare, so the exit never shows a floating half-animal.
-    private static let hiddenDrop: CGFloat = 54
+    private static let hiddenDrop: CGFloat = 58
 
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.clear
                 .frame(width: Self.boxSize.width, height: Self.boxSize.height)
                 .overlay {
-                    MarmotBody(phase: phase)
+                    TerrierBody(phase: phase)
                         .offset(y: emerged ? 0 : Self.hiddenDrop)
                 }
                 // Clips to the fixed box, not to the moving animal, so the
-                // marmot slides out of view behind the mound instead of
+                // dog slides out of view behind the bed instead of
                 // shrinking.
                 .clipped()
-            BurrowMound()
-                .frame(width: Self.boxSize.width + 10, height: 20)
+            DogBed()
+                .frame(width: Self.boxSize.width + 10, height: 22)
                 .offset(y: 8)
         }
         .frame(width: Self.boxSize.width + 10, height: Self.boxSize.height + 8, alignment: .bottom)
     }
 }
 
-/// The mound of earth the marmot lives in. Also the reason the pop-in reads
-/// as emerging rather than materialising: something has to hide the cut.
-private struct BurrowMound: View {
+/// The plump cushion the terrier lives in. Also the reason the pop-in reads
+/// as hauling himself up rather than materialising: something has to hide
+/// the cut.
+private struct DogBed: View {
     var body: some View {
         ZStack {
             Ellipse()
                 .fill(
                     LinearGradient(
-                        colors: [PetPalette.soil, PetPalette.soilShade],
+                        colors: [PetPalette.cushion, PetPalette.cushionShade],
                         startPoint: .top, endPoint: .bottom))
             Ellipse()
-                .strokeBorder(PetPalette.soilShade.opacity(0.7), lineWidth: 1)
-            // A hint of alpine grass on the rim.
+                .strokeBorder(PetPalette.cushionShade.opacity(0.8), lineWidth: 1)
+            // The stitched seam around the rim that makes it a cushion and
+            // not a puddle.
             Ellipse()
-                .trim(from: 0.52, to: 0.98)
-                .stroke(AlpineTheme.meadow.opacity(0.55), lineWidth: 2)
-                .padding(.horizontal, 6)
+                .stroke(
+                    PetPalette.stitch.opacity(0.75),
+                    style: StrokeStyle(lineWidth: 1.2, dash: [3, 2.6]))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
         }
         .shadow(color: .black.opacity(0.2), radius: 5, y: 2)
     }
 }
 
-private struct MarmotBody: View {
+private struct TerrierBody: View {
     let phase: ReviewPetPhase
 
     var body: some View {
@@ -278,17 +283,20 @@ private struct MarmotBody: View {
                 paused: !profile.allowsCharacterMotion)
         ) { context in
             let pose = profile.allowsCharacterMotion
-                ? MarmotPose(
-                    phase: phase, time: context.date.timeIntervalSinceReferenceDate)
-                : MarmotPose.resting(phase: phase)
+                ? TerrierPose(
+                    phase: phase,
+                    time: context.date.timeIntervalSinceReferenceDate,
+                    breathPeriod: profile.petBreathPeriod)
+                : TerrierPose.resting(phase: phase)
             animal(pose: pose)
         }
     }
 
-    private func animal(pose: MarmotPose) -> some View {
+    private func animal(pose: TerrierPose) -> some View {
         ZStack {
-            haunches
-            arms(pose: pose)
+            tailNub(pose: pose)
+            torso(pose: pose)
+            paws(pose: pose)
             prop(pose: pose)
             head(pose: pose)
         }
@@ -298,46 +306,72 @@ private struct MarmotBody: View {
 
     // MARK: Parts
 
-    private var haunches: some View {
-        ZStack {
-            Ellipse()
-                .fill(PetPalette.furGradient)
-                .frame(width: 42, height: 41)
-            Ellipse()
-                .fill(PetPalette.belly)
-                .frame(width: 25, height: 26)
-                .offset(y: 4)
-        }
-        .offset(y: 11)
+    /// The stub. It peeks past the left hip so the wag reads even though the
+    /// whole tail is nine points long.
+    private func tailNub(pose: TerrierPose) -> some View {
+        Capsule()
+            .fill(PetPalette.coatShade)
+            .frame(width: 7, height: 10)
+            .rotationEffect(.degrees(-24 + pose.tailWag), anchor: .bottom)
+            .offset(x: -24, y: 6)
     }
 
-    private func arms(pose: MarmotPose) -> some View {
+    /// Black barrel of a body with the cream beer belly front and center.
+    /// The belly is the widest thing on the dog on purpose — it is the
+    /// silhouette.
+    private func torso(pose: TerrierPose) -> some View {
+        ZStack {
+            Ellipse()
+                .fill(PetPalette.coatGradient)
+                .frame(width: 50, height: 44)
+            // White bib running into the belly, tuxedo-style.
+            Ellipse()
+                .fill(PetPalette.cream)
+                .frame(width: 36, height: 34)
+                .offset(y: 3)
+                // The jiggle only touches the belly: wider-and-shorter on the
+                // way down, so the mass reads as settling, not the dog
+                // scaling.
+                .scaleEffect(
+                    x: 1 + pose.bellyJiggle,
+                    y: 1 - pose.bellyJiggle * 0.7,
+                    anchor: .bottom)
+            // A navel shadow to sell the overhang.
+            Ellipse()
+                .fill(PetPalette.creamShade.opacity(0.55))
+                .frame(width: 14, height: 4)
+                .offset(y: 16)
+        }
+        .offset(y: 12)
+    }
+
+    private func paws(pose: TerrierPose) -> some View {
         ZStack {
             Capsule()
-                .fill(PetPalette.furShade)
-                .frame(width: 8, height: 15)
-                .rotationEffect(.degrees(-14 - pose.propAngle * 0.15), anchor: .top)
-                .offset(x: -16, y: 6)
+                .fill(PetPalette.coatShade)
+                .frame(width: 9, height: 14)
+                .rotationEffect(.degrees(-12 - pose.propAngle * 0.15), anchor: .top)
+                .offset(x: -19, y: 12)
             Capsule()
-                .fill(PetPalette.furShade)
-                .frame(width: 8, height: 15)
-                .rotationEffect(.degrees(18 + pose.propAngle * 0.35), anchor: .top)
-                .offset(x: 16, y: 6)
+                .fill(PetPalette.coatShade)
+                .frame(width: 9, height: 14)
+                .rotationEffect(.degrees(16 + pose.propAngle * 0.35), anchor: .top)
+                .offset(x: 19, y: 12)
         }
     }
 
     /// The tool in the right paw, plus the glint or spark it throws.
-    private func prop(pose: MarmotPose) -> some View {
+    private func prop(pose: TerrierPose) -> some View {
         ZStack {
             Image(systemName: ReviewPetPresentation.propSymbolName(for: phase))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(phase.tint)
                 .shadow(color: phase.tint.opacity(0.6), radius: 3)
                 .rotationEffect(.degrees(pose.propAngle))
-                .offset(x: 19 + pose.propSlide, y: 8)
+                .offset(x: 22 + pose.propSlide, y: 12)
             if pose.sparkle > 0.01 {
                 sparkBurst(intensity: pose.sparkle)
-                    .offset(x: 19 + pose.propSlide, y: 8)
+                    .offset(x: 22 + pose.propSlide, y: 12)
             }
         }
         .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
@@ -366,95 +400,133 @@ private struct MarmotBody: View {
         CGPoint(x: 9, y: 6), CGPoint(x: -6, y: 7),
     ]
 
-    private func head(pose: MarmotPose) -> some View {
+    private func head(pose: TerrierPose) -> some View {
         ZStack {
             ear(side: -1, twitch: pose.earTwitch)
-            ear(side: 1, twitch: -pose.earTwitch)
+            // The off ear rides the same twitch at half strength and mirrored,
+            // so the two never move in lockstep — one flicks, the other
+            // acknowledges.
+            ear(side: 1, twitch: -pose.earTwitch * 0.5)
             Circle()
-                .fill(PetPalette.furGradient)
-                .frame(width: 34, height: 34)
+                .fill(PetPalette.coatGradient)
+                .frame(width: 36, height: 36)
+            // The white blaze running up the forehead.
+            Capsule()
+                .fill(PetPalette.cream)
+                .frame(width: 8, height: 17)
+                .offset(y: -8)
             cheek(side: -1)
             cheek(side: 1)
             eye(side: -1, pose: pose)
             eye(side: 1, pose: pose)
-            muzzle
+            muzzle(pose: pose)
         }
-        .offset(y: -12)
+        .rotationEffect(.degrees(pose.headTilt))
+        .offset(y: -13)
     }
 
+    /// One bat ear: tall, upright, unmistakably Boston.
     private func ear(side: Double, twitch: Double) -> some View {
         ZStack {
-            Circle()
-                .fill(PetPalette.furShade)
-                .frame(width: 13, height: 13)
-            Circle()
+            Ellipse()
+                .fill(PetPalette.coatShade)
+                .frame(width: 11, height: 17)
+            Ellipse()
                 .fill(PetPalette.innerEar)
-                .frame(width: 6.5, height: 6.5)
+                .frame(width: 5.5, height: 10)
+                .offset(y: 1.5)
         }
-        .rotationEffect(.degrees(twitch * side), anchor: .bottom)
-        .offset(x: 12 * side, y: -13)
+        .rotationEffect(.degrees(9 * side + twitch * side), anchor: .bottom)
+        .offset(x: 13 * side, y: -18)
     }
 
     private func cheek(side: Double) -> some View {
         Circle()
-            .fill(PetPalette.cheek.opacity(0.4))
+            .fill(PetPalette.cheek.opacity(0.45))
             .frame(width: 9, height: 9)
             .blur(radius: 2)
-            .offset(x: 12 * side, y: 4)
+            .offset(x: 13 * side, y: 5)
     }
 
-    /// One eye. `blink` collapses it vertically rather than hiding it, so the
-    /// lid reads as closing instead of the eye disappearing.
-    private func eye(side: Double, pose: MarmotPose) -> some View {
+    /// One eye: round, glossy, a touch bulgy, set wide the way the breed
+    /// wears them. `blink` collapses it vertically rather than hiding it, so
+    /// the lid reads as closing instead of the eye disappearing, and a
+    /// coat-colored lid droops over the top third full-time — this dog is
+    /// never fully awake.
+    private func eye(side: Double, pose: TerrierPose) -> some View {
         ZStack {
-            Ellipse()
-                .fill(PetPalette.eye)
-                .frame(width: 6, height: 7)
             Circle()
-                .fill(.white.opacity(0.85))
-                .frame(width: 1.9, height: 1.9)
-                .offset(x: 1.1, y: -1.5)
+                .fill(.white.opacity(0.92))
+                .frame(width: 9, height: 9)
+            Circle()
+                .fill(PetPalette.eye)
+                .frame(width: 6.5, height: 6.5)
+                .offset(x: pose.look * 1.0, y: 0.4)
+            Circle()
+                .fill(.white.opacity(0.9))
+                .frame(width: 2.2, height: 2.2)
+                .offset(x: 1.4 + pose.look * 1.0, y: -1.6)
+            // The sleepy lid.
+            Ellipse()
+                .fill(PetPalette.coatGradient)
+                .frame(width: 11, height: 7)
+                .offset(y: -5.2)
         }
+        .frame(width: 9, height: 9)
+        .clipShape(Circle())
         .scaleEffect(x: 1, y: max(0.08, 1 - pose.blink))
-        .offset(x: 7 * side + pose.look * 1.2, y: -3)
+        .offset(x: 11 * side + pose.look * 0.8, y: -2)
     }
 
-    private var muzzle: some View {
+    private func muzzle(pose: TerrierPose) -> some View {
         ZStack {
+            // The tongue lives behind the muzzle band and slides out from
+            // under it, so a tucked tongue costs nothing to hide.
+            RoundedRectangle(cornerRadius: 3.2)
+                .fill(PetPalette.tongue)
+                .frame(width: 6.5, height: 4 + pose.tongue * 7)
+                .offset(y: 6 + pose.tongue * 3.5)
+                .opacity(pose.tongue > 0.05 ? 1 : 0)
             Ellipse()
-                .fill(PetPalette.belly)
-                .frame(width: 16, height: 12)
+                .fill(PetPalette.cream)
+                .frame(width: 19, height: 13)
             Ellipse()
                 .fill(PetPalette.eye)
-                .frame(width: 5, height: 3.6)
-                .offset(y: -3)
-            // Marmot incisors. Small, but they are most of the charm.
-            RoundedRectangle(cornerRadius: 0.8)
-                .fill(.white.opacity(0.92))
-                .frame(width: 5, height: 4)
-                .offset(y: 4)
+                .frame(width: 6.5, height: 4.6)
+                .offset(y: -3.5)
+            // The underbite snaggle tooth, pointing up out of the jaw. Small,
+            // but — like the marmot incisors before it — it is most of the
+            // charm.
+            RoundedRectangle(cornerRadius: 0.9)
+                .fill(.white.opacity(0.95))
+                .frame(width: 3.6, height: 4.2)
+                .offset(x: 3.4, y: 4.4)
         }
-        .offset(y: 7)
+        .offset(y: 8)
     }
 }
 
 // MARK: - Palette
 
-/// Marmot colours. Earth tones sampled around `AlpineTheme.clay` so the
-/// animal belongs to the same Dolomites palette as everything else, rather
-/// than importing a cartoon brown from nowhere.
+/// Boston terrier colours: a tuxedo coat in soft warm blacks and creams,
+/// with the pinks kept dusty so the whole dog still sits inside the same
+/// Dolomites palette as `AlpineTheme` (the bed is straight `clay`) rather
+/// than importing cartoon primaries from nowhere.
 private enum PetPalette {
-    static let fur = Color(red: 0.70, green: 0.53, blue: 0.40)
-    static let furShade = Color(red: 0.54, green: 0.39, blue: 0.29)
-    static let belly = Color(red: 0.90, green: 0.83, blue: 0.72)
-    static let innerEar = Color(red: 0.85, green: 0.67, blue: 0.63)
+    static let coat = Color(red: 0.24, green: 0.22, blue: 0.23)
+    static let coatShade = Color(red: 0.15, green: 0.13, blue: 0.14)
+    static let cream = Color(red: 0.93, green: 0.89, blue: 0.81)
+    static let creamShade = Color(red: 0.78, green: 0.72, blue: 0.62)
+    static let innerEar = Color(red: 0.84, green: 0.62, blue: 0.60)
     static let cheek = Color(red: 0.88, green: 0.58, blue: 0.52)
-    static let eye = Color(red: 0.14, green: 0.11, blue: 0.10)
-    static let soil = Color(red: 0.44, green: 0.36, blue: 0.29)
-    static let soilShade = Color(red: 0.29, green: 0.23, blue: 0.18)
+    static let tongue = Color(red: 0.90, green: 0.55, blue: 0.57)
+    static let eye = Color(red: 0.12, green: 0.10, blue: 0.10)
+    static let cushion = Color(red: 0.72, green: 0.51, blue: 0.41)
+    static let cushionShade = Color(red: 0.52, green: 0.35, blue: 0.28)
+    static let stitch = Color(red: 0.90, green: 0.83, blue: 0.72)
 
-    static let furGradient = LinearGradient(
-        colors: [fur, furShade], startPoint: .top, endPoint: .bottom)
+    static let coatGradient = LinearGradient(
+        colors: [coat, coatShade], startPoint: .top, endPoint: .bottom)
 }
 
 extension ReviewPetPhase {

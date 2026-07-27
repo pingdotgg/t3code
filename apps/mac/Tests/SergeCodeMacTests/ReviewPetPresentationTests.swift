@@ -54,14 +54,15 @@ struct ReviewPetPresentationTests {
     }
 }
 
-@Suite("Marmot pose")
-struct MarmotPoseTests {
+@Suite("Terrier pose")
+struct TerrierPoseTests {
     /// One second of frames at the decorative cadence, over a window long
-    /// enough to cover every schedule in the pose.
-    private func frames(phase: ReviewPetPhase, seconds: Double = 30) -> [MarmotPose] {
+    /// enough to cover every schedule in the pose — including the 11s sigh
+    /// and the 8.7s blep.
+    private func frames(phase: ReviewPetPhase, seconds: Double = 30) -> [TerrierPose] {
         let step = 1.0 / 30.0
         return stride(from: 0, to: seconds, by: step).map {
-            MarmotPose(phase: phase, time: $0)
+            TerrierPose(phase: phase, time: $0)
         }
     }
 
@@ -71,6 +72,21 @@ struct MarmotPoseTests {
             for pose in frames(phase: phase) {
                 #expect(abs(pose.bob) <= 8, "\(phase) bob escaped its box at \(pose.bob)")
                 #expect(pose.squash >= 0.9 && pose.squash <= 1.1)
+            }
+        }
+    }
+
+    @Test("the new dog channels stay inside their boxes")
+    func dogChannelsAreBounded() {
+        for phase in ReviewPetPhase.allCases {
+            for pose in frames(phase: phase) {
+                // The jiggle is a scale delta on the belly alone; anything
+                // bigger than this stops reading as mass and starts reading
+                // as the render glitching.
+                #expect(abs(pose.bellyJiggle) <= 0.15, "\(phase) belly at \(pose.bellyJiggle)")
+                #expect(pose.tongue >= 0 && pose.tongue <= 1)
+                #expect(abs(pose.tailWag) <= 30, "\(phase) tail at \(pose.tailWag)")
+                #expect(abs(pose.headTilt) <= 12, "\(phase) head at \(pose.headTilt)")
             }
         }
     }
@@ -89,33 +105,50 @@ struct MarmotPoseTests {
         let closed = frames(phase: .reviewing).filter { $0.blink > 0.5 }.count
         let total = frames(phase: .reviewing).count
         // Eyes shut for a small slice of the window: enough to read as a
-        // blink, nowhere near enough to read as a strobe.
+        // drowsy blink, nowhere near enough to read as a strobe. The
+        // permanent sleepy lid is drawn in the view, not the pose, so it
+        // cannot leak into this duty cycle.
         #expect(Double(closed) / Double(total) < 0.1)
-        #expect(closed > 0, "the marmot never blinked")
+        #expect(closed > 0, "the terrier never blinked")
     }
 
-    @Test("the resting pose is completely still")
+    @Test("the celebration actually pants and wags")
+    func celebrationIsLively() {
+        let poses = frames(phase: .readyToMerge, seconds: 5)
+        // Sustained pant, not the occasional idle blep.
+        #expect(poses.allSatisfy { $0.tongue > 0.3 })
+        // And the nub hits real speed at some point in the cycle.
+        #expect(poses.contains { abs($0.tailWag) > 15 })
+    }
+
+    @Test("the resting pose is completely still, but composed")
     func restingPoseIsStill() {
         for phase in ReviewPetPhase.allCases {
-            let pose = MarmotPose.resting(phase: phase)
+            let pose = TerrierPose.resting(phase: phase)
             #expect(pose.bob == 0)
             #expect(pose.squash == 1)
             #expect(pose.blink == 0)
             #expect(pose.look == 0)
             #expect(pose.earTwitch == 0)
             #expect(pose.sparkle == 0)
+            #expect(pose.bellyJiggle == 0)
+            #expect(pose.tongue == 0)
+            #expect(pose.tailWag == 0)
+            // Composed is not the same as zeroed: the still frame keeps the
+            // head tilt so the dog looks arranged, not switched off.
+            #expect(pose.headTilt != 0)
         }
     }
 
     @Test("the pulse helper is a bounded, periodic burst")
     func pulseIsWellBehaved() {
-        #expect(MarmotPose.pulse(0, period: 2, duration: 0.5) == 0)
-        #expect(MarmotPose.pulse(0.25, period: 2, duration: 0.5) == 1)
-        #expect(MarmotPose.pulse(1.0, period: 2, duration: 0.5) == 0)
+        #expect(TerrierPose.pulse(0, period: 2, duration: 0.5) == 0)
+        #expect(TerrierPose.pulse(0.25, period: 2, duration: 0.5) == 1)
+        #expect(TerrierPose.pulse(1.0, period: 2, duration: 0.5) == 0)
         // Repeats a period later.
-        #expect(abs(MarmotPose.pulse(2.25, period: 2, duration: 0.5) - 1) < 1e-9)
+        #expect(abs(TerrierPose.pulse(2.25, period: 2, duration: 0.5) - 1) < 1e-9)
         // Degenerate inputs must not divide by zero.
-        #expect(MarmotPose.pulse(1, period: 0, duration: 0.5) == 0)
-        #expect(MarmotPose.pulse(1, period: 2, duration: 0) == 0)
+        #expect(TerrierPose.pulse(1, period: 0, duration: 0.5) == 0)
+        #expect(TerrierPose.pulse(1, period: 2, duration: 0) == 0)
     }
 }
