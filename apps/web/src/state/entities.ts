@@ -152,10 +152,35 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
   );
 }
 
+export function resolveThreadDetailRef(
+  ref: ScopedThreadRef | null,
+  options: {
+    shellExists: boolean;
+    waitForShell: boolean;
+  },
+): ScopedThreadRef | null {
+  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
+}
+
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
-export function useThread(ref: ScopedThreadRef | null): EnvironmentThread | null {
+export function useThread(
+  ref: ScopedThreadRef | null,
+  options?: {
+    /**
+     * Client-reserved draft thread ids do not exist on the server until the
+     * first send. Waiting for the shell index avoids polling the detail
+     * endpoint for an intentionally missing thread during that window.
+     */
+    waitForShell?: boolean;
+  },
+): EnvironmentThread | null {
   const shell = useThreadShell(ref);
-  const detail = useThreadDetail(ref);
+  const detail = useThreadDetail(
+    resolveThreadDetailRef(ref, {
+      shellExists: shell !== null,
+      waitForShell: options?.waitForShell === true,
+    }),
+  );
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
 }
 

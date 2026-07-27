@@ -54,6 +54,12 @@ function SettingsContentLayout() {
       if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
+
+        const activeElement = document.activeElement;
+        if (activeElement instanceof HTMLElement) {
+          activeElement.blur();
+        }
+
         navigateBackWithinApp();
       }
     };

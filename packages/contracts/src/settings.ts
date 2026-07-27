@@ -3,7 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { ProjectId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
-import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
+import { DEFAULT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProjectSettings } from "./project.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
@@ -396,6 +396,24 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const SourceControlWritingStyleMode = Schema.Literals([
+  "repo_conventions",
+  "conventional_commits",
+  "custom",
+]);
+export type SourceControlWritingStyleMode = typeof SourceControlWritingStyleMode.Type;
+
+export const SourceControlWritingStyleSettings = Schema.Struct({
+  mode: SourceControlWritingStyleMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("repo_conventions" as const)),
+  ),
+  customInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  followChangeRequestTemplates: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+});
+export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -417,9 +435,15 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         instanceId: ProviderInstanceId.make("codex"),
-        model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
+        model: DEFAULT_TEXT_GENERATION_MODEL,
       }),
     ),
+  ),
+  sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -549,6 +573,14 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  sourceControlWritingStyle: Schema.optionalKey(
+    Schema.Struct({
+      mode: Schema.optionalKey(SourceControlWritingStyleMode),
+      customInstructions: Schema.optionalKey(TrimmedString),
+      followChangeRequestTemplates: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+  sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
