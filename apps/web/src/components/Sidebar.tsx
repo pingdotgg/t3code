@@ -1838,8 +1838,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (!confirmed) return;
       }
 
-      const deletedThreadKeys = new Set(threadKeys);
-      const removedThreadKeys: string[] = [];
+      // Grown as deletions actually land, never seeded with the whole batch:
+      // orphaned-worktree detection must only discount threads that are
+      // really gone, or the first delete would treat still-alive batch mates
+      // as deleted and remove a worktree they still point at.
+      const deletedThreadKeys = new Set<string>();
       let firstError: unknown = null;
       for (const { threadKey, threadRef } of selectedThreadEntries) {
         const result = await deleteThread(threadRef, {
@@ -1851,7 +1854,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           firstError ??= squashAtomCommandFailure(result);
           continue;
         }
-        removedThreadKeys.push(threadKey);
+        deletedThreadKeys.add(threadKey);
       }
       if (firstError !== null) {
         toastManager.add(
@@ -1862,7 +1865,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           }),
         );
       }
-      removeFromSelection(removedThreadKeys);
+      removeFromSelection([...deletedThreadKeys]);
     },
     [
       appSettingsConfirmThreadArchive,
