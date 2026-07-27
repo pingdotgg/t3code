@@ -83,10 +83,15 @@ enum ModelPickerCatalog {
     }
 
     /// Recents in recency order. Models the backend no longer offers are
-    /// dropped rather than shown as dead rows.
+    /// dropped rather than shown as dead rows, and a key repeated in the
+    /// stored list only ever produces one row.
     static func recentItems(_ items: [ModelPickerItem], recents: [String]) -> [ModelPickerItem] {
         let byKey = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return recents.compactMap { byKey[$0] }
+        var seen: Set<String> = []
+        return recents.compactMap { key in
+            guard seen.insert(key).inserted else { return nil }
+            return byKey[key]
+        }
     }
 
     /// `nil` when the item does not match at all. Higher is a better match.
