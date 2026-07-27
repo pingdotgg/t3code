@@ -4,7 +4,9 @@ import type { AutoReviewJob } from "@t3tools/contracts";
 
 import {
   buildAutoReviewFooter,
+  clampAutoReviewConcurrency,
   clampAutoReviewMaxAttempts,
+  countInFlightAutoReviewFixes,
   deriveAutoReviewThreadPhase,
   isAutoReviewFixThreadBusy,
   linkOriginThread,
@@ -12,8 +14,10 @@ import {
   matchAutoReviewMention,
   nextAutoReviewAttempt,
   parseAutoReviewFooter,
+  resolveAutoReviewFixModel,
   resolveAutoReviewJobOriginThread,
   resolveAutoReviewPolicy,
+  selectClaimableAutoReviewJobs,
   shouldAutoFixOriginThread,
   shouldEnqueueAutoReviewJob,
 } from "./autoReview.ts";
@@ -494,5 +498,176 @@ describe("deriveAutoReviewThreadPhase", () => {
         threadBusy: true,
       }),
     ).toBe("readyToMerge");
+  });
+});
+
+describe("resolveAutoReviewFixModel", () => {
+  const reviewModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+  const customModel = { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" };
+
+  it("leaves the thread on its own model in thread mode", () => {
+    expect(
+      resolveAutoReviewFixModel({
+        fixModelMode: "thread",
+        modelSelection: reviewModel,
+        fixModelSelection: customModel,
+      }),
+    ).toBeNull();
+  });
+
+  it("reuses the review model in review mode", () => {
+    expect(
+      resolveAutoReviewFixModel({
+        fixModelMode: "review",
+        modelSelection: reviewModel,
+        fixModelSelection: customModel,
+      }),
+    ).toEqual(reviewModel);
+  });
+
+  it("uses the explicit selection in custom mode", () => {
+    expect(
+      resolveAutoReviewFixModel({
+        fixModelMode: "custom",
+        modelSelection: reviewModel,
+        fixModelSelection: customModel,
+      }),
+    ).toEqual(customModel);
+  });
+
+  it("changes nothing when custom mode has no stored selection", () => {
+    expect(
+      resolveAutoReviewFixModel({
+        fixModelMode: "custom",
+        modelSelection: reviewModel,
+        fixModelSelection: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveAutoReviewPolicy fix model", () => {
+  const customModel = { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" };
+
+  it("resolves the fix model from the global settings", () => {
+    const policy = resolveAutoReviewPolicy(
+      {
+        ...DEFAULT_AUTO_REVIEW_SETTINGS,
+        enabled: true,
+        fixModelMode: "custom",
+        fixModelSelection: customModel,
+      },
+      "proj_1",
+    );
+    expect(policy.fixModelSelection).toEqual(customModel);
+  });
+
+  it("lets a project override the fix model", () => {
+    const policy = resolveAutoReviewPolicy(
+      {
+        ...DEFAULT_AUTO_REVIEW_SETTINGS,
+        enabled: true,
+        fixModelMode: "review",
+        projects: {
+          [ProjectId.make("proj_1")]: { fixModelMode: "custom", fixModelSelection: customModel },
+        },
+      },
+      "proj_1",
+    );
+    expect(policy.fixModelSelection).toEqual(customModel);
+  });
+
+  it("clamps both concurrency settings", () => {
+    const policy = resolveAutoReviewPolicy(
+      {
+        ...DEFAULT_AUTO_REVIEW_SETTINGS,
+        enabled: true,
+        concurrency: 999,
+        fixConcurrency: 0,
+      },
+      "proj_1",
+    );
+    expect(policy.concurrency).toBe(8);
+    expect(policy.fixConcurrency).toBe(1);
+  });
+});
+
+describe("clampAutoReviewConcurrency", () => {
+  it("clamps to 1..8 and falls back on non-finite input", () => {
+    expect(clampAutoReviewConcurrency(0)).toBe(1);
+    expect(clampAutoReviewConcurrency(4)).toBe(4);
+    expect(clampAutoReviewConcurrency(100)).toBe(8);
+    expect(clampAutoReviewConcurrency(Number.NaN)).toBe(1);
+    expect(clampAutoReviewConcurrency(undefined, 3)).toBe(3);
+  });
+});
+
+describe("selectClaimableAutoReviewJobs", () => {
+  const queued = (id: string, prNumber: number, projectId = "proj_1") =>
+    ({ id, projectId, prNumber, status: "queued" }) as const;
+
+  it("runs jobs for different PRs in parallel up to the limit", () => {
+    const picked = selectClaimableAutoReviewJobs({
+      jobs: [queued("a", 1), queued("b", 2), queued("c", 3)],
+      limit: 2,
+    });
+    expect(picked.map((job) => job.id)).toEqual(["a", "b"]);
+  });
+
+  it("never claims two jobs for the same PR in one batch", () => {
+    const picked = selectClaimableAutoReviewJobs({
+      jobs: [queued("a", 1), queued("b", 1), queued("c", 2)],
+      limit: 3,
+    });
+    expect(picked.map((job) => job.id)).toEqual(["a", "c"]);
+  });
+
+  it("skips a PR that already has a running job", () => {
+    const picked = selectClaimableAutoReviewJobs({
+      jobs: [
+        { id: "running", projectId: "proj_1", prNumber: 1, status: "running" } as const,
+        queued("a", 1),
+        queued("b", 2),
+      ],
+      limit: 4,
+    });
+    expect(picked.map((job) => job.id)).toEqual(["b"]);
+  });
+
+  it("treats the same PR number in different projects as distinct", () => {
+    const picked = selectClaimableAutoReviewJobs({
+      jobs: [queued("a", 1, "proj_1"), queued("b", 1, "proj_2")],
+      limit: 4,
+    });
+    expect(picked.map((job) => job.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("countInFlightAutoReviewFixes", () => {
+  it("counts only dispatched fixes whose thread is still busy", () => {
+    expect(
+      countInFlightAutoReviewFixes({
+        jobs: [
+          { autoFixEnqueued: true, pendingFix: null, originThreadId: "t1" },
+          // Settled thread: the fix finished, the slot is free.
+          { autoFixEnqueued: true, pendingFix: null, originThreadId: "t2" },
+          // Parked, never started.
+          { autoFixEnqueued: false, pendingFix: { threadId: "t3" }, originThreadId: "t3" },
+        ],
+        busyThreadIds: new Set(["t1"]),
+      }),
+    ).toBe(1);
+  });
+
+  it("counts a thread once even with several dispatched jobs on it", () => {
+    expect(
+      countInFlightAutoReviewFixes({
+        jobs: [
+          { autoFixEnqueued: true, pendingFix: null, originThreadId: "t1" },
+          { autoFixEnqueued: true, pendingFix: null, originThreadId: "t1" },
+        ],
+        busyThreadIds: new Set(["t1"]),
+      }),
+    ).toBe(1);
   });
 });

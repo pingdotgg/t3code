@@ -180,8 +180,8 @@ struct ChatTimelineRowView: View, Equatable {
                 )
             }
         case .approval(let request):
-            ApprovalCard(request: request, isActive: isActiveDecisionCard(request.id)) { approve in
-                Task { await model.respond(to: request, approve: approve) }
+            ApprovalCard(request: request, isActive: isActiveDecisionCard(request.id)) { decision in
+                Task { await model.respond(to: request, decision: decision) }
             }
         case .userInput(let request):
             UserInputCard(request: request, isActive: isActiveDecisionCard(request.id)) { answers in
@@ -695,6 +695,10 @@ private struct ToolGroupRow: View {
                     Text(headline)
                         .font(SurgeTypography.toolTitle)
                         .foregroundStyle(.secondary)
+                        // Aisle labels can stretch the headline; truncate
+                        // rather than wrap so the collapsed row stays one
+                        // line tall.
+                        .lineLimit(1)
                         // The count rolling rather than swapping is what ties
                         // the flight to a number: the group took in the row
                         // that just vanished below it. Attached to the text
@@ -808,14 +812,7 @@ private struct ToolGroupRow: View {
     }
 
     private var headline: String {
-        var parts = ["Ran \(summary.toolCount) tool\(summary.toolCount == 1 ? "" : "s")"]
-        if summary.editedFileCount > 0 {
-            parts.append("edited \(summary.editedFileCount) file\(summary.editedFileCount == 1 ? "" : "s")")
-        }
-        if summary.failedCount > 0 {
-            parts.append("\(summary.failedCount) failed")
-        }
-        return parts.joined(separator: " · ")
+        summary.headline
     }
 
     @ViewBuilder

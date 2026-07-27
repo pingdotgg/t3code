@@ -59,10 +59,23 @@ add_rpath "$DEVELOPER_DIR_RESOLVED/Library/Developer/usr/lib"
 add_rpath "$DEVELOPER_DIR_RESOLVED/Platforms/MacOSX.platform/Developer/Library/Frameworks"
 
 # (3) Frameworks vendored into the build products directory, notably Sparkle.
+#
+# This one is NOT gated on the directory existing. `--show-bin-path` reports
+# where products *will* be written, and in a fresh worktree that directory does
+# not exist yet — so gating it meant the very first `pnpm run test:mac` in every
+# new worktree linked without the Sparkle rpath and died at load time with a
+# 20-line dyld "no such file" dump, while the identical second run passed.
+# Every agent that hit that spent the gap debugging a toolchain layout problem
+# that had already fixed itself. An rpath to a directory that does not exist yet
+# is harmless; it is resolved when the test binary runs, not when it links.
 BIN_PATH="$(swift build --package-path "$MAC_DIR" --show-bin-path 2>/dev/null | tail -1)"
 if [[ -n "$BIN_PATH" ]]; then
-  add_rpath "$BIN_PATH"
+  EXTRA_ARGS+=(-Xlinker -rpath -Xlinker "$BIN_PATH")
 fi
+# Belt and braces for the same framework: the test bundle sits three directories
+# below Products/Debug, so this resolves even if `--show-bin-path` reports
+# nothing (it fails on a package that has never resolved its dependencies).
+EXTRA_ARGS+=(-Xlinker -rpath -Xlinker '@loader_path/../../..')
 
 # The suites share process-wide static caches (TimelineDisplayCache,
 # StreamingMarkdownCache) and are all @MainActor, so parallel execution

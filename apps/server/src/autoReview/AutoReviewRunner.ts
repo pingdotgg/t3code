@@ -1,9 +1,15 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { AutoReviewFindings, ModelSelection, ThreadId } from "@t3tools/contracts";
+import type {
+  AutoReviewFindings,
+  AutoReviewJob,
+  ModelSelection,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   buildOriginFixPrompt,
+  clampAutoReviewConcurrency,
   linkOriginThread,
   parseAutoReviewFooter,
   shouldAutoFixOriginThread,
@@ -27,10 +33,16 @@ export interface AutoReviewOriginContext {
   readonly prTitle?: string;
   readonly prBody?: string;
   readonly candidates: ReadonlyArray<ThreadLinkCandidate>;
+  /**
+   * Absent when the project's policy disables auto-fix — the review is still
+   * posted, nothing is dispatched to the origin thread.
+   */
   readonly queueOrDispatchFix?: (input: {
     readonly jobId: string;
     readonly threadId: string;
     readonly prompt: string;
+    /** null keeps the origin thread on its own model. */
+    readonly modelSelection: ModelSelection | null;
   }) => Effect.Effect<"dispatched" | "queued">;
   readonly existingReviewBodies?: ReadonlyArray<string>;
 }
@@ -233,7 +245,12 @@ export const make = Effect.gen(function* () {
           findings,
         });
         const outcome = yield* context
-          .queueOrDispatchFix({ jobId: job.id, threadId: originThreadId, prompt })
+          .queueOrDispatchFix({
+            jobId: job.id,
+            threadId: originThreadId,
+            prompt,
+            modelSelection: job.fixModelSelection,
+          })
           .pipe(Effect.orElseSucceed(() => "queued" as const));
         autoFixEnqueued = outcome === "dispatched";
       }
@@ -261,39 +278,50 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /** Resolve context and run one already-claimed job. Never fails. */
+  const runClaimed = (
+    job: AutoReviewJob,
+    contextForJob: Parameters<AutoReviewRunner["Service"]["drain"]>[0],
+  ) =>
+    Effect.gen(function* () {
+      const context = yield* contextForJob({
+        projectId: String(job.projectId),
+        prNumber: job.prNumber,
+        headSha: job.headSha,
+      }).pipe(
+        Effect.orElseSucceed(
+          () =>
+            ({
+              cwd: "",
+              candidates: [],
+            }) satisfies AutoReviewOriginContext,
+        ),
+      );
+      if (!context.cwd) {
+        yield* store.update(job.id, {
+          status: "failed",
+          error: "Missing project workspace for auto-review job.",
+        });
+        return false;
+      }
+      yield* runJob(job.id, context);
+      return true;
+    });
+
   const drain: AutoReviewRunner["Service"]["drain"] = (contextForJob, concurrency = 1) =>
     Effect.gen(function* () {
-      let completed = 0;
-      const limit = Math.max(1, concurrency);
-      for (let i = 0; i < limit; i += 1) {
-        const job = yield* store.claimNext();
-        if (!job) {
-          break;
-        }
-        const context = yield* contextForJob({
-          projectId: String(job.projectId),
-          prNumber: job.prNumber,
-          headSha: job.headSha,
-        }).pipe(
-          Effect.orElseSucceed(
-            () =>
-              ({
-                cwd: "",
-                candidates: [],
-              }) satisfies AutoReviewOriginContext,
-          ),
-        );
-        if (!context.cwd) {
-          yield* store.update(job.id, {
-            status: "failed",
-            error: "Missing project workspace for auto-review job.",
-          });
-          continue;
-        }
-        yield* runJob(job.id, context);
-        completed += 1;
+      const limit = clampAutoReviewConcurrency(concurrency);
+      // One batched claim rather than a claim-per-slot loop: the batch is what
+      // enforces "never two jobs on the same PR at once", and claiming the
+      // whole set up front is what lets the reviews actually overlap.
+      const claimed = yield* store.claimNextBatch(limit);
+      if (claimed.length === 0) {
+        return 0;
       }
-      return completed;
+      const outcomes = yield* Effect.forEach(claimed, (job) => runClaimed(job, contextForJob), {
+        concurrency: limit,
+      });
+      return outcomes.filter(Boolean).length;
     });
 
   return AutoReviewRunner.of({ runJob, drain });

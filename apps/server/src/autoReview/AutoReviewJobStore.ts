@@ -14,6 +14,8 @@ import type {
 import {
   clampAutoReviewMaxAttempts,
   nextAutoReviewAttempt,
+  occupiedAutoReviewFixThreads,
+  selectClaimableAutoReviewJobs,
   shouldEnqueueAutoReviewJob,
 } from "@t3tools/shared/autoReview";
 
@@ -26,6 +28,11 @@ export interface EnqueueAutoReviewJobInput {
   readonly trigger: AutoReviewTrigger;
   readonly commentId?: string | null;
   readonly modelSelection: ModelSelection;
+  /**
+   * Model the auto-fix turn must run under, or null/omitted to leave the
+   * origin thread on its own model.
+   */
+  readonly fixModelSelection?: ModelSelection | null | undefined;
   /**
    * Total attempts allowed for this (project, PR, headSha) chain before the
    * store stops handing out retries. Defaults to
@@ -48,6 +55,11 @@ export class AutoReviewJobStore extends Context.Service<
       input: EnqueueAutoReviewJobInput,
     ) => Effect.Effect<{ readonly job: AutoReviewJob; readonly created: boolean }>;
     readonly claimNext: () => Effect.Effect<AutoReviewJob | null>;
+    /**
+     * Claim up to `limit` queued jobs to run in parallel, never two for the
+     * same pull request. Returned in FIFO order.
+     */
+    readonly claimNextBatch: (limit: number) => Effect.Effect<ReadonlyArray<AutoReviewJob>>;
     readonly update: (
       id: AutoReviewJobId | string,
       patch: Partial<
@@ -59,6 +71,7 @@ export class AutoReviewJobStore extends Context.Service<
           | "githubReviewId"
           | "originThreadId"
           | "autoFixEnqueued"
+          | "autoFixDispatchedAt"
           | "pendingFix"
           | "decision"
           | "actionableFindings"
@@ -67,6 +80,27 @@ export class AutoReviewJobStore extends Context.Service<
         >
       >,
     ) => Effect.Effect<AutoReviewJob | null>;
+    /**
+     * Atomically take a fix-concurrency slot for `jobId`'s origin thread.
+     *
+     * Check-then-act across separate `list`/`update` calls is not safe here:
+     * reviews run in parallel, so several finishing at once would each read a
+     * budget that none of them had spent yet and all dispatch. This decides
+     * and records the reservation in one `Ref` transition, so exactly `limit`
+     * threads can hold a slot however many callers race.
+     *
+     * Returns false when the budget is full, when the thread already holds a
+     * slot, or when the job has no origin thread — the caller parks the fix.
+     */
+    readonly reserveFixSlot: (input: {
+      readonly jobId: AutoReviewJobId | string;
+      readonly threadId: string;
+      readonly limit: number;
+      readonly busyThreadIds: ReadonlySet<string>;
+      readonly now: string;
+    }) => Effect.Effect<boolean>;
+    /** Give back a slot whose dispatch failed. */
+    readonly releaseFixSlot: (id: AutoReviewJobId | string) => Effect.Effect<void>;
     readonly get: (id: AutoReviewJobId | string) => Effect.Effect<AutoReviewJob | null>;
     readonly list: (input?: {
       readonly projectId?: string;
@@ -226,11 +260,13 @@ export const makeInMemory = Effect.gen(function* () {
         status: "queued",
         attempt,
         modelSelection: input.modelSelection,
+        fixModelSelection: input.fixModelSelection ?? null,
         findingsCount: null,
         reviewUrl: null,
         githubReviewId: null,
         originThreadId: null,
         autoFixEnqueued: false,
+        autoFixDispatchedAt: null,
         pendingFix: null,
         decision: null,
         actionableFindings: false,
@@ -244,23 +280,76 @@ export const makeInMemory = Effect.gen(function* () {
       return { job, created: true };
     });
 
-  const claimNext: AutoReviewJobStore["Service"]["claimNext"] = () =>
+  const claimNextBatch: AutoReviewJobStore["Service"]["claimNextBatch"] = (limit) =>
     Effect.gen(function* () {
-      const jobs = yield* Ref.get(jobsRef);
-      const next = jobs.find((job) => job.status === "queued");
-      if (!next) {
-        return null;
-      }
-      const updated: AutoReviewJob = {
-        ...next,
-        status: "running",
-        updatedAt: yield* nowIso,
-      };
-      yield* Ref.update(jobsRef, (current) =>
-        current.map((job) => (job.id === next.id ? updated : job)),
-      );
-      return updated;
+      // Stamped before the transition: a timestamp is not part of the
+      // invariant, and reading it inside would put an effect in the middle of
+      // the read-modify-write.
+      const stamp = yield* nowIso;
+      return yield* Ref.modify(jobsRef, (jobs) => {
+        // Selection and transition share one snapshot, so the "one in-flight
+        // review per PR" guarantee cannot be split by a concurrent claimer
+        // selecting from state this call is about to overwrite.
+        const selected = selectClaimableAutoReviewJobs({ jobs, limit });
+        if (selected.length === 0) {
+          return [[] as ReadonlyArray<AutoReviewJob>, jobs] as const;
+        }
+        const claimed = selected.map(
+          (job): AutoReviewJob => ({ ...job, status: "running", updatedAt: stamp }),
+        );
+        const byId = new Map(claimed.map((job) => [job.id, job]));
+        return [
+          claimed as ReadonlyArray<AutoReviewJob>,
+          jobs.map((job) => byId.get(job.id) ?? job),
+        ] as const;
+      });
     });
+
+  const claimNext: AutoReviewJobStore["Service"]["claimNext"] = () =>
+    claimNextBatch(1).pipe(Effect.map((jobs) => jobs[0] ?? null));
+
+  const reserveFixSlot: AutoReviewJobStore["Service"]["reserveFixSlot"] = (input) =>
+    // One Ref transition: the decision and the record of it cannot be
+    // interleaved by another fiber's reservation.
+    Ref.modify(jobsRef, (jobs) => {
+      const job = jobs.find((candidate) => candidate.id === input.jobId);
+      if (!job) {
+        return [false, jobs] as const;
+      }
+      const threadId = input.threadId;
+      const occupied = occupiedAutoReviewFixThreads({
+        jobs,
+        busyThreadIds: input.busyThreadIds,
+        now: input.now,
+      });
+      // A thread already running a fix cannot take a second one, whatever the
+      // budget: it runs one turn at a time.
+      if (occupied.has(threadId)) {
+        return [false, jobs] as const;
+      }
+      if (occupied.size >= Math.max(1, Math.trunc(input.limit))) {
+        return [false, jobs] as const;
+      }
+      const reserved: AutoReviewJob = {
+        ...job,
+        autoFixEnqueued: true,
+        autoFixDispatchedAt: input.now,
+        originThreadId: (job.originThreadId ?? threadId) as AutoReviewJob["originThreadId"],
+        pendingFix: null,
+        updatedAt: input.now,
+      };
+      return [
+        true,
+        jobs.map((candidate) => (candidate.id === job.id ? reserved : candidate)),
+      ] as const;
+    });
+
+  const releaseFixSlot: AutoReviewJobStore["Service"]["releaseFixSlot"] = (id) =>
+    Ref.update(jobsRef, (jobs) =>
+      jobs.map((job) =>
+        job.id === id ? { ...job, autoFixEnqueued: false, autoFixDispatchedAt: null } : job,
+      ),
+    ).pipe(Effect.asVoid);
 
   const update: AutoReviewJobStore["Service"]["update"] = (id, patch) =>
     Effect.gen(function* () {
@@ -328,6 +417,9 @@ export const makeInMemory = Effect.gen(function* () {
   return AutoReviewJobStore.of({
     enqueue,
     claimNext,
+    claimNextBatch,
+    reserveFixSlot,
+    releaseFixSlot,
     update,
     get,
     list,

@@ -249,7 +249,18 @@ struct ChatTimelineScrollView: View {
                 // hidden and the leading-edge rail jumps between turns.
                 .scrollIndicators(.hidden)
                 .overlay(alignment: .leading) {
-                    ChatTurnRail(turns: ChatTurnRailModel.turns(from: displayItems)) { rowID in
+                    // Tape memo shares the display cache's key: structural
+                    // timeline edits recompute it, streaming refreshes don't.
+                    let tape = RunTapeCache.tape(
+                        timeline: items,
+                        threadID: threadKey,
+                        structureVersion: model.timelineStructureVersion(threadID: threadID))
+                    ChatTurnRail(
+                        turns: ChatTurnRailModel.turns(from: displayItems),
+                        tape: Dictionary(
+                            uniqueKeysWithValues: tape.map { ($0.id, $0) }),
+                        threadIsSettled: threadIsSettled
+                    ) { rowID in
                         // Jumping to a turn is explicit navigation away from
                         // the tail: unpin first, or the next content growth
                         // (streaming delta) would re-anchor to the bottom and

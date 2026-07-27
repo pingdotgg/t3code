@@ -379,8 +379,16 @@ public struct AutoReviewSettings: Decodable, Sendable {
     /// `Schema.DurationFromMillis` — milliseconds.
     public var pollIntervalMs: Double
     public var autoFixOriginThread: Bool
+    /// `"thread"` (keep the origin thread's model), `"review"` (reuse the
+    /// reviewer's), or `"custom"` (use `fixModelSelection`).
+    public var fixModelMode: String
+    /// Only meaningful when `fixModelMode` is `"custom"`.
+    public var fixModelSelection: ModelSelection?
     public var maxDiffBytes: Int
+    /// Reviews running at once, across distinct PRs (1–8).
     public var concurrency: Int
+    /// Auto-fix turns running at once, across distinct threads (1–8).
+    public var fixConcurrency: Int
     /// Max review attempts per PR head before the server stops retrying (1–10).
     public var maxAttempts: Int
     /// Per-project overrides — opaque for v1; full UI can refine later.
@@ -393,8 +401,11 @@ public struct AutoReviewSettings: Decodable, Sendable {
         mentionHandle: "surgecode",
         pollIntervalMs: 60_000,
         autoFixOriginThread: true,
+        fixModelMode: "thread",
+        fixModelSelection: nil,
         maxDiffBytes: 400_000,
         concurrency: 1,
+        fixConcurrency: 1,
         maxAttempts: 2,
         projects: .object([:])
     )
@@ -406,8 +417,11 @@ public struct AutoReviewSettings: Decodable, Sendable {
         mentionHandle: String,
         pollIntervalMs: Double,
         autoFixOriginThread: Bool,
+        fixModelMode: String = "thread",
+        fixModelSelection: ModelSelection? = nil,
         maxDiffBytes: Int,
         concurrency: Int,
+        fixConcurrency: Int = 1,
         maxAttempts: Int,
         projects: JSONValue
     ) {
@@ -417,15 +431,19 @@ public struct AutoReviewSettings: Decodable, Sendable {
         self.mentionHandle = mentionHandle
         self.pollIntervalMs = pollIntervalMs
         self.autoFixOriginThread = autoFixOriginThread
+        self.fixModelMode = fixModelMode
+        self.fixModelSelection = fixModelSelection
         self.maxDiffBytes = maxDiffBytes
         self.concurrency = concurrency
+        self.fixConcurrency = fixConcurrency
         self.maxAttempts = maxAttempts
         self.projects = projects
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, mode, modelSelection, mentionHandle, pollInterval, autoFixOriginThread,
-            maxDiffBytes, concurrency, maxAttempts, projects
+            fixModelMode, fixModelSelection, maxDiffBytes, concurrency, fixConcurrency,
+            maxAttempts, projects
     }
 
     public init(from decoder: Decoder) throws {
@@ -437,8 +455,11 @@ public struct AutoReviewSettings: Decodable, Sendable {
         mentionHandle = try c.decode(String.self, forKey: .mentionHandle, default: "surgecode")
         pollIntervalMs = try c.decode(Double.self, forKey: .pollInterval, default: 60_000)
         autoFixOriginThread = try c.decode(Bool.self, forKey: .autoFixOriginThread, default: true)
+        fixModelMode = try c.decode(String.self, forKey: .fixModelMode, default: "thread")
+        fixModelSelection = try c.decodeIfPresent(ModelSelection.self, forKey: .fixModelSelection)
         maxDiffBytes = try c.decode(Int.self, forKey: .maxDiffBytes, default: 400_000)
         concurrency = try c.decode(Int.self, forKey: .concurrency, default: 1)
+        fixConcurrency = try c.decode(Int.self, forKey: .fixConcurrency, default: 1)
         maxAttempts = try c.decode(Int.self, forKey: .maxAttempts, default: 2)
         projects = try c.decode(JSONValue.self, forKey: .projects, default: .object([:]))
     }

@@ -227,6 +227,12 @@ public final class AppModel {
     /// matching `scopedThreadKey(_:)`.
     @ObservationIgnored private var projectPathByThreadKey: [String: String] = [:]
 
+    /// Owns the model picker's most-recently-used list, updated here rather
+    /// than at the tap so a switch the backend rejected never enters it.
+    /// Internal rather than injected through `init`, which is public and
+    /// cannot take an internal type; tests point it at scratch defaults.
+    @ObservationIgnored var modelPickerPreferences: ModelPickerPreferences = .shared
+
     public init(
         backend: any BackendService,
         deviceID: DeviceID = .local,
@@ -834,6 +840,7 @@ public final class AppModel {
             interactionThreadByID = interactionThreadByID.filter { $0.value != id }
             pruneTimelineTasks.removeValue(forKey: id)?.cancel()
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
+            RunTapeCache.evict(threadID: scopedThreadKey(id))
             StreamingMarkdownCache.evict(threadID: scopedThreadKey(id))
             StreamingRevealStore.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
@@ -1674,9 +1681,9 @@ public final class AppModel {
         }
     }
 
-    public func respond(to approval: ApprovalRequest, approve: Bool) async {
+    public func respond(to approval: ApprovalRequest, decision: ApprovalDecision) async {
         do {
-            try await backend.respondToApproval(id: approval.id, approve: approve)
+            try await backend.respondToApproval(id: approval.id, decision: decision)
         } catch {
             lastError = String(describing: error)
         }
@@ -1710,10 +1717,19 @@ public final class AppModel {
 
     public func setExecutorModel(instanceID: String?, modelID: String?, maxSubAgents: Int? = nil) async {
         guard let threadID = selectedThreadID else { return }
+        // Resolved before the await: a provider reconnect or catalog refresh
+        // landing mid-flight would otherwise drop a switch the backend
+        // accepted out of the recents list. Nil ids are a clear, not a
+        // selection, so they record nothing.
+        let requested = ModelPickerCatalog.selectedOption(
+            in: models, instanceID: instanceID, modelID: modelID)
         do {
             try await backend.setExecutorModel(
                 threadID: threadID, instanceID: instanceID, modelID: modelID,
                 maxSubAgents: maxSubAgents)
+            if let requested {
+                modelPickerPreferences.recordUsage(for: requested)
+            }
         } catch {
             lastError = String(describing: error)
         }
@@ -1723,6 +1739,9 @@ public final class AppModel {
         guard let threadID = selectedThreadID else { return }
         do {
             try await backend.setModel(threadID: threadID, model: model)
+            // Recorded only once the backend accepted the switch: a failed or
+            // rejected change must not promote the model in the picker.
+            modelPickerPreferences.recordUsage(for: model)
         } catch {
             lastError = String(describing: error)
         }
@@ -1766,6 +1785,7 @@ public final class AppModel {
             if let model {
                 usageLimitActions[notice.id] = .switching(modelName: model.displayName)
                 try await backend.setModel(threadID: notice.threadID, model: model)
+                modelPickerPreferences.recordUsage(for: model)
             } else {
                 usageLimitActions[notice.id] = .resuming
             }

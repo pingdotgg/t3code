@@ -12,18 +12,22 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import {
   CommandId,
+  DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
   ThreadId,
+  type ModelSelection,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadAutoReviewPhase,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import {
+  clampAutoReviewConcurrency,
   deriveAutoReviewThreadPhase,
   isAutoReviewFixThreadBusy,
   resolveAutoReviewJobOriginThread,
+  resolveAutoReviewPolicy,
   type ThreadLinkCandidate,
 } from "@t3tools/shared/autoReview";
 
@@ -44,7 +48,11 @@ const AUTO_REVIEW_JOB_LIST_LIMIT = 500;
  * accepted, false when it failed (already swallowed) — callers park the fix
  * as pendingFix instead of losing it.
  */
-type FixDispatch = (threadId: string, prompt: string) => Effect.Effect<boolean>;
+type FixDispatch = (
+  threadId: string,
+  prompt: string,
+  modelSelection: ModelSelection | null,
+) => Effect.Effect<boolean>;
 
 const busyInputForThread = (thread: OrchestrationThreadShell, now: string) => ({
   sessionStatus: thread.session?.status ?? null,
@@ -56,6 +64,14 @@ const busyInputForThread = (thread: OrchestrationThreadShell, now: string) => ({
   now,
 });
 
+/** Ids of threads currently mid-turn, the unit fix concurrency is counted in. */
+const busyThreadIds = (shell: OrchestrationShellSnapshot, now: string): ReadonlySet<string> =>
+  new Set(
+    shell.threads
+      .filter((thread) => isAutoReviewFixThreadBusy(busyInputForThread(thread, now)))
+      .map((thread) => String(thread.id)),
+  );
+
 /**
  * Auto-review never steers/injects into a running turn: when the origin
  * thread is busy the fix prompt is parked on the job as `pendingFix` for
@@ -66,37 +82,59 @@ export const makeQueueOrDispatchFix = (deps: {
   readonly shell: OrchestrationShellSnapshot;
   readonly store: AutoReviewJobStore.AutoReviewJobStore["Service"];
   readonly dispatchFix: FixDispatch;
+  /** Max concurrent auto-fix turns; parked when the budget is exhausted. */
+  readonly fixConcurrency: number;
 }) => {
   return (input: {
     readonly jobId: string;
     readonly threadId: string;
     readonly prompt: string;
+    readonly modelSelection: ModelSelection | null;
   }): Effect.Effect<"dispatched" | "queued"> =>
     Effect.gen(function* () {
-      const thread = deps.shell.threads.find((t) => String(t.id) === input.threadId);
       const now = DateTime.formatIso(yield* DateTime.now);
-      if (thread && isAutoReviewFixThreadBusy(busyInputForThread(thread, now))) {
-        yield* deps.store.update(input.jobId, {
+      const park = deps.store
+        .update(input.jobId, {
           pendingFix: {
             threadId: ThreadId.make(input.threadId),
             prompt: input.prompt,
+            modelSelection: input.modelSelection,
             queuedAt: now,
           },
-        });
-        return "queued" as const;
+        })
+        .pipe(Effect.as("queued" as const));
+
+      const thread = deps.shell.threads.find((t) => String(t.id) === input.threadId);
+      if (thread && isAutoReviewFixThreadBusy(busyInputForThread(thread, now))) {
+        return yield* park;
       }
-      const dispatched = yield* deps.dispatchFix(input.threadId, input.prompt);
+      // Reviews run in parallel, so several can land wanting a fix at once.
+      // The budget is taken atomically rather than read-then-spent: a plain
+      // check here would let every concurrent review see the same empty
+      // budget and dispatch. Overflow parks for `drainPendingFixes`.
+      const reserved = yield* deps.store.reserveFixSlot({
+        jobId: input.jobId,
+        threadId: input.threadId,
+        limit: deps.fixConcurrency,
+        busyThreadIds: busyThreadIds(deps.shell, now),
+        now,
+      });
+      if (!reserved) {
+        return yield* park;
+      }
+
+      const dispatched = yield* deps.dispatchFix(
+        input.threadId,
+        input.prompt,
+        input.modelSelection,
+      );
       if (dispatched) {
         return "dispatched" as const;
       }
-      yield* deps.store.update(input.jobId, {
-        pendingFix: {
-          threadId: ThreadId.make(input.threadId),
-          prompt: input.prompt,
-          queuedAt: now,
-        },
-      });
-      return "queued" as const;
+      // The slot was taken but nothing is running under it — hand it back
+      // before parking, or the budget leaks until the grace window expires.
+      yield* deps.store.releaseFixSlot(input.jobId);
+      return yield* park;
     }).pipe(Effect.orElseSucceed(() => "queued" as const));
 };
 
@@ -109,6 +147,8 @@ export const makeDrainPendingFixes = (deps: {
   readonly getShell: Effect.Effect<OrchestrationShellSnapshot | null>;
   readonly store: AutoReviewJobStore.AutoReviewJobStore["Service"];
   readonly dispatchFix: FixDispatch;
+  /** Max concurrent auto-fix turns, re-read each tick so the slider is live. */
+  readonly getFixConcurrency: Effect.Effect<number>;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
     const shell = yield* deps.getShell;
@@ -117,6 +157,8 @@ export const makeDrainPendingFixes = (deps: {
     }
     const jobs = yield* deps.store.list({ limit: AUTO_REVIEW_JOB_LIST_LIMIT });
     const now = DateTime.formatIso(yield* DateTime.now);
+    const fixConcurrency = Math.max(1, yield* deps.getFixConcurrency);
+    const busy = busyThreadIds(shell, now);
     for (const job of jobs) {
       const pendingFix = job.pendingFix;
       if (!pendingFix) {
@@ -139,12 +181,34 @@ export const makeDrainPendingFixes = (deps: {
         yield* deps.store.update(job.id, { pendingFix: null });
         continue;
       }
+      const threadId = String(pendingFix.threadId);
       if (isAutoReviewFixThreadBusy(busyInputForThread(thread, now))) {
         continue;
       }
-      const dispatched = yield* deps.dispatchFix(String(pendingFix.threadId), pendingFix.prompt);
-      if (dispatched) {
-        yield* deps.store.update(job.id, { pendingFix: null, autoFixEnqueued: true });
+      // Same atomic reservation the review path uses, so both share one
+      // budget. It also subsumes the per-pass bookkeeping this loop used to
+      // do by hand: a thread reserved earlier in the pass is already
+      // occupied, so a second fix for it cannot take a slot.
+      const reserved = yield* deps.store.reserveFixSlot({
+        jobId: job.id,
+        threadId,
+        limit: fixConcurrency,
+        busyThreadIds: busy,
+        now,
+      });
+      if (!reserved) {
+        continue;
+      }
+      const dispatched = yield* deps.dispatchFix(
+        threadId,
+        pendingFix.prompt,
+        pendingFix.modelSelection,
+      );
+      if (!dispatched) {
+        // Restore the parked fix: `reserveFixSlot` cleared it when it took
+        // the slot, and nothing is running to consume it.
+        yield* deps.store.releaseFixSlot(job.id);
+        yield* deps.store.update(job.id, { pendingFix });
       }
     }
   }).pipe(
@@ -224,7 +288,7 @@ export const layer = Layer.effectDiscard(
 
     const getShell = snapshots.getShellSnapshot().pipe(Effect.orElseSucceed(() => null));
 
-    const dispatchFix: FixDispatch = (threadId, prompt) =>
+    const dispatchFix: FixDispatch = (threadId, prompt, modelSelection) =>
       Effect.gen(function* () {
         const commandUuid = yield* crypto.randomUUIDv4;
         const messageUuid = yield* crypto.randomUUIDv4;
@@ -240,6 +304,10 @@ export const layer = Layer.effectDiscard(
               text: prompt,
               attachments: [],
             },
+            // Omitted rather than nulled: the command treats an absent
+            // selection as "keep the thread's model", which is the default
+            // "the thread that did the work also fixes it" behaviour.
+            ...(modelSelection ? { modelSelection } : {}),
             runtimeMode: DEFAULT_RUNTIME_MODE,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
             createdAt,
@@ -292,6 +360,12 @@ export const layer = Layer.effectDiscard(
             return { cwd: "", candidates: [] };
           }
           const project = shell.projects.find((p) => String(p.id) === job.projectId);
+          // Re-resolved per job so a settings edit takes effect on the next
+          // review rather than at the next server restart.
+          const policy = yield* settings.getSettings.pipe(
+            Effect.map((current) => resolveAutoReviewPolicy(current.autoReview, job.projectId)),
+            Effect.orElseSucceed(() => null),
+          );
           return {
             cwd: project?.workspaceRoot ?? "",
             candidates: shell.threads
@@ -308,10 +382,34 @@ export const layer = Layer.effectDiscard(
                 prState: null as "open" | "closed" | "merged" | null,
                 branch: thread.branch,
               })),
-            queueOrDispatchFix: makeQueueOrDispatchFix({ shell, store, dispatchFix }),
+            // Omitted when the project opted out of auto-fix: the review is
+            // still posted, but nothing is dispatched to the origin thread.
+            ...(policy?.autoFixOriginThread === false
+              ? {}
+              : {
+                  queueOrDispatchFix: makeQueueOrDispatchFix({
+                    shell,
+                    store,
+                    dispatchFix,
+                    fixConcurrency: policy?.fixConcurrency ?? DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY,
+                  }),
+                }),
           } satisfies AutoReviewRunner.AutoReviewOriginContext;
         }),
-      drainPendingFixes: makeDrainPendingFixes({ getShell, store, dispatchFix }),
+      drainPendingFixes: makeDrainPendingFixes({
+        getShell,
+        store,
+        dispatchFix,
+        getFixConcurrency: settings.getSettings.pipe(
+          Effect.map((current) =>
+            clampAutoReviewConcurrency(
+              current.autoReview.fixConcurrency,
+              DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY,
+            ),
+          ),
+          Effect.orElseSucceed(() => DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY),
+        ),
+      }),
       syncThreadPhases: makeSyncThreadPhases({ getShell, store, setPhase }),
     };
 

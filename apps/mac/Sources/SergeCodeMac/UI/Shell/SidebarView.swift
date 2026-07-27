@@ -1,7 +1,10 @@
 import SwiftUI
 
+/// Where a session row is being drawn, and what the outline around it looks
+/// like there. Search results are a flat list — no project owns them — so they
+/// carry no rail and always name their project on the metadata line.
 private enum SidebarRowContext {
-    case project(showMachine: Bool)
+    case project(showMachine: Bool, accent: Color, index: Int, isLast: Bool)
     case search
 }
 
@@ -148,6 +151,11 @@ struct SidebarView: View {
                 onForget: { forgetTarget = $0 })
         }
         .navigationTitle("SurgeCode")
+        // Probe hook (see UIProbeHooks): publishes which sections have their
+        // settled disclosure open. A probe drives the disclosure through the
+        // notification below, but it also has to know what the disclosure was
+        // doing before it asked — the reveal unions rather than toggles.
+        .uiProbeRevealedSettled(revealedSettled)
         .onAppear {
             loadCollapsedProjects()
             validateMachineScope()
@@ -168,11 +176,17 @@ struct SidebarView: View {
         // a group the user had already expanded, leaving the rows it was asked
         // to reveal missing.
         .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
-            guard note.object as? String == "settled" else { return }
-            let groupIDs = Set(allProjectGroups.map(\.id))
+            guard let key = note.object as? String else { return }
+            // "settled" opens every project's disclosure; "settled:<groupID>"
+            // opens one, so a probe verifying a single section can drive that
+            // section alone. Unknown ids are dropped rather than unioned in —
+            // see `UIProbeSettledKey.targets`.
+            let targets = UIProbeSettledKey.targets(
+                for: key, among: Set(allProjectGroups.map(\.id)))
+            guard !targets.isEmpty else { return }
             DispatchQueue.main.async {
                 withAnimation(Motion.structure) {
-                    revealedSettled.formUnion(groupIDs)
+                    revealedSettled.formUnion(targets)
                 }
             }
         }
@@ -323,8 +337,8 @@ struct SidebarView: View {
                     systemImage: "magnifyingglass",
                     detail: "Try a task, project, branch, or machine name.")
             } else {
-                ForEach(results, id: \.id) { item in
-                    threadRow(item, context: .search)
+                ForEach(Array(results.enumerated()), id: \.element.id) { index, item in
+                    threadRow(item, context: .search, index: index)
                 }
             }
         } header: {
@@ -356,7 +370,9 @@ struct SidebarView: View {
                 } header: {
                     ProjectSectionHeader(
                         group: group,
-                        scenery: scenery,
+                        summary: SidebarProjectSummary(group: group),
+                        accent: projectAccent(group),
+                        symbol: projectSymbol(group),
                         isCollapsed: section.isCollapsed,
                         machineBadge: machineBadge(for: group),
                         onToggleCollapse: { toggleProjectCollapse(group.id) },
@@ -379,6 +395,7 @@ struct SidebarView: View {
     ) -> some View {
         let group = section.group
         let showMachine = group.members.count > 1
+        let accent = projectAccent(group)
         if split.active.isEmpty && split.settled.isEmpty {
             SidebarEmptyRow(
                 title: "No sessions",
@@ -386,46 +403,82 @@ struct SidebarView: View {
                 detail: "Use + above to start a session in this project.")
         } else {
             let visible = visibleActive(split, sectionID: section.id)
-            ForEach(visible, id: \.id) { item in
-                threadRow(item, context: .project(showMachine: showMachine))
-            }
             let hiddenCount = split.active.count - visible.count
+            // The outline's guide has to know where it stops, and that is not
+            // "the last visible row": a "Show more" pill or a settled
+            // disclosure keeps the section going below it.
+            let activeRunsOn = hiddenCount > 0 || !split.settled.isEmpty
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+                threadRow(
+                    item,
+                    context: .project(
+                        showMachine: showMachine,
+                        accent: accent,
+                        index: index,
+                        isLast: !activeRunsOn && index == visible.count - 1),
+                    index: index)
+            }
             if hiddenCount > 0 {
-                Button {
-                    Haptics.play(.toggle)
-                    withAnimation(Motion.structure) {
-                        // `_ =`: as a single-expression closure this would
-                        // implicitly return Set.insert's (inserted,
-                        // memberAfterInsert) tuple, which the shipping
-                        // Xcode 26.5 toolchain rejects as conflicting with
-                        // a Void Result (failed the alpha.14/15 release
-                        // checks; newer toolchains accept it).
-                        _ = expandedProjects.insert(group.id)
-                    }
-                } label: {
-                    HStack {
-                        Spacer()
-                        Text("Show \(hiddenCount) more")
-                            .font(.caption)
-                        Spacer()
-                    }
-                }
-                .buttonStyle(.plain)
-                .padding(.vertical, 4)
+                showMoreRow(group: group, hiddenCount: hiddenCount, accent: accent)
             }
             if !split.settled.isEmpty {
-                settledDisclosure(group: group, settled: split.settled, showMachine: showMachine)
+                settledDisclosure(
+                    group: group,
+                    settled: split.settled,
+                    showMachine: showMachine,
+                    accent: accent)
             }
         }
+    }
+
+    /// The per-project overflow affordance. A pill rather than centered text:
+    /// it sits on the rail like the rows it will reveal, and it springs on
+    /// press so it reads as a control.
+    private func showMoreRow(
+        group: SidebarProjectGroup,
+        hiddenCount: Int,
+        accent: Color
+    ) -> some View {
+        Button {
+            Haptics.play(.toggle)
+            withAnimation(Motion.structure) {
+                // `_ =`: as a single-expression closure this would
+                // implicitly return Set.insert's (inserted,
+                // memberAfterInsert) tuple, which the shipping
+                // Xcode 26.5 toolchain rejects as conflicting with
+                // a Void Result (failed the alpha.14/15 release
+                // checks; newer toolchains accept it).
+                _ = expandedProjects.insert(group.id)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                SidebarRailStub(accent: accent)
+                SidebarPill {
+                    HStack(spacing: 3) {
+                        Text("\(hiddenCount) more")
+                            .contentTransition(.numericText())
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7, weight: .bold))
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarPressStyle())
+        .padding(.vertical, 3)
+        .accessibilityLabel("Show \(hiddenCount) more sessions in \(group.name)")
     }
 
     @ViewBuilder
     private func settledDisclosure(
         group: SidebarProjectGroup,
         settled: [SidebarThreadItem],
-        showMachine: Bool
+        showMachine: Bool,
+        accent: Color
     ) -> some View {
         let isRevealed = revealedSettled.contains(group.id)
+        let isHovered = hoveredSettledGroup == group.id
         HStack(spacing: 6) {
             Button {
                 Haptics.play(.toggle)
@@ -441,29 +494,31 @@ struct SidebarView: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: isRevealed ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                    SidebarRailStub(accent: accent)
+                    SidebarDisclosureChevron(isExpanded: isRevealed, size: 8)
                         .foregroundStyle(.tertiary)
-                        .frame(width: 12, height: 12)
-                        .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
-                    Text("Settled")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(settled.count)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .frame(width: 10)
+                    SidebarPill {
+                        HStack(spacing: 4) {
+                            Text("Settled")
+                            Text("\(settled.count)")
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                        }
+                    }
+                    Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(SidebarPressStyle())
             .accessibilityLabel(
                 isRevealed
                     ? "Hide \(settled.count) settled sessions in \(group.name)"
                     : "Show \(settled.count) settled sessions in \(group.name)")
-            Spacer()
             // Hover-revealed like the project header actions so calm sections
             // stay quiet; kept in the layout at 0 opacity so the row never
-            // resizes on hover. The context menu below carries the same action
+            // resizes on hover, and sliding in from the trailing edge rather
+            // than blinking on. The context menu below carries the same action
             // for keyboard/VO users, who never set `hoveredSettledGroup`.
             Button {
                 Haptics.play(.commit)
@@ -473,16 +528,18 @@ struct SidebarView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 18, height: 18)
+                    .background { SidebarHoverSurface(isActive: isHovered, cornerRadius: 5) }
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(SidebarPressStyle())
             .help("Archive \(settled.count) settled \(settled.count == 1 ? "session" : "sessions") in \(group.name)")
             .accessibilityLabel("Archive all settled sessions in \(group.name)")
-            .opacity(hoveredSettledGroup == group.id ? 1 : 0)
-            .allowsHitTesting(hoveredSettledGroup == group.id)
-            .accessibilityHidden(hoveredSettledGroup != group.id)
+            .opacity(isHovered ? 1 : 0)
+            .offset(x: isHovered || !Motion.profile.usesMovement ? 0 : 8)
+            .allowsHitTesting(isHovered)
+            .accessibilityHidden(!isHovered)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .onHover { hovering in
             hoveredSettledGroup = hovering ? group.id : nil
         }
@@ -513,8 +570,15 @@ struct SidebarView: View {
             }
         }
         if isRevealed {
-            ForEach(settled, id: \.id) { item in
-                threadRow(item, context: .project(showMachine: showMachine))
+            ForEach(Array(settled.enumerated()), id: \.element.id) { index, item in
+                threadRow(
+                    item,
+                    context: .project(
+                        showMachine: showMachine,
+                        accent: accent,
+                        index: index,
+                        isLast: index == settled.count - 1),
+                    index: index)
             }
         }
     }
@@ -531,17 +595,40 @@ struct SidebarView: View {
         return member.location.isLocal ? nil : member.location.name
     }
 
+    /// A project's own color, used for its tile, its outline rail and the
+    /// selected row on it. Falls back to the app tint for projects that have
+    /// never been given scenery, so an unconfigured sidebar still reads as one
+    /// palette rather than as a set of gray folders.
+    private func projectAccent(_ group: SidebarProjectGroup) -> Color {
+        scenery.projectPrefs(for: group.preferredMember.project.path)?
+            .projectBadgeAccent ?? AlpineTheme.accent
+    }
+
+    private func projectSymbol(_ group: SidebarProjectGroup) -> String {
+        scenery.projectPrefs(for: group.preferredMember.project.path)?
+            .projectBadgeSymbol ?? "folder.fill"
+    }
+
     @ViewBuilder
-    private func threadRow(_ item: SidebarThreadItem, context: SidebarRowContext) -> some View {
-        SidebarThreadRow(item: item, context: context)
+    private func threadRow(
+        _ item: SidebarThreadItem,
+        context: SidebarRowContext,
+        index: Int
+    ) -> some View {
+        SidebarThreadRow(
+            item: item,
+            context: context,
+            isSelected: multi.selection == item.id)
             .tag(item.id)
             .disabled(!item.isSelectable)
             .opacity(item.isSelectable ? 1 : 0.5)
             // Applied here rather than at each `ForEach` so the search and
-            // project sections share one rule. Unstaggered: sections are
-            // short and re-sort as thread status changes, and a cascade on
-            // every re-sort would read as fidgeting.
-            .entrance(.row)
+            // project sections share one rule. Staggered by position, which
+            // `EntrancePolicy` clamps at eight steps: expanding a project
+            // unrolls its sessions instead of flashing them in, and the clamp
+            // is what keeps a re-sort of a long section from rippling — the
+            // rows that stay put keep their identity and never re-enter.
+            .entrance(.row, index: index)
             .alpineContextMenu(width: 300) { dismiss in
                 SidebarThreadMenu(
                     item: item,
@@ -699,73 +786,33 @@ private struct SidebarCommandBar: View {
 
     @UIState private var isScopePresented = false
     @UIState private var isProjectScopePresented = false
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         HStack(spacing: 7) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("Search tasks", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
-            // Search wins space over the project/machine filter labels (they
-            // truncate first) so the field stays usable at min/ideal sidebar
-            // widths.
-            .layoutPriority(1)
-
-            Button {
+            searchField
+            scopeChip(
+                symbol: "folder",
+                title: projectScopeTitle,
+                isActive: isProjectScopePresented,
+                isFiltered: projectScopeID != "all",
+                help: "Filter tasks by project"
+            ) {
                 isProjectScopePresented.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "folder")
-                    Text(projectScopeTitle)
-                        .lineLimit(1)
-                }
-                .font(.caption.weight(.medium))
-                .frame(height: 28)
-                .padding(.horizontal, 7)
-                .background(
-                    Color.primary.opacity(isProjectScopePresented ? 0.11 : 0.055),
-                    in: RoundedRectangle(cornerRadius: 7))
             }
-            .buttonStyle(.plain)
-            .help("Filter tasks by project")
             .popover(isPresented: $isProjectScopePresented, arrowEdge: .top) {
                 projectScopePopover
             }
 
-            Button {
+            scopeChip(
+                symbol: scopeSymbol,
+                title: scopeTitle,
+                isActive: isScopePresented,
+                isFiltered: scope != .all,
+                help: "Filter tasks by machine"
+            ) {
                 isScopePresented.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: scopeSymbol)
-                    Text(scopeTitle)
-                        .lineLimit(1)
-                }
-                .font(.caption.weight(.medium))
-                .frame(height: 28)
-                .padding(.horizontal, 7)
-                .background(
-                    Color.primary.opacity(isScopePresented ? 0.11 : 0.055),
-                    in: RoundedRectangle(cornerRadius: 7))
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .help("Filter tasks by machine")
             .popover(isPresented: $isScopePresented, arrowEdge: .top) {
                 scopePopover
             }
@@ -773,6 +820,88 @@ private struct SidebarCommandBar: View {
         .padding(.horizontal, 10)
         .padding(.top, 8)
         .padding(.bottom, 6)
+    }
+
+    /// The field grows an accent ring on focus rather than swapping its fill:
+    /// a sidebar-width control that changes background reads as a different
+    /// control, while a ring reads as the same one, now listening.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(isSearchFocused ? AlpineTheme.accent : Color.secondary)
+                .scaleEffect(isSearchFocused ? 1.1 : 1)
+            TextField("Search tasks", text: $searchText)
+                .textFieldStyle(.plain)
+                .focused($isSearchFocused)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(SidebarPressStyle(pressedScale: 0.8))
+                .accessibilityLabel("Clear search")
+                .transition(Motion.pop(from: .trailing))
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(AlpineTheme.accent.opacity(isSearchFocused ? 0.65 : 0), lineWidth: 1.5)
+        }
+        .animation(Motion.feedback, value: isSearchFocused)
+        .animation(Motion.reveal, value: searchText.isEmpty)
+        // Search wins space over the project/machine filter labels (they
+        // truncate first) so the field stays usable at min/ideal sidebar
+        // widths.
+        .layoutPriority(1)
+    }
+
+    /// One shape for both filter chips. `isFiltered` tints the chip so a
+    /// sidebar that is hiding projects or machines says so at rest, not only
+    /// when its label is read.
+    ///
+    /// The name rides along only while a filter is on. Two chips each carrying
+    /// "All projects" / "All machines" next to a search field does not fit a
+    /// 260pt sidebar — both labels truncated to nothing and the chips ended up
+    /// icon-only anyway, just wider. Now the width is spent on the one case
+    /// where the label carries information.
+    private func scopeChip(
+        symbol: String,
+        title: String,
+        isActive: Bool,
+        isFiltered: Bool,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                if isFiltered {
+                    Text(title)
+                        .lineLimit(1)
+                        .transition(Motion.pop(from: .leading))
+                }
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(isFiltered ? AlpineTheme.accent : Color.primary)
+            .frame(height: 28)
+            .padding(.horizontal, 7)
+            .background(
+                (isFiltered ? AlpineTheme.accent : Color.primary)
+                    .opacity(isActive ? 0.16 : (isFiltered ? 0.1 : 0.055)),
+                in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarPressStyle(pressedScale: 0.96))
+        .help(help)
+        .accessibilityLabel("\(help): \(title)")
+        .animation(Motion.feedback, value: isActive)
+        .animation(Motion.structure, value: isFiltered)
     }
 
     private var scopePopover: some View {
@@ -1116,9 +1245,19 @@ private struct SidebarThreadMenu: View {
     }
 }
 
+/// A project's header row: the thing the whole sidebar is organized around.
+///
+/// It carries four pieces of state at three densities — the project's identity
+/// (tile + name), its shape across machines (the badge), its workload
+/// (subtitle + meter), and its actions — so a collapsed section still says
+/// everything an expanded one does. The actions replace the meter on hover
+/// rather than appearing beside it: the header is ~200pt wide at the default
+/// sidebar size, and both at once pushed the name into truncation.
 private struct ProjectSectionHeader: View {
     let group: SidebarProjectGroup
-    let scenery: SceneryStore
+    let summary: SidebarProjectSummary
+    let accent: Color
+    let symbol: String
     let isCollapsed: Bool
     /// Machine context to show next to the name when the sidebar spans
     /// machines ("2 machines", or the remote machine's name). Nil hides it.
@@ -1133,107 +1272,124 @@ private struct ProjectSectionHeader: View {
     @UIState private var isManagePresented = false
     @UIState private var isHovering = false
 
+    /// Whether the trailing slot shows actions instead of the meter. Popovers
+    /// keep it open so their anchor cannot vanish mid-interaction.
+    private var showsActions: Bool {
+        isHovering || isNewTaskPresented || isManagePresented
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             Button(action: onToggleCollapse) {
-                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
+                SidebarDisclosureChevron(isExpanded: !isCollapsed)
                     .foregroundStyle(.secondary)
-                    .frame(width: 12, height: 12)
                     .contentShape(Rectangle())
-                    .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(SidebarPressStyle(pressedScale: 0.85))
             .accessibilityLabel(isCollapsed ? "Expand \(group.name)" : "Collapse \(group.name)")
 
-            projectBadge
-            Text(group.name)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-            if let machineBadge {
-                Text(machineBadge)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-            }
-            Spacer(minLength: 4)
-            // The counts tick as threads move between tiers below; the digit
-            // rolls and the badge swaps in place rather than popping.
-            if group.attentionThreadCount > 0 {
-                Label("\(group.attentionThreadCount)", systemImage: "exclamationmark.circle.fill")
-                    .foregroundStyle(AlpineTheme.clay)
-                    .contentTransition(.numericText())
-                    .transition(Motion.pop(from: .trailing))
-                    .help("\(group.attentionThreadCount) need attention")
-            } else if group.activeThreadCount > 0 {
-                Label("\(group.activeThreadCount)", systemImage: "bolt.fill")
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-                    .transition(Motion.pop(from: .trailing))
-                    .help("\(group.activeThreadCount) in progress")
-            }
-            HStack(spacing: 2) {
-                // A plain button plus the app's own popover, not `Menu`: the
-                // native menu drops a system-styled NSMenu on top of an
-                // otherwise custom sidebar, and the "+" beside it already
-                // opens an Alpine popover.
-                Button {
-                    isManagePresented.toggle()
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                        .background {
-                            if isManagePresented {
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color.primary.opacity(0.1))
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-                .help("Manage \(group.name)")
-                .popover(isPresented: $isManagePresented, arrowEdge: .top) {
-                    projectMenu { isManagePresented = false }
-                }
+            SidebarProjectTile(
+                symbol: symbol,
+                accent: accent,
+                summary: summary,
+                isHovering: isHovering)
 
-                Button {
-                    isNewTaskPresented.toggle()
-                } label: {
-                    Image(systemName: "plus")
-                        .fontWeight(.semibold)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                        .background {
-                            if isNewTaskPresented {
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color.primary.opacity(0.1))
-                            }
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 5) {
+                    Text(group.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if let machineBadge {
+                        SidebarPill { Text(machineBadge) }
+                            .transition(Motion.pop(from: .leading))
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("New session in \(group.name)")
-                .popover(isPresented: $isNewTaskPresented, arrowEdge: .top) {
-                    newTaskPopover
-                }
+                // The census line: what this project is carrying, in words,
+                // so the meter beside it never has to be decoded.
+                Text(summary.subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(summary.needsAttention ? AlpineTheme.clay : Color.secondary)
+                    .lineLimit(1)
+                    .contentTransition(.numericText())
             }
-            // Hover-revealed so calm sections stay quiet; kept visible while
-            // either popover is up so the anchor doesn't vanish mid-interaction.
-            .opacity(isHovering || isNewTaskPresented || isManagePresented ? 1 : 0)
-            .accessibilityHidden(!isHovering && !isNewTaskPresented && !isManagePresented)
+
+            Spacer(minLength: 4)
+
+            // One trailing slot, two occupants. Sized by the wider of the two
+            // so the swap never re-lays the title out.
+            ZStack(alignment: .trailing) {
+                SidebarActivityMeter(summary: summary)
+                    .opacity(showsActions ? 0 : 1)
+                    .scaleEffect(showsActions ? 0.85 : 1, anchor: .trailing)
+                    .accessibilityHidden(showsActions)
+
+                headerActions
+                    .opacity(showsActions ? 1 : 0)
+                    .offset(x: showsActions || !Motion.profile.usesMovement ? 0 : 6)
+                    .allowsHitTesting(showsActions)
+                    .accessibilityHidden(!showsActions)
+            }
+            .frame(width: 44, alignment: .trailing)
         }
-        .font(.caption)
+        .padding(.vertical, 4)
+        // `List` gives a section header less trailing inset than it gives its
+        // rows, which left the meter flush against the sidebar's edge while the
+        // rows below it kept a margin.
+        .padding(.trailing, 4)
+        .background {
+            SidebarHoverSurface(isActive: showsActions, cornerRadius: 7)
+                .padding(.horizontal, -6)
+        }
         .contentShape(Rectangle())
         .onTapGesture(perform: onToggleCollapse)
         .onHover { isHovering = $0 }
         .animation(Motion.structure, value: isCollapsed)
-        .animation(Motion.feedback, value: isHovering)
-        .animation(Motion.ambient, value: group.attentionThreadCount)
-        .animation(Motion.ambient, value: group.activeThreadCount)
+        .animation(Motion.feedback, value: showsActions)
+        .animation(Motion.ambient, value: summary)
+        .animation(Motion.reveal, value: machineBadge)
         .alpineContextMenu(width: 300) { dismiss in
             projectMenu(dismiss: dismiss)
         }
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: 2) {
+            // A plain button plus the app's own popover, not `Menu`: the
+            // native menu drops a system-styled NSMenu on top of an
+            // otherwise custom sidebar, and the "+" beside it already
+            // opens an Alpine popover.
+            Button {
+                isManagePresented.toggle()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 19, height: 19)
+                    .background { SidebarHoverSurface(isActive: isManagePresented, cornerRadius: 5) }
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(SidebarPressStyle())
+            .help("Manage \(group.name)")
+            .popover(isPresented: $isManagePresented, arrowEdge: .top) {
+                projectMenu { isManagePresented = false }
+            }
+
+            Button {
+                isNewTaskPresented.toggle()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 19, height: 19)
+                    .background { SidebarHoverSurface(isActive: isNewTaskPresented, cornerRadius: 5) }
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(SidebarPressStyle())
+            .help("New session in \(group.name)")
+            .popover(isPresented: $isNewTaskPresented, arrowEdge: .top) {
+                newTaskPopover
+            }
+        }
+        .foregroundStyle(.secondary)
     }
 
     /// One menu body behind both entry points — the "…" button and a
@@ -1263,19 +1419,6 @@ private struct ProjectSectionHeader: View {
             #if DEBUG
                 UIProbeMenus.record("project:\(group.id)")
             #endif
-        }
-    }
-
-    @ViewBuilder
-    private var projectBadge: some View {
-        if let prefs = projectPrefs, prefs.showsProjectBadge {
-            ProjectSceneryBadge(prefs: prefs, symbolSize: 10, dotSize: 6)
-                .frame(width: 12, height: 12)
-        } else {
-            Image(systemName: "folder.fill")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
-                .frame(width: 12, height: 12)
         }
     }
 
@@ -1368,23 +1511,41 @@ private struct ProjectSectionHeader: View {
             }
         }
     }
-
-    private var projectPrefs: ProjectSceneryPrefs? {
-        scenery.projectPrefs(for: group.preferredMember.project.path)
-    }
 }
 
 private struct SidebarThreadRow: View {
     let item: SidebarThreadItem
     let context: SidebarRowContext
+    let isSelected: Bool
+
+    @UIState private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            SidebarThreadStatus(item: item)
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 7) {
+            if case .project(_, let accent, let index, let isLast) = context {
+                SidebarThreadRail(
+                    accent: accent,
+                    isSelected: isSelected,
+                    isLast: isLast,
+                    index: index)
+            }
+            // A working thread breathes, so a sidebar full of sessions says
+            // which ones are alive without the user reading a single label.
+            // `pulseGlow` is a phase animator, not a timeline clock, so a long
+            // list of running threads stays cheap.
+            SidebarStatusChip(
+                symbol: item.statusSymbol,
+                tint: item.statusTint,
+                isWorking: item.isWorking)
+                .scaleEffect(isHovering ? 1.08 : 1)
+                .animation(Motion.ambient, value: item.thread.status)
+                .accessibilityLabel(item.statusLabel)
+                .help(item.statusLabel)
+            VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(item.thread.title)
                         .font(SurgeTypography.sidebarTaskTitle)
+                        .fontWeight(isSelected ? .semibold : .regular)
                         .lineLimit(1)
                     if item.isPinned {
                         Image(systemName: "pin.fill")
@@ -1400,20 +1561,29 @@ private struct SidebarThreadRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            SidebarRunTape(item: item)
             if item.thread.backgroundAgentCount > 0 {
-                Text("\(item.thread.backgroundAgentCount)")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
-                    .contentTransition(.numericText())
-                    .transition(Motion.pop(from: .trailing))
-                    .help("Background agents and commands")
+                SidebarPill {
+                    Text("\(item.thread.backgroundAgentCount)")
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+                .transition(Motion.pop(from: .trailing))
+                .help("Background agents and commands")
             }
         }
         .padding(.vertical, 2)
-        .animation(Motion.reveal, value: item.isPinned)
+        .background {
+            // A whisper behind the hovered row. The List still owns selection;
+            // this only says "the pointer is here", which the old rows left to
+            // the cursor alone.
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(isHovering && !isSelected ? 0.05 : 0))
+                .padding(.horizontal, -5)
+        }
+        .onHover { isHovering = $0 }
+        .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.reveal, value: isPinnedOrSelected)
         .animation(Motion.ambient, value: item.thread.backgroundAgentCount)
         .modifier(
             SidebarRowMoveTrail(
@@ -1422,12 +1592,19 @@ private struct SidebarThreadRow: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// One key for the two things that restyle the row's text, so the title's
+    /// weight change and the pin's arrival share a transaction instead of
+    /// racing each other.
+    private var isPinnedOrSelected: Int {
+        (item.isPinned ? 1 : 0) | (isSelected ? 2 : 0)
+    }
+
     private var secondaryText: String {
         let parts: [String]
         switch context {
         case .search:
             parts = [item.member.project.name, item.member.location.name, workMetadata]
-        case .project(let showMachine):
+        case .project(let showMachine, _, _, _):
             parts = [showMachine ? item.member.location.name : nil, workMetadata]
                 .compactMap { $0 }
         }
@@ -1446,6 +1623,67 @@ private struct SidebarThreadRow: View {
             parts.append(item.thread.provider.displayName)
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Miniature run tape at a sidebar row's trailing edge: one bar per recent
+/// turn, tinted by the turn's dominant signal, so "which of my running
+/// agents is thrashing" reads from the sidebar without opening anything.
+///
+/// The tape only exists where the timeline does — the app retains a handful
+/// of timeline subscriptions, so unvisited threads simply show no tape
+/// rather than a fabricated one. Reading `model.timeline` here subscribes
+/// the row to that one thread's timeline writes, which is the observation
+/// granularity `ThreadState` exists to provide.
+private struct SidebarRunTape: View {
+    let item: SidebarThreadItem
+
+    /// Cap so a 100-turn thread doesn't grow a mural; the recent tail is
+    /// the actionable part.
+    private static let maxCells = 12
+
+    var body: some View {
+        let model = item.member.location.model
+        let threadID = item.thread.id
+        let timeline = model.timeline(threadID: threadID)
+        if !timeline.isEmpty {
+            let cells = RunTapeCache.tape(
+                timeline: timeline,
+                threadID: model.scopedThreadKey(threadID),
+                structureVersion: model.timelineStructureVersion(threadID: threadID)
+            ).suffix(Self.maxCells)
+            if cells.count >= 2 {
+                HStack(spacing: 2) {
+                    ForEach(cells) { cell in
+                        Capsule()
+                            .fill(tint(for: cell).opacity(0.6))
+                            .frame(width: 3, height: 7)
+                    }
+                }
+                .help(helpText(Array(cells)))
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func tint(for cell: RunTapeCell) -> Color {
+        if cell.hasRunningTool && !item.thread.status.isSettled {
+            return AlpineTheme.accent
+        }
+        switch cell.signal {
+        case .fail: return AlpineTheme.destructive
+        case .edit: return AlpineTheme.statusSuccess
+        case .work: return AlpineTheme.sky
+        case .talk: return Color.secondary
+        }
+    }
+
+    private func helpText(_ cells: [RunTapeCell]) -> String {
+        let failed = cells.reduce(0) { $0 + $1.failedCount }
+        let tools = cells.reduce(0) { $0 + $1.toolCount }
+        var line = "Last \(cells.count) turns · \(tools) tools"
+        if failed > 0 { line += " · \(failed) failed" }
+        return line
     }
 }
 
@@ -1548,26 +1786,6 @@ extension SidebarThreadItem {
         case .fixing: return "wrench.and.screwdriver"
         case .readyToMerge: return "checkmark.seal"
         }
-    }
-}
-
-private struct SidebarThreadStatus: View {
-    let item: SidebarThreadItem
-
-    var body: some View {
-        Image(systemName: item.statusSymbol)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(item.statusTint)
-            .frame(width: 14, height: 14)
-            // A working thread breathes, so a sidebar full of sessions says
-            // which ones are alive without the user reading a single label.
-            // `pulseGlow` is a phase animator, not a timeline clock, so a
-            // long list of running threads stays cheap.
-            .pulseGlow(isActive: item.isWorking)
-            .accessibilityLabel(item.statusLabel)
-            .help(item.statusLabel)
-            .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
-            .animation(Motion.ambient, value: item.thread.status)
     }
 }
 

@@ -890,7 +890,27 @@ extension TimelineItem {
 }
 
 public enum ApprovalKind: String, Sendable {
-    case command, fileEdit, other
+    case command, fileEdit, fileRead, other
+
+    /// Manifest line naming what kind of authority the request asks for.
+    public var displayName: String {
+        switch self {
+        case .command: "Command"
+        case .fileEdit: "File change"
+        case .fileRead: "File read"
+        case .other: "Request"
+        }
+    }
+}
+
+/// User's answer to an approval request. `approveForSession` is the standing
+/// declaration: approve this request and stop asking for similar ones for
+/// the rest of the session — each provider maps it to its own session-scoped
+/// permission grant (the wire decision is `acceptForSession`).
+public enum ApprovalDecision: String, Sendable {
+    case approve, approveForSession, deny
+
+    public var isApproval: Bool { self != .deny }
 }
 
 public struct ApprovalRequest: Identifiable, Hashable, Sendable {
@@ -1514,9 +1534,23 @@ public struct AppAutoReviewSettings: Hashable, Sendable {
     public var mentionHandle: String
     public var pollIntervalSeconds: Double
     public var autoFixOriginThread: Bool
+    /// `"thread"` — the thread that wrote the code fixes it on its own model;
+    /// `"review"` — reuse the review model; `"custom"` — use `fixModel*`.
+    public var fixModelMode: String
+    /// Only used when `fixModelMode == "custom"`. Nil until the user picks a
+    /// model, which the UI treats as "not configured yet".
+    public var fixModelInstanceID: String?
+    public var fixModelID: String?
     /// Max review attempts per PR head before the server stops retrying (1–10).
     public var maxAttempts: Int
+    /// Reviews running at once, across distinct PRs (1–8).
+    public var concurrency: Int
+    /// Auto-fix turns running at once, across distinct threads (1–8).
+    public var fixConcurrency: Int
     public var projectOverrides: [AppAutoReviewProjectOverride]
+
+    /// True when fixes should run on a model other than the origin thread's.
+    public var usesDedicatedFixModel: Bool { fixModelMode != "thread" }
 
     public init(
         enabled: Bool = false,
@@ -1526,7 +1560,12 @@ public struct AppAutoReviewSettings: Hashable, Sendable {
         mentionHandle: String = "surgecode",
         pollIntervalSeconds: Double = 60,
         autoFixOriginThread: Bool = true,
+        fixModelMode: String = "thread",
+        fixModelInstanceID: String? = nil,
+        fixModelID: String? = nil,
         maxAttempts: Int = 2,
+        concurrency: Int = 1,
+        fixConcurrency: Int = 1,
         projectOverrides: [AppAutoReviewProjectOverride] = []
     ) {
         self.enabled = enabled
@@ -1536,7 +1575,12 @@ public struct AppAutoReviewSettings: Hashable, Sendable {
         self.mentionHandle = mentionHandle
         self.pollIntervalSeconds = pollIntervalSeconds
         self.autoFixOriginThread = autoFixOriginThread
+        self.fixModelMode = fixModelMode
+        self.fixModelInstanceID = fixModelInstanceID
+        self.fixModelID = fixModelID
         self.maxAttempts = maxAttempts
+        self.concurrency = concurrency
+        self.fixConcurrency = fixConcurrency
         self.projectOverrides = projectOverrides
     }
 }

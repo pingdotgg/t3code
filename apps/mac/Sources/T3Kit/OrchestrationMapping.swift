@@ -138,10 +138,4 @@ public enum OrchestrationMapping {
         }
         return nil
     }
-
-    /// Maps a `ProviderApprovalDecision` from a simple "approve or not"
-    /// choice, the shape most approval UIs actually offer.
-    public static func approvalDecision(approve: Bool) -> ProviderApprovalDecision {
-        approve ? .accept : .decline
-    }
 }

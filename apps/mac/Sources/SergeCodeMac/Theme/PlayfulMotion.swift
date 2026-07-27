@@ -107,12 +107,13 @@ struct PlayfulMotionProfile: Equatable, Sendable {
     /// to read as a drift rather than a spinner.
     let orbPeriod = 5.2
 
-    /// Seconds per breath of the pet's idle bob.
-    let petBreathPeriod = 2.6
+    /// Seconds per breath of the pet's idle bob. Slow on purpose: the pet is
+    /// a fat, lazy Boston terrier, and the tempo is where that reads first.
+    let petBreathPeriod = 3.4
 
-    /// How long the "ready to merge" pet stays on screen before ducking back
-    /// into its burrow. Long enough to read the caption twice; short enough
-    /// that a settled thread does not keep a character parked over it.
+    /// How long the "ready to merge" pet stays on screen before flopping
+    /// back into its bed. Long enough to read the caption twice; short
+    /// enough that a settled thread does not keep a character parked over it.
     let petVictoryDwell = 6.5
 }
 

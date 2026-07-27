@@ -71,7 +71,11 @@ const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
-const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
+// Nothing can answer a credential prompt inside a headless sidecar, so any
+// remote command that might raise one would hang until its timeout. Cached
+// credentials (Keychain, GCM store) still resolve; only the interactive
+// fallback is suppressed.
+const NON_INTERACTIVE_REMOTE_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
   GIT_TERMINAL_PROMPT: "0",
@@ -951,7 +955,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
       {
         allowNonZeroExit: true,
-        env: STATUS_UPSTREAM_REFRESH_ENV,
+        env: NON_INTERACTIVE_REMOTE_ENV,
         timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
       },
     ).pipe(Effect.asVoid);
@@ -2333,7 +2337,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         ["fetch", "--quiet", input.remoteName],
         {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
+          env: NON_INTERACTIVE_REMOTE_ENV,
           fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
         },
       );
@@ -2382,13 +2386,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"] =
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
-      yield* runGit("GitVcsDriver.fetchRemoteTrackingBranch", input.cwd, [
-        "fetch",
-        "--quiet",
-        "--no-tags",
-        input.remoteName,
-        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
-      ]);
+      yield* executeGit(
+        "GitVcsDriver.fetchRemoteTrackingBranch",
+        input.cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          input.remoteName,
+          `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+        ],
+        {
+          env: NON_INTERACTIVE_REMOTE_ENV,
+          fallbackErrorDetail: `git fetch ${input.remoteName} ${input.remoteBranch} failed`,
+        },
+      );
     });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = (input) =>

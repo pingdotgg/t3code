@@ -73,6 +73,9 @@
             case "sidebar-menus":
                 await SidebarMenuProbe.run(multi: multi, scenery: scenery, dir: dir)
                 return
+            case "sidebar-outline":
+                await SidebarOutlineProbe.run(multi: multi, scenery: scenery, dir: dir)
+                return
             case "tool-group-receive":
                 await runToolGroupReceive(model: model, multi: multi, dir: dir)
                 return
@@ -100,6 +103,7 @@
             snapshot("1-inspector-timeline", dir: dir)
             probeToolbarNavigationAccessibility(phase: model.connection)
             await probeChatTurnRail(model: model, dir: dir)
+            await probeApprovalCard(model: model, multi: multi, dir: dir)
             await probeCommandTaskCard(model: model, dir: dir)
 
             // Unified activity panel: scroll to the checkpoint history, then
@@ -325,6 +329,41 @@
             toggleSection("model-picker")
             try? await Task.sleep(for: .seconds(1))
             snapshotAllWindows("7b-model-picker", dir: dir)
+
+            // ⌘D stars the highlighted row. The chord travels the responder
+            // chain to the popover's `onKeyPress`, which no unit test can
+            // exercise, so drive it with a real event and check the store.
+            let favoritesBeforeChord = ModelPickerPreferences.shared.favorites
+            sendKey("d", keyCode: 2, modifiers: .command)
+            try? await Task.sleep(for: .seconds(1))
+            let starred = ModelPickerPreferences.shared.favorites.subtracting(favoritesBeforeChord)
+            print("UIProbe: model picker cmd-D starred=\(starred.count)")
+            // A check that only logs cannot fail a run: without this the chord
+            // could stop reaching the popover and the probe would still print
+            // a clean `done`.
+            if starred.count != 1 { probeFailures.append("model-picker-favorite-chord") }
+            // Leave the store as the later favorites capture expects it.
+            for key in starred { ModelPickerPreferences.shared.toggleFavorite(key) }
+
+            toggleSection("model-picker")
+            try? await Task.sleep(for: .seconds(1))
+
+            // Favorites and recents restructure the picker (an extra sidebar
+            // scope, a lifted Favorites section), so seed them before the
+            // popover mounts — state flipped on an already-rendered view does
+            // not reach the offscreen capture. The seed lands in the probe's
+            // scratch defaults suite (see `ModelPickerPreferences`), never the
+            // user's profile, so an aborted run cannot strand it.
+            let favoriteSeed = model.models.first.map(ModelPickerCatalog.key(for:))
+            let recentSeed = model.models.dropFirst().first.map(ModelPickerCatalog.key(for:))
+            if let favoriteSeed { ModelPickerPreferences.shared.toggleFavorite(favoriteSeed) }
+            if let recentSeed { ModelPickerPreferences.shared.recordUsage(recentSeed) }
+            print(
+                "UIProbe: model picker favorites=\(ModelPickerPreferences.shared.favorites.count) "
+                    + "recents=\(ModelPickerPreferences.shared.recents.count)")
+            toggleSection("model-picker")
+            try? await Task.sleep(for: .seconds(1))
+            snapshotAllWindows("7c-model-picker-favorites", dir: dir)
             toggleSection("model-picker")
             try? await Task.sleep(for: .seconds(1))
 
@@ -405,6 +444,11 @@
                 await snapshotSettings(
                     tab: .autoReview, name: "17-settings-auto-review", model: model,
                     scenery: scenery, dir: dir)
+                // The fix-model picker only exists once "use a different model
+                // for fixes" is on, and the parallelism sliders sit below the
+                // fold at the default height — so enable the feature first and
+                // capture it in a window tall enough to hold the whole tab.
+                await snapshotAutoReviewFixLanes(model: model, scenery: scenery, dir: dir)
 
                 // Window glass translucency: capture solid (1.0) and floor
                 // (0.5) states, logging NSWindow isOpaque/clear + behind-window
@@ -1150,10 +1194,42 @@
             let settled = model.thread(threadID: threadID)?.status.isSettled ?? false
             let turns = ChatTurnRailModel.turns(
                 from: items.groupedForDisplay(threadIsSettled: settled))
+            let tape = RunTapeProjection.tape(timeline: items)
             print(
                 "UIProbe: turn rail turns=\(turns.count) "
-                    + "visible=\(turns.count >= 2)")
+                    + "visible=\(turns.count >= 2) "
+                    + "tape=\(tape.map(\.signal.rawValue).joined(separator: ","))")
             snapshot("1c-chat-turn-rail", dir: dir)
+        }
+
+        /// The approval card is the thread's customs checkpoint: kind label,
+        /// manifest detail, and three stamps (Deny / Approve for Session /
+        /// Approve). The mock seeds its pending approval on thread-2, so hop
+        /// there, capture, and hop back.
+        private static func probeApprovalCard(
+            model: AppModel, multi: MultiDeviceModel, dir: String
+        ) async {
+            let previous = model.selectedThreadID
+            guard
+                let approvalThread = model.threads.first(where: { $0.hasPendingApproval })?.id
+                    ?? model.threads.first(where: { $0.id == "thread-2" })?.id
+            else {
+                print("UIProbe: approval card probe skipped (no approval thread)")
+                return
+            }
+            multi.select(threadID: approvalThread, on: model.deviceID)
+            await model.loadTimelineIfNeeded(threadID: approvalThread)
+            try? await Task.sleep(for: .seconds(1))
+            let hasApproval = model.timeline(threadID: approvalThread).contains {
+                if case .approval = $0 { return true }
+                return false
+            }
+            print("UIProbe: approval card present=\(hasApproval)")
+            snapshot("1e-approval-card", dir: dir)
+            if let previous {
+                multi.select(threadID: previous, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(0.5))
+            }
         }
 
         /// Command tasks render as shell work, not as delegated agents, and a
@@ -1339,11 +1415,80 @@
             print("UIProbe: brand about+empty snapshots captured")
         }
 
+        /// Auto-review with the fix lanes configured: enables auto-review and
+        /// picks a dedicated fix model, so the fix-model picker is mounted and
+        /// both parallelism sliders are non-default. Seeded before the view is
+        /// built — flipping it after the first render captures the old tree.
+        private static func snapshotAutoReviewFixLanes(
+            model: AppModel, scenery: SceneryStore, dir: String
+        ) async {
+            // The previous auto-review capture commits its (default) draft from
+            // `onDisappear` in a detached Task. Seeding before that lands would
+            // be overwritten by it, and the capture would silently show the
+            // defaults instead of the configuration under test.
+            try? await Task.sleep(for: .seconds(1))
+            await model.loadSettings()
+            guard var settings = model.settings else {
+                print("UIProbe: auto-review fix lanes skipped (no settings)")
+                return
+            }
+            settings.autoReview.enabled = true
+            settings.autoReview.autoFixOriginThread = true
+            settings.autoReview.fixModelMode = "custom"
+            settings.autoReview.fixModelInstanceID = "claude"
+            settings.autoReview.fixModelID = "opus-5"
+            settings.autoReview.concurrency = 4
+            settings.autoReview.fixConcurrency = 3
+            guard await model.saveSettings(settings) else {
+                print("UIProbe: auto-review fix lanes skipped (save rejected)")
+                return
+            }
+            let stored = model.settings?.autoReview
+            print(
+                "UIProbe: auto-review fix lanes seeded enabled=\(stored?.enabled ?? false) "
+                    + "fixModelMode=\(stored?.fixModelMode ?? "?") "
+                    + "concurrency=\(stored?.concurrency ?? -1) "
+                    + "fixConcurrency=\(stored?.fixConcurrency ?? -1)")
+            // Two captures: the tab is taller than any window AppKit will
+            // grant, and the two features live at opposite ends of it — the
+            // fix-model picker up top, the parallelism sliders at the bottom.
+            await snapshotSettings(
+                tab: .autoReview, name: "17b-settings-auto-review-fix-model", model: model,
+                scenery: scenery, dir: dir)
+            await snapshotSettings(
+                tab: .autoReview, name: "17c-settings-auto-review-parallelism", model: model,
+                scenery: scenery, dir: dir, scrollToBottom: true)
+        }
+
+        /// Depth-first search for the first `NSScrollView` under `view`.
+        private static func firstScrollView(in view: NSView) -> NSScrollView? {
+            if let scrollView = view as? NSScrollView { return scrollView }
+            for subview in view.subviews {
+                if let found = firstScrollView(in: subview) { return found }
+            }
+            return nil
+        }
+
+        /// Scrolls a settings pane to its bottom. The window cannot simply be
+        /// made tall enough to hold the whole tab — AppKit clamps a window to
+        /// the visible screen, so a 1400pt request silently comes back 560pt
+        /// and the capture looks identical to the unscrolled one.
+        private static func scrollToBottom(_ view: NSView) -> Bool {
+            guard let scrollView = firstScrollView(in: view) else { return false }
+            let documentHeight = scrollView.documentView?.bounds.height ?? 0
+            let visibleHeight = scrollView.contentView.bounds.height
+            guard documentHeight > visibleHeight else { return false }
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: documentHeight - visibleHeight))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            return true
+        }
+
         /// Hosts SettingsScene in its own window on `tab` and captures it —
         /// the real Settings scene can't be opened programmatically without
         /// the menu, and this exercises the identical view tree.
         private static func snapshotSettings(
-            tab: SettingsTab, name: String, model: AppModel, scenery: SceneryStore, dir: String
+            tab: SettingsTab, name: String, model: AppModel, scenery: SceneryStore, dir: String,
+            scrollToBottom shouldScrollToBottom: Bool = false
         ) async {
             let hosting = NSHostingView(
                 rootView: SettingsScene(
@@ -1358,6 +1503,14 @@
             window.orderFront(nil)
             // Let async .task loads (reachability check, pairing mint) land.
             try? await Task.sleep(for: .seconds(2))
+            if shouldScrollToBottom, let view = window.contentView {
+                if scrollToBottom(view) {
+                    // Let SwiftUI flush the scrolled layout before capturing.
+                    try? await Task.sleep(for: .seconds(1))
+                } else {
+                    print("UIProbe: \(name) not scrolled (no scrollable content)")
+                }
+            }
             if let view = window.contentView,
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             {
@@ -2020,6 +2173,53 @@
         private static func toggleSection(_ key: String) {
             NotificationCenter.default.post(name: .uiProbeToggleSection, object: key)
             print("UIProbe: toggled section '\(key)'")
+        }
+
+        /// Posts a key-down into the application event queue. SwiftUI's
+        /// `onKeyPress` handlers sit on the responder chain, so a synthesized
+        /// `NSEvent` is the only way to prove a chord reaches them in-process —
+        /// asserting the handler's predicate in a unit test cannot show that
+        /// the event arrives at all.
+        ///
+        /// Posted rather than handed straight to the window: the run loop then
+        /// dequeues it into `NSApplication.sendEvent`, which is where main-menu
+        /// key equivalents are resolved. A chord the menu bar claims first
+        /// never reaches the view, and `window.sendEvent` would hide exactly
+        /// that failure by starting past the point where it happens.
+        @discardableResult
+        private static func sendKey(
+            _ character: String,
+            keyCode: UInt16,
+            modifiers: NSEvent.ModifierFlags = []
+        ) -> Bool {
+            // A popover hosts in its own window, and an app driven headlessly
+            // has no key window at all, so neither `keyWindow` nor "the first
+            // visible window" finds the surface under test. Prefer the popover
+            // when one is up: that is where the picker's handlers live.
+            let visible = NSApp.windows.filter(\.isVisible)
+            let popover = visible.first { String(describing: type(of: $0)).contains("Popover") }
+            guard let window = popover ?? NSApp.keyWindow ?? visible.first else {
+                print("UIProbe: FAIL sendKey no target window")
+                return false
+            }
+            guard
+                let event = NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: modifiers,
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    characters: character,
+                    charactersIgnoringModifiers: character,
+                    isARepeat: false,
+                    keyCode: keyCode)
+            else {
+                print("UIProbe: FAIL sendKey could not build event")
+                return false
+            }
+            NSApp.postEvent(event, atStart: false)
+            return true
         }
 
         /// Drives a structural column to a known state instead of flipping

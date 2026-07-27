@@ -15,7 +15,9 @@ const modelSelection = {
   model: "gpt-5.4",
 };
 
-function makeGithub(listCount: { value: number }) {
+type IssueComment = GitHubCli.GitHubPullRequestIssueComment;
+
+function makeGithub(listCount: { value: number }, comments: ReadonlyArray<IssueComment> = []) {
   return GitHubCli.GitHubCli.of({
     execute: () => Effect.die("unused"),
     listOpenPullRequests: () => Effect.succeed([]),
@@ -34,7 +36,7 @@ function makeGithub(listCount: { value: number }) {
           },
         ];
       }),
-    listPullRequestIssueComments: () => Effect.succeed([]),
+    listPullRequestIssueComments: () => Effect.succeed(comments),
     getPullRequestDiff: () => Effect.succeed(""),
     submitPullRequestReview: () => Effect.succeed({ reviewId: "1", url: "u" }),
     getPullRequest: () =>
@@ -78,6 +80,10 @@ function makeText() {
 
 function makeLayer(input: {
   enabled: boolean;
+  mode?: "auto" | "mention";
+  fixModelMode?: "thread" | "review" | "custom";
+  fixModelSelection?: typeof modelSelection | null;
+  comments?: ReadonlyArray<IssueComment>;
   listCount: { value: number };
   maintenanceCount?: { drain: number; sync: number };
   order?: string[];
@@ -89,8 +95,10 @@ function makeLayer(input: {
         autoReview: {
           ...DEFAULT_AUTO_REVIEW_SETTINGS,
           enabled: input.enabled,
-          mode: "auto",
+          mode: input.mode ?? "auto",
           modelSelection,
+          fixModelMode: input.fixModelMode ?? "thread",
+          fixModelSelection: input.fixModelSelection ?? null,
           pollInterval: Duration.seconds(60),
         },
       }),
@@ -116,12 +124,16 @@ function makeLayer(input: {
       Layer.provide(
         AutoReviewRunner.layer.pipe(
           Layer.provide(AutoReviewJobStore.layerInMemory),
-          Layer.provide(Layer.succeed(GitHubCli.GitHubCli, makeGithub(input.listCount))),
+          Layer.provide(
+            Layer.succeed(GitHubCli.GitHubCli, makeGithub(input.listCount, input.comments)),
+          ),
           Layer.provide(Layer.succeed(TextGeneration.TextGeneration, makeText())),
         ),
       ),
       Layer.provide(AutoReviewJobStore.layerInMemory),
-      Layer.provide(Layer.succeed(GitHubCli.GitHubCli, makeGithub(input.listCount))),
+      Layer.provide(
+        Layer.succeed(GitHubCli.GitHubCli, makeGithub(input.listCount, input.comments)),
+      ),
       Layer.provide(Layer.succeed(TextGeneration.TextGeneration, makeText())),
     ),
   );
@@ -165,6 +177,70 @@ describe("AutoReviewPoller", () => {
       // review, since drain awaits the reviewer before the trailing sync.
       expect(order).toEqual(["sync", "review", "sync"]);
     }).pipe(Effect.provide(makeLayer({ enabled: true, listCount, order })), Effect.runPromise);
+  });
+
+  // The two enqueue call sites are far apart in the tick and easy to let
+  // drift, so both triggers assert the same fix-model behaviour. They did
+  // drift once: only the auto path was threaded, and a mention-triggered
+  // review silently fell back to the origin thread's model.
+  describe("fix model reaches the job from every trigger", () => {
+    const fixModel = { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" };
+
+    it("threads the resolved fix model through an auto-triggered review", async () => {
+      const listCount = { value: 0 };
+      await Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const poller = yield* AutoReviewPoller.AutoReviewPoller;
+        yield* poller.tick;
+
+        const jobs = yield* store.list({ projectId: "proj" });
+        expect(jobs[0]?.trigger).toBe("open_or_push");
+        expect(jobs[0]?.fixModelSelection).toEqual(fixModel);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            enabled: true,
+            mode: "auto",
+            fixModelMode: "custom",
+            fixModelSelection: fixModel,
+            listCount,
+          }),
+        ),
+        Effect.runPromise,
+      );
+    });
+
+    it("threads the resolved fix model through a mention-triggered review", async () => {
+      const listCount = { value: 0 };
+      await Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const poller = yield* AutoReviewPoller.AutoReviewPoller;
+        yield* poller.tick;
+
+        const jobs = yield* store.list({ projectId: "proj" });
+        expect(jobs[0]?.trigger).toBe("mention");
+        expect(jobs[0]?.fixModelSelection).toEqual(fixModel);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            enabled: true,
+            mode: "mention",
+            fixModelMode: "custom",
+            fixModelSelection: fixModel,
+            comments: [
+              {
+                id: "c1",
+                body: "@surgecode please take a look",
+                createdAt: "2026-05-25T12:00:00.000Z",
+                authorLogin: "octocat",
+              },
+            ],
+            listCount,
+          }),
+        ),
+        Effect.runPromise,
+      );
+    });
   });
 
   it("does nothing when disabled", async () => {
