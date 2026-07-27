@@ -1,7 +1,14 @@
 export function resolveBrowserRecordingStopTarget(
-  activeTabId: string | null,
-  requestedTabId?: string,
+  activeTabIds: ReadonlySet<string>,
+  implicitTabId: string | null,
+  explicitTabId?: string,
 ): string | null {
-  if (activeTabId === null) return null;
-  return requestedTabId === undefined || requestedTabId === activeTabId ? activeTabId : null;
+  if (explicitTabId !== undefined) {
+    return activeTabIds.has(explicitTabId) ? explicitTabId : null;
+  }
+  if (implicitTabId !== null && activeTabIds.has(implicitTabId)) {
+    return implicitTabId;
+  }
+  if (activeTabIds.size !== 1) return null;
+  return activeTabIds.values().next().value ?? null;
 }

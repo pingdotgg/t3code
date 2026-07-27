@@ -23,6 +23,23 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
     });
   });
 
+  it("clips a floating webview to the mini-player frame", () => {
+    expect(
+      resolveHostedBrowserWebviewWrapperStyle({
+        active: true,
+        cornerRadius: 12,
+        rect: { x: 12, y: 34, width: 360, height: 203 },
+        hiddenSize: { width: 1280, height: 800 },
+      }),
+    ).toMatchObject({
+      left: 12,
+      top: 34,
+      width: 360,
+      height: 203,
+      borderRadius: 12,
+    });
+  });
+
   it("keeps an inactive webview paintable while moving it offscreen", () => {
     const style = resolveHostedBrowserWebviewWrapperStyle({
       active: false,

@@ -9,7 +9,7 @@
  * @module Preview
  */
 import { Schema } from "effect";
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const Url = TrimmedNonEmptyString.check(Schema.isMaxLength(2048));
 const Title = Schema.String.check(Schema.isMaxLength(512));
@@ -192,6 +192,10 @@ export type PreviewListInput = typeof PreviewListInput.Type;
 
 export const PreviewListResult = Schema.Struct({
   sessions: Schema.Array(PreviewSessionSnapshot),
+  /** Identifies the current server process so revision resets are safe. */
+  serverEpoch: TrimmedNonEmptyString,
+  /** Monotonic server state revision used to reject stale list responses. */
+  revision: NonNegativeInt,
 });
 export type PreviewListResult = typeof PreviewListResult.Type;
 
@@ -199,6 +203,10 @@ const PreviewEventBaseSchema = Schema.Struct({
   threadId: TrimmedNonEmptyString,
   tabId: PreviewTabId,
   createdAt: Schema.String,
+  /** Identifies the server process that emitted this event. */
+  serverEpoch: TrimmedNonEmptyString,
+  /** Monotonic server state revision shared with PreviewListResult. */
+  revision: PositiveInt,
 });
 
 const PreviewOpenedEvent = Schema.Struct({

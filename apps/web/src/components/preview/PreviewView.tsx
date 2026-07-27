@@ -22,6 +22,8 @@ import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
@@ -47,7 +49,7 @@ import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   startBrowserRecording,
   stopBrowserRecording,
-  useActiveBrowserRecordingTabId,
+  useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
@@ -67,10 +69,13 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, visible }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
-  const activeRecordingTabId = useActiveBrowserRecordingTabId();
+  const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
+  const miniPlayer = usePreviewMiniPlayerStore((state) =>
+    selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
+  );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environment = useEnvironment(threadRef.environmentId);
@@ -227,11 +232,35 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     void localApi.shell.openExternal(url).catch(() => undefined);
   }, [url]);
 
+  const handlePictureInPicture = useCallback(() => {
+    if (!tabId) return;
+    if (miniPlayer?.tabId === tabId) {
+      usePreviewMiniPlayerStore.getState().close(threadRef);
+      return;
+    }
+    usePreviewMiniPlayerStore.getState().open(threadRef, tabId);
+    useRightPanelStore.getState().close(threadRef);
+  }, [miniPlayer?.tabId, tabId, threadRef]);
+
+  const handleNativePictureInPicture = useCallback(() => {
+    if (!previewBridge || !tabId) return;
+    const operation = desktopOverlay?.pictureInPicture
+      ? previewBridge.pictureInPicture.close
+      : previewBridge.pictureInPicture.open;
+    void operation(tabId).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to update popped-out preview",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, [desktopOverlay?.pictureInPicture, tabId]);
+
   const handleCapture = useCallback(
     (record: boolean) => {
       if (!previewBridge || !tabId) return;
       const bridge = previewBridge;
-      const recordingThisTab = activeRecordingTabId === tabId;
+      const recordingThisTab = activeRecordingTabIds.has(tabId);
       if (recordingThisTab) {
         void stopBrowserRecording(tabId).then(
           (artifact) => {
@@ -325,15 +354,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         return;
       }
       if (record) {
-        if (activeRecordingTabId !== null) {
-          toastManager.add({
-            type: "warning",
-            title: "Another preview is recording",
-            description: "Stop the active recording before starting a new one.",
-          });
-          return;
-        }
-        void startBrowserRecording(tabId).catch((error) => {
+        void startBrowserRecording(tabId, threadRef).catch((error) => {
           toastManager.add({
             type: "error",
             title: "Unable to start recording",
@@ -472,7 +493,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         },
       );
     },
-    [activeRecordingTabId, tabId],
+    [activeRecordingTabIds, tabId, threadRef],
   );
 
   const handlePickElement = useCallback(() => {
@@ -594,7 +615,10 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
-        recording={tabId !== null && activeRecordingTabId === tabId}
+        recording={tabId !== null && activeRecordingTabIds.has(tabId)}
+        onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
+        pictureInPicture={miniPlayer?.tabId === tabId}
+        pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}
         onPickElement={previewBridge && tabId ? handlePickElement : undefined}
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page
@@ -608,11 +632,13 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           previewBridge ? (
             <PreviewMoreMenu
               tabId={tabId}
-              hasWebContents={desktopOverlay !== null}
+              hasWebContents={desktopOverlay?.hasWebContents ?? false}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
               colorScheme={desktopOverlay?.colorScheme ?? "system"}
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
+              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              onNativePictureInPicture={handleNativePictureInPicture}
             />
           ) : null
         }

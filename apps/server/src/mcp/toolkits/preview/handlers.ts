@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import type {
   PreviewAutomationOperation,
+  PreviewAutomationOpenInput,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeResult,
@@ -13,6 +14,18 @@ import type {
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
+
+export function normalizePreviewOpenInput(
+  input: PreviewAutomationOpenInput,
+): PreviewAutomationOpenInput {
+  const open = input.open ?? input.show ?? true;
+  return {
+    ...input,
+    open,
+    show: open,
+    reuseExistingTab: input.reuseExistingTab ?? true,
+  };
+}
 
 const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   operation: PreviewAutomationOperation,
@@ -50,11 +63,7 @@ const invokeTargeted = <A>(
 const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
-    invokeTargeted<PreviewAutomationStatus>("open", {
-      ...input,
-      show: input.show ?? true,
-      reuseExistingTab: input.reuseExistingTab ?? true,
-    }),
+    invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
   preview_navigate: (input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>
