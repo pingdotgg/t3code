@@ -159,6 +159,23 @@ struct SidebarView: View {
         .onChange(of: allProjectGroups.map(\.id)) {
             validateProjectScope()
         }
+        // Probe hook (see UIProbeHooks): reveals every project's settled
+        // disclosure, so the rows it hides — and their menus — can be driven.
+        // Nothing posts this outside a probe run.
+        //
+        // A union rather than a toggle: the probe needs the disclosure *open*,
+        // and a toggle would close it again on a redelivered notification or on
+        // a group the user had already expanded, leaving the rows it was asked
+        // to reveal missing.
+        .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+            guard note.object as? String == "settled" else { return }
+            let groupIDs = Set(allProjectGroups.map(\.id))
+            DispatchQueue.main.async {
+                withAnimation(Motion.structure) {
+                    revealedSettled.formUnion(groupIDs)
+                }
+            }
+        }
         .alert(
             "Rename Project",
             isPresented: Binding(
@@ -470,9 +487,29 @@ struct SidebarView: View {
             hoveredSettledGroup = hovering ? group.id : nil
         }
         .animation(Motion.feedback, value: hoveredSettledGroup)
-        .contextMenu {
-            Button("Archive All Settled Sessions", systemImage: "archivebox") {
-                Task { await archiveAllSettled(settled) }
+        .alpineContextMenu(width: 280) { dismiss in
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "checkmark.circle",
+                    title: "Settled sessions",
+                    subtitle: group.name,
+                    titleLineLimit: 1)
+                Divider().opacity(0.55)
+                AlpineMenuList {
+                    AlpineMenuRow(
+                        icon: "archivebox",
+                        title: "Archive All Settled",
+                        detail: "\(settled.count) session\(settled.count == 1 ? "" : "s")"
+                    ) {
+                        dismiss()
+                        Task { await archiveAllSettled(settled) }
+                    }
+                }
+            }
+            .onAppear {
+                #if DEBUG
+                    UIProbeMenus.record("settled:\(group.id)")
+                #endif
             }
         }
         if isRevealed {
@@ -505,52 +542,17 @@ struct SidebarView: View {
             // short and re-sort as thread status changes, and a cascade on
             // every re-sort would read as fidgeting.
             .entrance(.row)
-            .contextMenu {
-                let model = item.member.location.model
-                Button(
-                    item.isPinned ? "Unpin" : "Pin",
-                    systemImage: item.isPinned ? "pin.slash" : "pin")
-                {
-                    Haptics.play(.toggle)
-                    model.togglePinned(item.thread)
-                }
-                .disabled(!item.isSelectable)
-                Menu("New Thread in This Project", systemImage: "plus.bubble") {
-                    ForEach(model.configuredProviderKinds) { provider in
-                        Button {
-                            createThread(item.member, provider: provider)
-                        } label: {
-                            ProviderLabel(provider: provider)
-                        }
-                        .disabled(
-                            !item.member.location.isReady
-                                || !model.canCreateThread(with: provider))
-                        .help(newThreadHelp(item.member, provider: provider))
-                    }
-                }
-                .disabled(!item.isSelectable || model.configuredProviderKinds.isEmpty)
-                Divider()
-                if item.thread.status != .settled && item.thread.status != .archived {
-                    Button("Settle Thread", systemImage: "checkmark.circle") {
-                        settle(item)
-                    }
-                    .disabled(
-                        !item.isSelectable || !ThreadInboxSemantics.canSettle(item.thread))
-                } else if item.thread.status == .settled {
-                    Button("Mark as Active", systemImage: "arrow.counterclockwise") {
-                        Task { await model.unsettleThread(item.thread) }
-                    }
-                    .disabled(!item.isSelectable)
-                }
-                Button("Archive", systemImage: "archivebox") {
-                    Haptics.play(.commit)
-                    Task { await model.archiveThread(item.thread) }
-                }
-                .disabled(!item.isSelectable)
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    deleteThreadTarget = ThreadActionTarget(model: model, thread: item.thread)
-                }
-                .disabled(!item.isSelectable)
+            .alpineContextMenu(width: 300) { dismiss in
+                SidebarThreadMenu(
+                    item: item,
+                    dismiss: dismiss,
+                    onNewSession: createThread,
+                    onSettle: settle,
+                    onDelete: { target in
+                        deleteThreadTarget = ThreadActionTarget(
+                            model: target.member.location.model, thread: target.thread)
+                    },
+                    newThreadHelp: newThreadHelp)
             }
     }
 
@@ -966,6 +968,154 @@ private struct SidebarProviderChoiceRow: View {
     }
 }
 
+/// The secondary-click menu for a session row. Two pages inside one popover:
+/// the actions, and the provider list behind "New Thread in This Project" —
+/// the same back-chevron pattern the composer's executor picker uses, since a
+/// nested popover would put a second floating surface on screen.
+///
+/// The provider page is why this is a view with state rather than a `@ViewBuilder`
+/// on `SidebarView`: the page has to survive the menu staying open.
+@MainActor
+private struct SidebarThreadMenu: View {
+    let item: SidebarThreadItem
+    let dismiss: () -> Void
+    let onNewSession: (SidebarProjectMember, ProviderKind) -> Void
+    let onSettle: (SidebarThreadItem) -> Void
+    let onDelete: (SidebarThreadItem) -> Void
+    let newThreadHelp: (SidebarProjectMember, ProviderKind) -> String
+
+    @UIState private var showingProviders = false
+
+    private var model: AppModel { item.member.location.model }
+    private var providers: [ProviderKind] { model.configuredProviderKinds }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showingProviders {
+                providerPage
+            } else {
+                actionPage
+            }
+        }
+        .animation(Motion.structure, value: showingProviders)
+    }
+
+    private var actionPage: some View {
+        VStack(spacing: 0) {
+            ComposerPickerHeader(
+                icon: "bubble.left",
+                title: item.thread.title,
+                subtitle: item.member.project.name,
+                titleLineLimit: 2)
+            Divider().opacity(0.55)
+            AlpineMenuList {
+                // No detail lines on the action rows: a context menu is
+                // scanned, not read, and one two-line row among single-line
+                // ones breaks the rhythm.
+                AlpineMenuRow(
+                    icon: item.isPinned ? "pin.slash" : "pin",
+                    title: item.isPinned ? "Unpin" : "Pin"
+                ) {
+                    Haptics.play(.toggle)
+                    model.togglePinned(item.thread)
+                    dismiss()
+                }
+                .disabled(!item.isSelectable)
+
+                AlpineMenuRow(
+                    icon: "plus.bubble",
+                    title: "New Session in This Project",
+                    detail: providers.isEmpty ? "No providers configured" : nil,
+                    opensSubmenu: true
+                ) {
+                    showingProviders = true
+                }
+                .disabled(!item.isSelectable || providers.isEmpty)
+
+                AlpineMenuSeparator()
+
+                lifecycleRow
+
+                AlpineMenuRow(icon: "archivebox", title: "Archive") {
+                    Haptics.play(.commit)
+                    dismiss()
+                    Task { await model.archiveThread(item.thread) }
+                }
+                .disabled(!item.isSelectable)
+
+                AlpineMenuSeparator()
+
+                AlpineMenuRow(icon: "trash", title: "Delete…", isDestructive: true) {
+                    dismiss()
+                    onDelete(item)
+                }
+                .disabled(!item.isSelectable)
+            }
+        }
+        .onAppear {
+            #if DEBUG
+                // The lifecycle branch is part of the identity: settle and
+                // un-settle share one slot, so the probe cannot tell the two
+                // menus apart from the thread id alone.
+                UIProbeMenus.record("thread:\(item.thread.id):\(lifecycleProbeLabel)")
+            #endif
+        }
+    }
+
+    #if DEBUG
+        private var lifecycleProbeLabel: String {
+            if item.thread.status != .settled, item.thread.status != .archived { return "settle" }
+            return item.thread.status == .settled ? "unsettle" : "none"
+        }
+    #endif
+
+    /// Settle and un-settle are the same slot: a live session can be settled,
+    /// a settled one reopened, and an archived one is neither.
+    @ViewBuilder
+    private var lifecycleRow: some View {
+        if item.thread.status != .settled, item.thread.status != .archived {
+            AlpineMenuRow(icon: "checkmark.circle", title: "Settle Session") {
+                dismiss()
+                onSettle(item)
+            }
+            .disabled(!item.isSelectable || !ThreadInboxSemantics.canSettle(item.thread))
+        } else if item.thread.status == .settled {
+            AlpineMenuRow(icon: "arrow.counterclockwise", title: "Mark as Active") {
+                dismiss()
+                Task { await model.unsettleThread(item.thread) }
+            }
+            .disabled(!item.isSelectable)
+        }
+    }
+
+    private var providerPage: some View {
+        VStack(spacing: 0) {
+            ComposerPickerHeader(
+                icon: "plus.bubble",
+                title: "New session",
+                subtitle: item.member.project.name,
+                onBack: { showingProviders = false },
+                titleLineLimit: 1)
+            Divider().opacity(0.55)
+            AlpineMenuList {
+                ForEach(providers) { provider in
+                    SidebarProviderChoiceRow(
+                        provider: provider,
+                        detail: item.member.location.isReady
+                            ? nil : item.member.location.connection.statusText,
+                        isEnabled: item.member.location.isReady
+                            && model.canCreateThread(with: provider)
+                    ) {
+                        dismiss()
+                        onNewSession(item.member, provider)
+                    }
+                    .help(newThreadHelp(item.member, provider))
+                }
+            }
+        }
+    }
+}
+
 private struct ProjectSectionHeader: View {
     let group: SidebarProjectGroup
     let scenery: SceneryStore
@@ -980,6 +1130,7 @@ private struct ProjectSectionHeader: View {
     let onDelete: (SidebarProjectMember) -> Void
 
     @UIState private var isNewTaskPresented = false
+    @UIState private var isManagePresented = false
     @UIState private var isHovering = false
 
     var body: some View {
@@ -1024,17 +1175,28 @@ private struct ProjectSectionHeader: View {
                     .help("\(group.activeThreadCount) in progress")
             }
             HStack(spacing: 2) {
-                Menu {
-                    projectMenuContent
+                // A plain button plus the app's own popover, not `Menu`: the
+                // native menu drops a system-styled NSMenu on top of an
+                // otherwise custom sidebar, and the "+" beside it already
+                // opens an Alpine popover.
+                Button {
+                    isManagePresented.toggle()
                 } label: {
                     Image(systemName: "ellipsis")
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
+                        .background {
+                            if isManagePresented {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Color.primary.opacity(0.1))
+                            }
+                        }
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
+                .buttonStyle(.plain)
                 .help("Manage \(group.name)")
+                .popover(isPresented: $isManagePresented, arrowEdge: .top) {
+                    projectMenu { isManagePresented = false }
+                }
 
                 Button {
                     isNewTaskPresented.toggle()
@@ -1057,9 +1219,9 @@ private struct ProjectSectionHeader: View {
                 }
             }
             // Hover-revealed so calm sections stay quiet; kept visible while
-            // the popover is up so the anchor doesn't vanish mid-interaction.
-            .opacity(isHovering || isNewTaskPresented ? 1 : 0)
-            .accessibilityHidden(!isHovering && !isNewTaskPresented)
+            // either popover is up so the anchor doesn't vanish mid-interaction.
+            .opacity(isHovering || isNewTaskPresented || isManagePresented ? 1 : 0)
+            .accessibilityHidden(!isHovering && !isNewTaskPresented && !isManagePresented)
         }
         .font(.caption)
         .contentShape(Rectangle())
@@ -1069,16 +1231,39 @@ private struct ProjectSectionHeader: View {
         .animation(Motion.feedback, value: isHovering)
         .animation(Motion.ambient, value: group.attentionThreadCount)
         .animation(Motion.ambient, value: group.activeThreadCount)
-        .contextMenu {
-            projectMenuContent
+        .alpineContextMenu(width: 300) { dismiss in
+            projectMenu(dismiss: dismiss)
         }
     }
 
-    @ViewBuilder
-    private var projectMenuContent: some View {
-        memberActionButtons(title: "Rename…", action: onRename)
-        Divider()
-        memberActionButtons(title: "Delete Project…", destructive: true, action: onDelete)
+    /// One menu body behind both entry points — the "…" button and a
+    /// right-click anywhere on the header row.
+    private func projectMenu(dismiss: @escaping () -> Void) -> some View {
+        VStack(spacing: 0) {
+            ComposerPickerHeader(
+                icon: "folder",
+                title: group.name,
+                subtitle: group.members.count == 1
+                    ? "Manage this project"
+                    : "Manage on \(group.members.count) machines",
+                titleLineLimit: 1)
+            Divider().opacity(0.55)
+            AlpineMenuList {
+                memberActionRows(icon: "pencil", title: "Rename", dismiss: dismiss, action: onRename)
+                AlpineMenuSeparator()
+                memberActionRows(
+                    icon: "trash",
+                    title: "Delete Project",
+                    isDestructive: true,
+                    dismiss: dismiss,
+                    action: onDelete)
+            }
+        }
+        .onAppear {
+            #if DEBUG
+                UIProbeMenus.record("project:\(group.id)")
+            #endif
+        }
     }
 
     @ViewBuilder
@@ -1151,33 +1336,35 @@ private struct ProjectSectionHeader: View {
         }
     }
 
+    /// A group can span machines, and rename/delete act on one machine's copy
+    /// of the project. One row per member then, with the machine name on the
+    /// detail line rather than folded into the title.
     @ViewBuilder
-    private func memberActionButtons(
+    private func memberActionRows(
+        icon: String,
         title: String,
-        destructive: Bool = false,
+        isDestructive: Bool = false,
+        dismiss: @escaping () -> Void,
         action: @escaping (SidebarProjectMember) -> Void
     ) -> some View {
         if group.members.count == 1, let member = group.members.first {
-            if destructive {
-                Button(title, role: .destructive) { action(member) }
-                    .disabled(!member.location.isReady)
-            } else {
-                Button(title) { action(member) }
-                    .disabled(!member.location.isReady)
+            AlpineMenuRow(icon: icon, title: "\(title)…", isDestructive: isDestructive) {
+                dismiss()
+                action(member)
             }
+            .disabled(!member.location.isReady)
         } else {
             ForEach(group.members, id: \.id) { member in
-                if destructive {
-                    Button("\(title.dropLast()) on \(member.location.name)…", role: .destructive) {
-                        action(member)
-                    }
-                    .disabled(!member.location.isReady)
-                } else {
-                    Button("\(title.dropLast()) on \(member.location.name)…") {
-                        action(member)
-                    }
-                        .disabled(!member.location.isReady)
+                AlpineMenuRow(
+                    icon: icon,
+                    title: "\(title)…",
+                    detail: member.location.name,
+                    isDestructive: isDestructive
+                ) {
+                    dismiss()
+                    action(member)
                 }
+                .disabled(!member.location.isReady)
             }
         }
     }

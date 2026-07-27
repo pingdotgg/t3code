@@ -44,6 +44,10 @@ struct ComposerPickerHeader: View {
     let subtitle: String
     /// When set, shows a leading chevron that navigates back within a multi-page popover.
     var onBack: (() -> Void)? = nil
+    /// Headers that title themselves after user content (a thread title, a
+    /// branch) cap the line count; the fixed-label pickers leave this nil and
+    /// keep wrapping.
+    var titleLineLimit: Int? = nil
 
     var body: some View {
         HStack(spacing: 10) {
@@ -71,6 +75,7 @@ struct ComposerPickerHeader: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.headline)
+                    .lineLimit(titleLineLimit)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)

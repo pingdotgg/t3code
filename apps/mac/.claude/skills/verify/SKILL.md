@@ -29,6 +29,19 @@ another's PNGs (or a crashed run's leftovers). The probe echoes
   prompt), scrolls the diff panel's NSScrollView programmatically, logs
   `UIProbe:` lines to stdout, then quits itself. Extend that file to drive
   new flows; keep it `#if DEBUG`.
+- `SERGECODE_UI_PROBE_SCENARIO=<name>` runs one focused scenario instead of
+  the default sweep. `sidebar-menus` synthesizes a right-click on *every* row
+  of the sidebar table — scrolling to reach rows below the fold, and failing
+  the run if one never gets there — and asserts each opens an Alpine popover
+  (never an `NSMenu`). It seeds a settled session — failing the run if it
+  cannot — and opens the settled disclosure via `.uiProbeToggleSection` so all
+  four menu variants exist: project, thread/settle, thread/unsettle,
+  settled-disclosure. The reveal is keyed on the model having a settled
+  session, not on what the first walk saw, and the receiver unions rather than
+  toggles (a toggle closed the disclosure on redelivery). Captures land
+  as `menu-p<pass>-row<N>.png` plus a `-content` version; judge the
+  `-content` one, since the window's theme frame carries the system glass rim
+  that `cacheDisplay` turns into a saturated halo.
 - Success is the final `UIProbe: done` line with no `FAIL=` suffix. Soft
   check failures and the watchdog timeout both report as
   `UIProbe: done FAIL=<reasons>`; a failed capture prints
