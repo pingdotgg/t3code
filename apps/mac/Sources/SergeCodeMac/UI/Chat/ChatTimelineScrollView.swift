@@ -189,6 +189,17 @@ struct ChatTimelineScrollView: View {
                                 .id("agent-activity-dock")
                                 .transition(Motion.rise)
                                 .entrance(.row)
+                                #if DEBUG
+                                    // Lets the probe assert the dock is
+                                    // actually mounted, which it cannot see
+                                    // any other way — the dock is pure
+                                    // SwiftUI and never reaches the AppKit
+                                    // accessibility tree.
+                                    .probeSurface(
+                                        UIProbeSurfaces.activityDock,
+                                        threadID: threadID,
+                                        detail: activity.phase.probeDescription)
+                                #endif
                         }
                         Color.clear
                             .frame(height: 1)

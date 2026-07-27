@@ -47,6 +47,18 @@ struct ReviewPetOverlay: View {
                     .onTapGesture { dismiss() }
                     .help(ReviewPetPresentation.accessibilityLabel(for: phase))
                     .transition(.opacity)
+                    #if DEBUG
+                        // Registered from inside the mounted branch, so the
+                        // probe's check is "the pet is on screen" rather than
+                        // "the model says it should be". It also stands in
+                        // for the surface check: the pet lives inside
+                        // ChatScreen's chat branch, so it cannot be mounted
+                        // while DiffReviewView owns the detail column.
+                        .probeSurface(
+                            UIProbeSurfaces.reviewPet,
+                            threadID: threadID,
+                            detail: phase.rawValue)
+                    #endif
             }
         }
         .task(id: token) { await run() }

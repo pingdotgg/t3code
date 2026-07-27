@@ -687,43 +687,32 @@
         /// merely logged for the same reason — a dock that stopped mounting
         /// entirely would otherwise log `phase=none`, write a perfectly
         /// valid-looking PNG of a thread with no dock in it, and pass.
-        /// Text of the detail column only — the pane that hosts either the
-        /// chat surface or `DiffReviewView`, never both.
+        /// Asserts a SwiftUI surface is mounted for `threadID`, and that its
+        /// reported state matches.
         ///
-        /// `mainWindowText()` is too coarse to prove which of those two is
-        /// mounted: the sidebar and the inspector are in the same window, and
-        /// the inspector's turn card quotes the user's prompt. Today it
-        /// truncates that quote, so a window-wide search happens to give the
-        /// right answer, but that is luck rather than a property — widen the
-        /// card and the check silently passes forever.
-        ///
-        /// `NavigationSplitView` + `.inspector` nests two `NSSplitView`s:
-        /// the outer splits sidebar | rest, the inner splits detail |
-        /// inspector. So the deepest split's first pane is the detail column.
-        ///
-        /// Returns nil rather than falling back to the whole window if that
-        /// pane cannot be found. Every way this can guess wrong — a changed
-        /// hierarchy, a missing split — then yields a loud failure instead of
-        /// a silent pass, which is the direction a regression check has to
-        /// fail in.
-        private static func detailColumnText() -> String? {
-            guard let window = NSApp.windows.first(where: { $0.isVisible }),
-                let root = window.contentView
-            else { return nil }
-
-            var deepest: (depth: Int, split: NSSplitView)?
-            func walk(_ view: NSView, depth: Int) {
-                if let split = view as? NSSplitView, !split.arrangedSubviews.isEmpty,
-                    depth > (deepest?.depth ?? -1)
-                {
-                    deepest = (depth, split)
-                }
-                for sub in view.subviews { walk(sub, depth: depth + 1) }
+        /// This replaced a view-hierarchy heuristic ("the deepest
+        /// `NSSplitView`'s first pane is the detail column"). That heuristic
+        /// was a guess about SwiftUI's private layout, and its failure mode
+        /// was not merely a loud one: had it landed on the *outer* split's
+        /// second pane, that subtree contains the detail column, so the
+        /// search would have kept passing while proving nothing. The views
+        /// report themselves now — see `UIProbeSurfaces`.
+        private static func expectSurface(
+            _ key: String, threadID: String, detail: String, scene: String
+        ) -> [String] {
+            guard let entry = UIProbeSurfaces.entry(key, threadID: threadID) else {
+                print(
+                    "UIProbe: FAIL \(scene) surface '\(key)' is not mounted for \(threadID) "
+                        + "(mounted: \(UIProbeSurfaces.entries))")
+                return ["\(scene)-not-mounted"]
             }
-            walk(root, depth: 0)
-
-            guard let pane = deepest?.split.arrangedSubviews.first else { return nil }
-            return accessibleText(in: pane)
+            guard entry.detail == detail else {
+                print(
+                    "UIProbe: FAIL \(scene) surface '\(key)' reports \"\(entry.detail)\", "
+                        + "expected \"\(detail)\"")
+                return ["\(scene)-wrong-state"]
+            }
+            return []
         }
 
         private static func probeLiveActivitySurfaces(
@@ -766,6 +755,12 @@
                     print("UIProbe: FAIL activity dock tool tape is empty")
                     failures.append("activity-dock-tape")
                 }
+                // Everything above is derived from the model, which only says
+                // what *should* render. This says the dock is on screen.
+                failures.append(
+                    contentsOf: expectSurface(
+                        UIProbeSurfaces.activityDock, threadID: "thread-7",
+                        detail: "tool(command)", scene: "activity-dock"))
                 snapshot("18-activity-dock", dir: dir)
             } else {
                 print("UIProbe: activity dock skipped (live backend run)")
@@ -784,50 +779,34 @@
                 // it, so a future change that couples the two fails here
                 // instead of quietly capturing the wrong surface.
                 let onChatSurface = model.threadState("thread-8")?.isReviewing != true
-                // The load-bearing check, read back off the live window
-                // rather than off the model: the thread's own transcript text
-                // is in the *detail column*. `DiffReviewView` occupies that
-                // same column and renders a file list and diff hunks instead,
-                // so this cannot be satisfied by the pane the pet must not be
-                // captured on — and scoping to the column keeps the sidebar
-                // and the inspector's quoted prompt out of the search.
-                //
-                // Excerpt pulled from the timeline rather than hardcoded so
-                // the fixture and the assertion cannot drift apart.
-                let transcriptExcerpt = model.timeline(threadID: "thread-8")
-                    .compactMap { item -> String? in
-                        if case .userMessage(_, let text, _, _) = item { return text }
-                        return nil
-                    }
-                    .first
-                    .map { String($0.prefix(40)) }
-                let columnText = detailColumnText()
-                let onChatTranscript: Bool
-                if let columnText, let transcriptExcerpt {
-                    onChatTranscript = columnText.contains(transcriptExcerpt)
-                } else {
-                    onChatTranscript = false
-                }
+                let petMounted = UIProbeSurfaces.entry(
+                    UIProbeSurfaces.reviewPet, threadID: "thread-8") != nil
+                let playfulSurfaces = Motion.playful.showsPlayfulSurfaces
                 print(
                     "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
                         + "phase=\(petPhase?.rawValue ?? "none") "
-                        + "chatSurface=\(onChatSurface) "
-                        + "columnChars=\(columnText?.count ?? -1) "
-                        + "transcriptInColumn=\(onChatTranscript)")
+                        + "chatSurface=\(onChatSurface) mounted=\(petMounted) "
+                        + "playful=\(playfulSurfaces)")
                 failures.append(
                     contentsOf: expectSelected("thread-8", model: model, scene: "review-pet"))
                 if petPhase != .reviewing {
                     print("UIProbe: FAIL review pet expected the reviewing phase")
                     failures.append("review-pet-phase")
                 }
-                if columnText == nil {
-                    print("UIProbe: FAIL review pet could not locate the detail column")
-                    failures.append("review-pet-no-detail-column")
-                } else if !onChatTranscript {
-                    print(
-                        "UIProbe: FAIL review pet captured a detail column with no transcript "
-                            + "on it (looked for \"\(transcriptExcerpt ?? "")\")")
-                    failures.append("review-pet-wrong-surface")
+                if playfulSurfaces {
+                    // Doubles as the surface check. The pet is rendered inside
+                    // ChatScreen's chat branch, so it cannot be mounted while
+                    // `DiffReviewView` owns the detail column — a registration
+                    // for this thread *is* proof the capture is of the chat
+                    // surface, with no guess about the view hierarchy.
+                    failures.append(
+                        contentsOf: expectSurface(
+                            UIProbeSurfaces.reviewPet, threadID: "thread-8",
+                            detail: "reviewing", scene: "review-pet"))
+                } else if petMounted {
+                    // The opt-out has to actually remove it, not just still it.
+                    print("UIProbe: FAIL review pet mounted with playful motion off")
+                    failures.append("review-pet-opt-out")
                 }
                 // Secondary, and deliberately still `!= true`: it mirrors
                 // ChatScreen's own `?.isReviewing == true` routing, in which a
@@ -891,6 +870,13 @@
                             + "expected \"\(fullyEscalated)\" (elapsed \(Int(elapsed))s)")
                     failures.append("activity-dock-thinking-label")
                 }
+                // Mounted in both presentations: the playful dock and the
+                // quiet fallback are branches *inside* `AgentActivityDock`,
+                // so this holds with playful motion either way.
+                failures.append(
+                    contentsOf: expectSurface(
+                        UIProbeSurfaces.activityDock, threadID: "thread-9",
+                        detail: "thinking", scene: "activity-dock-thinking"))
                 snapshot(
                     playful ? "20-activity-dock-thinking" : "20-activity-dock-thinking-quiet",
                     dir: dir)
