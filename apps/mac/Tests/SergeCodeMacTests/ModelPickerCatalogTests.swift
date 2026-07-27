@@ -178,6 +178,48 @@ struct ModelPickerCatalogTests {
                 == nil)
     }
 
+    @Test("a reconnect renaming the instance keeps the current model selected")
+    func selectedRowSurvivesInstanceRename() {
+        // The thread stored `codex-a`; the provider reconnected as `codex-b`.
+        let afterReconnect = [
+            option(instance: "codex-b", modelID: "gpt-5", name: "GPT-5", provider: .codex),
+            option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+        ]
+
+        #expect(
+            ModelPickerCatalog.selectedRowKey(
+                in: afterReconnect, instanceID: "codex-a", modelID: "gpt-5") == "codex/gpt-5")
+        // A live instance still resolves through the exact match.
+        #expect(
+            ModelPickerCatalog.selectedRowKey(
+                in: afterReconnect, instanceID: "codex-b", modelID: "gpt-5") == "codex/gpt-5")
+        #expect(
+            ModelPickerCatalog.selectedRowKey(
+                in: afterReconnect, instanceID: "codex-a", modelID: "retired-model") == nil)
+        #expect(
+            ModelPickerCatalog.selectedRowKey(in: afterReconnect, instanceID: nil, modelID: nil)
+                == nil)
+    }
+
+    @Test("an ambiguous model id highlights nothing rather than the wrong provider")
+    func ambiguousModelIDResolvesToNoRow() {
+        // Two providers advertise the same model id, and the stored instance
+        // matches neither — guessing would put the checkmark on the wrong row.
+        let options = [
+            option(instance: "claude-a", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+            option(
+                instance: "work-a", modelID: "sonnet-5", name: "Sonnet 5", provider: .claudeWork),
+        ]
+
+        #expect(
+            ModelPickerCatalog.selectedRowKey(
+                in: options, instanceID: "gone", modelID: "sonnet-5") == nil)
+        // The same catalog still resolves exactly when the instance is live.
+        #expect(
+            ModelPickerCatalog.selectedRowKey(
+                in: options, instanceID: "work-a", modelID: "sonnet-5") == "claudeWork/sonnet-5")
+    }
+
     @Test("keys ignore the provider instance so favorites survive a reconnect")
     func keysAreInstanceIndependent() {
         let first = option(instance: "codex-a", modelID: "GPT-5", name: "GPT-5", provider: .codex)

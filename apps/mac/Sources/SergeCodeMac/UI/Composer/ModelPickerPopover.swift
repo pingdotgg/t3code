@@ -265,10 +265,6 @@ struct ModelPickerPopoverContent: View {
         return keys
     }
 
-    private var selectedOption: ModelOption? {
-        ModelPickerCatalog.selectedOption(
-            in: models, instanceID: selectedInstanceID, modelID: selectedModelID)
-    }
 
     /// Where the keyboard starts when the popover opens. The current model
     /// when it is on offer — but a thread can run a model the connected
@@ -282,9 +278,12 @@ struct ModelPickerPopoverContent: View {
     }
 
     /// Rows collapse the instances advertising one model, so the checkmark,
-    /// the opening highlight, and the scroll target are all this row key.
+    /// the opening highlight, and the scroll target are all this row key —
+    /// resolved by row identity, which survives a reconnect renaming the
+    /// instance the thread's stored selection points at.
     private var selectedItemKey: String? {
-        selectedOption.map(ModelPickerCatalog.key(for:))
+        ModelPickerCatalog.selectedRowKey(
+            in: models, instanceID: selectedInstanceID, modelID: selectedModelID)
     }
 
     private var isClearSelected: Bool {

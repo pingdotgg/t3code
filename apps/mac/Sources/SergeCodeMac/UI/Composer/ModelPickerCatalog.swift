@@ -87,6 +87,31 @@ enum ModelPickerCatalog {
         return options.first { instanceKey(for: $0) == target }
     }
 
+    /// The picker row a thread's stored selection belongs to.
+    ///
+    /// Rows collapse the instances advertising one model, and the store keeps
+    /// selections as `instanceID` + `modelID`. A provider that reconnects mints
+    /// a new instance id, which strands the thread's stored one: matching on it
+    /// alone would drop the checkmark and the opening highlight for the model
+    /// the thread is still running. So an exact instance match wins when the
+    /// instance is live, and otherwise the model id alone resolves the row —
+    /// but only when it is unambiguous, since highlighting the wrong
+    /// provider's row is worse than highlighting none.
+    static func selectedRowKey(
+        in options: [ModelOption],
+        instanceID: String?,
+        modelID: String?
+    ) -> String? {
+        guard let modelID, !normalized(modelID).isEmpty else { return nil }
+        if let exact = selectedOption(in: options, instanceID: instanceID, modelID: modelID) {
+            return key(for: exact)
+        }
+        let target = normalized(modelID)
+        let candidateKeys = Set(
+            options.filter { normalized($0.modelID) == target }.map { key(for: $0) })
+        return candidateKeys.count == 1 ? candidateKeys.first : nil
+    }
+
     static func filteredItems(
         _ items: [ModelPickerItem],
         scope: ModelPickerScope,
