@@ -714,6 +714,57 @@ class ServiceDefinitionTest(unittest.TestCase):
         self.assertEqual(pid, 42)
         self.assertEqual(command.call_count, 4)
 
+    def test_service_pid_accepts_production_s6_svstat_pgid_output(self) -> None:
+        service_dir = Path(self.temporary.name) / "service" / "t3code"
+        service_dir.mkdir(parents=True)
+        (service_dir / "run").touch()
+
+        with patch(
+            "integrations.hermes_plugin.service._command",
+            return_value=CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="up (pid 39429 pgid 39429) 119 seconds\n",
+                stderr="",
+            ),
+        ):
+            pid = service_module._service_pid(service_dir)
+
+        self.assertEqual(pid, 39429)
+
+    def test_service_pid_preserves_strict_positive_s6_svstat_format(self) -> None:
+        service_dir = Path(self.temporary.name) / "service" / "t3code"
+        service_dir.mkdir(parents=True)
+        (service_dir / "run").touch()
+        cases = [
+            ("up (pid 42) 1 seconds\n", 42),
+            ("up (pid 40420 pgid 40420) 9 seconds\n", 40420),
+            ("up (pid 0) 1 seconds\n", None),
+            ("up (pid -1) 1 seconds\n", None),
+            ("up (pid nope) 1 seconds\n", None),
+            ("up (pid 42 pgid 0) 1 seconds\n", None),
+            ("up (pid 42 pgid -1) 1 seconds\n", None),
+            ("up (pid 42 pgid nope) 1 seconds\n", None),
+            ("up (pid 42 pgid 42)malformed\n", None),
+        ]
+
+        for output, expected in cases:
+            with (
+                self.subTest(output=output),
+                patch(
+                    "integrations.hermes_plugin.service._command",
+                    return_value=CompletedProcess(
+                        args=[],
+                        returncode=0,
+                        stdout=output,
+                        stderr="",
+                    ),
+                ),
+            ):
+                pid = service_module._service_pid(service_dir)
+
+            self.assertEqual(pid, expected)
+
     def test_split_brain_cleanup_refuses_ambiguous_exact_orphans(self) -> None:
         candidates = [
             service_module._StaleServiceProcess(child_pid=2882, supervisor_pid=2850),
@@ -801,6 +852,92 @@ class ServiceDefinitionTest(unittest.TestCase):
                 ),
             ],
         )
+
+    def test_split_brain_cleanup_escalates_only_the_pinned_child(self) -> None:
+        stale = service_module._StaleServiceProcess(
+            child_pid=37749,
+            supervisor_pid=3008,
+        )
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._find_stale_service_processes",
+                return_value=[stale],
+            ),
+            patch(
+                "integrations.hermes_plugin.service.os.pidfd_open",
+                return_value=17,
+            ),
+            patch(
+                "integrations.hermes_plugin.service.signal.pidfd_send_signal"
+            ) as send_signal,
+            patch("integrations.hermes_plugin.service.os.close") as close,
+            patch(
+                "integrations.hermes_plugin.service._wait_for_process_exit",
+                side_effect=[
+                    ServiceError("TERM timeout"),
+                    None,
+                    None,
+                ],
+            ) as wait_for_exit,
+        ):
+            service_module._terminate_exact_stale_service(self.config)
+
+        self.assertEqual(
+            send_signal.call_args_list,
+            [
+                call(17, signal.SIGTERM),
+                call(17, signal.SIGKILL),
+            ],
+        )
+        close.assert_called_once_with(17)
+        self.assertEqual(
+            wait_for_exit.call_args_list,
+            [
+                call(
+                    stale.child_pid,
+                    timeout=service_module._PROCESS_EXIT_TIMEOUT_SECONDS,
+                ),
+                call(
+                    stale.child_pid,
+                    timeout=service_module._PROCESS_EXIT_TIMEOUT_SECONDS,
+                ),
+                call(
+                    stale.supervisor_pid,
+                    timeout=service_module._PROCESS_EXIT_TIMEOUT_SECONDS,
+                ),
+            ],
+        )
+
+    def test_split_brain_cleanup_refuses_kill_after_identity_change(self) -> None:
+        stale = service_module._StaleServiceProcess(
+            child_pid=37749,
+            supervisor_pid=3008,
+        )
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._find_stale_service_processes",
+                side_effect=[[stale], [stale], []],
+            ),
+            patch(
+                "integrations.hermes_plugin.service.os.pidfd_open",
+                return_value=17,
+            ),
+            patch(
+                "integrations.hermes_plugin.service.signal.pidfd_send_signal"
+            ) as send_signal,
+            patch("integrations.hermes_plugin.service.os.close") as close,
+            patch(
+                "integrations.hermes_plugin.service._wait_for_process_exit",
+                side_effect=ServiceError("TERM timeout"),
+            ),
+            self.assertRaisesRegex(ServiceError, "identity changed after SIGTERM"),
+        ):
+            service_module._terminate_exact_stale_service(self.config)
+
+        send_signal.assert_called_once_with(17, signal.SIGTERM)
+        close.assert_called_once_with(17)
 
     def test_finds_only_exact_deleted_slot_process_that_owns_configured_port(
         self,
