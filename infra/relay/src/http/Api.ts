@@ -43,6 +43,7 @@ import {
   RelayEnvironmentLinkProofExpiredError,
   RelayEnvironmentLinkProofInvalidError,
   RelayEnvironmentLinkUnavailableError,
+  RelayEnvironmentLinkLimitExceededError,
   RelayEnvironmentPrincipal,
   type RelayEnvironmentConnectRequest,
   type RelayDpopAccessTokenScope,
@@ -534,6 +535,12 @@ export const clientApi = HttpApiBuilder.group(
               new RelayEnvironmentLinkProofInvalidError({
                 code: "environment_link_proof_invalid",
                 reason: "origin_not_allowed",
+                traceId,
+              }),
+            ManagedTunnelLimitExceeded: (limitError, traceId) =>
+              new RelayEnvironmentLinkLimitExceededError({
+                code: "environment_link_limit_exceeded",
+                maxTunnels: limitError.maxTunnels,
                 traceId,
               }),
             EnvironmentLinkUpsertPersistenceError: (_error, traceId) =>
