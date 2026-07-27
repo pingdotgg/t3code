@@ -338,7 +338,6 @@ const buildAppUnderTest = (options?: {
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
-    previewManager?: Partial<PreviewManager.PreviewManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
@@ -673,7 +672,6 @@ const buildAppUnderTest = (options?: {
             subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
               PubSub.subscribe(pubsub),
             ),
-            ...options?.layers?.previewManager,
           }),
           Layer.mock(PortScanner.PortDiscovery)({
             scan: () => Effect.succeed([]),
@@ -6414,7 +6412,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("stops the provider session and closes thread runtimes after archive", () =>
+  it.effect("stops the provider session and closes thread terminals after archive", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-archive");
       const effects: string[] = [];
@@ -6427,12 +6425,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             close: (input) =>
               Effect.sync(() => {
                 effects.push(`terminal.close:${input.threadId}`);
-              }),
-          },
-          previewManager: {
-            close: (input) =>
-              Effect.sync(() => {
-                effects.push(`preview.close:${input.threadId}`);
               }),
           },
           orchestrationEngine: {
@@ -6482,52 +6474,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "dispatch:thread.archive",
         "dispatch:thread.session.stop",
         `terminal.close:${threadId}`,
-        `preview.close:${threadId}`,
       ]);
       const sessionStopCommand = dispatchedCommands[1];
       assert.equal(sessionStopCommand?.type, "thread.session.stop");
       if (sessionStopCommand?.type === "thread.session.stop") {
         assert.equal(sessionStopCommand.threadId, threadId);
       }
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("closes thread previews after deletion", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-delete-preview");
-      const effects: string[] = [];
-
-      yield* buildAppUnderTest({
-        layers: {
-          previewManager: {
-            close: (input) =>
-              Effect.sync(() => {
-                effects.push(`preview.close:${input.threadId}`);
-              }),
-          },
-          orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                effects.push(`dispatch:${command.type}`);
-                return { sequence: 1 };
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const dispatchResult = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-            type: "thread.delete",
-            commandId: CommandId.make("cmd-thread-delete-preview"),
-            threadId,
-          }),
-        ),
-      );
-
-      assert.equal(dispatchResult.sequence, 1);
-      assert.deepEqual(effects, ["dispatch:thread.delete", `preview.close:${threadId}`]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

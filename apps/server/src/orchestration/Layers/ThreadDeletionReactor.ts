@@ -12,6 +12,7 @@ import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { ProjectionThreadSessionRepository } from "../../persistence/Services/ProjectionThreadSessions.ts";
+import { PreviewManager } from "../../preview/Manager.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadColdStorage } from "../Services/ThreadColdStorage.ts";
@@ -78,6 +79,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const providerSessionDirectory = yield* ProviderSessionDirectory;
   const projectionThreadSessions = yield* ProjectionThreadSessionRepository;
+  const previewManager = yield* PreviewManager;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const threadColdStorage = yield* ThreadColdStorage;
   const providerEventLoggers = yield* ProviderEventLoggers;
@@ -94,6 +96,13 @@ const make = Effect.gen(function* () {
     logCleanupCauseUnlessInterrupted({
       effect: terminalManager.close({ threadId, deleteHistory: true }),
       message: "thread deletion cleanup skipped terminal close",
+      threadId,
+    });
+
+  const closeThreadPreviews = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: previewManager.close({ threadId }),
+      message: "thread lifecycle cleanup skipped preview close",
       threadId,
     });
 
@@ -217,10 +226,18 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (event.type === "thread.deleted") {
-          return enqueueLifecycleJob({ type: "delete", threadId: event.payload.threadId });
+          return closeThreadPreviews(event.payload.threadId).pipe(
+            Effect.andThen(
+              enqueueLifecycleJob({ type: "delete", threadId: event.payload.threadId }),
+            ),
+          );
         }
         if (event.type === "thread.archived") {
-          return enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId });
+          return closeThreadPreviews(event.payload.threadId).pipe(
+            Effect.andThen(
+              enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId }),
+            ),
+          );
         }
         return Effect.void;
       }),

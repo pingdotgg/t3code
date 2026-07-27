@@ -19,7 +19,6 @@ export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
   const activeThreadRefs = useThreadRefs();
-  const miniPlayerByThreadKey = usePreviewMiniPlayerStore((state) => state.byThreadKey);
   const previousActiveThreadRefs = useRef(activeThreadRefs);
   const sessions = useMemo(
     () =>
@@ -40,15 +39,13 @@ export function ElectronBrowserHost() {
     const removedThreadRefs = collectRemovedPreviewThreadRefs({
       previousActiveThreadRefs: previousActiveThreadRefs.current,
       activeThreadRefs,
-      previewThreadKeys: Object.keys(previewByThreadKey),
-      miniPlayerThreadKeys: Object.keys(miniPlayerByThreadKey),
     });
     previousActiveThreadRefs.current = activeThreadRefs;
     for (const threadRef of removedThreadRefs) {
       removePreviewThread(threadRef);
       usePreviewMiniPlayerStore.getState().removeThread(threadRef);
     }
-  }, [activeThreadRefs, miniPlayerByThreadKey, previewByThreadKey]);
+  }, [activeThreadRefs]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;

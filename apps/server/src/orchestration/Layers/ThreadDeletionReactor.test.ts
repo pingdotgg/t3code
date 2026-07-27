@@ -32,6 +32,7 @@ import { ProviderValidationError } from "../../provider/Errors.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { ProjectionThreadSessionRepository } from "../../persistence/Services/ProjectionThreadSessions.ts";
+import { PreviewManager } from "../../preview/Manager.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
@@ -94,6 +95,11 @@ function testReactorLayer(input: {
     ),
     Layer.provide(
       Layer.mock(TerminalManager.TerminalManager)({
+        close: () => Effect.void,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PreviewManager)({
         close: () => Effect.void,
       }),
     ),
@@ -345,6 +351,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
     const threadId = ThreadId.make("thread-force-delete-cold");
     const commandId = CommandId.make("command-force-delete-cold");
     const deleteStarted = yield* Deferred.make<void>();
+    const previewClosed = yield* Deferred.make<void>();
 
     const orchestrationEngineLayer = Layer.succeed(OrchestrationEngineService, {
       readEvents: () => Stream.empty,
@@ -357,6 +364,12 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
     });
     const terminalLayer = Layer.mock(TerminalManager.TerminalManager)({
       close: () => Effect.void,
+    });
+    const previewLayer = Layer.mock(PreviewManager)({
+      close: (input) =>
+        Effect.sync(() => {
+          assert.equal(input.threadId, threadId);
+        }).pipe(Effect.andThen(Deferred.succeed(previewClosed, undefined)), Effect.asVoid),
     });
     const loggerLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
     const coldStorageLayer = ThreadColdStorageLive.pipe(
@@ -380,6 +393,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
         }),
       ),
       Layer.provide(terminalLayer),
+      Layer.provide(previewLayer),
       Layer.provide(loggerLayer),
       Layer.provideMerge(coldStorageLayer),
     );
@@ -498,6 +512,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
 
       yield* reactor.start();
       yield* PubSub.publish(events, { ...deletedEvent, sequence: 4 });
+      yield* Deferred.await(previewClosed);
       yield* Deferred.await(deleteStarted);
       yield* reactor.drain;
 

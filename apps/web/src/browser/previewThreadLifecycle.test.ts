@@ -1,4 +1,4 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -14,20 +14,16 @@ describe("collectRemovedPreviewThreadRefs", () => {
       collectRemovedPreviewThreadRefs({
         previousActiveThreadRefs: [activeRef, archivedRef, deletedRef],
         activeThreadRefs: [activeRef],
-        previewThreadKeys: [scopedThreadKey(activeRef), scopedThreadKey(archivedRef)],
-        miniPlayerThreadKeys: [scopedThreadKey(archivedRef), scopedThreadKey(deletedRef)],
       }),
     ).toEqual([archivedRef, deletedRef]);
   });
 
-  it("does not clean removed threads without preview lifecycle state", () => {
+  it("cleans removed threads after preview sessions close first", () => {
     expect(
       collectRemovedPreviewThreadRefs({
         previousActiveThreadRefs: [archivedRef],
         activeThreadRefs: [],
-        previewThreadKeys: [],
-        miniPlayerThreadKeys: [],
       }),
-    ).toEqual([]);
+    ).toEqual([archivedRef]);
   });
 });
