@@ -14,6 +14,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+_SUPERVISOR_REAP_TIMEOUT_SECONDS = 10.0
+_SUPERVISOR_REAP_POLL_SECONDS = 0.1
+
 
 @contextmanager
 def lifecycle_lock(lock_path: Path):
@@ -101,24 +104,70 @@ def _run(command: list[str], *, timeout: float = 15) -> bool:
     return result.returncode == 0
 
 
+def _removal_tombstones(service_dir: Path) -> list[Path]:
+    return list(service_dir.parent.glob(f".{service_dir.name}.removing.*"))
+
+
+def _reap_tombstone(tombstone: Path) -> bool:
+    deadline = time.monotonic() + _SUPERVISOR_REAP_TIMEOUT_SECONDS
+    while _run(["s6-svok", str(tombstone)], timeout=5):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_SUPERVISOR_REAP_POLL_SECONDS)
+    shutil.rmtree(tombstone, ignore_errors=True)
+    return not tombstone.exists()
+
+
 def remove_service(service_dir: Path, *, scan_dir: Path) -> bool:
     if not service_dir.exists():
-        return True
-    if not (service_dir / "run").is_file():
-        if not _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5):
+        return all(
+            _reap_tombstone(tombstone)
+            for tombstone in _removal_tombstones(service_dir)
+        )
+    if (service_dir / "run").is_file():
+        if not _run(["s6-svc", "-d", str(service_dir)], timeout=5):
             return False
-        time.sleep(0.2)
-        shutil.rmtree(service_dir, ignore_errors=True)
-        return not service_dir.exists()
-    if not _run(["s6-svc", "-d", str(service_dir)], timeout=5):
+        if not _run(["s6-svwait", "-D", "-t", "10000", str(service_dir)]):
+            return False
+    tombstone = service_dir.with_name(
+        f".{service_dir.name}.removing.{os.getpid()}"
+    )
+    if tombstone.exists():
         return False
-    if not _run(["s6-svwait", "-D", "-t", "10000", str(service_dir)]):
+    try:
+        os.replace(service_dir, tombstone)
+    except OSError:
         return False
     if not _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5):
+        try:
+            os.replace(tombstone, service_dir)
+        except OSError:
+            pass
         return False
-    time.sleep(0.2)
-    shutil.rmtree(service_dir, ignore_errors=True)
-    return not service_dir.exists()
+    return _reap_tombstone(tombstone)
+
+
+def hide_current_service(service_dir: Path, *, scan_dir: Path) -> bool:
+    """Remove our scan name; the next install reaps the hidden supervisor."""
+
+    if not service_dir.exists():
+        return True
+    tombstone = service_dir.with_name(
+        f".{service_dir.name}.removing.{os.getpid()}"
+    )
+    if tombstone.exists():
+        return False
+    try:
+        os.replace(service_dir, tombstone)
+    except OSError:
+        return False
+    if _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5):
+        return True
+    try:
+        os.replace(tombstone, service_dir)
+    except OSError:
+        pass
+    return False
 
 
 def cleanup_orphaned_services(
@@ -138,12 +187,12 @@ def cleanup_orphaned_services(
                 return False
             if not remove_service(t3_service_dir, scan_dir=scan_dir):
                 return False
-            # Removing our own directory is safe: the running interpreter has
-            # already loaded this module, and s6-svscan is notified immediately.
-            shutil.rmtree(watchdog_service_dir, ignore_errors=True)
-            return (
-                not watchdog_service_dir.exists()
-                and _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5)
+            # Keep our live supervise tree intact under a hidden name until
+            # this process exits. A later install removes the tombstone only
+            # after s6-svok confirms that this supervisor has been reaped.
+            return hide_current_service(
+                watchdog_service_dir,
+                scan_dir=scan_dir,
             )
     except OSError as error:
         print(

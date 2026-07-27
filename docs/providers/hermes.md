@@ -87,6 +87,14 @@ without replacing their supervise tree, and will not rewrite a partial supervise
 stopped T3 definition whose native environment marker does not contain the configured `HERMES_HOME`
 is repaired once through the retained checksum-verified binary's local **Update** path. That refreshes
 stale launchers without a release lookup; the repaired marker makes later reconciliation a no-op.
+Native install, update, and start commands are not treated as proof that the service is running:
+the plugin waits for the current slot to report the same positive service PID on consecutive checks.
+If an obsolete deleted slot still owns the configured port, recovery terminates it only when `/proc`
+proves one unambiguous match for the configured service UID, exact T3 command and executable, deleted
+service working directory, listen socket, and root `s6-supervise` parent. Otherwise recovery fails
+safely with an actionable status instead of touching an arbitrary port owner or reporting a false
+repair. Watchdog updates reuse their existing scan slot, and removal hides the old scan name before
+asking s6 to reap its supervisor, preventing two supervisors from acquiring the same service name.
 
 Hermes pre-seeds each dynamic service's supervision skeleton with the ownership required by its
 no-new-privileges container. After the native T3 service command writes an s6 run script, the plugin

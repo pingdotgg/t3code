@@ -6,8 +6,11 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
+import re
 import shlex
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -54,6 +57,17 @@ _DESIRED_INSTALLED = "installed"
 _DESIRED_UNINSTALLED = "uninstalled"
 _RECONCILIATION_LOCK = threading.Lock()
 _RUNTIME_RECONCILIATION: dict[str, dict[str, str | None]] = {}
+_SERVICE_START_TIMEOUT_SECONDS = 10.0
+_SERVICE_START_POLL_SECONDS = 0.1
+_SERVICE_STABLE_SECONDS = 0.5
+_PROCESS_EXIT_TIMEOUT_SECONDS = 10.0
+_SVSTAT_PID = re.compile(r"^\s*up \(pid ([1-9][0-9]*)\)")
+
+
+@dataclass(frozen=True)
+class _StaleServiceProcess:
+    child_pid: int
+    supervisor_pid: int
 
 
 def _timestamp() -> str:
@@ -264,14 +278,60 @@ def _command(
     return result
 
 
-def _service_running(service_dir: Path) -> bool:
+def _service_pid(service_dir: Path) -> int | None:
     if not (service_dir / "run").is_file():
-        return False
+        return None
     try:
         result = _command(["s6-svstat", str(service_dir)], timeout=5, check=False)
     except ServiceError:
-        return False
-    return result.returncode == 0 and result.stdout.lstrip().startswith("up ")
+        return None
+    if result.returncode != 0:
+        return None
+    match = _SVSTAT_PID.match(result.stdout)
+    return int(match.group(1)) if match is not None else None
+
+
+def _service_running(service_dir: Path) -> bool:
+    return _service_pid(service_dir) is not None
+
+
+def _wait_for_service_up(
+    service_dir: Path,
+    *,
+    timeout: float | None = None,
+    poll_interval: float | None = None,
+    reject_pid: int | None = None,
+    stable_seconds: float | None = None,
+) -> int:
+    """Require one positive PID to remain current for a bounded stable window."""
+
+    if timeout is None:
+        timeout = _SERVICE_START_TIMEOUT_SECONDS
+    if poll_interval is None:
+        poll_interval = _SERVICE_START_POLL_SECONDS
+    if stable_seconds is None:
+        stable_seconds = _SERVICE_STABLE_SECONDS
+    deadline = time.monotonic() + timeout
+    candidate_pid: int | None = None
+    candidate_since = 0.0
+    while True:
+        pid = _service_pid(service_dir)
+        if pid == reject_pid:
+            pid = None
+        now = time.monotonic()
+        if pid is None:
+            candidate_pid = None
+        elif pid != candidate_pid:
+            candidate_pid = pid
+            candidate_since = now
+        elif now - candidate_since >= stable_seconds:
+            return pid
+        if now >= deadline:
+            raise ServiceError(
+                f"s6 service {service_dir} did not reach a stable positive pid "
+                f"within {timeout:g} seconds"
+            )
+        time.sleep(poll_interval)
 
 
 def _reachable(port: int) -> bool:
@@ -280,6 +340,249 @@ def _reachable(port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def _proc_status(proc_dir: Path) -> tuple[int, int] | None:
+    try:
+        lines = (proc_dir / "status").read_text(encoding="utf-8").splitlines()
+        fields = {
+            key: value.strip()
+            for line in lines
+            if ":" in line
+            for key, value in [line.split(":", 1)]
+            if key in {"Uid", "PPid"}
+        }
+        uid = int(fields["Uid"].split()[0])
+        parent_pid = int(fields["PPid"])
+    except (OSError, KeyError, ValueError, IndexError):
+        return None
+    return uid, parent_pid
+
+
+def _proc_command(proc_dir: Path) -> list[str] | None:
+    try:
+        raw = (proc_dir / "cmdline").read_bytes()
+    except OSError:
+        return None
+    parts = raw.rstrip(b"\0").split(b"\0") if raw else []
+    return [os.fsdecode(part) for part in parts]
+
+
+def _proc_link(proc_dir: Path, name: str) -> tuple[str, bool] | None:
+    try:
+        target = os.readlink(proc_dir / name)
+    except OSError:
+        return None
+    suffix = " (deleted)"
+    return (
+        target.removesuffix(suffix),
+        target.endswith(suffix),
+    )
+
+
+def _process_has_expected_hermes_home(
+    pid: int,
+    config: PluginConfig,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> bool:
+    try:
+        environment = (proc_root / str(pid) / "environ").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    expected = b"HERMES_HOME=" + os.fsencode(config.hermes_home)
+    return environment.count(expected) == 1
+
+
+def _listening_socket_inodes(port: int, proc_root: Path) -> set[str]:
+    inodes: set[str] = set()
+    for table in ("tcp", "tcp6"):
+        try:
+            lines = (proc_root / "net" / table).read_text(
+                encoding="ascii"
+            ).splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 10 or fields[3] != "0A":
+                continue
+            try:
+                local_port = int(fields[1].rsplit(":", 1)[1], 16)
+            except (IndexError, ValueError):
+                continue
+            if local_port == port:
+                inodes.add(fields[9])
+    return inodes
+
+
+def _process_owns_socket(proc_dir: Path, socket_inodes: set[str]) -> bool:
+    if not socket_inodes:
+        return False
+    try:
+        descriptors = list((proc_dir / "fd").iterdir())
+    except OSError:
+        return False
+    for descriptor in descriptors:
+        try:
+            target = os.readlink(descriptor)
+        except OSError:
+            continue
+        if (
+            target.startswith("socket:[")
+            and target.endswith("]")
+            and target[8:-1] in socket_inodes
+        ):
+            return True
+    return False
+
+
+def _expected_service_uid(config: PluginConfig) -> int:
+    if config.service_user.isdecimal():
+        return int(config.service_user)
+    try:
+        return pwd.getpwnam(config.service_user).pw_uid
+    except KeyError as error:
+        raise ServiceError(
+            f"cannot validate a stale T3 process because service user "
+            f"{config.service_user!r} is unavailable"
+        ) from error
+
+
+def _find_stale_service_processes(
+    config: PluginConfig,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> list[_StaleServiceProcess]:
+    """Find only deleted-slot T3 children that own the configured listen port."""
+
+    expected_uid = _expected_service_uid(config)
+    socket_inodes = _listening_socket_inodes(config.port, proc_root)
+    matches: list[_StaleServiceProcess] = []
+    try:
+        processes = list(proc_root.iterdir())
+    except OSError as error:
+        raise ServiceError(f"could not inspect processes for stale T3 service: {error}")
+
+    for proc_dir in processes:
+        if not proc_dir.name.isdecimal():
+            continue
+        child_status = _proc_status(proc_dir)
+        if child_status is None or child_status[0] != expected_uid:
+            continue
+        if _proc_command(proc_dir) != [str(config.binary_path), "serve"]:
+            continue
+        executable = _proc_link(proc_dir, "exe")
+        working_dir = _proc_link(proc_dir, "cwd")
+        if (
+            executable != (str(config.binary_path), True)
+            or working_dir != (str(config.service_dir), True)
+            or not _process_owns_socket(proc_dir, socket_inodes)
+        ):
+            continue
+
+        parent_pid = child_status[1]
+        parent_dir = proc_root / str(parent_pid)
+        parent_status = _proc_status(parent_dir)
+        parent_command = _proc_command(parent_dir)
+        parent_executable = _proc_link(parent_dir, "exe")
+        parent_working_dir = _proc_link(parent_dir, "cwd")
+        if (
+            parent_status is None
+            or parent_status[0] != 0
+            or parent_command is None
+            or len(parent_command) != 2
+            or Path(parent_command[0]).name != "s6-supervise"
+            or parent_command[1] != config.service_dir.name
+            or parent_executable is None
+            or Path(parent_executable[0]).name != "s6-supervise"
+            or parent_working_dir != (str(config.service_dir), True)
+        ):
+            continue
+        matches.append(
+            _StaleServiceProcess(
+                child_pid=int(proc_dir.name),
+                supervisor_pid=parent_pid,
+            )
+        )
+    return matches
+
+
+def _wait_for_process_exit(pid: int, *, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    while Path(f"/proc/{pid}").exists():
+        if time.monotonic() >= deadline:
+            raise ServiceError(
+                f"stale T3 service process {pid} did not exit within "
+                f"{timeout:g} seconds"
+            )
+        time.sleep(_SERVICE_START_POLL_SECONDS)
+
+
+def _terminate_exact_stale_service(config: PluginConfig) -> None:
+    candidates = _find_stale_service_processes(config)
+    if len(candidates) != 1:
+        raise ServiceError(
+            f"refusing stale T3 cleanup: found {len(candidates)} exact stale "
+            "service processes for the configured port; manual repair is required"
+        )
+    stale = candidates[0]
+    try:
+        pid_descriptor = os.pidfd_open(stale.child_pid)
+    except OSError as error:
+        raise ServiceError(
+            f"could not safely open exact stale T3 process {stale.child_pid}: {error}"
+        ) from error
+    try:
+        # Revalidate after pinning the PID so a process-exit/PID-reuse race
+        # cannot redirect the signal to an unrelated process.
+        if _find_stale_service_processes(config) != [stale]:
+            raise ServiceError(
+                "refusing stale T3 cleanup because process identity changed "
+                "during validation"
+            )
+        try:
+            signal.pidfd_send_signal(pid_descriptor, signal.SIGTERM)
+        except OSError as error:
+            raise ServiceError(
+                f"could not terminate exact stale T3 process {stale.child_pid}: {error}"
+            ) from error
+    finally:
+        os.close(pid_descriptor)
+    _wait_for_process_exit(
+        stale.child_pid,
+        timeout=_PROCESS_EXIT_TIMEOUT_SECONDS,
+    )
+    _wait_for_process_exit(
+        stale.supervisor_pid,
+        timeout=_PROCESS_EXIT_TIMEOUT_SECONDS,
+    )
+
+
+def _verify_t3_service_up(
+    config: PluginConfig,
+    *,
+    reject_pid: int | None = None,
+) -> int:
+    try:
+        pid = _wait_for_service_up(
+            config.service_dir,
+            reject_pid=reject_pid,
+        )
+    except ServiceError:
+        if not _reachable(config.port):
+            raise
+        _terminate_exact_stale_service(config)
+        _command(["s6-svc", "-u", str(config.service_dir)], timeout=5)
+        pid = _wait_for_service_up(
+            config.service_dir,
+            reject_pid=reject_pid,
+        )
+    if not _process_has_expected_hermes_home(pid, config):
+        raise ServiceError(
+            f"T3 service process {pid} is missing the configured HERMES_HOME"
+        )
+    return pid
 
 
 def status(config: PluginConfig) -> ServiceStatus:
@@ -314,7 +617,26 @@ def _seed_supervise_skeleton(service_dir: Path) -> None:
     seed(service_dir)
 
 
+def _clear_reaped_tombstones(service_dir: Path) -> None:
+    tombstones = list(
+        service_dir.parent.glob(f".{service_dir.name}.removing.*")
+    )
+    for tombstone in tombstones:
+        supervised = _command(
+            ["s6-svok", str(tombstone)],
+            timeout=5,
+            check=False,
+        )
+        if supervised.returncode == 0:
+            raise ServiceError(
+                f"refusing to create s6 slot {service_dir} while an old "
+                "supervisor removal is incomplete"
+            )
+        shutil.rmtree(tombstone)
+
+
 def _prepare_service_dir(service_dir: Path) -> None:
+    _clear_reaped_tombstones(service_dir)
     service_dir.mkdir(parents=True, exist_ok=True)
     _seed_supervise_skeleton(service_dir)
 
@@ -441,8 +763,10 @@ def _write_t3_s6_service(
     *,
     timeout: float,
 ) -> subprocess.CompletedProcess[str]:
+    previous_pid = _service_pid(config.service_dir) if action == "update" else None
     result = _command(_t3_service_args(config, action), timeout=timeout)
     _remove_redundant_s6_svperms(config.service_dir)
+    _verify_t3_service_up(config, reject_pid=previous_pid)
     return result
 
 
@@ -473,29 +797,52 @@ def _render_watchdog_run(config: PluginConfig, watchdog_path: Path) -> str:
 def _install_watchdog(config: PluginConfig) -> None:
     source = Path(__file__).with_name("watchdog.py")
     service_dir = config.watchdog_service_dir
-    temporary = service_dir.with_name(f".{service_dir.name}.tmp")
-    shutil.rmtree(temporary, ignore_errors=True)
-    temporary.mkdir(parents=True)
+    _clear_reaped_tombstones(service_dir)
+    if service_dir.is_symlink():
+        raise ServiceError(f"refusing symlinked watchdog s6 slot {service_dir}")
+    service_dir.mkdir(parents=True, exist_ok=True)
+    _seed_supervise_skeleton(service_dir)
+
+    def replace_file(path: Path, contents: bytes, mode: int) -> None:
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=service_dir,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as output:
+                temporary = Path(output.name)
+                output.write(contents)
+                output.flush()
+                os.fchmod(output.fileno(), mode)
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        except OSError as error:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise ServiceError(f"could not write watchdog service file {path}: {error}")
+
     try:
-        watchdog_path = temporary / "plugin-watchdog.py"
-        shutil.copyfile(source, watchdog_path)
-        watchdog_path.chmod(0o755)
-        run_path = temporary / "run"
-        run_path.write_text(
+        watchdog_path = service_dir / "plugin-watchdog.py"
+        replace_file(watchdog_path, source.read_bytes(), 0o755)
+        run_path = service_dir / "run"
+        replace_file(
+            run_path,
             _render_watchdog_run(
                 config,
-                service_dir / watchdog_path.name,
-            ),
-            encoding="utf-8",
+                watchdog_path,
+            ).encode(),
+            0o755,
         )
-        run_path.chmod(0o755)
-        _seed_supervise_skeleton(temporary)
-        if service_dir.exists():
-            _remove_service_dir(service_dir)
-        temporary.replace(service_dir)
-    except Exception:
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
+        directory = os.open(service_dir, os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as error:
+        raise ServiceError(f"could not install watchdog service: {error}") from error
 
     _command(["s6-svscanctl", "-a", str(config.scan_dir)], timeout=5)
     for _ in range(100):
@@ -505,25 +852,12 @@ def _install_watchdog(config: PluginConfig) -> None:
         time.sleep(0.05)
     else:
         raise ServiceError("watchdog service was not picked up by s6")
-    _command(["s6-svc", "-u", str(service_dir)], timeout=5)
+    _command(["s6-svc", "-r", str(service_dir)], timeout=5)
+    _wait_for_service_up(service_dir)
 
 
 def _remove_service_dir(service_dir: Path) -> None:
     if not service_dir.exists():
-        return
-
-    if not (service_dir / "run").is_file():
-        # A failed install can leave a directory that s6 cannot launch. Ask
-        # the scanner to reap any supervisor it may have allocated before
-        # deleting the inert slot.
-        _command(
-            ["s6-svscanctl", "-an", str(service_dir.parent)],
-            timeout=5,
-        )
-        time.sleep(0.2)
-        shutil.rmtree(service_dir, ignore_errors=True)
-        if service_dir.exists():
-            raise ServiceError(f"could not remove incomplete s6 slot {service_dir}")
         return
 
     supervised = _command(
@@ -531,26 +865,50 @@ def _remove_service_dir(service_dir: Path) -> None:
         timeout=5,
         check=False,
     )
-    if supervised.returncode != 0:
+    if (service_dir / "run").is_file() and supervised.returncode != 0:
         raise ServiceError(
             f"refusing to remove complete s6 slot {service_dir} because its "
             "supervisor is unavailable"
         )
-    _command(["s6-svc", "-d", str(service_dir)], timeout=5)
-    _command(
-        ["s6-svwait", "-D", "-t", "10000", str(service_dir)],
-        timeout=15,
+    if supervised.returncode == 0:
+        _command(["s6-svc", "-d", str(service_dir)], timeout=5)
+        _command(
+            ["s6-svwait", "-D", "-t", "10000", str(service_dir)],
+            timeout=15,
+        )
+
+    # Remove the scan name before asking s6-svscan to reap it. Hidden entries
+    # are not scan slots, so the old supervisor cannot survive while a new
+    # supervisor is allocated for the same public name.
+    tombstone = service_dir.with_name(
+        f".{service_dir.name}.removing.{os.getpid()}"
     )
-    # Match Hermes' dynamic-service teardown: ask s6-svscan to reap the
-    # supervisor, then give it one loop turn before removing its files.
-    _command(
-        ["s6-svscanctl", "-an", str(service_dir.parent)],
-        timeout=5,
-    )
-    time.sleep(0.2)
-    shutil.rmtree(service_dir, ignore_errors=True)
-    if service_dir.exists():
-        raise ServiceError(f"could not remove s6 slot {service_dir}")
+    if tombstone.exists():
+        raise ServiceError(f"stale s6 removal tombstone already exists at {tombstone}")
+    os.replace(service_dir, tombstone)
+    try:
+        _command(
+            ["s6-svscanctl", "-an", str(service_dir.parent)],
+            timeout=5,
+        )
+    except Exception:
+        os.replace(tombstone, service_dir)
+        raise
+    deadline = time.monotonic() + _PROCESS_EXIT_TIMEOUT_SECONDS
+    while supervised.returncode == 0:
+        supervised = _command(
+            ["s6-svok", str(tombstone)],
+            timeout=5,
+            check=False,
+        )
+        if supervised.returncode != 0:
+            break
+        if time.monotonic() >= deadline:
+            raise ServiceError(
+                f"s6 supervisor for {service_dir} did not exit after slot removal"
+            )
+        time.sleep(_SERVICE_START_POLL_SECONDS)
+    shutil.rmtree(tombstone)
 
 
 def install(config: PluginConfig) -> dict[str, object]:
@@ -711,7 +1069,7 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
         if service_installed and not _service_has_expected_hermes_home(config):
             _validate_recovery_binary(config, state)
             _write_t3_s6_service(config, "update", timeout=45)
-            service_running = True
+            service_running = _service_running(config.service_dir)
             service_repaired = True
         if service_running and watchdog_running:
             action = "repaired" if service_repaired else "not_needed"
@@ -725,11 +1083,13 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
             _command(["s6-svscanctl", "-a", str(config.scan_dir)], timeout=5)
             if not service_running:
                 _command(["s6-svc", "-u", str(config.service_dir)], timeout=5)
+                _verify_t3_service_up(config)
             if not watchdog_running:
                 _command(
                     ["s6-svc", "-u", str(config.watchdog_service_dir)],
                     timeout=5,
                 )
+                _wait_for_service_up(config.watchdog_service_dir)
             action = "repaired" if service_repaired else "started"
             _record_reconciliation(config, action)
             return {"ok": True, "action": action}
@@ -773,11 +1133,13 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
             if service_installed and not service_running:
                 _remove_redundant_s6_svperms(config.service_dir)
                 _command(["s6-svc", "-u", str(config.service_dir)], timeout=5)
+                _verify_t3_service_up(config)
             if watchdog_installed and not watchdog_running:
                 _command(
                     ["s6-svc", "-u", str(config.watchdog_service_dir)],
                     timeout=5,
                 )
+                _wait_for_service_up(config.watchdog_service_dir)
         except Exception:
             if not watchdog_installed:
                 _remove_service_dir(config.watchdog_service_dir)
