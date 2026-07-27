@@ -49,9 +49,17 @@ function resetPromptStashStore() {
 
 describe("promptStashScopeKey", () => {
   it("maps a provider instance to its own bucket and null to the unscoped bucket", () => {
-    expect(promptStashScopeKey(CLAUDE_AGENT_INSTANCE)).toBe("claudeAgent");
+    expect(promptStashScopeKey(CLAUDE_AGENT_INSTANCE)).toBe("provider:claudeAgent");
     expect(promptStashScopeKey(null)).toBe(PROMPT_STASH_UNSCOPED_KEY);
     expect(promptStashScopeKey(undefined)).toBe(PROMPT_STASH_UNSCOPED_KEY);
+  });
+
+  // Provider slugs must match /^[a-zA-Z][a-zA-Z0-9_-]*$/, so no real instance
+  // id can equal the unscoped sentinel. The namespace prefix makes that
+  // structural rather than incidental.
+  it("namespaces provider keys so they can never equal the unscoped sentinel", () => {
+    expect(promptStashScopeKey(CLAUDE_AGENT_INSTANCE)).not.toBe(PROMPT_STASH_UNSCOPED_KEY);
+    expect(promptStashScopeKey(CODEX_INSTANCE).startsWith("provider:")).toBe(true);
   });
 });
 
@@ -106,7 +114,9 @@ describe("promptStashStore", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "first" }));
     store.stashEntry(makeEntry({ id: "second" }));
-    const queue = usePromptStashStore.getState().queuesByScopeKey["claudeAgent"] ?? [];
+    const queue =
+      usePromptStashStore.getState().queuesByScopeKey[promptStashScopeKey(CLAUDE_AGENT_INSTANCE)] ??
+      [];
     expect(queue.map((entry) => entry.id)).toEqual(["second", "first"]);
   });
 
@@ -116,8 +126,12 @@ describe("promptStashStore", () => {
     store.stashEntry(makeEntry({ id: "codex", providerInstanceId: CODEX_INSTANCE }));
     store.stashEntry(makeEntry({ id: "none", providerInstanceId: null }));
     const queues = usePromptStashStore.getState().queuesByScopeKey;
-    expect(queues["claudeAgent"]?.map((entry) => entry.id)).toEqual(["claude"]);
-    expect(queues["codex"]?.map((entry) => entry.id)).toEqual(["codex"]);
+    expect(queues[promptStashScopeKey(CLAUDE_AGENT_INSTANCE)]?.map((entry) => entry.id)).toEqual([
+      "claude",
+    ]);
+    expect(queues[promptStashScopeKey(CODEX_INSTANCE)]?.map((entry) => entry.id)).toEqual([
+      "codex",
+    ]);
     expect(queues[PROMPT_STASH_UNSCOPED_KEY]?.map((entry) => entry.id)).toEqual(["none"]);
   });
 
@@ -128,7 +142,9 @@ describe("promptStashStore", () => {
     }
     const evicted = store.stashEntry(makeEntry({ id: "overflow" }));
     expect(evicted?.id).toBe("entry-0");
-    const queue = usePromptStashStore.getState().queuesByScopeKey["claudeAgent"] ?? [];
+    const queue =
+      usePromptStashStore.getState().queuesByScopeKey[promptStashScopeKey(CLAUDE_AGENT_INSTANCE)] ??
+      [];
     expect(queue).toHaveLength(MAX_STASH_ENTRIES_PER_QUEUE);
     expect(queue[0]?.id).toBe("overflow");
   });
@@ -137,16 +153,33 @@ describe("promptStashStore", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "keep" }));
     store.stashEntry(makeEntry({ id: "take" }));
-    expect(store.takeEntry("claudeAgent", "take")?.id).toBe("take");
-    expect(store.takeEntry("claudeAgent", "take")).toBeNull();
-    const queue = usePromptStashStore.getState().queuesByScopeKey["claudeAgent"] ?? [];
+    expect(store.takeEntry(promptStashScopeKey(CLAUDE_AGENT_INSTANCE), "take")?.id).toBe("take");
+    expect(store.takeEntry(promptStashScopeKey(CLAUDE_AGENT_INSTANCE), "take")).toBeNull();
+    const queue =
+      usePromptStashStore.getState().queuesByScopeKey[promptStashScopeKey(CLAUDE_AGENT_INSTANCE)] ??
+      [];
     expect(queue.map((entry) => entry.id)).toEqual(["keep"]);
+  });
+
+  // Queue keys are persisted as plain strings, so a hand-edited or corrupted
+  // localStorage payload can carry a literal `__proto__` key that survives
+  // JSON.parse as an own property. An unguarded lookup would resolve to
+  // Object.prototype and throw "not iterable" on spread.
+  it("tolerates a __proto__ scope key rehydrated from storage", () => {
+    usePromptStashStore.setState({
+      queuesByScopeKey: JSON.parse('{"__proto__":[]}') as Record<string, PromptStashEntry[]>,
+    });
+    const store = usePromptStashStore.getState();
+    expect(() => store.takeEntry("__proto__", "missing")).not.toThrow();
+    expect(store.takeEntry("__proto__", "missing")).toBeNull();
   });
 
   it("drops the scope key entirely when its queue empties", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "only" }));
-    store.takeEntry("claudeAgent", "only");
-    expect(usePromptStashStore.getState().queuesByScopeKey["claudeAgent"]).toBeUndefined();
+    store.takeEntry(promptStashScopeKey(CLAUDE_AGENT_INSTANCE), "only");
+    expect(
+      usePromptStashStore.getState().queuesByScopeKey[promptStashScopeKey(CLAUDE_AGENT_INSTANCE)],
+    ).toBeUndefined();
   });
 });

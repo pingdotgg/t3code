@@ -64,8 +64,9 @@ import {
   usePromptStashStore,
   type PromptStashEntry,
 } from "../../promptStashStore";
-import { ComposerStashBadge, type StashFlyGhost } from "./ComposerStashBadge";
+import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import { compressImageForStash } from "../../lib/stashImageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { resolveShortcutCommand } from "../../keybindings";
@@ -738,7 +739,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
   );
-  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const clearComposerDraftPromptAndImages = useComposerDraftStore(
+    (store) => store.clearComposerPromptAndImages,
+  );
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
@@ -979,7 +982,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
-  const [stashGhost, setStashGhost] = useState<StashFlyGhost | null>(null);
+  const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
+    key: 0,
+    active: false,
+  });
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
@@ -999,8 +1005,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
-  const stashGhostKeyRef = useRef(0);
-  const stashGhostTimeoutRef = useRef<number | null>(null);
+  const stashPulseKeyRef = useRef(0);
+  const stashPulseTimeoutRef = useRef<number | null>(null);
+  /** Guards against a second ⌘S landing while image encoding is in flight. */
+  const stashInFlightRef = useRef(false);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1904,22 +1912,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     return () => {
-      if (stashGhostTimeoutRef.current !== null) {
-        window.clearTimeout(stashGhostTimeoutRef.current);
+      if (stashPulseTimeoutRef.current !== null) {
+        window.clearTimeout(stashPulseTimeoutRef.current);
       }
     };
   }, []);
 
-  const playStashGhost = useCallback((snippet: string) => {
-    stashGhostKeyRef.current += 1;
-    setStashGhost({ key: stashGhostKeyRef.current, snippet });
-    if (stashGhostTimeoutRef.current !== null) {
-      window.clearTimeout(stashGhostTimeoutRef.current);
+  /** Briefly highlight the badge so the save registers without a flourish. */
+  const pulseStashBadge = useCallback(() => {
+    stashPulseKeyRef.current += 1;
+    setStashPulse({ key: stashPulseKeyRef.current, active: true });
+    if (stashPulseTimeoutRef.current !== null) {
+      window.clearTimeout(stashPulseTimeoutRef.current);
     }
-    stashGhostTimeoutRef.current = window.setTimeout(() => {
-      stashGhostTimeoutRef.current = null;
-      setStashGhost(null);
-    }, 600);
+    stashPulseTimeoutRef.current = window.setTimeout(() => {
+      stashPulseTimeoutRef.current = null;
+      setStashPulse((current) => ({ ...current, active: false }));
+    }, 1200);
   }, []);
 
   const restoreStashEntry = useCallback(
@@ -1940,12 +1949,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerCursor(nextCursor);
       setComposerTrigger(null);
 
+      let unrestoredImageNames: string[] = [];
       if (entry.attachments.length > 0) {
         const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
-        const capacity = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - composerImagesRef.current.length;
-        const restoredImages = hydrateImagesFromPersisted(
-          entry.attachments.filter((attachment) => !existingIds.has(attachment.id)),
-        ).slice(0, Math.max(0, capacity));
+        const capacity = Math.max(
+          0,
+          PROVIDER_SEND_TURN_MAX_ATTACHMENTS - composerImagesRef.current.length,
+        );
+        const pending = entry.attachments.filter((attachment) => !existingIds.has(attachment.id));
+        // Anything past the attachment limit cannot be restored. The entry is
+        // already out of the queue, so report the overflow by name instead of
+        // discarding it silently.
+        unrestoredImageNames = pending.slice(capacity).map((attachment) => attachment.name);
+        const restoredImages = hydrateImagesFromPersisted(pending.slice(0, capacity));
         if (restoredImages.length > 0) {
           addComposerDraftImages(composerDraftTarget, restoredImages);
         }
@@ -1967,11 +1983,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
 
+      // Each cause gets its own sentence so "too large" is never blamed for a
+      // file that actually failed to decode, or for one the composer simply
+      // had no room to take back.
+      const missingImageReasons: string[] = [];
       if (entry.droppedImageNames.length > 0) {
+        missingImageReasons.push(
+          `${entry.droppedImageNames.join(", ")} exceeded the stash size limit when this prompt was saved.`,
+        );
+      }
+      if (entry.unreadableImageNames && entry.unreadableImageNames.length > 0) {
+        missingImageReasons.push(
+          `${entry.unreadableImageNames.join(", ")} could not be read when this prompt was saved.`,
+        );
+      }
+      if (unrestoredImageNames.length > 0) {
+        missingImageReasons.push(
+          `${unrestoredImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-image limit.`,
+        );
+      }
+      if (missingImageReasons.length > 0) {
         toastManager.add({
           type: "warning",
-          title: "Some images were not stashed",
-          description: `${entry.droppedImageNames.join(", ")} exceeded the stash size limit when this prompt was saved.`,
+          title: "Some images were not restored",
+          description: missingImageReasons.join(" "),
         });
       }
 
@@ -2003,39 +2038,58 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Terminal-context placeholders reference live sessions the stash can't
     // round-trip, so they are stripped from the stashed prompt.
     const prompt = promptRef.current.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim();
-    const images = composerImagesRef.current;
+    const images = [...composerImagesRef.current];
     if (prompt.length === 0 && images.length === 0) {
       setIsStashMenuOpen((open) => !open);
       return;
     }
+    // A repeat ⌘S while encoding is still running would stash the same
+    // snapshot twice. The composer is already cleared by then, so the second
+    // press has nothing new to save.
+    if (stashInFlightRef.current) return;
+    stashInFlightRef.current = true;
 
-    const persistedById = new Map(
-      (getComposerDraft(composerDraftTarget)?.persistedAttachments ?? []).map(
-        (attachment) => [attachment.id, attachment] as const,
-      ),
-    );
+    // Clear synchronously, before any await. Image serialization is async, and
+    // the editor stays live throughout: clearing afterwards would wipe
+    // whatever the user typed in the meantime. Only the prompt and images are
+    // cleared — terminal/element contexts, preview annotations, and review
+    // comments are not stashable, so destroying them here would be
+    // unrecoverable.
+    const stashTarget = composerDraftTarget;
+    promptRef.current = "";
+    clearComposerDraftPromptAndImages(stashTarget);
+    setComposerCursor(0);
+    setComposerTrigger(null);
+    // The badge pulse is the whole confirmation — no toast. Anything that
+    // didn't survive the save is recorded on the entry and shown in the
+    // stash menu, so nothing is silently lost.
+    pulseStashBadge();
+
+    // Images are re-encoded for the stash rather than stored verbatim: the
+    // composer allows up to 10MB per image, but localStorage gives the whole
+    // origin ~5MB. Only the stashed copy shrinks; the live attachment (and
+    // anything sent without stashing) keeps the original file.
     const candidateAttachments: PersistedComposerImageAttachment[] = [];
     const unreadableImageNames: string[] = [];
     for (const image of images) {
-      const persisted = persistedById.get(image.id);
-      if (persisted) {
-        candidateAttachments.push(persisted);
-        continue;
-      }
       try {
+        const compressed = await compressImageForStash(image.file);
+        if (!compressed) {
+          unreadableImageNames.push(image.name);
+          continue;
+        }
         candidateAttachments.push({
           id: image.id,
           name: image.name,
-          mimeType: image.mimeType,
-          sizeBytes: image.sizeBytes,
-          dataUrl: await readFileAsDataUrl(image.file),
+          mimeType: compressed.mimeType,
+          sizeBytes: compressed.sizeBytes,
+          dataUrl: compressed.dataUrl,
         });
       } catch {
         unreadableImageNames.push(image.name);
       }
     }
     const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
-    const allDroppedNames = [...droppedNames, ...unreadableImageNames];
 
     const entry: PromptStashEntry = {
       id: randomUUID(),
@@ -2044,49 +2098,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       attachments: kept,
       providerInstanceId: stashScopeInstanceId,
       modelSelection: noProviderAvailable ? null : selectedModelSelection,
-      droppedImageNames: allDroppedNames,
+      // Kept separate so the menu can say *why* an image is missing rather
+      // than blaming everything on the size budget.
+      droppedImageNames: droppedNames,
+      unreadableImageNames,
     };
-    const evicted = stashEntryToQueue(entry);
+    stashEntryToQueue(entry);
     flushPromptStashStorage();
-
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    setComposerCursor(0);
-    setComposerTrigger(null);
-
-    playStashGhost(
-      prompt.length > 0 ? prompt : `${images.length} image${images.length === 1 ? "" : "s"}`,
-    );
-
-    toastManager.add({
-      type: "success",
-      title: `Stashed to ${stashProviderLabel}`,
-      description:
-        allDroppedNames.length > 0
-          ? `Saved without ${allDroppedNames.join(", ")} (too large to stash).`
-          : evicted
-            ? "Oldest stashed prompt was discarded to make room."
-            : "Press ⌘S in an empty composer to bring it back.",
-      actionProps: {
-        children: "Undo",
-        onClick: () => {
-          restoreStashEntry(entry);
-        },
-      },
-      data: { hideCopyButton: true },
-    });
+    stashInFlightRef.current = false;
   }, [
-    clearComposerDraftContent,
+    clearComposerDraftPromptAndImages,
     composerDraftTarget,
     composerImagesRef,
-    getComposerDraft,
     noProviderAvailable,
-    playStashGhost,
     promptRef,
-    restoreStashEntry,
+    pulseStashBadge,
     selectedModelSelection,
     stashEntryToQueue,
-    stashProviderLabel,
     stashScopeInstanceId,
   ]);
 
@@ -2687,7 +2715,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           >
             <ComposerStashBadge
               count={stashQueue.length}
-              ghost={stashGhost}
+              pulseKey={stashPulse.key}
+              pulsing={stashPulse.active}
               menuOpen={isStashMenuOpen}
               onToggleMenu={toggleStashMenu}
             />

@@ -9,6 +9,11 @@ import { Button } from "../ui/button";
 
 const SNIPPET_MAX_CHARS = 90;
 
+/** Images that did not make it into the entry, whatever the reason. */
+function missingImageCount(entry: PromptStashEntry): number {
+  return entry.droppedImageNames.length + (entry.unreadableImageNames?.length ?? 0);
+}
+
 function stashEntrySnippet(entry: PromptStashEntry): string {
   const trimmed = entry.prompt.trim().replace(/\s+/g, " ");
   if (trimmed.length > 0) {
@@ -65,6 +70,11 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         return;
       }
       if (event.key === "Enter") {
+        // A focused control inside the row (the delete button) owns its own
+        // activation; swallowing Enter here would restore instead of delete.
+        if (event.target instanceof HTMLElement && event.target.closest("button[aria-label]")) {
+          return;
+        }
         if (!highlightedEntry) return;
         event.preventDefault();
         event.stopPropagation();
@@ -133,10 +143,10 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                   <span className="min-w-0 flex-1 truncate text-sm">
                     {stashEntrySnippet(entry)}
                   </span>
-                  {entry.droppedImageNames.length > 0 ? (
+                  {missingImageCount(entry) > 0 ? (
                     <span className="shrink-0 text-[10px] text-amber-600">
-                      {entry.droppedImageNames.length} image
-                      {entry.droppedImageNames.length === 1 ? "" : "s"} dropped
+                      {missingImageCount(entry)} image
+                      {missingImageCount(entry) === 1 ? "" : "s"} dropped
                     </span>
                   ) : null}
                   <span className="shrink-0 text-muted-foreground/60 text-xs">

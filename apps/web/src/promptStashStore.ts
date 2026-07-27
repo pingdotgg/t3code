@@ -10,16 +10,27 @@ export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v1";
 const PROMPT_STASH_STORAGE_VERSION = 1;
 const PROMPT_STASH_PERSIST_DEBOUNCE_MS = 300;
 
-/** Queue bucket for prompts stashed while no provider instance is selected. */
+/**
+ * Queue bucket for prompts stashed while no provider instance is selected.
+ *
+ * Provider-scoped keys are prefixed (see `promptStashScopeKey`), so this
+ * sentinel can never collide with a provider literally named `__none__`.
+ */
 export const PROMPT_STASH_UNSCOPED_KEY = "__none__";
+/** Namespace applied to provider-derived keys to keep them collision-proof. */
+const PROVIDER_SCOPE_PREFIX = "provider:";
 
 export const MAX_STASH_ENTRIES_PER_QUEUE = 20;
 /**
  * Budget for an entry's serialized attachment payload. localStorage is a
  * ~5MB origin-wide quota shared with the composer draft store, so oversized
  * images are dropped (tracked in `droppedImageNames`) rather than persisted.
+ *
+ * Sized to hold two images at the per-image compression budget
+ * (`MAX_STASH_IMAGE_DATA_URL_CHARS`) so a typical before/after screenshot
+ * pair survives intact.
  */
-export const MAX_STASH_ENTRY_ATTACHMENT_CHARS = 2_000_000;
+export const MAX_STASH_ENTRY_ATTACHMENT_CHARS = 2_700_000;
 
 const StashEntrySchema = Schema.Struct({
   id: Schema.String,
@@ -30,6 +41,13 @@ const StashEntrySchema = Schema.Struct({
   modelSelection: Schema.NullOr(ModelSelection),
   /** Names of images that exceeded the attachment budget and were not saved. */
   droppedImageNames: Schema.Array(Schema.String),
+  /**
+   * Names of images that could not be decoded or re-encoded at all — a
+   * distinct failure from exceeding the size budget, so the menu can explain
+   * which actually happened. Optional: entries written before this field
+   * existed decode without it.
+   */
+  unreadableImageNames: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type PromptStashEntry = typeof StashEntrySchema.Type;
 
@@ -42,7 +60,19 @@ const decodePersistedPromptStashState = Schema.decodeUnknownSync(PersistedPrompt
 
 /** Maps the composer's active provider instance to a stash queue bucket. */
 export function promptStashScopeKey(instanceId: ProviderInstanceId | null | undefined): string {
-  return instanceId ?? PROMPT_STASH_UNSCOPED_KEY;
+  return instanceId ? `${PROVIDER_SCOPE_PREFIX}${instanceId}` : PROMPT_STASH_UNSCOPED_KEY;
+}
+
+/**
+ * Reads a queue without inheriting from `Object.prototype`. Scope keys derive
+ * from user-authored provider slugs, so a key like `__proto__` must not
+ * resolve to the prototype chain.
+ */
+function readQueue(
+  queues: Record<string, ReadonlyArray<PromptStashEntry>>,
+  scopeKey: string,
+): ReadonlyArray<PromptStashEntry> {
+  return Object.hasOwn(queues, scopeKey) ? (queues[scopeKey] ?? []) : [];
 }
 
 /**
@@ -125,7 +155,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()(
       queuesByScopeKey: {},
       stashEntry: (entry) => {
         const scopeKey = promptStashScopeKey(entry.providerInstanceId);
-        const queue = get().queuesByScopeKey[scopeKey] ?? [];
+        const queue = readQueue(get().queuesByScopeKey, scopeKey);
         const nextQueue = [entry, ...queue];
         const evicted =
           nextQueue.length > MAX_STASH_ENTRIES_PER_QUEUE ? (nextQueue.pop() ?? null) : null;
@@ -135,11 +165,11 @@ export const usePromptStashStore = create<PromptStashStoreState>()(
         return evicted;
       },
       takeEntry: (scopeKey, entryId) => {
-        const queue = get().queuesByScopeKey[scopeKey] ?? [];
+        const queue = readQueue(get().queuesByScopeKey, scopeKey);
         const entry = queue.find((candidate) => candidate.id === entryId) ?? null;
         if (!entry) return null;
         set((state) => {
-          const nextQueue = (state.queuesByScopeKey[scopeKey] ?? []).filter(
+          const nextQueue = readQueue(state.queuesByScopeKey, scopeKey).filter(
             (candidate) => candidate.id !== entryId,
           );
           const nextQueues = { ...state.queuesByScopeKey };
