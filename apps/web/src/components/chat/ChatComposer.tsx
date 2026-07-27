@@ -1908,6 +1908,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
   const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
+  const readStashQueueSnapshot = usePromptStashStore((state) => state.readQueueSnapshot);
+  const restoreStashQueueSnapshot = usePromptStashStore((state) => state.restoreQueueSnapshot);
   const stashProviderLabel = noProviderAvailable
     ? "No provider"
     : getProviderDisplayName(providerStatuses, selectedProvider);
@@ -2054,6 +2056,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const stashTarget = composerDraftTarget;
     const entryId = randomUUID();
     const scopeKey = promptStashScopeKey(stashScopeInstanceId);
+    // Captured before the write so a rejected persist can be rolled back
+    // whole. Removing just the new entry would strand an older one that the
+    // 20-entry cap evicted to make room for it.
+    const queueBeforeStash = readStashQueueSnapshot(scopeKey);
     try {
       // Persist the text-only entry *first*, then clear. Ordering matters in
       // both directions: writing before clearing means a crash or closed tab
@@ -2077,7 +2083,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // memory, so leave the composer untouched rather than making it the
       // second casualty of a reload.
       if (!flushPromptStashStorage()) {
-        takeStashEntry(scopeKey, entryId);
+        restoreStashQueueSnapshot(scopeKey, queueBeforeStash);
         toastManager.add({
           type: "error",
           title: "Could not stash this prompt",
@@ -2164,11 +2170,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     noProviderAvailable,
     promptRef,
     pulseStashBadge,
+    readStashQueueSnapshot,
+    restoreStashQueueSnapshot,
     selectedModelSelection,
     stashEntryToQueue,
     stashProviderLabel,
     stashScopeInstanceId,
-    takeStashEntry,
   ]);
 
   const toggleStashMenu = useCallback(() => {

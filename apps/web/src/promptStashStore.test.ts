@@ -216,6 +216,27 @@ describe("promptStashStore", () => {
     expect(attached).toBe(false);
   });
 
+  it("restoreQueueSnapshot rolls back an eviction caused by a failed write", () => {
+    const store = usePromptStashStore.getState();
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    for (let index = 0; index < MAX_STASH_ENTRIES_PER_QUEUE; index += 1) {
+      store.stashEntry(makeEntry({ id: `entry-${index}` }));
+    }
+    const snapshot = store.readQueueSnapshot(scopeKey);
+
+    // A stash at the cap evicts the oldest entry...
+    const evicted = store.stashEntry(makeEntry({ id: "overflow" }));
+    expect(evicted?.id).toBe("entry-0");
+
+    // ...so a rejected write has to restore the whole queue, not just remove
+    // the new entry, or the evicted one is lost for nothing.
+    store.restoreQueueSnapshot(scopeKey, snapshot);
+    const queue = usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? [];
+    expect(queue.map((entry) => entry.id)).toEqual(snapshot.map((entry) => entry.id));
+    expect(queue.some((entry) => entry.id === "entry-0")).toBe(true);
+    expect(queue.some((entry) => entry.id === "overflow")).toBe(false);
+  });
+
   it("drops the scope key entirely when its queue empties", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "only" }));

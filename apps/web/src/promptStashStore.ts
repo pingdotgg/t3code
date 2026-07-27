@@ -179,6 +179,14 @@ interface PromptStashStoreState {
   stashEntry: (entry: PromptStashEntry) => PromptStashEntry | null;
   /** Removes and returns an entry from a scope's queue (restore + delete). */
   takeEntry: (scopeKey: string, entryId: string) => PromptStashEntry | null;
+  /** Snapshot of a scope's queue, for rolling back a failed write. */
+  readQueueSnapshot: (scopeKey: string) => ReadonlyArray<PromptStashEntry>;
+  /**
+   * Restores a queue captured by `readQueueSnapshot`. Used when a stash write
+   * is rejected by storage: rolling back only the new entry would leave an
+   * entry evicted by the cap permanently lost.
+   */
+  restoreQueueSnapshot: (scopeKey: string, queue: ReadonlyArray<PromptStashEntry>) => void;
   /**
    * Attaches the encoded images to an entry written earlier by `stashEntry`,
    * clearing its pending count. Returns false when the entry is gone (restored
@@ -228,6 +236,18 @@ export const usePromptStashStore = create<PromptStashStoreState>()(
           return { queuesByScopeKey: nextQueues };
         });
         return entry;
+      },
+      readQueueSnapshot: (scopeKey) => readQueue(get().queuesByScopeKey, scopeKey),
+      restoreQueueSnapshot: (scopeKey, queue) => {
+        set((state) => {
+          const nextQueues = { ...state.queuesByScopeKey };
+          if (queue.length === 0) {
+            delete nextQueues[scopeKey];
+          } else {
+            nextQueues[scopeKey] = [...queue];
+          }
+          return { queuesByScopeKey: nextQueues };
+        });
       },
       finalizeEntryImages: (scopeKey, entryId, images) => {
         // Read before the update so the caller learns whether the entry
