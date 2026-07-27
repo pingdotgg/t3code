@@ -68,6 +68,10 @@ function updateProviderUpdateToast(input: {
       title: input.view.title,
       description: input.view.description,
       timeout: 0,
+      // Base UI merges toast updates with the existing toast. Explicitly clear
+      // the prompt action so its guarded Update handler cannot linger as a
+      // visible no-op while the update is running (or after it succeeds).
+      actionProps: undefined,
       data: {
         hideCopyButton: true,
         ...(input.view.dismissAfterVisibleMs !== undefined
