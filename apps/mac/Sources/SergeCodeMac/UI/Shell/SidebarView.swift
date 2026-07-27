@@ -176,11 +176,17 @@ struct SidebarView: View {
         // a group the user had already expanded, leaving the rows it was asked
         // to reveal missing.
         .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
-            guard note.object as? String == "settled" else { return }
-            let groupIDs = Set(allProjectGroups.map(\.id))
+            guard let key = note.object as? String else { return }
+            // "settled" opens every project's disclosure; "settled:<groupID>"
+            // opens one, so a probe verifying a single section can drive that
+            // section alone. Unknown ids are dropped rather than unioned in —
+            // see `UIProbeSettledKey.targets`.
+            let targets = UIProbeSettledKey.targets(
+                for: key, among: Set(allProjectGroups.map(\.id)))
+            guard !targets.isEmpty else { return }
             DispatchQueue.main.async {
                 withAnimation(Motion.structure) {
-                    revealedSettled.formUnion(groupIDs)
+                    revealedSettled.formUnion(targets)
                 }
             }
         }

@@ -28,6 +28,11 @@
         static func run(multi: MultiDeviceModel, scenery: SceneryStore, dir: String) async {
             try? FileManager.default.createDirectory(
                 atPath: dir, withIntermediateDirectories: true)
+            // Process-wide state, so the scenario clears it rather than
+            // inheriting it. A group left recorded by an earlier run would make
+            // the target section look already-open, and the reveal check below
+            // would then measure a transition that had already happened.
+            UIProbeSidebarState.reset()
 
             // The mock backend loads asynchronously. Wait for the projection to
             // report projects, not for a duration that assumed it would.
@@ -57,10 +62,8 @@
                 fail("sidebar-outline-settled", "could not settle a session")
                 return
             }
-            guard await revealSettled(seeded, in: multi, table: table) else {
-                fail(
-                    "sidebar-outline-settled",
-                    "settled disclosure never opened for \(seeded)")
+            if let problem = await revealSettled(seeded, in: multi, table: table) {
+                fail("sidebar-outline-settled", problem)
                 return
             }
 
@@ -160,44 +163,63 @@
                 }?.id
         }
 
-        /// Opens the settled disclosures and waits for the seeded section's rows
-        /// to join the table.
+        /// Opens the seeded section's settled disclosure and checks that this is
+        /// what actually happened. Returns nil on success, or what went wrong.
         ///
-        /// Scoped to `groupID` rather than checked as a global row delta, which
-        /// is wrong in both directions. The reveal notification *unions*, so a
-        /// section already open contributes no new rows and a
-        /// `before + settledRows` target is never reached even though the
-        /// outline is correct; meanwhile an unrelated section opening in the
-        /// same pass contributes rows nobody asked for. The section's own report
-        /// of being open is the real assertion, and the row check that follows
-        /// only has to cover the rows that section was actually hiding — none,
-        /// if it was open to begin with.
+        /// Both halves are scoped to `groupID`, and they have to be. Driving the
+        /// disclosure with the broadcast key while checking one section lets any
+        /// section supply the growth the check is looking for: the target could
+        /// render nothing at all and a neighbour opening in the same pass would
+        /// carry the row count over the line. So the toggle names the section,
+        /// and the assertions are exact rather than "at least" —
         ///
-        /// The count is sampled for stability before the post: settling removes
-        /// a row from the active list and adds the disclosure toggle, so a count
-        /// read straight after the settle is a number in transit.
+        /// - the revealed set gains *exactly* this section, which is the direct
+        ///   test of the disclosure logic and does not depend on the model, and
+        /// - the table grows by *exactly* the rows this section was hiding.
+        ///
+        /// Both row counts are sampled for stability rather than read once.
+        /// Settling removes a row from the active list and adds the disclosure
+        /// toggle, so a count read straight after the settle is a number in
+        /// transit, and the mock keeps mutating threads while the probe runs.
+        /// The expected count is re-read from the model after the toggle for the
+        /// same reason: it is what the section is hiding *now*, not what it was
+        /// hiding before the bracket opened.
         private static func revealSettled(
             _ groupID: String, in multi: MultiDeviceModel, table: NSTableView
-        ) async -> Bool {
-            let wasOpen = UIProbeSidebarState.revealedSettledGroups.contains(groupID)
-            let hidden = wasOpen ? 0 : settledCount(of: groupID, in: multi)
-            let before = await UIProbeWait.untilStable { table.numberOfRows }
+        ) async -> String? {
+            // The scenario resets the recorded state on entry and `revealedSettled`
+            // is `@UIState`, never persisted — so on a fresh run the target is
+            // closed. If it is not, the transition this function exists to
+            // measure has already happened and the checks below would pass
+            // without exercising anything.
+            let openBefore = UIProbeSidebarState.revealedSettledGroups
+            guard !openBefore.contains(groupID) else {
+                return "section \(groupID) was already open before the toggle"
+            }
+            let rowsBefore = await UIProbeWait.untilStable { table.numberOfRows }
 
-            NotificationCenter.default.post(name: .uiProbeToggleSection, object: "settled")
+            NotificationCenter.default.post(
+                name: .uiProbeToggleSection, object: UIProbeSettledKey.scoped(to: groupID))
 
             let reported = await UIProbeWait.until {
                 UIProbeSidebarState.revealedSettledGroups.contains(groupID)
             }
-            // `>=`, not `==`: other sections may open in the same pass, and the
-            // model is live — a thread settling mid-toggle adds a row here.
-            // Only a table that grew by *less* than this section was hiding
-            // means the disclosure did not actually render its rows.
-            let landed = await UIProbeWait.until { table.numberOfRows >= before + hidden }
+            let rowsAfter = await UIProbeWait.untilStable { table.numberOfRows }
+            let opened = UIProbeSidebarState.revealedSettledGroups.subtracting(openBefore)
+            let hidden = settledCount(of: groupID, in: multi)
             print(
                 "UIProbe: sidebar-outline settled section=\(groupID) "
-                    + "wasOpen=\(wasOpen) rows \(before)→\(table.numberOfRows) "
+                    + "opened=\(opened.sorted()) rows \(rowsBefore)→\(rowsAfter) "
                     + "(hiding \(hidden))")
-            return reported && landed
+
+            guard reported else { return "section \(groupID) never reported its disclosure open" }
+            guard opened == [groupID] else {
+                return "scoped toggle opened \(opened.sorted()) instead of just \(groupID)"
+            }
+            guard rowsAfter - rowsBefore == hidden else {
+                return "table grew by \(rowsAfter - rowsBefore), expected \(hidden)"
+            }
+            return nil
         }
 
         private static func settledCount(of groupID: String, in multi: MultiDeviceModel) -> Int {
