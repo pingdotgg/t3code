@@ -175,6 +175,7 @@ function buildProps() {
     isWorking: false,
     activeTurnInProgress: false,
     activeTurnStartedAt: null,
+    threadActivities: [],
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
     runningTurnId: null,
@@ -223,6 +224,42 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("keeps live turn diagnostics behind an on-demand activity control", () => {
+    const turnId = TurnId.make("turn-live");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:30.000Z"
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:30.000Z",
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        threadActivities={[
+          {
+            id: "tool-started" as never,
+            turnId,
+            tone: "tool",
+            kind: "tool.started",
+            summary: "bash started",
+            payload: { detail: "Running focused tests" },
+            createdAt: "2026-03-17T19:12:32.000Z" as never,
+          },
+        ]}
+        timelineEntries={[]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Inspect turn activity"');
+    expect(markup).toContain("Working for");
+    expect(markup).toContain("Details");
+    expect(markup).not.toContain('aria-label="Current turn activity"');
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 

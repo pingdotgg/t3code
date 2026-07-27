@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type MessageId,
+  type OrchestrationThreadActivity,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type TurnId,
@@ -159,6 +160,7 @@ interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
+  threadActivities: ReadonlyArray<OrchestrationThreadActivity>;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   latestTurn: TimelineLatestTurn | null;
@@ -194,6 +196,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   activeTurnInProgress,
   activeTurnStartedAt,
+  threadActivities,
   listRef,
   timelineEntries,
   latestTurn,
@@ -306,6 +309,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         runningTurnId,
         expandedTurnIds,
         expandedWorkGroupIds,
+        threadActivities,
         isWorking,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
@@ -317,6 +321,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       runningTurnId,
       expandedTurnIds,
       expandedWorkGroupIds,
+      threadActivities,
       isWorking,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
@@ -1092,10 +1097,28 @@ function ProposedPlanTimelineRow({
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(false);
+  const latestFeedback = row.activityTrace.entries[0] ?? null;
+  const providerEventLabel =
+    row.activityTrace.providerEventCount === 1
+      ? "1 provider event"
+      : `${row.activityTrace.providerEventCount} provider events`;
+  const toolCallLabel =
+    row.activityTrace.toolCallCount === 1
+      ? "1 tool call"
+      : `${row.activityTrace.toolCallCount} tool calls`;
+
   return (
     <div className="py-0.5 pl-1.5">
-      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
-        <span className="inline-flex items-center gap-[3px]">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-label={expanded ? "Hide turn activity" : "Inspect turn activity"}
+        className="group/working flex cursor-pointer items-center gap-2 rounded-md py-1 pr-1 text-[11px] text-muted-foreground/70 tabular-nums transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span className="inline-flex items-center gap-[3px]" aria-hidden>
           <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
           <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
           <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
@@ -1109,7 +1132,116 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
             "Working..."
           )}
         </span>
-      </div>
+        <span className="ml-0.5 opacity-0 transition-opacity group-hover/working:opacity-100 group-focus-visible/working:opacity-100">
+          Details
+        </span>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 opacity-45 transition-[opacity,transform] group-hover/working:opacity-80",
+            expanded && "rotate-180 opacity-80",
+          )}
+        />
+      </button>
+      {expanded ? (
+        <section
+          aria-label="Current turn activity"
+          className="mt-1.5 max-w-2xl rounded-lg border border-border/70 bg-muted/20 p-2.5 text-xs text-foreground/85"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h3 className="font-medium text-foreground">Current turn activity</h3>
+            <span className="text-[11px] text-muted-foreground">
+              {providerEventLabel} · {toolCallLabel}
+            </span>
+          </div>
+          <dl className="mt-2 grid gap-1 text-[11px]">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <dt className="text-muted-foreground">Request sent</dt>
+              <dd className="tabular-nums">
+                {row.createdAt ? (
+                  <>
+                    <ActivityAge createdAt={row.createdAt} /> ago ·{" "}
+                    {formatShortTimestamp(row.createdAt, ctx.timestampFormat)}
+                  </>
+                ) : (
+                  "Dispatch in progress"
+                )}
+              </dd>
+            </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <dt className="text-muted-foreground">Last feedback</dt>
+              <dd className="tabular-nums">
+                {row.activityTrace.lastFeedbackAt ? (
+                  <>
+                    <ActivityAge createdAt={row.activityTrace.lastFeedbackAt} /> ago ·{" "}
+                    {formatShortTimestamp(row.activityTrace.lastFeedbackAt, ctx.timestampFormat)}
+                  </>
+                ) : (
+                  "No provider event received yet"
+                )}
+              </dd>
+            </div>
+            {row.activityTrace.turnId ? (
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <dt className="text-muted-foreground">Turn</dt>
+                <dd
+                  className="max-w-64 truncate font-mono text-[10px]"
+                  title={row.activityTrace.turnId}
+                >
+                  {row.activityTrace.turnId}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+          {latestFeedback ? (
+            <div className="mt-2 border-t border-border/60 pt-2">
+              <p className="mb-1.5 font-medium text-[11px] text-muted-foreground">
+                Received activity · newest first
+              </p>
+              <ol className="max-h-64 space-y-1 overflow-y-auto pr-1">
+                {row.activityTrace.entries.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-md px-1.5 py-1 hover:bg-accent/25"
+                  >
+                    <time
+                      className="text-[10px] text-muted-foreground tabular-nums"
+                      dateTime={entry.createdAt}
+                      title={formatChatTimestampTooltip(entry.createdAt, ctx.timestampFormat)}
+                    >
+                      {formatShortTimestamp(entry.createdAt, ctx.timestampFormat)}
+                    </time>
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+                        <span
+                          className={cn(
+                            "font-medium",
+                            entry.tone === "error" && "text-destructive",
+                            entry.tone === "approval" && "text-amber-600 dark:text-amber-300",
+                          )}
+                        >
+                          {entry.summary}
+                        </span>
+                        <code className="text-[10px] text-muted-foreground">{entry.kind}</code>
+                      </div>
+                      {entry.detail ? (
+                        <p className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+                          {entry.detail}
+                        </p>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : (
+            <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+              T3 has sent the request, but it has not received a later provider event to explain the
+              wait yet.
+            </p>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -1140,6 +1272,25 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
       {initialText}
     </span>
   );
+}
+
+/** Live age used inside the optional activity inspector. */
+function ActivityAge({ createdAt }: { createdAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = formatWorkingTimerNow(createdAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [createdAt]);
+
+  return <span ref={textRef}>{initialText}</span>;
 }
 
 // ---------------------------------------------------------------------------
