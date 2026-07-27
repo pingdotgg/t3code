@@ -1163,6 +1163,20 @@ const makeWsRpcLayer = (
                   ),
                 );
               }
+              if (
+                normalizedCommand.type === "thread.archive" ||
+                normalizedCommand.type === "thread.delete"
+              ) {
+                yield* previewManager.close({ threadId: normalizedCommand.threadId }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("failed to close thread previews after lifecycle command", {
+                      commandType: normalizedCommand.type,
+                      threadId: normalizedCommand.threadId,
+                      error: error.message,
+                    }),
+                  ),
+                );
+              }
               return result;
             }).pipe(
               Effect.mapError((cause) =>

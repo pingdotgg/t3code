@@ -2,19 +2,25 @@
 
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
-import { useActivePreviewSessions } from "~/previewStateStore";
+import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { removePreviewThread, useActivePreviewSessions } from "~/previewStateStore";
+import { useThreadRefs } from "~/state/entities";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
+import { collectRemovedPreviewThreadRefs } from "./previewThreadLifecycle";
 
 export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
+  const activeThreadRefs = useThreadRefs();
+  const miniPlayerByThreadKey = usePreviewMiniPlayerStore((state) => state.byThreadKey);
+  const previousActiveThreadRefs = useRef(activeThreadRefs);
   const sessions = useMemo(
     () =>
       Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
@@ -29,6 +35,20 @@ export function ElectronBrowserHost() {
       }),
     [previewByThreadKey],
   );
+
+  useEffect(() => {
+    const removedThreadRefs = collectRemovedPreviewThreadRefs({
+      previousActiveThreadRefs: previousActiveThreadRefs.current,
+      activeThreadRefs,
+      previewThreadKeys: Object.keys(previewByThreadKey),
+      miniPlayerThreadKeys: Object.keys(miniPlayerByThreadKey),
+    });
+    previousActiveThreadRefs.current = activeThreadRefs;
+    for (const threadRef of removedThreadRefs) {
+      removePreviewThread(threadRef);
+      usePreviewMiniPlayerStore.getState().removeThread(threadRef);
+    }
+  }, [activeThreadRefs, miniPlayerByThreadKey, previewByThreadKey]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
