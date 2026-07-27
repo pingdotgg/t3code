@@ -116,13 +116,3 @@ struct PlayfulMotionProfile: Equatable, Sendable {
     /// enough that a settled thread does not keep a character parked over it.
     let petVictoryDwell = 6.5
 }
-
-extension Motion {
-    /// Current playful policy. Read per access, like `Motion.profile`, so a
-    /// settings change applies from the next state change onward.
-    static var playful: PlayfulMotionProfile {
-        PlayfulMotionProfile(
-            reduceMotion: reduceMotion,
-            playfulEnabled: PlayfulMotionPreferences.isEnabled)
-    }
-}

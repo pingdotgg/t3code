@@ -267,15 +267,20 @@ private struct UserMessageBubble: View {
         canSend && !isResending
     }
 
-    private var isLarge: Bool { text.count > 12_000 }
+    /// Byte count, not `count`: `String.count` walks every grapheme break in
+    /// the message, and this is read on each body evaluation of every visible
+    /// bubble. A pasted file made that walk megabytes long. The threshold is
+    /// a "this is too big to render whole" heuristic, so bytes serve it as
+    /// well as characters do.
+    private var isLarge: Bool { text.utf8.count > 12_000 }
     private var visibleText: String {
         guard isLarge, !isExpanded else { return text }
         return String(text.prefix(1_600)) + "\n\n…"
     }
 
-    private var hasText: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    /// Same reasoning: this used to copy the whole message to find out
+    /// whether it was blank.
+    private var hasText: Bool { text.hasVisibleContent }
 
     var body: some View {
         HStack {
@@ -902,23 +907,20 @@ private struct ToolEventRow: View {
 
     /// One-line preview text plus optional full path for the tooltip when a
     /// file path was shortened for display.
+    ///
+    /// `firstNonBlankLine` rather than `split(separator:).first`: a command or
+    /// a tool payload can be thousands of lines, and this is recomputed for
+    /// every visible row on every timeline mutation.
     private var preview: (text: String, fullPath: String?)? {
         switch parsed {
         case .command(let command):
-            guard let first = command.split(separator: "\n", omittingEmptySubsequences: true).first
-            else { return nil }
-            let trimmed = first.trimmingCharacters(in: .whitespaces)
-            return trimmed.isEmpty ? nil : (trimmed, nil)
+            return command.firstNonBlankLine.map { ($0, nil) }
         case .fileChange(let path, _):
-            let trimmed = path.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { return nil }
+            guard let trimmed = path.trimmedIfNotBlank else { return nil }
             let short = PathDisplay.short(trimmed, projectRoot: projectRoot)
             return (short, trimmed)
         case .plain(let text):
-            guard let first = text.split(separator: "\n", omittingEmptySubsequences: true).first
-            else { return nil }
-            let trimmed = first.trimmingCharacters(in: .whitespaces)
-            return trimmed.isEmpty ? nil : (trimmed, nil)
+            return text.firstNonBlankLine.map { ($0, nil) }
         }
     }
 

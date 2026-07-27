@@ -90,16 +90,22 @@ struct TimelineActivityScan: Equatable, Sendable {
                     }
                 }
                 scan.note(at)
+            // `hasVisibleContent` rather than `trimmingCharacters(…).isEmpty`
+            // throughout: this walk runs inside `ChatTimelineScrollView`'s
+            // body, so it repeats on every streaming delta, and trimming
+            // allocated a full copy of every assistant message and every
+            // reasoning row in the transcript each time. The check stops at
+            // the first non-whitespace character instead.
             case .assistantMessage(_, let markdown, let isStreaming, let at):
                 if isStreaming {
                     scan.turn.hasActiveStreamingAssistant = true
-                    if !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if markdown.hasVisibleContent {
                         scan.turn.hasStreamingAssistantText = true
                     }
                 }
                 scan.note(at)
             case .reasoning(_, let text, let at):
-                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if text.hasVisibleContent {
                     scan.turn.hasVisibleReasoningText = true
                 }
                 scan.note(at)
