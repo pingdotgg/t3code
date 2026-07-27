@@ -1,56 +1,35 @@
 import * as DynamoDB from "@distilled.cloud/aws/dynamodb";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface ListTablesRequest extends DynamoDB.ListTablesInput {}
 
-export class ListTables extends Binding.Service<
+/**
+ * Runtime binding for `dynamodb:ListTables`.
+ *
+ * An account-level binding — call it with no arguments to get a callable that
+ * lists table names in the region. Provide the `ListTablesHttp` layer on the
+ * Function to satisfy the binding.
+ * @binding
+ * @section Table Metadata
+ * @example List Tables in the Region
+ * ```typescript
+ * const listTables = yield* AWS.DynamoDB.ListTables();
+ *
+ * const response = yield* listTables();
+ * const tableNames = response.TableNames;
+ * ```
+ */
+export interface ListTables extends Binding.Service<
   ListTables,
+  "AWS.DynamoDB.ListTables",
   () => Effect.Effect<
     (
       request?: ListTablesRequest,
     ) => Effect.Effect<DynamoDB.ListTablesOutput, DynamoDB.ListTablesError>
   >
->()("AWS.DynamoDB.ListTables") {}
+> {}
 
-export const ListTablesLive = Layer.effect(
-  ListTables,
-  Effect.gen(function* () {
-    const Policy = yield* ListTablesPolicy;
-    const listTables = yield* DynamoDB.listTables;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (request?: ListTablesRequest) {
-        return yield* listTables(request ?? {});
-      });
-    });
-  }),
-);
-
-export class ListTablesPolicy extends Binding.Policy<
-  ListTablesPolicy,
-  () => Effect.Effect<void>
->()("AWS.DynamoDB.ListTables") {}
-
-export const ListTablesPolicyLive = ListTablesPolicy.layer.succeed(
-  Effect.fn(function* (host) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.DynamoDB.ListTables())`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["dynamodb:ListTables"],
-            Resource: ["*"],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `ListTablesPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const ListTables = Binding.Service<ListTables>(
+  "AWS.DynamoDB.ListTables",
 );

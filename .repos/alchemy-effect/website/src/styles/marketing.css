@@ -3378,3 +3378,84 @@ body.alc-root,
   color: var(--alc-accent-deep);
   border-color: var(--alc-accent);
 }
+
+/* ── Landing: "Pick your cloud" cards + integrations chip strip ── */
+.alc-cloud-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+@media (max-width: 560px) {
+  .alc-cloud-cards {
+    grid-template-columns: 1fr;
+  }
+}
+.alc-cloud-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+  background: var(--alc-bg-elev-1);
+  border: 1px solid var(--alc-hairline);
+  border-radius: 14px;
+  text-decoration: none;
+  color: inherit;
+  transition:
+    border-color 200ms ease,
+    transform 200ms ease;
+}
+.alc-cloud-card:hover {
+  border-color: var(--alc-accent-40);
+  transform: translateY(-2px);
+}
+.alc-cloud-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--alc-fg-1);
+}
+.alc-cloud-card__title .alc-provider-mark {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+.alc-cloud-card__body {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--alc-fg-2);
+}
+.alc-cloud-card__cta {
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--alc-accent-deep);
+}
+.alc-cloud-chips {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.alc-cloud-chips__label {
+  font-size: 13px;
+  color: var(--alc-fg-4);
+}
+.alc-cloud-chip {
+  font-size: 13px;
+  color: var(--alc-fg-2);
+  text-decoration: none;
+  border: 1px solid var(--alc-hairline-2);
+  border-radius: 999px;
+  padding: 3px 12px;
+  transition:
+    color 200ms ease,
+    border-color 200ms ease;
+}
+.alc-cloud-chip:hover {
+  color: var(--alc-accent-deep);
+  border-color: var(--alc-accent-40);
+}

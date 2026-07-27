@@ -1,0 +1,224 @@
+---
+title: Repositories
+description: Manage GitHub repositories as Stack resources — create or adopt a repo, converge its settings on every deploy, rename in place, and opt into deletion explicitly.
+---
+
+`GitHub.Repository` manages the lifecycle of a repository owned by a
+user or organization. The repository is created on first deploy and
+its settings are converged on every subsequent deploy — description,
+visibility, tabs, merge policy, topics — so repo configuration lives
+in code next to the infrastructure it hosts.
+
+Repositories are treated as precious: destroying the stack retains
+the repository by default, and deleting it is an explicit opt-in.
+New here? [Set up credentials](/github/setup) first.
+
+## Create a repository
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GitHub from "alchemy/GitHub";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyRepos",
+  {
+    providers: GitHub.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const repo = yield* GitHub.Repository("api", {
+      owner: "my-org",
+      name: "api",
+      description: "API service",
+      autoInit: true,
+    });
+
+    return { url: repo.htmlUrl, clone: repo.cloneUrl };
+  }),
+);
+```
+
+`owner` is a user or organization login — alchemy picks the matching
+create endpoint automatically. Outputs include the stable numeric
+`repoId`, `fullName`, `htmlUrl`, the `sshUrl`/`cloneUrl`/`gitUrl`
+clone URLs, and the resolved `defaultBranch`.
+
+## Adopt an existing repository
+
+Pointing `Repository` at a name that already exists under the owner
+doesn't fail with a name conflict. The deploy observes the live
+repository and converges its settings in place, so you can bring an
+existing repo under management just by declaring it:
+
+```typescript
+yield* GitHub.Repository("api", {
+  owner: "my-org",
+  name: "api", // already exists — settings below are applied to it
+  hasWiki: false,
+  deleteBranchOnMerge: true,
+});
+```
+
+## Settings alchemy manages
+
+Every deploy converges the declared settings against the live
+repository:
+
+```typescript
+const repo = yield* GitHub.Repository("internal-tools", {
+  owner: "my-org",
+  name: "internal-tools",
+  visibility: "private",
+  hasWiki: false,
+  hasProjects: false,
+  deleteBranchOnMerge: true,
+});
+```
+
+- **`description`, `homepage`** — the repository page blurb and link.
+- **`visibility`** — `"public"` (default), `"private"`, or
+  `"internal"` (organization repos on GitHub Enterprise only).
+- **Tabs** — `hasIssues`, `hasProjects`, `hasWiki` (default `true`)
+  and `hasDiscussions` (default `false`).
+- **Merge policy** — `allowSquashMerge`, `allowMergeCommit`,
+  `allowRebaseMerge` (default `true`), `allowAutoMerge` and
+  `deleteBranchOnMerge` (default `false`).
+- **`isTemplate`** — mark the repository as a template.
+- **`defaultBranch`** — only applied once the branch actually exists;
+  on an empty repository it's dropped for that deploy and applied on
+  a later one.
+
+## Topics
+
+The `topics` list fully replaces whatever is on the repository —
+removing the prop on a later deploy clears them:
+
+```typescript
+yield* GitHub.Repository("sdk", {
+  owner: "my-org",
+  name: "sdk",
+  topics: ["typescript", "effect", "sdk"],
+});
+```
+
+## Seed the first commit
+
+`autoInit`, `gitignoreTemplate`, and `licenseTemplate` initialize the
+repository at create time — an empty README, a `.gitignore` template,
+and a license. They are only honored on creation; changing them on a
+later deploy has no effect on an existing repository:
+
+```typescript
+yield* GitHub.Repository("service", {
+  owner: "my-org",
+  name: "service",
+  autoInit: true,
+  gitignoreTemplate: "Node",
+  licenseTemplate: "mit",
+});
+```
+
+## Rename, don't replace
+
+Keep the same logical ID and change `name` to rename the live
+repository in place — history, issues, and pull requests are
+preserved, and the numeric `repoId` stays the same:
+
+```typescript
+// First deploy creates "api"; this later deploy (same logical ID)
+// renames it to "gateway".
+const repo = yield* GitHub.Repository("api", {
+  owner: "my-org",
+  name: "gateway",
+});
+```
+
+Only changing `owner` triggers a replacement — a repository can't be
+moved between owners by an update.
+
+## Archive a repository
+
+`archived: true` makes the repository read-only; set it back to
+`false` on a later deploy to un-archive:
+
+```typescript
+yield* GitHub.Repository("legacy", {
+  owner: "my-org",
+  name: "legacy-service",
+  archived: true,
+});
+```
+
+## Deleting a repository
+
+Destroying the stack does **not** delete the repository — the default
+removal policy is retain, protecting irreplaceable history. Opt into
+actual deletion with `destroy()`:
+
+```typescript
+import { destroy } from "alchemy/RemovalPolicy";
+
+yield* GitHub.Repository("ephemeral", {
+  owner: "my-org",
+  name: "ephemeral-preview",
+}).pipe(destroy());
+```
+
+The token needs the `delete_repo` scope for this (plain `repo` scope
+covers everything else). Deletion resolves the repository by its
+stable `repoId`, so it targets the right repo even after a rename.
+
+## Escape hatch: Octokit
+
+For anything the resource model doesn't cover, the
+`GitHubCredentials` service hands you an authenticated
+[Octokit](https://github.com/octokit/rest.js) client — the same one
+every GitHub resource uses:
+
+```typescript
+import * as GitHub from "alchemy/GitHub";
+import * as Effect from "effect/Effect";
+
+const program = Effect.gen(function* () {
+  const creds = yield* yield* GitHub.GitHubCredentials;
+  const octokit = creds.octokit();
+
+  const { data } = yield* Effect.tryPromise(() =>
+    octokit.rest.repos.get({ owner: "my-org", repo: "api" }),
+  );
+  return data;
+});
+```
+
+(`GitHubCredentials` resolves to an effect that yields the service,
+hence the double `yield*`.)
+
+Inside a stack, `GitHub.providers()` already carries
+`GitHubCredentials`, resolved via [the login flow](/github/setup).
+Outside one, build the layer directly:
+
+- **`GitHub.fromEnv()`** — reads `GITHUB_ACCESS_TOKEN` or
+  `GITHUB_TOKEN`.
+- **`GitHub.fromToken(token)`** — a literal token, plain string or
+  `Redacted` — useful in tests.
+
+```typescript
+program.pipe(Effect.provide(GitHub.fromEnv()));
+```
+
+## Where next
+
+Related:
+
+- [Actions secrets & variables](/github/actions-config) — seed the
+  CI configuration your repository's workflows read.
+- [Repository events](/github/events) — subscribe a Worker to the
+  repository's webhooks with typed payloads.
+- [CI/CD guide](/environments/ci) — deploy the stack itself from GitHub
+  Actions.
+
+Reference:
+
+- [Repository API reference](/providers/github/repository)

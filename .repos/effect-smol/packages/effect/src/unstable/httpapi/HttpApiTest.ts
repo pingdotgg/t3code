@@ -1,23 +1,10 @@
 /**
- * The `HttpApiTest` module provides helpers for testing `HttpApi`
- * implementations through the generated client interface without starting an
- * HTTP server.
+ * Tests `HttpApi` implementations through an in-memory generated client.
  *
- * Use this module when a test should exercise one or more implemented API
- * groups with the same request encoding, routing, response encoding, and client
- * decoding used by the production `HttpApiBuilder` and `HttpApiClient`
- * pipeline. This is useful for focused handler tests, schema round-trip checks,
- * middleware behavior, and tests that want to call an API through its typed
- * client while keeping all traffic in memory.
- *
- * The selected groups must be provided in the test environment, usually by
- * supplying the corresponding `HttpApiBuilder.group` layers. Groups that are not
- * selected are still present on the returned client shape, but their handlers
- * are placeholders that die if called, which helps catch accidental calls outside
- * the test scope. The generated client is still a real `HttpApiClient`, so
- * endpoint middleware, client middleware, platform services, and the optional
- * `baseUrl` used for URL construction follow the same rules as normal clients;
- * only the HTTP transport is replaced with an in-memory router dispatch.
+ * The helpers use the same request encoding, routing, response encoding, and
+ * client decoding as the normal `HttpApiBuilder` and `HttpApiClient` pipeline,
+ * but they do not start an HTTP server. This is useful for focused handler
+ * tests, schema round trips, middleware behavior, and typed client calls.
  *
  * @since 4.0.0
  */
@@ -34,7 +21,7 @@ import * as HttpRouter from "../http/HttpRouter.ts"
 import * as HttpServerRequest from "../http/HttpServerRequest.ts"
 import * as HttpServerResponse from "../http/HttpServerResponse.ts"
 import type * as HttpApi from "./HttpApi.ts"
-import type { Handlers } from "./HttpApiBuilder.ts"
+import type { HandlerRuntime } from "./HttpApiBuilder.ts"
 import * as HttpApiBuilder from "./HttpApiBuilder.ts"
 import * as HttpApiClient from "./HttpApiClient.ts"
 import type * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
@@ -53,12 +40,12 @@ import type * as HttpApiGroup from "./HttpApiGroup.ts"
  */
 export const groups = Effect.fnUntraced(function*<
   ApiId extends string,
-  Groups extends HttpApiGroup.Any,
-  const Names extends ReadonlyArray<HttpApiGroup.Name<Groups>>,
-  SelectedGroups = HttpApiGroup.WithName<Groups, Names[number]>
+  Groups extends HttpApiGroup.Constraint,
+  const Identifiers extends ReadonlyArray<HttpApiGroup.Identifier<Groups>>,
+  SelectedGroups extends HttpApiGroup.Constraint = HttpApiGroup.WithIdentifier<Groups, Identifiers[number]>
 >(
   api: HttpApi.HttpApi<ApiId, Groups>,
-  groupNames: Names,
+  groupIdentifiers: Identifiers,
   options?: {
     readonly baseUrl?: string | URL | undefined
   }
@@ -76,22 +63,23 @@ export const groups = Effect.fnUntraced(function*<
 > {
   let context = yield* Effect.context<HttpApiGroup.ToService<ApiId, SelectedGroups>>()
 
-  for (const name in api.groups) {
-    const group = api.groups[name]
-    if (groupNames.includes(name as any)) {
+  const groups = api.groups as unknown as Record<string, HttpApiGroup.Top>
+  for (const identifier in groups) {
+    const group = groups[identifier]
+    if (groupIdentifiers.includes(identifier as any)) {
       continue
     }
-    const handlers = new Map<string, Handlers.Item<never>>()
+    const handlers = new Map<string, HandlerRuntime>()
     const routes: Array<HttpRouter.Route<any, any>> = []
-    for (const endpointName in group.endpoints) {
-      const endpoint = group.endpoints[endpointName]
-      const handler: Handlers.Item<never> = {
+    for (const endpointIdentifier in group.endpoints) {
+      const endpoint = group.endpoints[endpointIdentifier]
+      const handler: HandlerRuntime = {
         endpoint: endpoint as any,
-        handler: () => Effect.die(new Error(`Unhandled endpoint: ${endpointName}`)),
+        handler: () => Effect.die(new Error(`Unhandled endpoint: ${endpointIdentifier}`)),
         isRaw: false,
         uninterruptible: false
       }
-      handlers.set(endpointName, handler)
+      handlers.set(endpointIdentifier, handler)
       routes.push(HttpApiBuilder.handlerToRoute(group as any, handler, context))
     }
     context = Context.add(context, group as any, { handlers, routes })

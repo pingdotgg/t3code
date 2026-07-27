@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -23,7 +23,7 @@ export const OBJECT_VAR_VALUE = { host: "localhost", flags: { beta: true } };
 export default class SecretsTestWorker extends Cloudflare.Worker<SecretsTestWorker>()(
   "SecretsTestWorker",
   {
-    main: import.meta.filename,
+    main: import.meta.url,
     subdomain: { enabled: true, previewsEnabled: false },
   },
   Effect.gen(function* () {

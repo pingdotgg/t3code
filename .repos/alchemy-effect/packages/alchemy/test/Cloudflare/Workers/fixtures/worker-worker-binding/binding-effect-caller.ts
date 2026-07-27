@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -6,7 +6,7 @@ import BindingTargetWorker from "./binding-target-worker.ts";
 
 /**
  * Effect-native worker that calls another Effect-native worker's RPC method
- * via `Cloudflare.bindWorker`. This is the canonical Effect → Effect cross-
+ * via `Cloudflare.Workers.bindWorker`. This is the canonical Effect → Effect cross-
  * worker pattern: the bound stub returns Effects, errors and streams flow
  * back through the typed channel.
  *
@@ -15,10 +15,10 @@ import BindingTargetWorker from "./binding-target-worker.ts";
 export default class BindingEffectCaller extends Cloudflare.Worker<BindingEffectCaller>()(
   "BindingEffectCaller",
   {
-    main: import.meta.filename,
+    main: import.meta.url,
   },
   Effect.gen(function* () {
-    const target = yield* Cloudflare.bindWorker(BindingTargetWorker);
+    const target = yield* Cloudflare.Workers.bindWorker(BindingTargetWorker);
 
     return {
       fetch: Effect.gen(function* () {

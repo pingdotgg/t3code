@@ -1,48 +1,10 @@
 /**
- * The `Function` module provides small, pure helpers for defining, composing,
- * adapting, and reusing TypeScript functions. It is the foundation for the
- * data-first and data-last APIs used throughout Effect, and it includes the
- * core pipeline utilities that make those APIs ergonomic.
+ * Provides small helpers for defining and reusing TypeScript functions.
  *
- * **Mental model**
- *
- * - {@link pipe} starts with a value and passes it through one unary function at
- *   a time
- * - {@link flow} composes unary functions into a reusable function
- * - {@link dual} builds APIs that support both direct calls and `pipe`-friendly
- *   data-last calls
- * - {@link identity}, {@link constant}, and the `const*` helpers model common
- *   identity and thunk patterns without allocating ad hoc callbacks
- * - {@link tupled}, {@link untupled}, {@link flip}, and {@link apply} adapt
- *   call shapes without changing the underlying behavior
- * - Type helpers such as {@link LazyArg}, {@link FunctionN}, {@link satisfies},
- *   and {@link cast} describe or constrain functions at the type level
- *
- * **Common tasks**
- *
- * - Build readable transformation pipelines: {@link pipe}
- * - Create reusable composed functions: {@link flow}, {@link compose}
- * - Define functions callable in both data-first and data-last style: {@link dual}
- * - Return a value unchanged: {@link identity}
- * - Create thunks and common constant functions: {@link constant},
- *   {@link constTrue}, {@link constFalse}, {@link constNull},
- *   {@link constUndefined}, {@link constVoid}
- * - Convert between rest-argument and tuple-argument functions: {@link tupled},
- *   {@link untupled}
- * - Express impossible branches: {@link absurd}
- * - Cache results for object keys: {@link memoize}
- *
- * **Gotchas**
- *
- * - Functions passed to {@link pipe} and {@link flow} are applied left-to-right
- *   and should be unary at each step
- * - {@link dual} uses either an arity or a predicate to decide whether a call is
- *   data-first or data-last; use a predicate when optional arguments make arity
- *   ambiguous
- * - {@link cast} changes only the static TypeScript type and performs no runtime
- *   validation
- * - {@link memoize} is intended for object keys and stores cached values in a
- *   `WeakMap`
+ * The main helpers are `pipe` and `flow` for left-to-right composition and
+ * `dual` for APIs that support both direct and pipe-friendly call styles. The
+ * module also contains small identity, constant, tuple, type-level, and
+ * memoization helpers used across the library.
  *
  * @since 2.0.0
  */
@@ -54,7 +16,8 @@ import { pipeArguments } from "./Pipeable.ts"
  *
  * **When to use**
  *
- * Use to represent unary function types in higher-kinded type operations.
+ * Use when defining higher-kinded abstractions that must accept function types
+ * as one of their type-lambda inputs.
  *
  * **Example** (Creating a function type with a type lambda)
  *
@@ -88,7 +51,7 @@ export interface FunctionTypeLambda extends TypeLambda {
  * whether the current call is data-first. Arity is the common case. Use a
  * predicate when optional arguments make arity ambiguous.
  *
- * **Example** (Using arity to determine data-first or data-last style)
+ * **Example** (Selecting data-first or data-last style by arity)
  *
  * ```ts
  * import { Function, pipe } from "effect"
@@ -102,7 +65,7 @@ export interface FunctionTypeLambda extends TypeLambda {
  * console.log(pipe(2, sum(3))) // 5
  * ```
  *
- * **Example** (Using call signatures to define the overloads)
+ * **Example** (Defining overloads with call signatures)
  *
  * ```ts
  * import { Function, pipe } from "effect"
@@ -116,7 +79,7 @@ export interface FunctionTypeLambda extends TypeLambda {
  * console.log(pipe(2, sum(3))) // 5
  * ```
  *
- * **Example** (Using a predicate to determine data-first or data-last style)
+ * **Example** (Selecting data-first or data-last style with a predicate)
  *
  * ```ts
  * import { Function, pipe } from "effect"
@@ -310,7 +273,7 @@ export const identity = <A>(a: A): A => a
  *
  * @see {@link cast} for changing only the static TypeScript type
  *
- * @category type utils
+ * @category utility types
  * @since 2.0.0
  */
 export const satisfies = <A>() => <B extends A>(b: B) => b
@@ -330,7 +293,7 @@ export const satisfies = <A>() => <B extends A>(b: B) => b
  *
  * @see {@link satisfies} for checking assignability without changing the resulting type
  *
- * @category type utils
+ * @category utility types
  * @since 4.0.0
  */
 export const cast: <A, B>(a: A) => B = identity as any
@@ -340,8 +303,8 @@ export const cast: <A, B>(a: A) => B = identity as any
  *
  * **When to use**
  *
- * Use when an API expects a thunk or callback and every invocation
- * should return the same value.
+ * Use when you need a thunk or callback that returns the same value on every
+ * invocation.
  *
  * **Example** (Creating a constant thunk)
  *
@@ -365,7 +328,7 @@ export const constant = <A>(value: A): LazyArg<A> => () => value
  *
  * **When to use**
  *
- * Use when an API expects a thunk and every invocation should return `true`.
+ * Use when you need a thunk that returns `true` on every invocation.
  *
  * **Example** (Returning true from a thunk)
  *
@@ -386,7 +349,7 @@ export const constTrue: LazyArg<boolean> = constant(true)
  *
  * **When to use**
  *
- * Use when an API expects a thunk and every invocation should return `false`.
+ * Use when you need a thunk that returns `false` on every invocation.
  *
  * **Example** (Returning false from a thunk)
  *
@@ -407,7 +370,7 @@ export const constFalse: LazyArg<boolean> = constant(false)
  *
  * **When to use**
  *
- * Use when an API expects a thunk and every invocation should return `null`.
+ * Use when you need a thunk that returns `null` on every invocation.
  *
  * **Example** (Returning null from a thunk)
  *
@@ -428,8 +391,7 @@ export const constNull: LazyArg<null> = constant(null)
  *
  * **When to use**
  *
- * Use when an API expects a thunk and every invocation should return
- * `undefined`.
+ * Use when you need a thunk that returns `undefined` on every invocation.
  *
  * **Example** (Returning undefined from a thunk)
  *
@@ -450,7 +412,7 @@ export const constUndefined: LazyArg<undefined> = constant(undefined)
  *
  * **When to use**
  *
- * Use when an API expects a thunk used only for its call effect and not for a
+ * Use when you need a thunk that is called only for its effect and has no
  * meaningful return value.
  *
  * **Example** (Returning void from a thunk)
@@ -532,8 +494,8 @@ export const compose: {
  *
  * **When to use**
  *
- * Use when exhaustive checks prove a branch cannot be reached, but
- * TypeScript still needs a return value.
+ * Use when you need a return value in a branch that exhaustive checks prove
+ * cannot be reached.
  *
  * **Gotchas**
  *
@@ -550,7 +512,7 @@ export const compose: {
  * }
  * ```
  *
- * @category utils
+ * @category utility types
  * @since 2.0.0
  */
 export const absurd = <A>(_: never): A => {
@@ -613,21 +575,20 @@ export const untupled = <A extends ReadonlyArray<unknown>, B>(f: (a: A) => B): (
  *
  * **When to use**
  *
- * Use when you use `pipe` with data-last functions to build readable transformation
- * pipelines and to write method-style chains as ordinary function calls.
+ * Use when you need to compose data-last functions into readable
+ * transformation pipelines instead of method-style chains.
  *
  * **Details**
  *
- * `pipe` takes an initial value, passes it to the first function, then passes
- * each result to the next function in order. The final function result is
- * returned.
+ * Takes an initial value, passes it to the first function, then passes each
+ * result to the next function in order. The final function result is returned.
  *
  * **Gotchas**
  *
  * Each function passed after the initial value must accept a single argument,
  * because `pipe` calls each step with only the previous result.
  *
- * **Example** (Using pipeline syntax)
+ * **Example** (Piping values through functions)
  *
  * In this example, `1` is passed to the first function, and each result becomes
  * the input for the next function.
@@ -1389,7 +1350,7 @@ export function flow(
  * console.log(typeof buildUser) // "function"
  * ```
  *
- * @category utils
+ * @category utility types
  * @since 2.0.0
  */
 export const hole: <T>() => T = cast(absurd)
@@ -1438,7 +1399,7 @@ export const SK = <A, B>(_: A, b: B): B => b
  * mutated after its first call, later calls still return the cached result for
  * that reference.
  *
- * @category utils
+ * @category caching
  * @since 4.0.0
  */
 export function memoize<A extends object, O>(f: (a: A) => O): (ast: A) => O {
