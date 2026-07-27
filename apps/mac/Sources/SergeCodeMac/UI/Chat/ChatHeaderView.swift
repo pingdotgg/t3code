@@ -12,6 +12,14 @@ struct ChatHeaderView: View {
     let scenery: SceneryStore
     let threadKey: String
 
+    /// The header's own width, which is what the git bar's density is resolved
+    /// from. Measured rather than inferred, and measured *here* rather than on
+    /// the bar: the header is sized by the window, so nothing the bar renders
+    /// can change this number. Reading the bar's own width instead would be a
+    /// feedback loop — a bar that collapses frees the space that would expand
+    /// it again.
+    @UIState private var headerWidth: CGFloat = 0
+
     struct GitStripOverflow: Equatable {
         /// The strip needs more width than the header gives it.
         var isOverflowing = false
@@ -104,7 +112,7 @@ struct ChatHeaderView: View {
 
             Spacer(minLength: 8)
 
-            GitStrip(model: model, threadID: thread.id)
+            GitStrip(model: model, threadID: thread.id, density: density)
                 .id(thread.id)
 
             // Provider and status are fixed-width and never scroll away: they
@@ -119,6 +127,27 @@ struct ChatHeaderView: View {
         // so the header can grow instead of clipping if its content ever
         // exceeds the band (see AlpineTheme.contentHeaderHeight).
         .frame(minHeight: AlpineTheme.contentHeaderHeight)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            headerWidth = width
+        }
+    }
+
+    /// How much room the git bar has for words at the current window width.
+    ///
+    /// Resolved from the header's width and from the strings the bar is about
+    /// to draw, never from what the bar measured last frame — see
+    /// `HeaderBarDensity.resolve`.
+    private var density: HeaderBarDensity {
+        guard let status = model.selectedVcsStatus(), status.isRepo else { return .full }
+        return HeaderBarDensity.resolve(
+            headerWidth: headerWidth,
+            inventory: GitBarInventory(
+                status: status,
+                outcomeTitle: model.lastGitActionOutcome(for: thread.id)?.title),
+            providerName: thread.provider.displayName,
+            statusText: StatusBadge.text(for: thread.status, stalled: thread.isStalled))
     }
 
     private var projectPrefs: ProjectSceneryPrefs? {
@@ -167,6 +196,11 @@ struct ChatHeaderView: View {
 private struct GitStrip: View {
     let model: AppModel
     let threadID: String
+    /// Resolved by the header from the window width. The strip stays the
+    /// safety net for what the density tiers cannot absorb — a branch name
+    /// longer than any cap, a repository showing every chip at once in a
+    /// 300pt pane — rather than the first line of defence it used to be.
+    let density: HeaderBarDensity
 
     @UIState private var overflow = ChatHeaderView.GitStripOverflow()
 
@@ -188,7 +222,7 @@ private struct GitStrip: View {
 
     private func strip(_ proxy: ScrollViewProxy) -> some View {
         ScrollView(.horizontal) {
-            VcsToolbar(model: model, threadID: threadID)
+            VcsToolbar(model: model, threadID: threadID, density: density)
                 .id(Self.contentID)
         }
         // Compressible: the strip must lose width to the title's compression
@@ -290,7 +324,7 @@ struct StatusBadge: View {
     var stalled: Bool = false
 
     var body: some View {
-        Label(text, systemImage: icon)
+        Label(Self.text(for: status, stalled: stalled), systemImage: icon)
             .labelStyle(.titleAndIcon)
             .font(.caption)
             .foregroundStyle(color)
@@ -314,7 +348,9 @@ struct StatusBadge: View {
         }
     }
 
-    private var text: String {
+    /// The badge's label. Static so the header's density resolver can measure
+    /// the trailing cluster from the same string the badge draws.
+    static func text(for status: ThreadStatus, stalled: Bool) -> String {
         if stalled { return "Stalled" }
         switch status {
         case .idle: return "Idle"

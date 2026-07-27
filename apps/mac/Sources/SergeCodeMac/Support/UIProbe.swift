@@ -1618,7 +1618,7 @@
 
             await probeGitStripAnchor(multi: multi, dir: dir, window: window)
             await probeHeaderFloorCoversWidestState(multi: multi)
-            await probeLateVcsStatusAnchor(multi: multi, dir: dir)
+            await probeLateVcsStatusAnchor(multi: multi, dir: dir, window: window)
             await probeContentGrowthDoesNotResizeWindow(
                 multi: multi, dir: dir, window: window, log: log)
 
@@ -1717,10 +1717,21 @@
         /// assert it comes to rest at its trailing edge. This is the path where
         /// the scroll view has already anchored an empty strip, so growth has
         /// to re-anchor it or the git actions menu is off-screen.
+        ///
+        /// Driven at the window minimum. The header's git bar folds its labels
+        /// down as the window narrows (`HeaderBarDensity`), so on a wide window
+        /// even this fixture — a 66-character branch, five-digit diff counts,
+        /// every PR chip at once — now fits without scrolling, and the check
+        /// would pass while proving nothing. Squeezing the window first is what
+        /// puts the strip back in the position it exists to handle.
         private static func probeLateVcsStatusAnchor(
-            multi: MultiDeviceModel, dir: String
+            multi: MultiDeviceModel, dir: String, window: NSWindow
         ) async {
             let model = multi.local
+            window.setContentSize(
+                NSSize(
+                    width: window.contentMinSize.width, height: window.contentMinSize.height))
+            try? await Task.sleep(for: .seconds(1))
             guard let mock = model.backendForShutdown as? MockBackend else {
                 print("UIProbe: late-status skipped (live backend run)")
                 return

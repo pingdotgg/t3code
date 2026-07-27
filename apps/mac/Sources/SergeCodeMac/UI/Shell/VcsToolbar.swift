@@ -1,11 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// The git controls embedded in the chat header: an inline row that groups
-/// the branch dropdown, working-tree status chips, PR affordances, and the
-/// git-actions dropdown directly into the top bar. There is no surrounding
-/// card — the triggers' own bordered-pill chrome keeps the controls legible
-/// on the header's transparent scenery backdrop.
+/// The git controls embedded in the chat header: one bar of same-height chips
+/// grouping the branch dropdown, working-tree status, PR affordances, and the
+/// git-actions menu.
+///
+/// Every chip goes through `HeaderChip`/`HeaderChipButton`, so the row has a
+/// single height, a single shape, and a single type scale. The bar renders at
+/// the `density` the header resolves for the current window width: the same
+/// chips throughout, trading prose for glyphs as the window narrows, with the
+/// full sentence kept in each chip's tooltip and accessibility label.
 struct VcsToolbar: View {
     let model: AppModel
     /// The thread this toolbar instance is scoped to. The call site
@@ -15,6 +19,10 @@ struct VcsToolbar: View {
     /// `commitMessage` below would survive the switch and briefly show
     /// thread A's in-flight git state over thread B.
     let threadID: String
+    /// How much room the header has for labels. Defaults to the widest tier so
+    /// a caller that measures nothing (the probe's fitting-size pass) still
+    /// gets the bar at full width.
+    var density: HeaderBarDensity = .full
 
     @UIState private var branches: [BranchRef] = []
     @UIState private var branchQuery = ""
@@ -26,8 +34,6 @@ struct VcsToolbar: View {
     @UIState private var pullRequestReviewReference: String?
     @UIState private var showBranchMenu = false
     @UIState private var showGitActions = false
-    @UIState private var branchMenuHovering = false
-    @UIState private var gitActionsHovering = false
     @FocusState private var branchSearchFocused: Bool
 
     private var isRunningAction: Bool { runningAction != nil }
@@ -46,21 +52,22 @@ struct VcsToolbar: View {
     }
 
     private func vcsStrip(_ status: VcsStatus) -> some View {
-        HStack(spacing: 10) {
-            if let outcome = model.lastGitActionOutcome(for: threadID) {
-                outcomePill(outcome)
+        let outcome = model.lastGitActionOutcome(for: threadID)
+        let inventory = GitBarInventory(status: status, outcomeTitle: outcome?.title)
+        return HStack(spacing: HeaderChipMetrics.barSpacing) {
+            if let outcome {
+                outcomeChip(outcome)
                     .transition(Motion.banner)
             }
-            branchMenu(status)
-            statusChips(status)
-            prControls(status)
-            actionMenu(status)
+            branchChip(status)
+            workingTreeChip(inventory)
+            divergenceChip(inventory)
+            prChips(status, inventory)
+            actionChip(status)
         }
         // Rare successes arrive on the delight spring; failures stay sober.
         .animation(
-            model.lastGitActionOutcome(for: threadID)?.success == true
-                ? Motion.delight
-                : Motion.reveal,
+            outcome?.success == true ? Motion.delight : Motion.reveal,
             value: model.lastGitActionOutcome(for: threadID)
         )
         .animation(Motion.ambient, value: status)
@@ -91,122 +98,44 @@ struct VcsToolbar: View {
         }
     }
 
-    // MARK: - Dropdown chrome
+    // MARK: - Chip labels
 
-    /// Shared chrome for the toolbar's dropdown triggers: a bordered pill that is
-    /// always visibly a button (fill + hairline, deepening on hover/open)
-    /// with a chevron that flips while the popover is presented. `prominent`
-    /// tints the pill with the alpine accent for the primary git-actions menu.
-    private func dropdownTrigger<LabelContent: View>(
-        isPresented: Bool,
-        isHovering: Bool,
-        prominent: Bool = false,
-        @ViewBuilder label: () -> LabelContent
-    ) -> some View {
-        HStack(spacing: 6) {
-            label()
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(
-                    prominent ? AlpineTheme.forest.opacity(0.75) : Color.secondary)
-                .rotationEffect(.degrees(isPresented ? 180 : 0))
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .contentShape(
-            RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
-        .background {
-            let shape = RoundedRectangle(
-                cornerRadius: AlpineTheme.Corners.control, style: .continuous)
-            shape
-                .fill(
-                    prominent
-                        ? AlpineTheme.accent.opacity(
-                            isPresented ? 0.62 : isHovering ? 0.5 : 0.34)
-                        : Color.primary.opacity(
-                            isPresented ? 0.11 : isHovering ? 0.085 : 0.05)
-                )
-                .overlay {
-                    shape.strokeBorder(
-                        prominent
-                            ? AlpineTheme.accent.opacity(0.95)
-                            : Color.primary.opacity(isPresented || isHovering ? 0.16 : 0.10),
-                        lineWidth: 1)
-                }
+    /// A chip's glyph plus its optional text, at the bar's shared spacing.
+    /// `text` is nil at the densities where the chip folds down to its glyph;
+    /// the caller always supplies `accessibility` so folding never removes
+    /// meaning, only characters.
+    @ViewBuilder
+    private func chipLabel(_ symbol: String, _ text: String?) -> some View {
+        HStack(spacing: HeaderChipMetrics.contentSpacing) {
+            Image(systemName: symbol)
+                .font(HeaderChipMetrics.iconFont)
+            if let text {
+                Text(text)
+            }
         }
     }
 
-    /// Bordered capsule button for the toolbar's inline actions (PR link,
-    /// comments, ready-for-review). A view (not a `ButtonStyle`) so the hover
-    /// state can live in `@UIState`; the pill deepens under the pointer like
-    /// the dropdown triggers do.
-    private struct PillButton<LabelContent: View>: View {
-        let action: () -> Void
-        @ViewBuilder let label: LabelContent
+    // MARK: - Branch
 
-        @UIState private var isHovering = false
-        @Environment(\.isEnabled) private var isEnabled
-
-        var body: some View {
-            Button {
-                Haptics.play(.selection)
-                action()
-            } label: {
-                label
-            }
-                .buttonStyle(.plain)
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4.5)
-                .contentShape(Capsule())
-                .background {
-                    Capsule()
-                        .fill(Color.primary.opacity(isHovering ? 0.1 : 0.05))
-                        .overlay {
-                            Capsule()
-                                .strokeBorder(
-                                    Color.primary.opacity(isHovering ? 0.16 : 0.10),
-                                    lineWidth: 1)
-                        }
-                }
-                .opacity(isEnabled ? 1 : 0.5)
-                .onHover { isHovering = $0 }
-                .animation(Motion.feedback, value: isHovering)
-        }
-    }
-
-    // MARK: - Branch menu
-
-    private func branchMenu(_ status: VcsStatus) -> some View {
-        Button {
-            showBranchMenu.toggle()
-        } label: {
-            dropdownTrigger(isPresented: showBranchMenu, isHovering: branchMenuHovering) {
-                HStack(spacing: 7) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AlpineTheme.forest)
-                        .frame(width: 20, height: 20)
-                        .background(
-                            AlpineTheme.accent.opacity(0.85),
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    Text(status.branch ?? "no branch")
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+    private func branchChip(_ status: VcsStatus) -> some View {
+        HeaderChipButton(
+            role: .control,
+            isOn: showBranchMenu,
+            maxWidth: density.branchWidth,
+            showsChevron: true,
+            action: { showBranchMenu.toggle() }
+        ) {
+            HStack(spacing: HeaderChipMetrics.contentSpacing) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(HeaderChipMetrics.iconFont)
+                    .foregroundStyle(AlpineTheme.meadow)
+                Text(status.branch ?? "no branch")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
-        .buttonStyle(.plain)
-        // No `.fixedSize()` here: it would counter-propose the label's ideal
-        // width and defeat the middle-truncation for long branch names.
-        // Capped tighter than a standalone toolbar would allow so the header
-        // keeps room for the thread title on narrower windows.
-        .frame(maxWidth: 200, alignment: .leading)
-        .onHover { branchMenuHovering = $0 }
-        .animation(Motion.feedback, value: branchMenuHovering)
-        .animation(Motion.feedback, value: showBranchMenu)
         .help("Current branch — click to switch, create, or pull")
+        .accessibilityLabel("Branch \(status.branch ?? "none")")
         .popover(isPresented: $showBranchMenu, arrowEdge: .bottom) {
             branchPopover(status)
         }
@@ -333,189 +262,191 @@ struct VcsToolbar: View {
         }
     }
 
-    // MARK: - Status chips
+    // MARK: - Working tree
 
     @ViewBuilder
-    private func statusChips(_ status: VcsStatus) -> some View {
-        if status.changedFileCount > 0 {
-            statusChip {
-                HStack(spacing: 5) {
-                    Text(
-                        "^[\(status.changedFileCount) file](inflect: true) changed"
-                    )
-                    if status.insertions > 0 {
-                        Text("+\(status.insertions)")
-                            .foregroundStyle(AlpineTheme.statusSuccess)
+    private func workingTreeChip(_ inventory: GitBarInventory) -> some View {
+        if inventory.showsWorkingTree {
+            HeaderChip {
+                HStack(spacing: HeaderChipMetrics.contentSpacing) {
+                    if density.showsLabels {
+                        Text(inventory.filesChangedLabel)
+                    } else {
+                        Image(systemName: "doc.on.doc")
+                            .font(HeaderChipMetrics.iconFont)
+                        Text(inventory.changedFilesCount)
                     }
-                    if status.deletions > 0 {
-                        Text("−\(status.deletions)")
-                            .foregroundStyle(.red)
+                    // The deltas are the chip's most-read numbers, so they
+                    // survive one tier longer than the words around them.
+                    if density > .minimal {
+                        if let insertions = inventory.insertionsLabel {
+                            Text(insertions).foregroundStyle(AlpineTheme.statusSuccess)
+                        }
+                        if let deletions = inventory.deletionsLabel {
+                            Text(deletions).foregroundStyle(.red)
+                        }
                     }
                 }
             }
             .contentTransition(.numericText())
             .transition(Motion.materialize)
-            .help("Uncommitted changes in the working tree")
+            .help(workingTreeDescription(inventory))
+            .accessibilityLabel(workingTreeDescription(inventory))
         }
-        if status.aheadCount > 0 || status.behindCount > 0 {
-            statusChip {
-                HStack(spacing: 6) {
-                    if status.aheadCount > 0 {
-                        Label("\(status.aheadCount)", systemImage: "arrow.up")
+    }
+
+    private func workingTreeDescription(_ inventory: GitBarInventory) -> String {
+        let deltas = [inventory.insertionsLabel, inventory.deletionsLabel]
+            .compactMap(\.self)
+            .joined(separator: " ")
+        let counts = deltas.isEmpty ? "" : " (\(deltas))"
+        return "Uncommitted changes in the working tree: "
+            + inventory.filesChangedLabel + counts
+    }
+
+    @ViewBuilder
+    private func divergenceChip(_ inventory: GitBarInventory) -> some View {
+        if inventory.showsDivergence {
+            HeaderChip {
+                HStack(spacing: HeaderChipMetrics.contentSpacing) {
+                    if inventory.ahead > 0 {
+                        chipLabel("arrow.up", inventory.aheadCount)
                     }
-                    if status.behindCount > 0 {
-                        Label("\(status.behindCount)", systemImage: "arrow.down")
+                    if inventory.behind > 0 {
+                        chipLabel("arrow.down", inventory.behindCount)
                     }
                 }
             }
             .contentTransition(.numericText())
             .transition(Motion.materialize)
             .help("Commits ahead of / behind the upstream branch")
+            .accessibilityLabel(
+                "\(inventory.ahead) commits ahead, \(inventory.behind) behind upstream")
         }
-    }
-
-    /// A bordered capsule tag so working-tree state reads as glanceable
-    /// status rather than bare toolbar text.
-    private func statusChip<Content: View>(
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        content()
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.05), in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            }
     }
 
     // MARK: - PR controls
 
     @ViewBuilder
-    private func prControls(_ status: VcsStatus) -> some View {
+    private func prChips(_ status: VcsStatus, _ inventory: GitBarInventory) -> some View {
         if let prURL = status.prURL, let url = URL(string: prURL) {
-            let isMerged = status.prState == .merged
-            let isDraft = status.isDraftPR == true
-            PillButton {
-                NSWorkspace.shared.open(url)
-            } label: {
-                Label(
-                    (status.prNumber.map { "PR #\($0)" } ?? "PR")
-                        + (isMerged ? " · Merged" : isDraft ? " · Draft" : ""),
-                    systemImage: isMerged
+            let label = inventory.prLabel(at: density)
+            HeaderChipButton(
+                role: .tinted(
+                    inventory.prIsMerged
+                        ? .purple : inventory.prIsDraft ? .secondary : AlpineTheme.sky),
+                isIconOnly: label == nil,
+                action: { NSWorkspace.shared.open(url) }
+            ) {
+                chipLabel(
+                    inventory.prIsMerged
                         ? "checkmark.seal.fill"
-                        : isDraft ? "doc.badge.clock" : "arrow.triangle.pull")
+                        : inventory.prIsDraft ? "doc.badge.clock" : "arrow.triangle.pull",
+                    label)
             }
-            .foregroundStyle(
-                isMerged
-                    ? AnyShapeStyle(.purple)
-                    : isDraft ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
             .help(status.prTitle ?? "Open pull request")
+            .accessibilityLabel(inventory.prLabel(at: .full) ?? "Pull request")
         }
-        if status.prState == .open, status.hasPrConflicts {
-            Label("Conflicts", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.red)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.red.opacity(0.12), in: Capsule())
-                .overlay {
-                    Capsule().strokeBorder(Color.red.opacity(0.25), lineWidth: 1)
-                }
-                .transition(Motion.materialize)
-                .help("This pull request has merge conflicts with its base branch.")
+        if inventory.showsConflicts {
+            HeaderChip(
+                role: .tinted(.red),
+                isIconOnly: !density.showsLabels
+            ) {
+                chipLabel(
+                    "exclamationmark.triangle.fill", density.showsLabels ? "Conflicts" : nil)
+            }
+            .transition(Motion.materialize)
+            .help("This pull request has merge conflicts with its base branch.")
+            .accessibilityLabel("Merge conflicts")
         }
         if let prNumber = status.prNumber {
-            PillButton {
-                pullRequestReviewReference = String(prNumber)
-            } label: {
-                Label(
-                    status.unresolvedReviewThreadCount.map { "Comments · \($0)" }
-                        ?? "Comments",
-                    systemImage: "bubble.left.and.bubble.right")
+            let label = inventory.commentsLabel(at: density)
+            HeaderChipButton(
+                role: .tinted(
+                    (inventory.comments ?? 0) > 0 ? .orange : .secondary),
+                isIconOnly: label == nil,
+                action: { pullRequestReviewReference = String(prNumber) }
+            ) {
+                chipLabel("bubble.left.and.bubble.right", label)
             }
-            .foregroundStyle(
-                (status.unresolvedReviewThreadCount ?? 0) > 0
-                    ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             .help("View comments and review threads on PR #\(prNumber)")
+            .accessibilityLabel(inventory.commentsLabel(at: .full) ?? "Comments")
         }
-        if status.prState == .open, status.isDraftPR == true {
-            PillButton {
-                run(.readyPR, message: nil)
-            } label: {
+        if inventory.showsReadyForReview {
+            let label = inventory.readyLabel(at: density)
+            HeaderChipButton(
+                role: .control,
+                isIconOnly: label == nil && runningAction != .readyPR,
+                action: { run(.readyPR, message: nil) }
+            ) {
                 if runningAction == .readyPR {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Marking ready…")
+                    HStack(spacing: HeaderChipMetrics.contentSpacing) {
+                        ProgressView().controlSize(.small)
+                        if density.showsLabels { Text("Marking ready…") }
                     }
                     .transition(.opacity)
                 } else {
-                    Label("Ready for Review", systemImage: "checkmark.circle")
+                    chipLabel("checkmark.circle", label)
                         .transition(.opacity)
                 }
             }
             .disabled(isRunningAction)
             .animation(Motion.reveal, value: runningAction)
             .help("Mark PR #\(status.prNumber ?? 0) ready for review")
+            .accessibilityLabel("Mark ready for review")
         }
-        if MergeReadiness.isReady(for: status) {
-            Button {
-                run(.mergePR, message: nil)
-            } label: {
+        if inventory.showsMerge {
+            let label = inventory.mergeLabel(at: density)
+            HeaderChipButton(
+                role: .primary,
+                isIconOnly: label == nil && runningAction != .mergePR,
+                action: { run(.mergePR, message: nil) }
+            ) {
                 if runningAction == .mergePR {
-                    HStack(spacing: 6) {
+                    HStack(spacing: HeaderChipMetrics.contentSpacing) {
                         ProgressView()
                             .controlSize(.small)
                             .tint(AlpineTheme.forest)
-                        Text("Merging…")
+                        if density.showsLabels { Text("Merging…") }
                     }
                     .transition(.opacity)
                 } else {
-                    Label("Merge PR", systemImage: "arrow.triangle.merge")
+                    chipLabel("arrow.triangle.merge", label)
                         .transition(.opacity)
                 }
             }
-            .buttonStyle(VcsMergePillButtonStyle())
             .disabled(isRunningAction)
             .animation(Motion.reveal, value: runningAction)
             .help("Merge the open pull request")
+            .accessibilityLabel("Merge pull request")
         }
     }
 
     // MARK: - Actions
 
-    private func actionMenu(_ status: VcsStatus) -> some View {
-        Button {
-            showGitActions.toggle()
-        } label: {
-            dropdownTrigger(
-                isPresented: showGitActions, isHovering: gitActionsHovering, prominent: true
-            ) {
-                // Merge owns its own in-button spinner; only show the menu
-                // spinner for other actions.
-                if let runningAction, runningAction != .mergePR, runningAction != .readyPR {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(AlpineTheme.forest)
-                        .transition(.opacity)
-                } else {
-                    Label("Git", systemImage: "arrow.up.circle")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(AlpineTheme.forest)
-                        .transition(.opacity)
-                }
+    private func actionChip(_ status: VcsStatus) -> some View {
+        HeaderChipButton(
+            role: .primary,
+            isOn: showGitActions,
+            showsChevron: true,
+            action: { showGitActions.toggle() }
+        ) {
+            // Merge and ready-for-review own their in-chip spinners; only show
+            // the menu spinner for the actions this menu itself started.
+            if let runningAction, runningAction != .mergePR, runningAction != .readyPR {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(AlpineTheme.forest)
+                    .transition(.opacity)
+            } else {
+                chipLabel("arrow.up.circle", density == .minimal ? nil : "Git")
+                    .transition(.opacity)
             }
         }
-        .buttonStyle(.plain)
-        .fixedSize()
         .disabled(isRunningAction)
-        .onHover { gitActionsHovering = $0 }
-        .animation(Motion.feedback, value: gitActionsHovering)
         .animation(Motion.reveal, value: runningAction)
         .help("Commit, push, and pull-request actions")
+        .accessibilityLabel("Git actions")
         .popover(isPresented: $showGitActions, arrowEdge: .bottom) {
             gitActionsPopover(status)
         }
@@ -614,78 +545,59 @@ struct VcsToolbar: View {
         }
     }
 
-    // MARK: - Outcome pill
+    // MARK: - Outcome chip
 
     /// Compact inline result of the last git action. The full detail string
-    /// (often a long error) rides in the tooltip so the header row never
-    /// grows a second line.
-    private func outcomePill(_ outcome: GitActionOutcome) -> some View {
-        HStack(spacing: 6) {
-            let icon = Image(systemName: outcome.success ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                .foregroundStyle(outcome.success ? .green : .red)
-            if Motion.reduceMotion || !outcome.success {
-                icon
-            } else {
-                icon.symbolEffect(.bounce, value: outcome)
+    /// (often a long error) rides in the tooltip so the bar never grows a
+    /// second line.
+    private func outcomeChip(_ outcome: GitActionOutcome) -> some View {
+        HeaderChip(role: .tinted(outcome.success ? AlpineTheme.statusSuccess : .red)) {
+            HStack(spacing: HeaderChipMetrics.contentSpacing) {
+                let icon = Image(
+                    systemName: outcome.success ? "checkmark.circle.fill" : "xmark.octagon.fill"
+                )
+                .font(HeaderChipMetrics.iconFont)
+                if Motion.reduceMotion || !outcome.success {
+                    icon
+                } else {
+                    icon.symbolEffect(.bounce, value: outcome)
+                }
+                if density > .minimal {
+                    Text(outcome.title)
+                        .lineLimit(1)
+                        .frame(maxWidth: density == .full ? 220 : 120, alignment: .leading)
+                        .fixedSize(horizontal: density == .full, vertical: false)
+                }
+                if density == .full, let prURL = outcome.prURL, let url = URL(string: prURL) {
+                    Button("Open PR") { NSWorkspace.shared.open(url) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tint)
+                }
+                Button {
+                    // The flat compat setter clears whichever thread is
+                    // currently selected — safe here because this toolbar only
+                    // ever renders for the selected thread, so it's always
+                    // `threadID` being cleared, matching the outcome read above.
+                    model.lastGitActionOutcome = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                // The chip's `.help` sits on the enclosing chip, so the
+                // icon-only button needs its own name.
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss git result")
             }
-            Text(outcome.title)
-                .lineLimit(1)
-            if let prURL = outcome.prURL, let url = URL(string: prURL) {
-                Button("Open PR") { NSWorkspace.shared.open(url) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
-            }
-            Button {
-                // The flat compat setter clears whichever thread is
-                // currently selected — safe here because this toolbar only
-                // ever renders for the selected thread, so it's always
-                // `threadID` being cleared, matching the outcome read above.
-                model.lastGitActionOutcome = nil
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption2)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            // The pill's `.help` sits on the enclosing HStack, so the
-            // icon-only button needs its own name.
-            .help("Dismiss")
-            .accessibilityLabel("Dismiss git result")
-        }
-        .font(.caption)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.primary.opacity(0.05), in: Capsule())
-        .overlay {
-            Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         }
         .help(outcome.detail ?? outcome.title)
     }
 }
 
-/// Emphasized pill for the one-click merge affordance (matches follow-up bar).
-/// Solid accent fill with a forest label — the app's primary-action language —
-/// so the button and its in-flight spinner stay legible on the dark chrome
-/// (the old white capsule rendered a white-on-white spinner).
-private struct VcsMergePillButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background {
-                Capsule()
-                    .fill(AlpineTheme.accent.opacity(configuration.isPressed ? 0.72 : 1))
-            }
-            .foregroundStyle(AlpineTheme.forest)
-            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-            .pressFeedback(configuration.isPressed, event: .commit)
-    }
-}
-
-private extension GitAction {
+extension GitAction {
     /// SF Symbol for the action's row in the Git actions popover.
-    var menuSymbol: String {
+    fileprivate var menuSymbol: String {
         switch self {
         case .commit: "checkmark.circle"
         case .push: "arrow.up.circle"
@@ -698,7 +610,7 @@ private extension GitAction {
 
     /// One-line explanation under the action title, so the menu teaches what
     /// each stacked action does instead of relying on the name alone.
-    var menuDetail: String {
+    fileprivate var menuDetail: String {
         switch self {
         case .commit: "Commit all working-tree changes"
         case .push: "Push committed changes to the remote"
