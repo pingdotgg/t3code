@@ -1,43 +1,11 @@
 /**
- * Layer-based server-side routing for Effect HTTP applications.
+ * Builds server-side routers for Effect HTTP applications.
  *
- * `HttpRouter` collects routes and router middleware while an application layer
- * is being built, then exposes the registered route table as an
- * `HttpServerResponse` effect for each incoming `HttpServerRequest`. Use it for
- * APIs, webhooks, and Fetch handlers that want request-scoped services, schema
- * decoding, and typed middleware to participate in the same `Layer` graph as
- * the rest of the application.
- *
- * **Mental model**
- *
- * Route layers do not handle requests immediately. They register `Route` values
- * into the current `HttpRouter`; `serve`, `toHttpEffect`, and `toWebHandler`
- * build the layer, read the completed router, and run the matching handler for
- * each request. During a request, the router provides `HttpServerRequest`,
- * `Scope`, parsed search parameters, and `RouteContext`, so handlers can decode
- * path, search, and body data or access services supplied by router middleware.
- *
- * **Common tasks**
- *
- * - Register individual routes with `add` or batches with `addAll`.
- * - Group routes under a prefix with `addAll(..., { prefix })` or
- *   `router.prefixed`.
- * - Decode route, search, and JSON body data with `schemaPathParams`,
- *   `schemaParams`, `schemaNoBody`, and `schemaJson`.
- * - Apply route-scoped middleware with `middleware(...).layer`, or install
- *   global router middleware for all routes.
- * - Serve the layer with `serve` or create a Fetch-compatible handler with
- *   `toWebHandler`.
- *
- * **Gotchas**
- *
- * Paths must be absolute `/` paths or the wildcard `*`. `HEAD` falls back to
- * `GET`, and wildcard paths ending in `/*` also match the prefix path itself.
- * For prefixed routes the matched prefix is removed from
- * `HttpServerRequest.url` before the handler sees it. Middleware passed to
- * `serve` wraps the wider server chain; use router middleware when you need to
- * provide request dependencies, handle configured route errors, or change the
- * response that will be sent.
+ * `HttpRouter` collects routes and middleware while an application layer is
+ * being built. Once the router is complete, it handles each
+ * `HttpServerRequest` by finding a matching route and producing an
+ * `HttpServerResponse`. The module also includes helpers for route definitions,
+ * prefixes, parameters, request decoding, CORS, and running the router.
  *
  * @since 4.0.0
  */
@@ -302,7 +270,7 @@ export const RouterConfig = Context.Reference<Partial<FindMyWay.RouterConfig>>(
  * It provides the route definition and the path parameters captured by the route
  * matcher.
  *
- * @category route context
+ * @category services
  * @since 4.0.0
  */
 export class RouteContext extends Context.Service<RouteContext, {
@@ -313,7 +281,7 @@ export class RouteContext extends Context.Service<RouteContext, {
 /**
  * Effect that returns the path parameters captured for the current matched route.
  *
- * @category RouteContext
+ * @category getters
  * @since 4.0.0
  */
 export const params: Effect.Effect<
@@ -345,10 +313,9 @@ export const schemaJson = <
     readonly searchParams: Readonly<Record<string, string | ReadonlyArray<string> | undefined>>
     readonly body: any
   }>,
-  RD,
-  RE
+  RD
 >(
-  schema: Schema.Codec<A, I, RD, RE>,
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<
   A,
@@ -400,10 +367,9 @@ export const schemaNoBody = <
     readonly pathParams: Readonly<Record<string, string | undefined>>
     readonly searchParams: Readonly<Record<string, string | ReadonlyArray<string> | undefined>>
   }>,
-  RD,
-  RE
+  RD
 >(
-  schema: Schema.Codec<A, I, RD, RE>,
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<
   A,
@@ -442,8 +408,8 @@ export const schemaNoBody = <
  * @category schemas
  * @since 4.0.0
  */
-export const schemaParams = <A, I extends Readonly<Record<string, string | ReadonlyArray<string> | undefined>>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaParams = <A, I extends Readonly<Record<string, string | ReadonlyArray<string> | undefined>>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<A, Schema.SchemaError, HttpServerRequest.ParsedSearchParams | RouteContext | RD> => {
   const parse = Schema.decodeUnknownEffect(schema)
@@ -461,8 +427,8 @@ export const schemaParams = <A, I extends Readonly<Record<string, string | Reado
  * @category schemas
  * @since 4.0.0
  */
-export const schemaPathParams = <A, I extends Readonly<Record<string, string | undefined>>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaPathParams = <A, I extends Readonly<Record<string, string | undefined>>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<A, Schema.SchemaError, RouteContext | RD> => {
   const parse = Schema.decodeUnknownEffect(schema)
@@ -475,7 +441,7 @@ export const schemaPathParams = <A, I extends Readonly<Record<string, string | u
  *
  * **When to use**
  *
- * Use when you use it to register routes or middleware with the router during layer
+ * Use when you need to register routes or middleware with the router during layer
  * construction.
  *
  * **Example** (Registering routes during layer construction)
@@ -1247,7 +1213,7 @@ export const provideRequest =
 /**
  * Runs the provided application layer as an HTTP server.
  *
- * @category Server
+ * @category server
  * @since 4.0.0
  */
 export const serve = <A, E, R, HE, HR = Request.Only<"Requires", R> | Request.Only<"GlobalRequires", R>>(
@@ -1311,7 +1277,7 @@ export const serve = <A, E, R, HE, HR = Request.Only<"Requires", R> | Request.On
  * Web `Response` values and a `dispose` function for releasing the layer
  * resources.
  *
- * @category Server
+ * @category server
  * @since 4.0.0
  */
 export const toWebHandler = <
@@ -1350,12 +1316,15 @@ export const toWebHandler = <
         | Request.Only<"Requires", R>
         | Request.Only<"GlobalRequires", R>
       >
-    ) => Effect.Effect<HttpServerResponse.HttpServerResponse, HE, HR>
+    ) => Effect.Effect<HttpServerResponse.HttpServerResponse, HE, HR | GlobalProvided>
   }
 ): {
-  readonly handler: [HR] extends [never]
+  readonly handler: [Exclude<HR, GlobalProvided>] extends [never]
     ? ((request: globalThis.Request, context?: Context.Context<never> | undefined) => Promise<Response>)
-    : ((request: globalThis.Request, context: Context.Context<HR>) => Promise<Response>)
+    : ((
+      request: globalThis.Request,
+      context: Context.Context<Exclude<HR, GlobalProvided>>
+    ) => Promise<Response>)
   readonly dispose: () => Promise<void>
 } => {
   let middleware: any = options?.middleware

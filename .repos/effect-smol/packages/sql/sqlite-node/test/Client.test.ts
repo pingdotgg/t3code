@@ -23,6 +23,8 @@ describe("Client", () => {
       assert.deepStrictEqual(response, [])
       response = yield* sql`SELECT * FROM test`
       assert.deepStrictEqual(response, [{ id: 1, name: "hello" }])
+      response = yield* sql`SELECT * FROM test`.valuesUnprepared
+      assert.deepStrictEqual(response, [[1, "hello"]])
       response = yield* sql`INSERT INTO test (name) VALUES ('world')`.pipe(sql.withTransaction)
       assert.deepStrictEqual(response, [])
       response = yield* sql`SELECT * FROM test`
@@ -71,5 +73,16 @@ describe("Client", () => {
       )
       const rows = yield* sql`SELECT * FROM test`
       assert.deepStrictEqual(rows, [])
+    }))
+
+  it.effect("supports backup and export", () =>
+    Effect.gen(function*() {
+      const sql = yield* makeClient
+      yield* sql`CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)`
+      yield* sql`INSERT INTO test (name) VALUES ('hello')`
+
+      const metadata = yield* sql.backup(sql.config.filename + ".backup")
+      assert(metadata.totalPages > 0)
+      assert.strictEqual(metadata.remainingPages, 0)
     }))
 })

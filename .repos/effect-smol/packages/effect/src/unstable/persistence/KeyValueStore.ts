@@ -1,24 +1,12 @@
 /**
- * Effectful key/value storage for persistence backends.
+ * Provides effectful key/value storage for persistence backends.
  *
- * This module defines the `KeyValueStore` service used by the persistence
- * package when a simple string or binary store is enough. It is useful for
- * lightweight durable state, browser storage, local file-backed data, SQL
- * tables, test stores, and as the storage primitive underneath higher-level
- * persistence APIs.
- *
- * Values are stored as strings or `Uint8Array`s, and `toSchemaStore` adds a
- * schema-aware JSON layer for typed values. Schema changes can make existing
- * JSON fail to decode, and `prefix` should be used to separate namespaces when
- * several logical stores share the same backend. This service does not provide
- * native TTL support; higher-level persistence layers encode expiration
- * metadata in stored values when they need TTLs.
- *
- * Backend behavior is intentionally small but not identical: Web Storage is
- * string-only, `makeStringOnly` stores binary values as base64, filesystem
- * keys become encoded file names, SQL stores value type metadata in a table,
- * and the memory layer is process-local. Choose keys, prefixes, table names,
- * and value formats with those backend constraints in mind.
+ * `KeyValueStore` is a service for storing string or binary values by key. It
+ * is useful for lightweight durable state, browser storage, local files, SQL
+ * tables, tests, and as a storage building block for higher-level persistence
+ * APIs. This module includes store operations, prefixed views, schema-aware JSON
+ * storage, error values, and layers for memory, filesystem, Web Storage, and
+ * SQL-backed stores.
  *
  * @since 4.0.0
  */
@@ -114,7 +102,7 @@ export interface KeyValueStore {
  * Primitive operations are required, while helpers such as `has`, `isEmpty`,
  * and `modify` can be supplied to override the defaults.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export type MakeOptions = Partial<KeyValueStore> & {
@@ -153,7 +141,7 @@ export type MakeOptions = Partial<KeyValueStore> & {
  * Implementation callbacks for adapting a string-only backing store into a
  * `KeyValueStore`.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export type MakeStringOptions = Partial<Omit<KeyValueStore, "set">> & {
@@ -214,7 +202,7 @@ export class KeyValueStoreError extends Data.TaggedError("KeyValueStoreError")<{
  * Use to access or provide the persistence store used for lightweight durable
  * state.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const KeyValueStore: Context.Service<
@@ -693,7 +681,7 @@ const SchemaStoreTypeId = "~effect/persistence/KeyValueStore/SchemaStore" as con
  * @category SchemaStore
  * @since 4.0.0
  */
-export interface SchemaStore<S extends Schema.Top> {
+export interface SchemaStore<S extends Schema.Constraint> {
   readonly [SchemaStoreTypeId]: typeof SchemaStoreTypeId
   /**
    * Returns the value of the specified key if it exists.
@@ -754,7 +742,7 @@ export interface SchemaStore<S extends Schema.Top> {
  * @category SchemaStore
  * @since 4.0.0
  */
-export const toSchemaStore = <S extends Schema.Top>(self: KeyValueStore, schema: S): SchemaStore<S> => {
+export const toSchemaStore = <S extends Schema.Constraint>(self: KeyValueStore, schema: S): SchemaStore<S> => {
   const serializer = Schema.toCodecJson(schema)
   const jsonSchema = Schema.fromJsonString(serializer)
   const decode = Schema.decodeEffect(jsonSchema)

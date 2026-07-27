@@ -38,17 +38,6 @@ export const encodeVarint = (value: number | bigint): Uint8Array => {
 }
 
 /**
- * Encodes a signed varint using ZigZag encoding
- *
- * @internal
- */
-export const encodeSint = (value: number | bigint): Uint8Array => {
-  const n = typeof value === "bigint" ? value : BigInt(value)
-  const zigzag = (n << BigInt(1)) ^ (n >> BigInt(63))
-  return encodeVarint(zigzag)
-}
-
-/**
  * Encodes a 64-bit fixed value (little-endian)
  *
  * @internal
@@ -131,17 +120,6 @@ export const varintField = (fieldNumber: number, value: number | bigint): Uint8A
   concat(
     encodeVarint(encodeTag(fieldNumber, WireType.Varint)),
     encodeVarint(value)
-  )
-
-/**
- * Encodes a sint field (ZigZag encoded)
- *
- * @internal
- */
-export const sintField = (fieldNumber: number, value: number | bigint): Uint8Array =>
-  concat(
-    encodeVarint(encodeTag(fieldNumber, WireType.Varint)),
-    encodeSint(value)
   )
 
 /**
@@ -230,26 +208,6 @@ export const repeatedField = <T>(
   values: ReadonlyArray<T>,
   encode: (value: T) => Uint8Array
 ): Uint8Array => concat(...values.map((v) => messageField(fieldNumber, encode(v))))
-
-/**
- * Encodes repeated varint fields (not packed)
- *
- * @internal
- */
-export const repeatedVarintField = (
-  fieldNumber: number,
-  values: ReadonlyArray<number | bigint>
-): Uint8Array => concat(...values.map((v) => varintField(fieldNumber, v)))
-
-/**
- * Helper to conditionally encode an optional field
- *
- * @internal
- */
-export const optionalField = <T>(
-  value: T | undefined,
-  encode: (v: T) => Uint8Array
-): Uint8Array => value !== undefined ? encode(value) : new Uint8Array(0)
 
 /**
  * Helper to conditionally encode a string field if non-empty

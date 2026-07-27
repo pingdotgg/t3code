@@ -134,7 +134,7 @@ const SERVER_CONFIG: ServerConfigType = {
 };
 
 const RpcRequest = Schema.TaggedStruct("Request", {
-  id: Schema.String,
+  id: Schema.Union([Schema.String, Schema.Number]),
   payload: Schema.Unknown,
   tag: Schema.String,
 });

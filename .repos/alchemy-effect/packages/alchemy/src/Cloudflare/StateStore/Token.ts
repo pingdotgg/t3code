@@ -1,7 +1,7 @@
 import { Random } from "../../Random.ts";
 import * as Effect from "effect/Effect";
 import * as Secret from "../SecretsStore/Secret.ts";
-import { SecretsStore } from "../SecretsStore/SecretsStore.ts";
+import { Store as SecretsStore } from "../SecretsStore/SecretsStore.ts";
 
 /**
  * The account-wide Secrets Store that backs every secret used by the

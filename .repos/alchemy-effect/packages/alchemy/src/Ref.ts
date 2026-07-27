@@ -20,6 +20,14 @@ export interface RefMetadata<R extends ResourceLike> {
   id: R["LogicalId"];
   stack?: string;
   stage?: string;
+  /**
+   * The resource type of the ref's target (e.g.
+   * `"Cloudflare.KV.Namespace"`). Known statically — `MyResource.ref`
+   * carries its own type — so duck-typing classifiers (Worker env
+   * bindings, capability helpers) that read `.Type` can identify a ref
+   * exactly like a locally-declared resource.
+   */
+  type?: string;
 }
 
 export const ref = <R extends ResourceLike>(
@@ -31,6 +39,7 @@ export const ref = <R extends ResourceLike>(
     stack?: string;
     stage?: string;
   } = {},
+  type?: string,
 ): Ref<R> => {
   const ref = new Proxy(
     {},
@@ -41,6 +50,7 @@ export const ref = <R extends ResourceLike>(
             stack,
             stage,
             id,
+            type,
           } satisfies RefMetadata<R>;
         }
         return (Output.of(ref) as any)[prop];

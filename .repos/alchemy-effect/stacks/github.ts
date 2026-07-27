@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-const REPO = { owner: "alchemy-run", repository: "alchemy-effect" } as const;
+const REPO = { owner: "alchemy-run", repository: "alchemy" } as const;
 
 export default Alchemy.Stack(
   "AlchemyGitHubSecrets",
@@ -23,17 +23,33 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const testAccountId = yield* Config.string("TEST_CLOUDFLARE_ACCOUNT_ID");
-    const prodAccountId = yield* Config.string("PROD_CLOUDFLARE_ACCOUNT_ID");
-    const discordWebhookUrl = yield* Config.string("DISCORD_WEBHOOK_URL");
-    const prPackageAuthToken = yield* Config.string("PR_PACKAGE_TOKEN");
+    const AWS_REGION = yield* yield* AWS.Region;
+    const DOPPLER_TOKEN = yield* Config.redacted("DOPPLER_TOKEN");
+    const CLOUDFLARE_API_TOKEN = yield* Config.redacted("CLOUDFLARE_API_TOKEN");
+    const TEST_CLOUDFLARE_ACCOUNT_ID = yield* Config.string(
+      "TEST_CLOUDFLARE_ACCOUNT_ID",
+    );
+    const PROD_CLOUDFLARE_ACCOUNT_ID = yield* Config.string(
+      "PROD_CLOUDFLARE_ACCOUNT_ID",
+    );
+    const PR_PACKAGE_TOKEN = yield* Config.string("PR_PACKAGE_TOKEN");
 
-    const testApiToken = yield* token("TestApiToken", {
-      accountId: testAccountId,
-    });
-
-    const prodApiToken = yield* token("ProdApiToken", {
-      accountId: prodAccountId,
+    const PROD_CLOUDFLARE_API_TOKEN = yield* AccountApiToken("ProdApiToken", {
+      accountId: PROD_CLOUDFLARE_ACCOUNT_ID,
+    }).pipe(
+      Effect.provide(
+        Layer.succeed(
+          Cloudflare.Credentials,
+          Effect.succeed({
+            type: "apiToken",
+            apiToken: CLOUDFLARE_API_TOKEN,
+            apiBaseUrl: "https://api.cloudflare.com",
+          }),
+        ),
+      ),
+    );
+    const TEST_CLOUDFLARE_API_TOKEN = yield* AccountApiToken("TestApiToken", {
+      accountId: TEST_CLOUDFLARE_ACCOUNT_ID,
     });
 
     // GitHub OIDC trust for AWS — lets `.github/workflows/test.yml` (and any
@@ -82,18 +98,15 @@ export default Alchemy.Stack(
       managedPolicyArns: ["arn:aws:iam::aws:policy/AdministratorAccess"],
     });
 
-    const region = yield* AWS.Region;
-
     yield* GitHub.Secrets({
       ...REPO,
       secrets: {
-        TEST_CLOUDFLARE_API_TOKEN: testApiToken.value,
-        TEST_CLOUDFLARE_ACCOUNT_ID: testAccountId,
-        PROD_CLOUDFLARE_API_TOKEN: prodApiToken.value,
-        PROD_CLOUDFLARE_ACCOUNT_ID: prodAccountId,
-        DISCORD_WEBHOOK_URL: discordWebhookUrl,
-        PR_PACKAGE_TOKEN: prPackageAuthToken,
-        NEON_API_KEY: (yield* Neon.NeonEnvironment).apiKey,
+        DOPPLER_TOKEN: DOPPLER_TOKEN,
+        PR_PACKAGE_TOKEN: PR_PACKAGE_TOKEN,
+        PROD_CLOUDFLARE_ACCOUNT_ID,
+        PROD_CLOUDFLARE_API_TOKEN: PROD_CLOUDFLARE_API_TOKEN.value,
+        TEST_CLOUDFLARE_ACCOUNT_ID,
+        TEST_CLOUDFLARE_API_TOKEN: TEST_CLOUDFLARE_API_TOKEN.value,
       },
     });
 
@@ -103,33 +116,33 @@ export default Alchemy.Stack(
       ...REPO,
       variables: {
         AWS_ROLE_ARN: role.roleArn,
-        AWS_REGION: region,
+        AWS_REGION: AWS_REGION,
       },
     });
 
     return {
-      TEST_CLOUDFLARE_API_TOKEN: testApiToken.value.pipe(
+      TEST_CLOUDFLARE_API_TOKEN: TEST_CLOUDFLARE_API_TOKEN.value.pipe(
         Output.map(Redacted.value),
       ),
-      TEST_CLOUDFLARE_ACCOUNT_ID: testAccountId,
-      PROD_CLOUDFLARE_API_TOKEN: prodApiToken.value.pipe(
+      TEST_CLOUDFLARE_ACCOUNT_ID: TEST_CLOUDFLARE_ACCOUNT_ID,
+      PROD_CLOUDFLARE_API_TOKEN: PROD_CLOUDFLARE_API_TOKEN.value.pipe(
         Output.map(Redacted.value),
       ),
-      PROD_CLOUDFLARE_ACCOUNT_ID: prodAccountId,
-      DISCORD_WEBHOOK_URL: discordWebhookUrl,
+      PROD_CLOUDFLARE_ACCOUNT_ID: PROD_CLOUDFLARE_ACCOUNT_ID,
       AWS_ROLE_ARN: role.roleArn,
-      AWS_REGION: region,
+      AWS_REGION: AWS_REGION,
     };
   }).pipe(Effect.orDie),
 );
 
-const token = (
+const AccountApiToken = (
   id: string,
   props: {
     accountId: string;
   },
 ) =>
   Cloudflare.AccountApiToken(id, {
+    name: "alchemy-ci",
     accountId: props.accountId,
     policies: [
       {
