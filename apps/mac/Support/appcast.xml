@@ -6,6 +6,15 @@
         <language>en</language>
         <!-- CI will inject release items here -->
         <item>
+            <title>0.4.0</title>
+            <pubDate>Mon, 27 Jul 2026 07:31:48 +0000</pubDate>
+            <sparkle:version>22</sparkle:version>
+            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.4.0/SurgeCode-0.4.0.zip" length="155465708" type="application/octet-stream" sparkle:edSignature="4yGk2ndzEfQrAppGHzCOTNC0RD6CS9OHsqf1plNq9EykxgW1LiZ+c7AstqgjiLfQOKmid3nI4Tg7p/k+XNKWDg=="/>
+        </item>
+        <item>
             <title>0.3.2</title>
             <pubDate>Mon, 27 Jul 2026 03:16:38 +0000</pubDate>
             <sparkle:version>21</sparkle:version>
@@ -22,15 +31,6 @@
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.3.1/SurgeCode-0.3.1.zip" length="155155535" type="application/octet-stream" sparkle:edSignature="uYitvLxZKl/cl8zuuucF0pcWBK+xNUv9b30WbsWjK5bBZisAIrsnkQzueIr0nuLJJyghJjhUXQgb+PON6RqBDw=="/>
-        </item>
-        <item>
-            <title>0.2.0</title>
-            <pubDate>Sun, 26 Jul 2026 04:46:03 +0000</pubDate>
-            <sparkle:version>17</sparkle:version>
-            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.2.0/SurgeCode-0.2.0.zip" length="154918678" type="application/octet-stream" sparkle:edSignature="xC9TFKYyRN1KrhAkdflw0kyPMt6Txg+vmaGCp4/OdkXFCmYQe+dg99lpT9SH5JRq9PsdsL00MB3AP8qbzw0HBA=="/>
         </item>
     </channel>
 </rss>
