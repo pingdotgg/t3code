@@ -99,11 +99,53 @@ package script.
 warnings that predate your change; they are not errors and not yours. Compare
 the error count, not the warning count.
 
+### Which suite to run for which change
+
+Pick by what you edited, not by how thorough you feel. Match the most specific
+row that applies; running a broader suite than the row calls for is the single
+biggest waste of thread time in this repo. Wall-clock figures are measured on
+an 18-core M-series host with a warm worktree; a loaded machine (several agent
+worktrees run at once) is slower, not different.
+
+| You changed                                                                          | Run                                                     | Cost      |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------- | --------- |
+| One test file you are iterating on                                                   | `vp test run path/to/file.test.ts` from that package    | 1–15s     |
+| TypeScript/JS anywhere in one package                                                | `pnpm run verify`                                       | 5–60s     |
+| Swift under `apps/mac`                                                               | `pnpm run test:mac`                                     | ~70s warm |
+| `.swift` / `.kt` under `apps/mobile`                                                 | `vp run lint:mobile`                                    | seconds   |
+| A shell script or a `.vite-hooks/` hook                                              | `pnpm run verify` (it maps those to `@t3tools/scripts`) | ~10s      |
+| Only `docs/`, `plans/`, `.claude/`, `.repos/`                                        | nothing                                                 | 0s        |
+| `package.json`, `pnpm-lock.yaml`, `vite.config.ts`, `tsconfig.base.json`, `patches/` | `pnpm run verify --all`                                 | ~80s      |
+| Anything, immediately before opening the PR                                          | `pnpm run verify --all`, once                           | ~80s      |
+
+`pnpm run verify` already resolves all of this from the diff — it runs
+`vp check` on the changed files, typechecks the owning packages and their
+dependents, runs `vp test related` on the tests that import the changed
+sources, and adds the Swift suite only when `apps/mac` changed. Prefer it over
+assembling the commands yourself; use the table to sanity-check what it chose
+(`--dry-run` prints the plan) and to understand what a given step will cost.
+
+What the full gate is made of, so you can tell a slow step from a hung one
+(one measured `pnpm run verify --all` on a loaded machine: 76s for all five
+steps):
+
+| Step                          | Cost                    | Notes                                  |
+| ----------------------------- | ----------------------- | -------------------------------------- |
+| `vp check`                    | ~1s                     | ~1350 files, 18 threads                |
+| `vp run --cache -r typecheck` | ~15s cold, ~0s replayed | `--cache` replays when nothing changed |
+| `vp run -r test`              | ~45s                    | 422 test files, ~3.6k tests            |
+| `pnpm run test:mac`           | 35–70s warm             | ~90% of that is compilation            |
+| `vp run lint:mobile`          | ~1s                     | native mobile static check             |
+
+Within `vp run -r test`, `apps/server` is the entire bill: 179 files and ~95s
+of test work, against ~2s of tests for every other package combined. If a run
+feels slow, it is the server suite; check there first.
+
 ### Do not re-run a check that cannot have changed
 
 Across the archived threads, 63% of all build/test/check runs happened with no
 file edit since the previous run. Re-running is not free: the full TypeScript
-suite is 411 files, and the Swift suite relinks before it runs.
+suite is 422 files, and the Swift suite relinks before it runs.
 
 - Never re-run a suite to "confirm" a result you already have. If nothing was
   edited, the answer is the same.
@@ -122,10 +164,33 @@ toolchain and applies `--no-parallel`.
 
 It forwards arguments, so `pnpm run test:mac --filter SidebarPresentationTests`
 narrows the run — but do not expect much from that. Roughly 90% of a Swift
-test run is compilation and ~10% is execution (509 tests run in 9.8s inside a
-44s invocation), so `--filter` mostly buys you shorter output, not a shorter
+test run is compilation and ~10% is execution (592 tests run in 9.8s inside a
+~70s invocation), so `--filter` mostly buys you shorter output, not a shorter
 wait. The way to make Swift work cheaper is to run it less often, not to
 narrow it.
+
+The first invocation in a fresh worktree builds `apps/mac/.build` from nothing
+and is the slowest one you will see. That is the build, not a hang — do not
+kill it and do not "fix" it by rerunning with different flags.
+
+### Server tests run in parallel; keep them that way
+
+`apps/server` runs its 179 test files across a bounded worker pool
+(`maxWorkers` in `apps/server/vite.config.ts`), which is the difference between
+a 139s suite and a ~40s one. The pool is capped at four rather than one-per-core
+on purpose, and the config records the measurements: the suite spawns real `git`
+and mock-agent processes, several agent worktrees compile and test on the same
+machine at once, and past four workers the files starve each other into 401s and
+timeouts. Raise the cap only with numbers from repeated runs.
+
+That makes wall-clock delays a shared resource. When a test needs to wait for
+something a child process does, wait for the observable event — the ACP mock
+agent's `T3_ACP_REQUEST_LOG_PATH` request log, a `Deferred`, a stream element —
+via `waitForFileContent`
+(`apps/server/src/provider/testing/waitForFileContent.ts`). Do not add
+`Effect.sleep("500 millis")` and do not advance a `TestClock` as a stand-in for
+real I/O: a delay that is generous on an idle machine is a race under six
+workers, and one such test deadlocked the whole file for its full 120s timeout.
 
 ## macOS App Versioning and Release Policy
 
