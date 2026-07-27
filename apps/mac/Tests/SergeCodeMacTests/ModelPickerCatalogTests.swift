@@ -84,7 +84,7 @@ struct ModelPickerCatalogTests {
 
         let claudeCodeItems = ModelPickerCatalog.filteredItems(
             items,
-            providerFilter: .provider(.claude),
+            scope: .provider(.claude),
             query: "")
 
         #expect(claudeCodeItems.count == 2)
@@ -112,16 +112,91 @@ struct ModelPickerCatalogTests {
 
         let providerResults = ModelPickerCatalog.filteredItems(
             items,
-            providerFilter: .provider(.claude),
+            scope: .provider(.claude),
             query: ""
         )
         let searchResults = ModelPickerCatalog.filteredItems(
             items,
-            providerFilter: .all,
+            scope: .all,
             query: "CODEX"
         )
 
         #expect(providerResults.map(\.option.modelID) == ["sonnet-5"])
         #expect(searchResults.map(\.option.modelID) == ["gpt-5"])
+    }
+
+    @Test("keys ignore the provider instance so favorites survive a reconnect")
+    func keysAreInstanceIndependent() {
+        let first = option(instance: "codex-a", modelID: "GPT-5", name: "GPT-5", provider: .codex)
+        let second = option(instance: "codex-b", modelID: " gpt-5 ", name: "GPT-5", provider: .codex)
+
+        #expect(ModelPickerCatalog.key(for: first) == ModelPickerCatalog.key(for: second))
+        #expect(ModelPickerCatalog.key(for: first) == "codex/gpt-5")
+    }
+
+    @Test("favorites and recents scopes filter and order rows")
+    func favoritesAndRecentsScopes() {
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(instance: "codex", modelID: "gpt-5", name: "GPT-5", provider: .codex),
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+                option(instance: "grok", modelID: "grok-4", name: "Grok 4", provider: .grok),
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        )
+
+        let favorites = ModelPickerCatalog.filteredItems(
+            items,
+            scope: .favorites,
+            query: "",
+            favorites: ["codex/gpt-5", "grok/grok-4"]
+        )
+        // Recency order wins over catalog order, and models the backend no
+        // longer offers drop out instead of rendering as dead rows.
+        let recents = ModelPickerCatalog.filteredItems(
+            items,
+            scope: .recents,
+            query: "",
+            recents: ["grok/grok-4", "kimi/retired", "claude/sonnet-5"]
+        )
+
+        #expect(favorites.map(\.option.modelID) == ["gpt-5", "grok-4"])
+        #expect(recents.map(\.option.modelID) == ["grok-4", "sonnet-5"])
+    }
+
+    @Test("search ranks exact and prefix hits above looser matches")
+    func searchRanksByMatchQuality() {
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(instance: "codex", modelID: "gpt-5-codex", name: "GPT-5 Codex", provider: .codex),
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+                option(instance: "grok", modelID: "grok-code", name: "Grok Code", provider: .grok),
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        )
+
+        let ranked = ModelPickerCatalog.filteredItems(items, scope: .all, query: "sonnet")
+        let looser = ModelPickerCatalog.filteredItems(items, scope: .all, query: "code")
+
+        #expect(ranked.first?.option.modelID == "sonnet-5")
+        // "Grok Code" starts the word; "GPT-5 Codex" only contains it later.
+        #expect(looser.map(\.option.modelID).prefix(2) == ["grok-code", "gpt-5-codex"])
+    }
+
+    @Test("search matches gapped subsequences but rejects out-of-order letters")
+    func searchMatchesSubsequences() {
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude)
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        )
+
+        #expect(ModelPickerCatalog.filteredItems(items, scope: .all, query: "s5").count == 1)
+        #expect(ModelPickerCatalog.filteredItems(items, scope: .all, query: "5s").isEmpty)
+        #expect(ModelPickerCatalog.filteredItems(items, scope: .all, query: "zzz").isEmpty)
     }
 }
