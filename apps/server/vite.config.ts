@@ -1,8 +1,29 @@
 import "vite-plus/test/config";
+import * as NodeOS from "node:os";
+
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+
+/**
+ * Worker cap for the server test pool. See the `test` block below for why this
+ * is bounded rather than "one per core".
+ *
+ * Measured on an 18-core host with three other agent worktrees compiling and
+ * testing at the same time — which is the normal state of this machine, not a
+ * stress test:
+ *
+ *   1 worker (the old `fileParallelism: false`)  138s, green
+ *   4 workers                                     38-58s, green over three runs
+ *   6 workers                                     45-50s, `server.test.ts` failed
+ *   10+ workers                                   126s, a 120s timeout in AcpJsonRpcConnection
+ *
+ * Past four workers the win is gone and the losses start: the files starve each
+ * other badly enough that real HTTP round-trips in `server.test.ts` come back
+ * 401/400. Four is the knee of that curve, so that is the cap.
+ */
+const serverTestWorkers = Math.max(2, Math.min(4, NodeOS.availableParallelism() - 1));
 
 const bundledPackagePrefixes = [
   "@pierre/diffs",
@@ -60,9 +81,18 @@ export default mergeConfig(
       },
     },
     test: {
-      // The server suite exercises sqlite, git, temp worktrees, and orchestration
-      // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
-      fileParallelism: false,
+      // This suite is the monorepo's whole test bill: 179 files and ~95s of test
+      // work, against ~2s for every other package combined. Running it one file
+      // at a time cost 139s wall; spreading it across a bounded worker pool
+      // costs ~40s for the same 1643 tests.
+      //
+      // Bounded, not unbounded: the suite spawns real `git` and mock-agent
+      // processes, and several agent worktrees run their suites on this machine
+      // at once. At one worker per core the files starve each other badly enough
+      // that timing-sensitive tests time out. The cap keeps the win without the
+      // contention, and leaves cores for whoever else is building.
+      fileParallelism: true,
+      maxWorkers: serverTestWorkers,
       // Server integration tests exercise sqlite, git, and orchestration together.
       // Under package-wide runs they can exceed the default budget on loaded CI hosts.
       hookTimeout: 120_000,
