@@ -46,6 +46,22 @@ describe("Struct", () => {
       >()
     })
 
+    it("simplifies readonly & required views", () => {
+      const schema = Schema.Union([
+        Schema.Struct({ name: Schema.Literal("a"), a: Schema.String }),
+        Schema.Struct({ name: Schema.Literal("b"), b: Schema.Finite })
+      ])
+
+      // @ts-expect-error Type '{ readonly name: "a"; readonly a: string; } | { readonly name: "b"; readonly b: number; }'
+      const type: never = null as unknown as typeof schema.Type
+      // @ts-expect-error Type '{ readonly name: "a"; readonly a: string; } | { readonly name: "b"; readonly b: number; }'
+      const encoded: never = null as unknown as typeof schema.Encoded
+      // @ts-expect-error Type '{ readonly name: "a"; readonly a: string; } | { readonly name: "b"; readonly b: number; }'
+      const iso: never = null as unknown as typeof schema.Iso
+
+      void [type, encoded, iso]
+    })
+
     it("readonly & optionalKey field", () => {
       const schema = Schema.Struct({
         a: Schema.optionalKey(Schema.String)
@@ -148,6 +164,26 @@ describe("Struct", () => {
     expect(schema).type.toBe<
       Schema.Struct<{ readonly a: Schema.String; readonly b: Schema.String; readonly c: Schema.String }>
     >()
+  })
+
+  it("schema views remain precise", () => {
+    const schema = Schema.Struct({
+      a: Schema.FiniteFromString
+    })
+    const asSchema = <T>(schema: Schema.Schema<T>) => schema
+    const asCodec = <T, E, RD, RE>(schema: Schema.Codec<T, E, RD, RE>) => schema
+
+    expect(schema).type.toBeAssignableTo<Schema.Schema<{ readonly a: number }>>()
+    expect(schema).type.toBeAssignableTo<Schema.Codec<{ readonly a: number }, { readonly a: string }, never, never>>()
+
+    const schemaView = asSchema(schema)
+    expect(schemaView.Type).type.toBe<{ readonly a: number }>()
+
+    const codecView = asCodec(schema)
+    expect(codecView.Type).type.toBe<{ readonly a: number }>()
+    expect(codecView.Encoded).type.toBe<{ readonly a: string }>()
+    expect(codecView.DecodingServices).type.toBe<never>()
+    expect(codecView.EncodingServices).type.toBe<never>()
   })
 
   describe("mapFields", () => {
@@ -668,6 +704,44 @@ describe("StructWithRest", () => {
         readonly [Schema.$Record<Schema.String, Schema.Number>]
       >
     >()
+  })
+
+  it("reports decoded fields incompatible with string index signatures", () => {
+    const schema = Schema.Struct({ count: Schema.NumberFromString })
+    const records = [Schema.Record(Schema.String, Schema.String)] as const
+
+    expect(Schema.StructWithRest).type.toBeCallableWith(schema, records)
+    expect<Schema.StructWithRest.ValidateRecords<typeof schema, typeof records>>().type.toBe<{
+      "incompatible index signatures": "count"
+    }>()
+  })
+
+  it("reports encoded fields incompatible with string index signatures", () => {
+    const schema = Schema.Struct({ count: Schema.NumberFromString })
+    const records = [Schema.Record(Schema.String, Schema.Number)] as const
+
+    expect(Schema.StructWithRest).type.toBeCallableWith(schema, records)
+    expect<Schema.StructWithRest.ValidateRecords<typeof schema, typeof records>>().type.toBe<{
+      "incompatible index signatures": "count"
+    }>()
+  })
+
+  it("allows optionalKey fields compatible with string index signatures", () => {
+    const schema = Schema.Struct({ a: Schema.optionalKey(Schema.String) })
+    const records = [Schema.Record(Schema.String, Schema.String)] as const
+
+    expect(Schema.StructWithRest).type.toBeCallableWith(schema, records)
+    expect<Schema.StructWithRest.ValidateRecords<typeof schema, typeof records>>().type.toBe<true>()
+  })
+
+  it("reports optional fields incompatible with string index signatures", () => {
+    const schema = Schema.Struct({ a: Schema.optional(Schema.String) })
+    const records = [Schema.Record(Schema.String, Schema.String)] as const
+
+    expect(Schema.StructWithRest).type.toBeCallableWith(schema, records)
+    expect<Schema.StructWithRest.ValidateRecords<typeof schema, typeof records>>().type.toBe<{
+      "incompatible index signatures": "a"
+    }>()
   })
 
   it("records mutability and optionality", () => {

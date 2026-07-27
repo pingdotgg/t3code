@@ -1,8 +1,6 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { AlarmResource } from "./binding-common.ts";
 
 export interface DescribeAlarmContributorsRequest extends Omit<
@@ -11,10 +9,35 @@ export interface DescribeAlarmContributorsRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `cloudwatch:DescribeAlarmContributors`.
+ * Runtime binding for `cloudwatch:DescribeAlarmContributors` — list the
+ * time-series contributors currently in ALARM for a contributor-enabled
+ * metric-math alarm. Bind it to the {@link Alarm}; the alarm name is
+ * injected automatically.
+ *
+ * Provide `CloudWatch.DescribeAlarmContributorsHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Reading Alarm State
+ * @example List an Alarm's Contributors
+ * ```typescript
+ * // init — grants cloudwatch:DescribeAlarmContributors on the alarm
+ * const describeAlarmContributors =
+ *   yield* AWS.CloudWatch.DescribeAlarmContributors(alarm);
+ *
+ * // runtime — plain metric alarms have no contributor data; the typed
+ * // errors let you treat that as an empty result
+ * const contributors = yield* describeAlarmContributors().pipe(
+ *   Effect.map((r) => r.AlarmContributors ?? []),
+ *   Effect.catchTag(
+ *     ["ResourceNotFoundException", "ValidationException"],
+ *     () => Effect.succeed([]),
+ *   ),
+ * );
+ * ```
  */
-export class DescribeAlarmContributors extends Binding.Service<
+export interface DescribeAlarmContributors extends Binding.Service<
   DescribeAlarmContributors,
+  "AWS.CloudWatch.DescribeAlarmContributors",
   (
     alarm: AlarmResource,
   ) => Effect.Effect<
@@ -25,55 +48,9 @@ export class DescribeAlarmContributors extends Binding.Service<
       cloudwatch.DescribeAlarmContributorsError
     >
   >
->()("AWS.CloudWatch.DescribeAlarmContributors") {}
+> {}
 
-export const DescribeAlarmContributorsLive = Layer.effect(
-  DescribeAlarmContributors,
-  Effect.gen(function* () {
-    const Policy = yield* DescribeAlarmContributorsPolicy;
-    const describeAlarmContributors =
-      yield* cloudwatch.describeAlarmContributors;
-
-    return Effect.fn(function* (alarm: AlarmResource) {
-      const AlarmName = yield* alarm.alarmName;
-      yield* Policy(alarm);
-
-      return Effect.fn(function* (
-        request: DescribeAlarmContributorsRequest = {},
-      ) {
-        return yield* describeAlarmContributors({
-          ...request,
-          AlarmName: yield* AlarmName,
-        });
-      });
-    });
-  }),
-);
-
-export class DescribeAlarmContributorsPolicy extends Binding.Policy<
-  DescribeAlarmContributorsPolicy,
-  (alarm: AlarmResource) => Effect.Effect<void>
->()("AWS.CloudWatch.DescribeAlarmContributors") {}
-
-export const DescribeAlarmContributorsPolicyLive =
-  DescribeAlarmContributorsPolicy.layer.succeed(
-    Effect.fn(function* (host, alarm) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.DescribeAlarmContributors(${alarm}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:DescribeAlarmContributors"],
-                Resource: [alarm.alarmArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `DescribeAlarmContributorsPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
+export const DescribeAlarmContributors =
+  Binding.Service<DescribeAlarmContributors>(
+    "AWS.CloudWatch.DescribeAlarmContributors",
   );

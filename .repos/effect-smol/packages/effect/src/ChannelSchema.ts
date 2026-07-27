@@ -1,45 +1,9 @@
 /**
- * The `ChannelSchema` module provides helpers for applying `Schema` encoding
- * and decoding at `Channel` boundaries. It is useful when a channel should
- * expose typed values to application code while communicating with an upstream
- * or downstream component through an encoded representation such as JSON-ready
- * data, wire protocol values, or any other schema-defined format.
- *
- * **Mental model**
- *
- * - A channel schema adapter is a streaming boundary: chunks flow through a
- *   `Channel`, and each non-empty chunk is validated and transformed with a
- *   `Schema`
- * - `encode` turns typed schema values into their encoded representation before
- *   they leave a typed part of a pipeline
- * - `decode` turns encoded input into typed schema values before application
- *   code consumes them
- * - `duplex` wraps a bidirectional channel so callers work with typed input and
- *   output while the wrapped channel continues to operate on encoded chunks
- * - Schema failures are surfaced through the channel error type as
- *   `SchemaError`, and schema services are reflected in the channel
- *   requirements
- *
- * **Common tasks**
- *
- * - Encode typed channel input before sending it to an encoded transport:
- *   {@link encode}
- * - Decode encoded channel output before handling it as domain data:
- *   {@link decode}
- * - Use unknown encoded boundaries when static encoded types are intentionally
- *   erased: {@link encodeUnknown} and {@link decodeUnknown}
- * - Wrap a bidirectional encoded channel with typed input and output schemas:
- *   {@link duplex} or {@link duplexUnknown}
- *
- * **Gotchas**
- *
- * - These helpers operate on `NonEmptyReadonlyArray` chunks, so schemas are
- *   applied to non-empty batches rather than individual scalar values
- * - Encoding and decoding can require services from the schema; those
- *   requirements become part of the resulting channel type
- * - `duplex` encodes values flowing into the wrapped channel and decodes values
- *   emitted by it, so choose `inputSchema` and `outputSchema` from the
- *   perspective of the typed caller
+ * Schema adapters for `Channel` boundaries. The helpers encode typed channel
+ * chunks before they cross an encoded boundary, decode encoded chunks before
+ * application code receives them, and wrap bidirectional channels so callers
+ * work with schema-typed input and output while the inner channel uses encoded
+ * values.
  *
  * @since 4.0.0
  */
@@ -69,7 +33,7 @@ import * as Schema from "./Schema.ts"
  * @category constructors
  * @since 4.0.0
  */
-export const encode = <S extends Schema.Top>(
+export const encode = <S extends Schema.Constraint>(
   schema: S
 ) =>
 <IE = never, Done = unknown>(): Channel.Channel<
@@ -99,7 +63,7 @@ export const encode = <S extends Schema.Top>(
  * @category constructors
  * @since 4.0.0
  */
-export const encodeUnknown: <S extends Schema.Top>(
+export const encodeUnknown: <S extends Schema.Constraint>(
   schema: S
 ) => <IE = never, Done = unknown>() => Channel.Channel<
   Arr.NonEmptyReadonlyArray<unknown>,
@@ -131,7 +95,7 @@ export const encodeUnknown: <S extends Schema.Top>(
  * @category constructors
  * @since 4.0.0
  */
-export const decode = <S extends Schema.Top>(
+export const decode = <S extends Schema.Constraint>(
   schema: S
 ) =>
 <IE = never, Done = unknown>(): Channel.Channel<
@@ -152,8 +116,8 @@ export const decode = <S extends Schema.Top>(
  *
  * **When to use**
  *
- * Use when the encoded input type is intentionally unknown or untyped, so
- * that only the decoded output is statically typed according to the schema.
+ * Use when you need an intentionally unknown or untyped encoded input while
+ * keeping only the decoded output statically typed according to the schema.
  *
  * **Details**
  *
@@ -166,7 +130,7 @@ export const decode = <S extends Schema.Top>(
  * @category constructors
  * @since 4.0.0
  */
-export const decodeUnknown: <S extends Schema.Top>(
+export const decodeUnknown: <S extends Schema.Constraint>(
   schema: S
 ) => <IE = never, Done = unknown>() => Channel.Channel<
   Arr.NonEmptyReadonlyArray<S["Type"]>,
@@ -202,7 +166,7 @@ export const decodeUnknown: <S extends Schema.Top>(
  * @since 4.0.0
  */
 export const duplex: {
-  <In extends Schema.Top, Out extends Schema.Top>(options: {
+  <In extends Schema.Constraint, Out extends Schema.Constraint>(options: {
     readonly inputSchema: In
     readonly outputSchema: Out
   }): <OutErr, OutDone, InErr, InDone, R>(
@@ -224,7 +188,7 @@ export const duplex: {
     InDone,
     R | In["EncodingServices"] | Out["DecodingServices"]
   >
-  <Out extends Schema.Top, OutErr, OutDone, In extends Schema.Top, InErr, InDone, R>(
+  <Out extends Schema.Constraint, OutErr, OutDone, In extends Schema.Constraint, InErr, InDone, R>(
     self: Channel.Channel<
       Arr.NonEmptyReadonlyArray<Out["Encoded"]>,
       OutErr,
@@ -247,7 +211,7 @@ export const duplex: {
     InDone,
     R | In["EncodingServices"] | Out["DecodingServices"]
   >
-} = dual(2, <Out extends Schema.Top, OutErr, OutDone, In extends Schema.Top, InErr, InDone, R>(
+} = dual(2, <Out extends Schema.Constraint, OutErr, OutDone, In extends Schema.Constraint, InErr, InDone, R>(
   self: Channel.Channel<
     Arr.NonEmptyReadonlyArray<Out["Encoded"]>,
     OutErr,
@@ -280,9 +244,9 @@ export const duplex: {
  *
  * **When to use**
  *
- * Use when a bidirectional channel crosses an encoded boundary whose chunk types
- * are intentionally erased, while callers should send and receive schema-typed
- * chunks.
+ * Use when you need a bidirectional channel to cross an encoded boundary whose
+ * chunk types are intentionally erased, while callers send and receive
+ * schema-typed chunks.
  *
  * **Details**
  *
@@ -296,7 +260,7 @@ export const duplex: {
  * @since 4.0.0
  */
 export const duplexUnknown: {
-  <In extends Schema.Top, Out extends Schema.Top>(options: {
+  <In extends Schema.Constraint, Out extends Schema.Constraint>(options: {
     readonly inputSchema: In
     readonly outputSchema: Out
   }): <OutErr, OutDone, InErr, InDone, R>(
@@ -318,7 +282,7 @@ export const duplexUnknown: {
     InDone,
     R | In["EncodingServices"] | Out["DecodingServices"]
   >
-  <Out extends Schema.Top, OutErr, OutDone, In extends Schema.Top, InErr, InDone, R>(
+  <Out extends Schema.Constraint, OutErr, OutDone, In extends Schema.Constraint, InErr, InDone, R>(
     self: Channel.Channel<
       Arr.NonEmptyReadonlyArray<unknown>,
       OutErr,

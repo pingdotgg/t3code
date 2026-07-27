@@ -10,7 +10,7 @@ The site is intentionally split into independent steps:
 2. `bun run build:assets` compiles the shared Tailwind CSS and the custom browser JavaScript bundle.
 3. `bun run build:site` renders the site with Zola.
 4. `bun run build:search` indexes the built HTML with Pagefind.
-5. `alchemy.run.ts` deploys the final `dist/` directory through `Cloudflare.StaticSite(...)`.
+5. `alchemy.run.ts` deploys the final `dist/` directory through `Cloudflare.Website.StaticSite(...)`.
 
 This keeps the large markdown corpus on a Rust-first rendering path while still
 allowing a modern custom UI.

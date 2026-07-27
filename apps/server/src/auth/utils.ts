@@ -28,11 +28,42 @@ const SESSION_COOKIE_NAME = "t3_session";
 export function resolveSessionCookieName(input: {
   readonly mode: "web" | "desktop";
   readonly port: number;
-  readonly devUrl: URL | undefined;
+  readonly host: string | undefined;
+  readonly instanceKey: string;
+  readonly development: boolean;
 }): string {
-  return input.devUrl === undefined && input.mode !== "desktop"
-    ? SESSION_COOKIE_NAME
-    : `${SESSION_COOKIE_NAME}_${input.port}`;
+  if (input.mode === "desktop") {
+    return `${SESSION_COOKIE_NAME}_${input.port}`;
+  }
+
+  if (!input.development && isRemoteReachableHost(input.host)) {
+    return SESSION_COOKIE_NAME;
+  }
+
+  // Cookies are scoped by host, not port. Loopback development servers need an
+  // instance-specific name or parallel agents overwrite each other's session,
+  // and a server that later reuses the port receives a token signed elsewhere.
+  const instanceHash = NodeCrypto.createHash("sha256")
+    .update(input.instanceKey)
+    .digest("hex")
+    .slice(0, 12);
+  return `${SESSION_COOKIE_NAME}_${input.port}_${instanceHash}`;
+}
+
+export function isRemoteReachableHost(host: string | undefined): boolean {
+  if (host === "0.0.0.0" || host === "::" || host === "[::]") {
+    return true;
+  }
+  if (!host || host.length === 0) {
+    return false;
+  }
+  return !(
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.startsWith("127.")
+  );
 }
 
 export function base64UrlEncode(input: string | Uint8Array): string {

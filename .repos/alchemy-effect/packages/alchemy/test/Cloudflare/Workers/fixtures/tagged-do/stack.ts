@@ -1,9 +1,10 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
+import * as Alchemy from "@/index";
 import * as Effect from "effect/Effect";
-import WorkerALayer, { WorkerA } from "./workerA.ts";
+import * as Layer from "effect/Layer";
+import WorkerALive, { WorkerA } from "./workerA.ts";
 import WorkerB from "./workerB.ts";
-import WorkerCLayer, { WorkerC } from "./workerC.ts";
+import WorkerCLive, { WorkerC } from "./workerC.ts";
 
 export default Alchemy.Stack(
   "TaggedDOExample",
@@ -21,5 +22,5 @@ export default Alchemy.Stack(
       urlB: workerB.url.as<string>(),
       urlC: workerC.url.as<string>(),
     };
-  }).pipe(Effect.provide(WorkerALayer), Effect.provide(WorkerCLayer)),
+  }).pipe(Effect.provide(Layer.provideMerge(WorkerALive, WorkerCLive))),
 );

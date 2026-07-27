@@ -1,68 +1,10 @@
 /**
- * Operations for working with TypeScript `string` values. Use this module to
- * normalize text, inspect and extract characters, search with `Option` results,
- * split or iterate lines, convert identifier casing, and pass string instances
- * to generic APIs.
+ * Works with TypeScript `string` values.
  *
- * **Mental model**
- *
- * Strings are plain JavaScript strings. Many operations mirror native string
- * methods while giving them Effect-style names and data-last forms for `pipe`.
- * Operations that may miss, such as {@link at}, {@link charCodeAt},
- * {@link codePointAt}, {@link indexOf}, {@link lastIndexOf}, {@link match}, and
- * {@link search}, return `Option` instead of sentinel values such as `-1`,
- * `undefined`, or `null`.
- *
- * **Common tasks**
- *
- * - Coerce or narrow input: {@link String}, {@link isString}
- * - Build and compare strings: {@link empty}, {@link concat}, {@link Order},
- *   {@link Equivalence}, {@link ReducerConcat}
- * - Change text shape: {@link trim}, {@link trimStart}, {@link trimEnd},
- *   {@link toUpperCase}, {@link toLowerCase}, {@link capitalize},
- *   {@link uncapitalize}
- * - Slice, split, and inspect: {@link slice}, {@link substring},
- *   {@link takeLeft}, {@link takeRight}, {@link split}, {@link length}
- * - Search and match: {@link includes}, {@link startsWith}, {@link endsWith},
- *   {@link indexOf}, {@link lastIndexOf}, {@link match}, {@link matchAll},
- *   {@link search}
- * - Normalize identifiers and text blocks: {@link camelCase},
- *   {@link pascalCase}, {@link snakeCase}, {@link kebabCase},
- *   {@link constantCase}, {@link linesIterator}, {@link linesWithSeparators},
- *   {@link stripMargin}
- *
- * **Gotchas**
- *
- * - {@link length} reports JavaScript string length in UTF-16 code units, not
- *   user-perceived characters.
- * - {@link String} is the native JavaScript constructor. `String.String(value)`
- *   returns native string coercion results.
- * - {@link split} always returns a non-empty array; splitting `""` with `""`
- *   returns `[""]`.
- * - {@link replace} and {@link replaceAll} follow native JavaScript behavior.
- *   In particular, `replace` only replaces all matches when given a global
- *   regular expression.
- * - Fixed converters such as {@link snakeToCamel} expect their named input
- *   shape. For mixed free-form input, prefer {@link camelCase},
- *   {@link pascalCase}, {@link snakeCase}, {@link kebabCase}, or
- *   {@link noCase}.
- *
- * **Quickstart**
- *
- * **Example** (Normalizing and searching text)
- *
- * ```ts
- * import { String } from "effect"
- *
- * const slug = String.kebabCase("User profile ID")
- * console.log(slug) // "user-profile-id"
- *
- * const parts = String.split(slug, "-")
- * console.log(parts) // ["user", "profile", "id"]
- *
- * const firstDash = String.indexOf("-")(slug)
- * console.log(firstDash) // Option.some(4)
- * ```
+ * This module exposes common string operations in a pipe-friendly style. The
+ * helpers cover checks, comparison, concatenation, trimming, casing, slicing,
+ * padding, replacement, normalization, safe character access, search helpers
+ * that return `Option`, and joining strings through a reducer.
  *
  * @since 2.0.0
  */
@@ -160,7 +102,7 @@ export const Equivalence: Equ.Equivalence<string> = Equ.String
  *
  * Use when you need the canonical empty string value from the `String` module.
  *
- * **Example** (Using the empty string)
+ * **Example** (Referencing the empty string)
  *
  * ```ts
  * import { String } from "effect"
@@ -206,7 +148,7 @@ export type Concat<A extends string, B extends string> = `${A}${B}`
  * console.log(result2) // "helloworld"
  * ```
  *
- * @category concatenating
+ * @category combining
  * @since 2.0.0
  */
 export const concat: {
@@ -489,7 +431,7 @@ export const isNonEmpty = (self: string): boolean => self.length > 0
  * assert.deepStrictEqual(String.length("abc"), 3)
  * ```
  *
- * @category utils
+ * @category getters
  * @since 2.0.0
  */
 export const length = (self: string): number => self.length
@@ -1291,9 +1233,8 @@ const linesSeparated = (self: string, stripped: boolean): LinesIterator => new L
  *
  * **When to use**
  *
- * Use to normalize mixed-case, snake_case, kebab-case, or spaced input into
- * custom word-case output when you need a delimiter or part transform that the
- * fixed case helpers do not provide.
+ * Use when you need custom word-case output with a delimiter or part transform
+ * that the fixed case helpers do not provide.
  *
  * @see {@link pascalCase} for fixed PascalCase output
  * @see {@link camelCase} for fixed lower-initial camelCase output
@@ -1325,10 +1266,21 @@ export const noCase: {
 }): string => {
   const delimiter = options?.delimiter ?? " "
   const transform = options?.transform ?? toLowerCase
-  const result = input
-    .replace(SPLIT_REGEXP[0], "$1\0$2")
-    .replace(SPLIT_REGEXP[1], "$1\0$2")
-    .replace(STRIP_REGEXP, "\0")
+  return normalizeCase(input, SPLIT_REGEXP, STRIP_REGEXP, delimiter, transform)
+})
+
+const normalizeCase = (
+  input: string,
+  splitRegExp: ReadonlyArray<RegExp>,
+  stripRegExp: RegExp,
+  delimiter: string,
+  transform: (part: string, index: number, parts: ReadonlyArray<string>) => string
+): string => {
+  let result = input
+  for (const regexp of splitRegExp) {
+    result = result.replace(regexp, "$1\0$2")
+  }
+  result = result.replace(stripRegExp, "\0")
   let start = 0
   let end = result.length
   // Trim the delimiter from around the output string.
@@ -1341,20 +1293,21 @@ export const noCase: {
 
   // Transform each token independently.
   return result.slice(start, end).split("\0").map(transform).join(delimiter)
-})
+}
 
-// Support camel case ("camelCase" -> "camel Case" and "CAMELCase" -> "CAMEL Case").
-const SPLIT_REGEXP = [/([a-z0-9])([A-Z])/g, /([A-Z])([A-Z][a-z])/g]
+// Support camel case ("camelCase" -> "camel Case" and "CAMELCase" -> "CAMEL Case")
+// and digit boundaries ("camel2case" -> "camel 2 case").
+const SPLIT_REGEXP = [/([a-z0-9])([A-Z])/g, /([A-Z])([A-Z][a-z])/g, /([A-Z])([0-9])/gi, /([0-9])([A-Z])/gi]
+
+// Config paths preserve digit groups such as "v2" while still supporting camel case.
+const CONFIG_SPLIT_REGEXP = [/([a-z0-9])([A-Z])/g, /([A-Z])([A-Z][a-z])/g]
 
 // Remove all non-word characters.
 const STRIP_REGEXP = /[^A-Z0-9]+/gi
 
-const pascalCaseTransform = (input: string, index: number): string => {
+const pascalCaseTransform = (input: string): string => {
   const firstChar = input.charAt(0)
   const lowerChars = input.substring(1).toLowerCase()
-  if (index > 0 && firstChar >= "0" && firstChar <= "9") {
-    return `_${firstChar}${lowerChars}`
-  }
   return `${firstChar.toUpperCase()}${lowerChars}`
 }
 
@@ -1381,7 +1334,7 @@ export const pascalCase: (self: string) => string = noCase({
 const camelCaseTransform = (input: string, index: number): string =>
   index === 0
     ? input.toLowerCase()
-    : pascalCaseTransform(input, index)
+    : pascalCaseTransform(input)
 
 /**
  * Converts a string to camelCase.
@@ -1417,6 +1370,7 @@ export const camelCase: (self: string) => string = noCase({
  * @see {@link kebabCase} for lowercase hyphen-separated output
  * @see {@link camelCase} for lower-initial camelCase output
  * @see {@link pascalCase} for upper-initial PascalCase output
+ * @see {@link configCase} for configuration key casing that preserves numeric word groups
  * @see {@link noCase} for configurable delimiters and part transforms
  *
  * @category transforming
@@ -1426,6 +1380,27 @@ export const constantCase: (self: string) => string = noCase({
   delimiter: "_",
   transform: toUpperCase
 })
+
+/**
+ * Converts a string to CONFIG_CASE (uppercase with underscores) for
+ * configuration keys.
+ *
+ * **When to use**
+ *
+ * Use to normalize configuration path segments into environment-variable-like
+ * keys while preserving numeric word groups such as `v2`.
+ *
+ * **Details**
+ *
+ * Unlike {@link constantCase}, digit-letter boundaries are not split. For
+ * example, `"api-v2 xml"` becomes `"API_V2_XML"`.
+ *
+ * @see {@link constantCase} for standard uppercase underscore-separated output
+ * @category transforming
+ * @since 4.0.0
+ */
+export const configCase: (self: string) => string = (self) =>
+  normalizeCase(self, CONFIG_SPLIT_REGEXP, STRIP_REGEXP, "_", toUpperCase)
 
 /**
  * Converts a string to kebab-case (lowercase with hyphens).
@@ -1480,7 +1455,7 @@ export const snakeCase: (self: string) => string = noCase({
  *
  * @see {@link concat} for concatenating two strings directly
  *
- * @category concatenating
+ * @category combining
  * @since 4.0.0
  */
 export const ReducerConcat: Reducer.Reducer<string> = Reducer.make((a, b) => a + b, "")
