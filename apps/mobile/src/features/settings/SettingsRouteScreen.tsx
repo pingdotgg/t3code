@@ -37,7 +37,6 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { resolveMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -524,25 +523,9 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const projectGroupingMode = AsyncResult.isSuccess(preferencesResult)
-    ? resolveMobileProjectGroupingSettings(preferencesResult.value).sidebarProjectGroupingMode
-    : "repository";
-  const projectGroupingLabel =
-    projectGroupingMode === "repository"
-      ? "Repository"
-      : projectGroupingMode === "repository_path"
-        ? "Repository path"
-        : "Separate";
-
   return (
     <SettingsSection title="General">
-      <SettingsRow
-        icon="folder"
-        label="Project Grouping"
-        value={projectGroupingLabel}
-        target="SettingsProjectGrouping"
-      />
+      <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
     </SettingsSection>
   );
 }

@@ -85,10 +85,6 @@ export function SettingsProjectGroupingRouteScreen() {
             </Pressable>
           ))}
         </SettingsSection>
-        <Text className="px-2 text-sm leading-normal text-foreground-muted">
-          This preference is stored on this device. Grouping changes organization only; it never
-          hides a workspace from the New Task picker.
-        </Text>
       </ScrollView>
     </View>
   );
