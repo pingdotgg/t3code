@@ -117,6 +117,10 @@ struct SidebarView: View {
                 projectScopeID: projectScopeID,
                 onSelectScope: setMachineScope,
                 onSelectProject: { projectScopeID = $0 })
+            // Closes the sidebar's header band. Aligned with the dividers under
+            // the chat identity header and the inspector Activity header, so
+            // one line crosses all three columns.
+            Divider()
 
             List(selection: Binding(
                 get: { multi.selection },
@@ -818,8 +822,12 @@ private struct SidebarCommandBar: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
+        // Floor height shared with the chat identity header and the inspector
+        // Activity header, so the divider under this bar lands on the same
+        // baseline as the dividers under those two. A floor (not a fixed
+        // height) so the bar can grow instead of clipping if its controls ever
+        // exceed the band (see AlpineTheme.contentHeaderHeight).
+        .frame(minHeight: AlpineTheme.contentHeaderHeight)
     }
 
     /// The field grows an accent ring on focus rather than swapping its fill:

@@ -1612,27 +1612,9 @@ public actor LiveBackend: BackendService {
         }
         let threadID = UUID().uuidString
         let title = title ?? "New \(provider.displayName) thread"
-        // Worktree mode: create the worktree up front so the session lands on
-        // its own sergecode/* branch immediately, not on the first send. When
-        // this fails (or the eager RPC is unavailable), the thread is created
-        // without one and the first-turn bootstrap in sendMessage picks it up.
-        var worktree: VcsWorktree?
-        if let plan = await worktreePlan(projectID: projectID) {
-            worktree = await createEagerWorktree(plan: plan)
-        }
-        do {
-            _ = try await client.createThread(
-                threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
-                runtimeMode: .fullAccess, branch: worktree?.refName,
-                worktreePath: worktree?.path)
-        } catch {
-            // Don't leak the worktree when the thread never came to exist.
-            if let worktree, let project = projectsByID[projectID] {
-                _ = try? await client.removeWorktree(
-                    cwd: project.path, path: worktree.path, force: true)
-            }
-            throw error
-        }
+        _ = try await client.createThread(
+            threadId: threadID, projectId: projectID, title: title, modelSelection: selection,
+            runtimeMode: .fullAccess, branch: nil, worktreePath: nil)
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
             updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model,
@@ -1641,13 +1623,16 @@ public actor LiveBackend: BackendService {
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
         titleSeedsByThread[threadID] = title
-        threadEnvByThread[threadID] = ThreadEnvState(
-            worktreePath: worktree?.path, hasTurns: false)
+        threadEnvByThread[threadID] = ThreadEnvState(worktreePath: nil, hasTurns: false)
         // Emit immediately: the shell subscription's authoritative upsert can
         // lag (or be missed across a reconnect), and the caller selects the
         // thread right away — without this the detail pane shows an empty
         // state for a thread that exists.
         emitOrdered(threadID: threadID, event: .threadUpserted(thread))
+        // Worktree mode: still provisioned eagerly so the session lands on its
+        // own sergecode/* branch without waiting for the first send — but off
+        // this call's critical path (see `startWorktreeProvisioning`).
+        startWorktreeProvisioning(threadID: threadID, projectID: projectID)
         return thread
     }
 
@@ -1756,6 +1741,64 @@ public actor LiveBackend: BackendService {
         }
     }
 
+    /// Eager worktree provisioning, one detached task per thread.
+    ///
+    /// Provisioning is slow and unboundedly so: `worktreePlan` costs two RPCs,
+    /// and `vcs.createWorktree` runs a `git fetch` against the remote followed
+    /// by a `git worktree add` that checks out the tree and fires the repo's
+    /// own checkout hooks. Awaiting it inside `createThread` meant the caller
+    /// could not select the new thread until all of that finished, which read
+    /// as "new sessions take ten-plus seconds to open". The thread is created
+    /// first and the worktree is attached afterwards with `thread.meta.update`
+    /// — the same command the server's own first-turn bootstrap dispatches.
+    ///
+    /// The task is kept so the first send can await it (`worktreeBootstrapIfNeeded`);
+    /// without that, a send landing mid-provision would see no worktree and
+    /// bootstrap a second one.
+    private var worktreeProvisioningByThread: [String: Task<Void, Never>] = [:]
+
+    private func startWorktreeProvisioning(threadID: String, projectID: String) {
+        worktreeProvisioningByThread[threadID] = Task { [weak self] in
+            guard let self else { return }
+            await self.provisionWorktree(threadID: threadID, projectID: projectID)
+        }
+    }
+
+    private func provisionWorktree(threadID: String, projectID: String) async {
+        defer { worktreeProvisioningByThread[threadID] = nil }
+        guard let plan = await worktreePlan(projectID: projectID) else { return }
+        guard let worktree = await createEagerWorktree(plan: plan) else { return }
+        // The thread can be deleted, or take its first turn (which bootstraps
+        // its own worktree), while this was in flight. Either way the worktree
+        // now has no owner, so drop it rather than leave an orphan branch and
+        // checkout behind.
+        guard let client = currentClient,
+            threadsByID[threadID] != nil,
+            threadEnvByThread[threadID]?.worktreePath == nil,
+            threadEnvByThread[threadID]?.hasTurns == false
+        else {
+            await discardWorktree(worktree, projectCwd: plan.projectCwd)
+            return
+        }
+        do {
+            _ = try await client.updateThreadMeta(
+                threadId: threadID, branch: worktree.refName, worktreePath: worktree.path)
+        } catch {
+            await discardWorktree(worktree, projectCwd: plan.projectCwd)
+            return
+        }
+        // Recorded locally as well as on the wire: the authoritative shell
+        // upsert can lag, and until it lands `threadCwd` would still resolve
+        // to the project checkout.
+        threadEnvByThread[threadID]?.worktreePath = worktree.path
+        restartVcsWatchIfStale(threadID: threadID)
+    }
+
+    private func discardWorktree(_ worktree: VcsWorktree, projectCwd: String) async {
+        guard let client = currentClient else { return }
+        _ = try? await client.removeWorktree(cwd: projectCwd, path: worktree.path, force: true)
+    }
+
     /// Eager worktree creation at session-create time (vcs.createWorktree).
     /// startFromOrigin uses the base's origin tracking ref as the start point;
     /// the server fetches that ref from the remote right before creating the
@@ -1783,6 +1826,15 @@ public actor LiveBackend: BackendService {
     /// eager RPC failed at session-create time). Also runs the project setup
     /// script in the fresh worktree, which the eager path can't.
     private func worktreeBootstrapIfNeeded(threadID: String) async -> ThreadTurnStartBootstrap? {
+        // Let an eager provisioning started at thread-create time finish first.
+        // It may be moments from attaching a worktree, and deciding without it
+        // would bootstrap a second one for the same thread. This is also where
+        // the latency `createThread` no longer pays lands, if the user sends
+        // before provisioning finished — never worse than the old behaviour,
+        // which charged it to every new thread whether or not it was used.
+        while let provisioning = worktreeProvisioningByThread[threadID] {
+            await provisioning.value
+        }
         guard let env = threadEnvByThread[threadID], env.worktreePath == nil, !env.hasTurns,
             let projectID = threadsByID[threadID]?.projectID
         else { return nil }
