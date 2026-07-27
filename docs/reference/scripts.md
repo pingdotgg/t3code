@@ -43,7 +43,7 @@
 
 `dev` and `dev:web` leave `VITE_HTTP_URL` and `VITE_WS_URL` unset so the browser resolves the backend from `window.location.origin`. Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known` to the server, allowing the same bundle to work from localhost or a tailnet hostname.
 
-Worktrees derive a preferred port offset from their path. The runner shifts both ports together when either is occupied, so treat the `[dev-runner]` output as authoritative.
+Worktrees derive a preferred port offset from their path. The runner shifts both ports together when either is occupied or the web port is blocked by browsers, so treat the `[dev-runner]` output as authoritative.
 
 ## Running multiple dev instances
 

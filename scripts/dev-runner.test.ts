@@ -25,6 +25,7 @@ import {
   devPortProbeHosts,
   findFirstAvailableOffset,
   getDevRunnerModeArgs,
+  isBrowserAllowedPort,
   resolveModePortOffsets,
   resolveOffset,
   runDevRunnerWithInput,
@@ -547,6 +548,41 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect("skips browser-blocked web ports before probing availability", () =>
+      Effect.gen(function* () {
+        const probed: Array<{ port: number; role: string | undefined }> = [];
+        const offset = yield* findFirstAvailableOffset({
+          // 5733 + 833 = 6566, which browsers block as sane-port.
+          startOffset: 833,
+          requireServerPort: true,
+          requireWebPort: true,
+          checkPortAvailability: (port, role) => {
+            probed.push({ port, role });
+            return Effect.succeed(true);
+          },
+        });
+
+        assert.equal(offset, 834);
+        assert.deepStrictEqual(probed, [
+          { port: 14_607, role: "server" },
+          { port: 6567, role: "web" },
+        ]);
+      }),
+    );
+
+    it.effect("does not reject a server-only offset because its unused web port is blocked", () =>
+      Effect.gen(function* () {
+        const offset = yield* findFirstAvailableOffset({
+          startOffset: 833,
+          requireServerPort: true,
+          requireWebPort: false,
+          checkPortAvailability: () => Effect.succeed(true),
+        });
+
+        assert.equal(offset, 833);
+      }),
+    );
+
     it.effect("allows offsets where the non-required server port exceeds max", () =>
       Effect.gen(function* () {
         const offset = yield* findFirstAvailableOffset({
@@ -581,6 +617,19 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.ok(!("cause" in error));
       }),
     );
+  });
+
+  describe("isBrowserAllowedPort", () => {
+    it.each([6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697])(
+      "rejects Fetch-blocked web port %s from the worktree offset range",
+      (port) => {
+        assert.equal(isBrowserAllowedPort(port), false);
+      },
+    );
+
+    it.each([5733, 5900, 6567, 6670, 8733])("allows browser-safe web port %s", (port) => {
+      assert.equal(isBrowserAllowedPort(port), true);
+    });
   });
 
   describe("checkPortAvailabilityOnHosts", () => {
