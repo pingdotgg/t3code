@@ -426,14 +426,16 @@ function GitFetchIntervalSettings() {
 }
 
 function SourceControlSectionSkeleton({
+  id,
   title,
   headerAction,
 }: {
+  readonly id?: string;
   readonly title: string;
   readonly headerAction?: ReactNode;
 }) {
   return (
-    <SettingsSection title={title} headerAction={headerAction}>
+    <SettingsSection id={id} title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
         <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -474,7 +476,7 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection title="Server environment">
+    <SettingsSection id="source-control" title="Server environment">
       <Empty className="min-h-88">
         <EmptyMedia variant="icon">
           <GitPullRequestIcon />
@@ -517,8 +519,8 @@ export function SourceControlSettingsPanel() {
         }),
   );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
-  const hasDiscoveryItems =
-    result.versionControlSystems.length > 0 || result.sourceControlProviders.length > 0;
+  const hasVersionControlSystems = result.versionControlSystems.length > 0;
+  const hasDiscoveryItems = hasVersionControlSystems || result.sourceControlProviders.length > 0;
   const isInitialScanPending = discovery.isPending && discovery.data === null;
   const handleScan = () => {
     discovery.refresh();
@@ -547,13 +549,17 @@ export function SourceControlSettingsPanel() {
     <SettingsPageContainer>
       {isInitialScanPending ? (
         <>
-          <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
+          <SourceControlSectionSkeleton
+            id="source-control"
+            title="Version Control"
+            headerAction={scanButton}
+          />
           <SourceControlSectionSkeleton title="Source Control Providers" />
         </>
       ) : hasDiscoveryItems ? (
         <>
-          {result.versionControlSystems.length > 0 ? (
-            <SettingsSection title="Version Control" headerAction={scanButton}>
+          {hasVersionControlSystems ? (
+            <SettingsSection id="source-control" title="Version Control" headerAction={scanButton}>
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
                   {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
@@ -564,8 +570,9 @@ export function SourceControlSettingsPanel() {
 
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
+              id={hasVersionControlSystems ? undefined : "source-control"}
               title="Source Control Providers"
-              headerAction={result.versionControlSystems.length === 0 ? scanButton : null}
+              headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />

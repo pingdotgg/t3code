@@ -65,6 +65,7 @@ export function BetaSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection title="Beta features">
         <SettingsRow
+          id="sidebar-v2"
           title="Sidebar v2"
           description="One flat thread list in creation order. Active work renders as rich cards; settled threads collapse to compact rows. Settling requires an up-to-date server — on older servers threads simply stay active. Switch back any time."
           control={

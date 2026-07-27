@@ -1,4 +1,5 @@
 import { Undo2Icon } from "lucide-react";
+import { useLocation } from "@tanstack/react-router";
 import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -29,7 +30,11 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   return (
-    <section {...sectionProps} className={cn("space-y-3", className)}>
+    <section
+      {...sectionProps}
+      tabIndex={sectionProps.id ? -1 : sectionProps.tabIndex}
+      className={cn("space-y-3", className)}
+    >
       <div className="flex min-h-8 items-center justify-between gap-4 px-3 sm:px-4">
         <h2 className="flex items-center gap-2 text-lg font-semibold tracking-[-0.025em] text-foreground">
           {icon}
@@ -62,6 +67,7 @@ export function SettingsRow({
   return (
     <div
       {...rowProps}
+      tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       className={cn("rounded-xl px-3 sm:px-4", children ? "pt-3 pb-1" : "py-3", className)}
     >
       <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8">
@@ -119,6 +125,14 @@ export function SettingsPageContainer({
   children: ReactNode;
   className?: string;
 }) {
+  // Scroll to the row or section a settings-search result navigated to; `:target` keeps it lit.
+  const hash = useLocation({ select: (location) => location.hash });
+
+  useEffect(() => {
+    if (hash.length === 0) return;
+    return scrollToSettingsTarget(hash.replace(/^#/, ""));
+  }, [hash]);
+
   return (
     <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
       <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
@@ -126,4 +140,24 @@ export function SettingsPageContainer({
       </div>
     </div>
   );
+}
+
+export function scrollToSettingsTarget(targetId: string, attemptsRemaining = 180): () => void {
+  let frame = 0;
+  const tryScroll = () => {
+    const target = document.getElementById(targetId);
+    if (target) {
+      target.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "center",
+      });
+      target.focus({ preventScroll: true });
+      return;
+    }
+    if (attemptsRemaining <= 1) return;
+    attemptsRemaining -= 1;
+    frame = requestAnimationFrame(tryScroll);
+  };
+  frame = requestAnimationFrame(tryScroll);
+  return () => cancelAnimationFrame(frame);
 }

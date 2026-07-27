@@ -3316,6 +3316,7 @@ export function ConnectionsSettings() {
       )}
 
       <SettingsSection
+        id="remote-environments"
         title="Remote environments"
         headerAction={
           <Dialog

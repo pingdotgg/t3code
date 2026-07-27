@@ -358,6 +358,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       var(--app-scrollbar-width) 100%;
   }
 
+  /* Persistent highlight for the row or section a settings-search result points at. */
+  .settings-page-scroll-fade div:target,
+  .settings-page-scroll-fade section:target > div:first-child {
+    background-color: color-mix(in oklab, var(--color-primary) 12%, transparent) !important;
+    box-shadow: inset 2px 0 color-mix(in oklab, var(--color-primary) 60%, transparent);
+    border-radius: 0.75rem;
+  }
+
+  .settings-page-scroll-fade :target:focus {
+    outline: none;
+  }
+
   .workspace-titlebar-controls {
     position: absolute;
     top: var(--workspace-controls-top);
