@@ -29,6 +29,15 @@ index 2830482842c07f2f0fb412076c901e52830b7e24..cd92160578fd152c6b6399ad8a328c4d
    const handlers = yield* Layer.build(layerHandlers(options)).pipe(Effect.provideService(McpProtocolState, protocolState));
    const clients = yield* RcMap.make({
      lookup: Effect.fnUntraced(function* (clientId) {
+@@ -493,7 +513,7 @@ export const layerHttp = options => {
+       allow: "POST"
+     }
+   });
+-  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowedResponse), HttpRouter.add("PUT", options.path, methodNotAllowedResponse), HttpRouter.add("PATCH", options.path, methodNotAllowedResponse), HttpRouter.add("DELETE", options.path, methodNotAllowedResponse));
++  const routes = Layer.mergeAll(HttpRouter.add("GET", options.path, methodNotAllowedResponse), HttpRouter.add("PUT", options.path, methodNotAllowedResponse), HttpRouter.add("PATCH", options.path, methodNotAllowedResponse));
+   return Layer.merge(layerWithProtocolState(options), routes).pipe(Layer.provide(layerMcpProtocolHttp(options)), Layer.provide(protocolState), Layer.provide(RpcSerialization.layerJsonRpc()));
+ };
+ const layerMcpProtocolHttp = options => Layer.effect(RpcServer.Protocol)(Effect.gen(function* () {
 diff --git a/dist/unstable/rpc/RpcClient.d.ts b/dist/unstable/rpc/RpcClient.d.ts
 index a70061a638faabdd663eca25cb79585fec06e03c..15c940b61860830f11cad86b155e3b76f43d34ea 100644
 --- a/dist/unstable/rpc/RpcClient.d.ts
