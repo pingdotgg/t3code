@@ -266,3 +266,57 @@ describe("AutoReviewJobStore claimNextBatch", () => {
     }).pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
   });
 });
+
+describe("AutoReviewJobStore claim atomicity", () => {
+  /**
+   * Selection and the running-transition share one `Ref` snapshot, so no
+   * concurrent claimer can select from state another call is about to
+   * overwrite. This does not fail against a `Ref.get`/`Ref.update` pair
+   * today — nothing between the two suspends, so a fiber runs the window to
+   * completion — but that is an accident of the effects involved, not a
+   * property of the pattern. This holds the invariant if that changes.
+   */
+  it("never hands the same job to two concurrent claimers", async () => {
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      for (const prNumber of [1, 2, 3, 4]) {
+        yield* store.enqueue({
+          projectId: "proj",
+          prNumber,
+          headSha: `sha-${prNumber}`,
+          trigger: "open_or_push",
+          modelSelection,
+        });
+      }
+
+      const batches = yield* Effect.forEach([1, 2, 3, 4], () => store.claimNextBatch(4), {
+        concurrency: 4,
+      });
+
+      const ids = batches.flat().map((job) => job.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids).toHaveLength(4);
+      const jobs = yield* store.list({});
+      expect(jobs.every((job) => job.status === "running")).toBe(true);
+    }).pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
+  });
+
+  it("claims each PR once when many claimers race a single queued job", async () => {
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+
+      const batches = yield* Effect.forEach([1, 2, 3, 4, 5, 6], () => store.claimNextBatch(2), {
+        concurrency: 6,
+      });
+
+      expect(batches.flat()).toHaveLength(1);
+    }).pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
+  });
+});

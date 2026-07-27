@@ -282,18 +282,27 @@ export const makeInMemory = Effect.gen(function* () {
 
   const claimNextBatch: AutoReviewJobStore["Service"]["claimNextBatch"] = (limit) =>
     Effect.gen(function* () {
-      const jobs = yield* Ref.get(jobsRef);
-      const selected = selectClaimableAutoReviewJobs({ jobs, limit });
-      if (selected.length === 0) {
-        return [];
-      }
+      // Stamped before the transition: a timestamp is not part of the
+      // invariant, and reading it inside would put an effect in the middle of
+      // the read-modify-write.
       const stamp = yield* nowIso;
-      const claimed = selected.map(
-        (job): AutoReviewJob => ({ ...job, status: "running", updatedAt: stamp }),
-      );
-      const byId = new Map(claimed.map((job) => [job.id, job]));
-      yield* Ref.update(jobsRef, (current) => current.map((job) => byId.get(job.id) ?? job));
-      return claimed;
+      return yield* Ref.modify(jobsRef, (jobs) => {
+        // Selection and transition share one snapshot, so the "one in-flight
+        // review per PR" guarantee cannot be split by a concurrent claimer
+        // selecting from state this call is about to overwrite.
+        const selected = selectClaimableAutoReviewJobs({ jobs, limit });
+        if (selected.length === 0) {
+          return [[] as ReadonlyArray<AutoReviewJob>, jobs] as const;
+        }
+        const claimed = selected.map(
+          (job): AutoReviewJob => ({ ...job, status: "running", updatedAt: stamp }),
+        );
+        const byId = new Map(claimed.map((job) => [job.id, job]));
+        return [
+          claimed as ReadonlyArray<AutoReviewJob>,
+          jobs.map((job) => byId.get(job.id) ?? job),
+        ] as const;
+      });
     });
 
   const claimNext: AutoReviewJobStore["Service"]["claimNext"] = () =>
