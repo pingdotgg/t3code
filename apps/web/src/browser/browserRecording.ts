@@ -82,7 +82,10 @@ type BrowserRecordingLifecycle =
     };
 
 interface ActiveRecording {
+  /** Desktop-scoped identity used by capture and surface stores. */
   readonly tabId: string;
+  /** Server-local identity returned by preview automation tools. */
+  readonly serverTabId: string;
   readonly threadRef: ScopedThreadRef | null;
   readonly canvas: HTMLCanvasElement;
   readonly context: CanvasRenderingContext2D;
@@ -125,7 +128,7 @@ export function readActiveBrowserRecordingTabIds(threadRef?: ScopedThreadRef): R
       (recording.threadRef?.environmentId === threadRef.environmentId &&
         recording.threadRef.threadId === threadRef.threadId)
     ) {
-      tabIds.add(recording.tabId);
+      tabIds.add(recording.serverTabId);
     }
   }
   return tabIds;
@@ -283,6 +286,7 @@ const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperatio
 export async function startBrowserRecording(
   tabId: string,
   threadRef: ScopedThreadRef | null = null,
+  serverTabId = tabId,
 ): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
@@ -321,6 +325,7 @@ export async function startBrowserRecording(
   });
   const recording: ActiveRecording = {
     tabId,
+    serverTabId,
     threadRef,
     canvas,
     context,

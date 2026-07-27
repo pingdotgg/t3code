@@ -93,6 +93,7 @@ import {
   startBrowserRecording,
   stopBrowserRecording,
 } from "./browserRecording";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 class FakeMediaRecorder {
   static isTypeSupported(): boolean {
@@ -361,6 +362,36 @@ describe("browser recording", () => {
     await stopBrowserRecording("recording-tab-2");
     expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
     expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports the server-local tab id while capturing through a scoped desktop slot", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("environment-recording"),
+      threadId: ThreadId.make("thread-recording-scoped"),
+    };
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-a", "tab_1");
+    surfaceState.byTabId = {
+      [runtimeTabId]: {
+        visible: false,
+        rect: { x: 0, y: 0, width: 1280, height: 800 },
+        content: {
+          x: 0,
+          y: 0,
+          width: 1280,
+          height: 800,
+          scale: 1,
+          scrollLeft: 0,
+          scrollTop: 0,
+        },
+      },
+    };
+
+    await startBrowserRecording(runtimeTabId, threadRef, "tab_1");
+
+    expect(startScreencast).toHaveBeenCalledWith(runtimeTabId);
+    expect(readActiveBrowserRecordingTabIds(threadRef)).toEqual(new Set(["tab_1"]));
+
+    await stopBrowserRecording(runtimeTabId);
   });
 
   it("does not report success for a second start while the first is still starting", async () => {
