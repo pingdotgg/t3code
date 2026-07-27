@@ -6,16 +6,24 @@
  */
 export const PREVIEW_HOST_RESPONSE_MARGIN_MS = 1_500;
 
-/** Smallest useful wait; below this a slow first poll would fail instantly. */
-const MIN_HOST_WAIT_MS = 250;
+/**
+ * Share of the request budget reserved when the request is too short for the
+ * full margin, so the host still expires first rather than being clamped past
+ * the broker's deadline.
+ */
+const HOST_RESPONSE_MARGIN_FRACTION = 0.2;
 
 /**
- * Budget a host-side wait so it expires before the broker's deadline for the
- * same request.
+ * Budget a host-side wait so it always expires before the broker's deadline
+ * for the same request.
  */
 export function resolveHostWaitBudgetMs(requestTimeoutMs: number): number {
   if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
-    return MIN_HOST_WAIT_MS;
+    return 0;
   }
-  return Math.max(MIN_HOST_WAIT_MS, requestTimeoutMs - PREVIEW_HOST_RESPONSE_MARGIN_MS);
+  const reservedMs = Math.min(
+    PREVIEW_HOST_RESPONSE_MARGIN_MS,
+    Math.ceil(requestTimeoutMs * HOST_RESPONSE_MARGIN_FRACTION),
+  );
+  return Math.max(0, requestTimeoutMs - reservedMs);
 }
