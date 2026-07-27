@@ -44,7 +44,6 @@ import {
   ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
-  ProviderDriverKind,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
@@ -103,9 +102,6 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as ClaudeSessionHistory from "./provider/Layers/ClaudeSessionHistory.ts";
-import { ProviderValidationError } from "./provider/Errors.ts";
-import * as ProviderAdapterRegistry from "./provider/Services/ProviderAdapterRegistry.ts";
-import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -290,10 +286,6 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
 
-// The only provider whose on-disk transcript format `resumeExternalSessionId`
-// is derived from and verified against. See `ClaudeSessionHistory.ts`.
-const CLAUDE_RESUME_PROVIDER = ProviderDriverKind.make("claudeAgent");
-
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
@@ -458,8 +450,6 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const claudeSessionHistory = yield* ClaudeSessionHistory.ClaudeSessionHistory;
-      const providerAdapterRegistry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
-      const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -1009,19 +999,10 @@ const makeWsRpcLayer = (
 
               const resumeExternalSessionId = bootstrap.createThread.resumeExternalSessionId;
               if (resumeExternalSessionId) {
-                const instanceId = bootstrap.createThread.modelSelection.instanceId;
-                const instanceInfo = yield* providerAdapterRegistry.getInstanceInfo(instanceId);
-                if (instanceInfo.driverKind !== CLAUDE_RESUME_PROVIDER) {
-                  return yield* new ProviderValidationError({
-                    operation: "ws.dispatchBootstrapTurnStart",
-                    issue: `resumeExternalSessionId is only supported for Claude Code provider instances; '${instanceId}' is a '${instanceInfo.driverKind}' instance.`,
-                  });
-                }
-                yield* providerSessionDirectory.upsert({
+                yield* claudeSessionHistory.bindResumeSession({
                   threadId: command.threadId,
-                  provider: instanceInfo.driverKind,
-                  providerInstanceId: instanceId,
-                  resumeCursor: { resume: resumeExternalSessionId },
+                  providerInstanceId: bootstrap.createThread.modelSelection.instanceId,
+                  resumeExternalSessionId,
                 });
               }
             }

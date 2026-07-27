@@ -339,7 +339,13 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
   Layer.provideMerge(ProcessDiagnostics.layer),
   Layer.provideMerge(ProcessResourceMonitor.layer),
-  Layer.provideMerge(ClaudeSessionHistory.layer),
+  // `Layer.provideMerge(dependency)` only feeds `dependency`'s output into
+  // *this* layer's requirements — it does not resolve `dependency`'s own
+  // requirements from `RuntimeCoreDependenciesLive`. `ClaudeSessionHistory`
+  // needs `ProviderInstanceRegistry`/`ProviderSessionDirectory` (only
+  // exposed via `RuntimeCoreDependenciesLive`'s own composition), so it's
+  // explicitly provided that here rather than relying on ambient accumulation.
+  Layer.provideMerge(ClaudeSessionHistory.layer.pipe(Layer.provide(RuntimeCoreDependenciesLive))),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
