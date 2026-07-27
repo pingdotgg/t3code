@@ -1540,6 +1540,70 @@ describe("ProviderRuntimeIngestion", () => {
     expect(toolCallIdOf("evt-claude-tool-completed")).toBe("toolu_claude_1");
   });
 
+  it("stamps a toolCallId onto tool data that is not a record", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // `data` is `unknown` on the wire. A scalar or array payload carries
+    // nothing a client reads, but it must still correlate — otherwise the
+    // call falls back to per-event ids and renders as a running row plus a
+    // completed duplicate.
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-scalar-tool-updated"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-scalar-tool"),
+      itemId: asItemId("toolu_scalar_1"),
+      payload: {
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "Bash",
+        data: "raw provider text",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-array-tool-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-scalar-tool"),
+      itemId: asItemId("toolu_array_1"),
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Bash",
+        data: ["first", "second"],
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-array-tool-completed",
+      ),
+    );
+    const dataOf = (activityId: string): Record<string, unknown> | undefined => {
+      const activity = thread.activities.find(
+        (entry: ProviderRuntimeTestActivity) => entry.id === activityId,
+      );
+      const payload =
+        activity?.payload && typeof activity.payload === "object"
+          ? (activity.payload as Record<string, unknown>)
+          : undefined;
+      return payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : undefined;
+    };
+
+    expect(dataOf("evt-scalar-tool-updated")?.toolCallId).toBe("toolu_scalar_1");
+    // The payload itself is kept rather than dropped on the way through.
+    expect(dataOf("evt-scalar-tool-updated")?.value).toBe("raw provider text");
+    expect(dataOf("evt-array-tool-completed")?.toolCallId).toBe("toolu_array_1");
+    expect(dataOf("evt-array-tool-completed")?.value).toEqual(["first", "second"]);
+  });
+
   it("keeps a provider-supplied toolCallId instead of the runtime item id", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
