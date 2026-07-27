@@ -15,7 +15,7 @@ if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 from integrations.hermes_plugin.config import load_config
-from integrations.hermes_plugin import service
+from integrations.hermes_plugin import coherent_update, service
 
 router = APIRouter()
 _ACTION_LOCK = threading.Lock()
@@ -60,15 +60,16 @@ async def get_status(request: Request) -> dict[str, object]:
 async def _run_action(action: str, request: Request) -> dict[str, object]:
     config = load_config(plugin_root=PLUGIN_ROOT)
     handler = {
-        "install": service.install,
-        "update": service.update,
+        "install": coherent_update.install,
+        "update": coherent_update.update,
         "uninstall": service.uninstall,
     }[action]
     try:
         await _acquire_action_lock()
         try:
             result = await asyncio.to_thread(handler, config)
-            result["status"] = _response(request)
+            if not isinstance(result.get("status"), dict):
+                result["status"] = _response(request)
             return result
         finally:
             _ACTION_LOCK.release()

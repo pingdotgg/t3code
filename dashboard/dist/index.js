@@ -63,8 +63,10 @@
             : null,
           status
             ? React.createElement("dl", { className: "t3code-plugin__status" },
-                React.createElement("dt", null, "Version"),
-                React.createElement("dd", null, status.binary_version || "—"),
+                React.createElement("dt", null, "Installed product version"),
+                React.createElement("dd", null,
+                  status.coherent ? status.installed_version : "Needs Update"
+                ),
                 React.createElement("dt", null, "Address"),
                 React.createElement("dd", null, status.url),
                 React.createElement("dt", null, "Supervisor"),
@@ -112,6 +114,8 @@
           ),
           installed
             ? React.createElement("p", { className: "t3code-plugin__note" },
+                "Update advances the T3/Hermes integration and native runtime " +
+                "together, activates them, and verifies service health. " +
                 "Removing the service keeps the downloaded binary and T3 Code data. " +
                 "If Hermes removes the plugin directory directly, the delayed watchdog " +
                 "removes both s6 slots."

@@ -10,7 +10,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from subprocess import CompletedProcess
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from integrations.hermes_plugin import service as service_module
 from integrations.hermes_plugin.config import load_config
@@ -812,6 +812,299 @@ class ServiceDefinitionTest(unittest.TestCase):
                 proc_root=proc_root,
             )
         )
+
+    def test_coherent_status_reports_one_installed_product_version(self) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            plugin_root=root / "plugin",
+            runtime_root=root / "runtime",
+            binary_path=root / "runtime" / "bin" / "t3",
+        )
+        config.binary_path.parent.mkdir(parents=True)
+        config.binary_path.write_bytes(b"verified runtime")
+        config.service_state_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "desired_state": "installed",
+                    "binary_sha256": hashlib.sha256(
+                        config.binary_path.read_bytes()
+                    ).hexdigest(),
+                    "binary_version": "0.0.30",
+                    "product_version": "0.0.30",
+                    "product_source_commit": "a" * 40,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value="0.0.30",
+            ),
+            patch(
+                "integrations.hermes_plugin.service._current_source_commit",
+                return_value="a" * 40,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._source_checkout_clean",
+                return_value=True,
+            ),
+        ):
+            current = status(config)
+
+        self.assertTrue(current.coherent)
+        self.assertEqual(current.installed_version, "0.0.30")
+        self.assertEqual(current.binary_version, "0.0.30")
+
+    def test_source_only_and_runtime_only_states_never_report_success(self) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            plugin_root=root / "plugin",
+            runtime_root=root / "runtime",
+            binary_path=root / "runtime" / "bin" / "t3",
+        )
+        config.binary_path.parent.mkdir(parents=True)
+        config.binary_path.write_bytes(b"verified runtime")
+        config.service_state_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "desired_state": "installed",
+                    "binary_sha256": hashlib.sha256(
+                        config.binary_path.read_bytes()
+                    ).hexdigest(),
+                    "binary_version": "0.0.30",
+                    "product_version": "0.0.30",
+                    "product_source_commit": "a" * 40,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        for binary, source in (
+            ("0.0.30", "b" * 40),
+            ("0.0.31", "a" * 40),
+        ):
+            with self.subTest(binary=binary, source=source):
+                with (
+                    patch(
+                        "integrations.hermes_plugin.service.binary_version",
+                        return_value=binary,
+                    ),
+                    patch(
+                        "integrations.hermes_plugin.service._current_source_commit",
+                        return_value=source,
+                    ),
+                    patch(
+                        "integrations.hermes_plugin.service._source_checkout_clean",
+                        return_value=True,
+                    ),
+                ):
+                    current = status(config)
+                self.assertFalse(current.coherent)
+                self.assertIsNone(current.installed_version)
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value="0.0.30",
+            ),
+            patch(
+                "integrations.hermes_plugin.service._current_source_commit",
+                return_value="a" * 40,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._source_checkout_clean",
+                return_value=False,
+            ),
+        ):
+            current = status(config)
+        self.assertFalse(current.coherent)
+        self.assertIsNone(current.installed_version)
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._current_source_commit",
+                return_value="a" * 40,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._source_checkout_clean",
+                return_value=False,
+            ),
+            self.assertRaisesRegex(
+                ServiceError,
+                "source that is changed",
+            ),
+        ):
+            service_module._validate_recovery_source(
+                config,
+                {"product_source_commit": "a" * 40},
+            )
+
+        config.binary_path.write_bytes(b"changed runtime reporting same version")
+        with (
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value="0.0.30",
+            ),
+            patch(
+                "integrations.hermes_plugin.service._current_source_commit",
+                return_value="a" * 40,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._source_checkout_clean",
+                return_value=True,
+            ),
+        ):
+            current = status(config)
+        self.assertFalse(current.coherent)
+        self.assertIsNone(current.installed_version)
+
+    def test_product_health_proves_current_process_listener_and_http(self) -> None:
+        proc_root = Path(self.temporary.name) / "proc"
+        (proc_root / "net").mkdir(parents=True)
+        (proc_root / "net" / "tcp").write_text(
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when "
+            "retrnsmt   uid  timeout inode\n"
+            "   0: 00000000:0EBD 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000 10000 0 555\n",
+            encoding="ascii",
+        )
+        config = replace(
+            self.config,
+            hermes_home=Path("/opt/data"),
+            binary_path=Path("/opt/data/t3code/bin/t3"),
+            service_dir=Path("/run/service/t3code"),
+            watchdog_service_dir=Path("/run/service/t3code-plugin-watchdog"),
+            port=3773,
+        )
+        process = proc_root / "9621"
+        (process / "fd").mkdir(parents=True)
+        (process / "cmdline").write_bytes(
+            b"/opt/data/t3code/bin/t3\0serve\0"
+        )
+        process.joinpath("environ").write_bytes(
+            b"PATH=/usr/bin\0HERMES_HOME=/opt/data\0"
+        )
+        process.joinpath("status").write_text(
+            "Uid:\t10000\t10000\t10000\t10000\nPPid:\t9620\n",
+            encoding="ascii",
+        )
+        os.symlink("/opt/data/t3code/bin/t3", process / "exe")
+        os.symlink("/run/service/t3code", process / "cwd")
+        os.symlink("socket:[555]", process / "fd" / "3")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._expected_service_uid",
+                return_value=10000,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._http_healthy",
+                return_value=True,
+            ) as http_healthy,
+        ):
+            service_module._verify_product_health(
+                config,
+                9621,
+                proc_root=proc_root,
+            )
+
+        http_healthy.assert_called_once_with("0.0.0.0", 3773)
+
+        process.joinpath("status").write_text(
+            "Uid:\t10001\t10001\t10001\t10001\nPPid:\t9620\n",
+            encoding="ascii",
+        )
+        with (
+            patch(
+                "integrations.hermes_plugin.service._expected_service_uid",
+                return_value=10000,
+            ),
+            self.assertRaisesRegex(
+                service_module.ServiceError,
+                "service account",
+            ),
+        ):
+            service_module._verify_product_health(
+                config,
+                9621,
+                proc_root=proc_root,
+            )
+
+    def test_http_health_uses_the_configured_specific_bind_address(self) -> None:
+        response = Mock()
+        response.status = 200
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with patch(
+            "integrations.hermes_plugin.service.urllib.request.urlopen",
+            return_value=response,
+        ) as urlopen:
+            self.assertTrue(service_module._http_healthy("10.20.30.40", 3773))
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://10.20.30.40:3773/")
+
+    def test_coherent_activation_records_version_only_after_full_health(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            runtime_root=root / "runtime",
+            binary_path=root / "runtime" / "bin" / "t3",
+            data_dir=root / "runtime" / "data",
+            service_dir=root / "service" / "t3code",
+            watchdog_service_dir=root / "service" / "t3code-plugin-watchdog",
+        )
+        staged = root / "transaction" / "t3"
+        staged.parent.mkdir(parents=True)
+        staged.write_bytes(b"new verified coherent runtime")
+        checksum = hashlib.sha256(staged.read_bytes()).hexdigest()
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value="0.0.30",
+            ),
+            patch("integrations.hermes_plugin.service._prepare_service_dir"),
+            patch(
+                "integrations.hermes_plugin.service._write_t3_s6_service"
+            ) as write_service,
+            patch(
+                "integrations.hermes_plugin.service._install_watchdog"
+            ) as install_watchdog,
+            patch(
+                "integrations.hermes_plugin.service._verify_t3_service_up",
+                return_value=9621,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._verify_product_health"
+            ) as verify_health,
+        ):
+            result = service_module._activate_staged_product_locked(
+                config,
+                staged_binary=staged,
+                product_version="0.0.30",
+                source_commit="a" * 40,
+                binary_sha256=checksum,
+            )
+
+        self.assertEqual(result["service_pid"], 9621)
+        self.assertEqual(config.binary_path.read_bytes(), staged.read_bytes())
+        write_service.assert_called_once()
+        install_watchdog.assert_called_once_with(config)
+        verify_health.assert_called_once_with(config, 9621)
+        state = json.loads(config.service_state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["product_version"], "0.0.30")
+        self.assertEqual(state["product_source_commit"], "a" * 40)
 
     def test_missing_live_hermes_home_fails_without_orphan_cleanup(self) -> None:
         with (
