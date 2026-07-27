@@ -321,15 +321,21 @@ function withToolCallId(data: unknown, itemId: RuntimeItemId | undefined): unkno
   if (data === undefined || data === null) {
     return { toolCallId: itemId };
   }
-  if (typeof data !== "object" || Array.isArray(data)) {
-    return data;
+  if (typeof data === "object" && !Array.isArray(data)) {
+    const record = data as Record<string, unknown>;
+    const existing = record["toolCallId"];
+    if (typeof existing === "string" && existing.trim().length > 0) {
+      return record;
+    }
+    return { ...record, toolCallId: itemId };
   }
-  const record = data as Record<string, unknown>;
-  const existing = record["toolCallId"];
-  if (typeof existing === "string" && existing.trim().length > 0) {
-    return record;
-  }
-  return { ...record, toolCallId: itemId };
+  // `data` is typed `unknown` on the wire, so an adapter may send a scalar or
+  // an array. Clients resolve it through a record lookup and ignore anything
+  // that is not one, so nothing reads such a payload today — but leaving it
+  // alone would leave the call uncorrelated, which is exactly the duplicate
+  // row this stamping exists to prevent. It moves under `value` instead of
+  // being dropped.
+  return { toolCallId: itemId, value: data };
 }
 
 function toolActivityData(
