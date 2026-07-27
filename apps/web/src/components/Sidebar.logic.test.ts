@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  classifySidebarThreadFilterStatus,
   createThreadJumpHintVisibilityController,
+  filterSidebarThreadsForActiveRoute,
+  getSidebarRangeSelectionThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -10,11 +13,17 @@ import {
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  hasActiveSidebarThreadFilters,
+  hasNarrowingSidebarThreadFilters,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
+  matchesSidebarThreadFilters,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolvePinnedCollapsedSidebarThread,
+  resolveSidebarArchiveEnvironmentIds,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadFilterStatuses,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
   resolveThreadStatusPill,
@@ -27,16 +36,18 @@ import {
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
+  sidebarProviderInstanceKey,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
   OrchestrationLatestTurn,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-
+import { DEFAULT_SIDEBAR_THREAD_FILTERS } from "@t3tools/contracts/settings";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -93,6 +104,500 @@ describe("shouldNavigateAfterProjectRemoval", () => {
         projectDraftId: null,
       }),
     ).toBe(false);
+  });
+});
+
+const filterableThread = {
+  archivedAt: null,
+  createdAt: "2026-03-09T09:00:00.000Z",
+  environmentId: localEnvironmentId,
+  hasActionableProposedPlan: false,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  interactionMode: "default",
+  latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+  latestTurn: null,
+  session: null,
+  updatedAt: "2026-03-09T10:00:00.000Z",
+} as const;
+
+describe("sidebar thread filters", () => {
+  it("classifies attention, working, unread, and done as exclusive statuses", () => {
+    expect(
+      classifySidebarThreadFilterStatus({ ...filterableThread, hasPendingApprovals: true }),
+    ).toBe("needs_attention");
+    expect(
+      classifySidebarThreadFilterStatus({
+        ...filterableThread,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        },
+      }),
+    ).toBe("working");
+    expect(
+      classifySidebarThreadFilterStatus({
+        ...filterableThread,
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      }),
+    ).toBe("unread");
+    expect(classifySidebarThreadFilterStatus(filterableThread)).toBe("done");
+  });
+
+  it("keeps needs-attention status when a thread also has an unseen completion", () => {
+    expect(
+      classifySidebarThreadFilterStatus({
+        ...filterableThread,
+        hasPendingUserInput: true,
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      }),
+    ).toBe("needs_attention");
+  });
+
+  it("keeps working status when a live thread also has an unseen completion", () => {
+    expect(
+      classifySidebarThreadFilterStatus({
+        ...filterableThread,
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        },
+      }),
+    ).toBe("working");
+  });
+
+  it("matches status, environment, source, and archived controls", () => {
+    const archivedThread = {
+      ...filterableThread,
+      archivedAt: "2026-03-09T11:00:00.000Z",
+    };
+    expect(
+      matchesSidebarThreadFilters({
+        thread: archivedThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: DEFAULT_SIDEBAR_THREAD_FILTERS,
+      }),
+    ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: archivedThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: {
+          statuses: ["done"],
+          environmentIds: [localEnvironmentId],
+          sources: [ProviderDriverKind.make("codex")],
+          recentOnly: false,
+          attentionOnly: false,
+          includeArchived: true,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: filterableThread,
+        providerDriverKind: ProviderDriverKind.make("claudeAgent"),
+        filters: {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          sources: [ProviderDriverKind.make("codex")],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("treats an empty status selection as an unrestricted status filter", () => {
+    const filters = {
+      ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+      statuses: [],
+    };
+
+    expect(
+      matchesSidebarThreadFilters({
+        thread: filterableThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(true);
+    expect(resolveSidebarThreadFilterStatuses(filters.statuses)).toEqual(
+      DEFAULT_SIDEBAR_THREAD_FILTERS.statuses,
+    );
+    expect(hasNarrowingSidebarThreadFilters(filters)).toBe(false);
+    expect(hasActiveSidebarThreadFilters(filters)).toBe(false);
+  });
+
+  it("matches the attention quick filter as unread OR needs attention", () => {
+    const filters = {
+      ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+      attentionOnly: true,
+    };
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...filterableThread, hasPendingUserInput: true },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestTurn: makeLatestTurn(),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-03-09T10:00:00.000Z",
+          },
+        },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestTurn: makeLatestTurn(),
+        },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: filterableThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+      }),
+    ).toBe(false);
+  });
+
+  it("matches unread live threads through either their live or unread status facet", () => {
+    const workingThread = {
+      ...filterableThread,
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      },
+    } as const;
+
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...workingThread, latestTurn: makeLatestTurn() },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["unread"] },
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...workingThread, latestTurn: makeLatestTurn() },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["working"] },
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...workingThread, latestTurn: makeLatestTurn() },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["done"] },
+      }),
+    ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...workingThread, latestTurn: makeLatestTurn() },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: { ...DEFAULT_SIDEBAR_THREAD_FILTERS, statuses: ["unread"] },
+      }),
+    ).toBe(true);
+  });
+
+  it("composes the attention quick filter with live and unread status facets", () => {
+    const workingThread = {
+      ...filterableThread,
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "running",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      },
+    } as const;
+
+    for (const statuses of [["working"], ["unread"]] as const) {
+      expect(
+        matchesSidebarThreadFilters({
+          thread: { ...workingThread, latestTurn: makeLatestTurn() },
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          providerDriverKind: ProviderDriverKind.make("codex"),
+          filters: {
+            ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+            attentionOnly: true,
+            statuses: [...statuses],
+          },
+        }),
+      ).toBe(true);
+    }
+    expect(
+      matchesSidebarThreadFilters({
+        thread: workingThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          attentionOnly: true,
+          statuses: ["working"],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: { ...workingThread, hasPendingUserInput: true },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          attentionOnly: true,
+          statuses: ["needs_attention"],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("matches recent activity within the last seven days", () => {
+    const filters = {
+      ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+      recentOnly: true,
+    };
+    const nowMs = Date.parse("2026-03-10T10:00:00.000Z");
+    expect(
+      matchesSidebarThreadFilters({
+        thread: filterableThread,
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+        nowMs,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: null,
+          updatedAt: "2026-03-03T09:59:59.999Z",
+          createdAt: "2026-03-03T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+        nowMs,
+      }),
+    ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: null,
+          updatedAt: "not-a-date",
+          createdAt: "2026-03-03T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+        nowMs,
+      }),
+    ).toBe(false);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: "2026-03-01T10:00:00.000Z",
+          updatedAt: "2026-03-10T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+        nowMs,
+      }),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: "not-a-date",
+          updatedAt: "2026-03-10T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters,
+        nowMs,
+      }),
+    ).toBe(true);
+  });
+
+  it("counts activity recorded only on the latest turn as recent", () => {
+    const filters = {
+      ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+      recentOnly: true,
+    };
+    const nowMs = Date.parse("2026-03-10T10:00:00.000Z");
+    const recentTimestamp = "2026-03-10T09:00:00.000Z";
+    const olderTurn = {
+      ...makeLatestTurn({
+        completedAt: "2026-03-01T10:05:00.000Z",
+        startedAt: "2026-03-01T10:00:00.000Z",
+      }),
+      requestedAt: "2026-03-01T09:59:00.000Z",
+    };
+    const olderThread = {
+      ...filterableThread,
+      latestUserMessageAt: null,
+      updatedAt: "2026-03-01T10:00:00.000Z",
+      createdAt: "2026-03-01T09:00:00.000Z",
+    };
+
+    for (const latestTurn of [
+      { ...olderTurn, requestedAt: recentTimestamp },
+      { ...olderTurn, startedAt: recentTimestamp },
+      { ...olderTurn, completedAt: recentTimestamp },
+    ]) {
+      expect(
+        matchesSidebarThreadFilters({
+          thread: { ...olderThread, latestTurn },
+          providerDriverKind: ProviderDriverKind.make("codex"),
+          filters,
+          nowMs,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("ignores malformed and older latest-turn timestamps for recent filtering", () => {
+    expect(
+      matchesSidebarThreadFilters({
+        thread: {
+          ...filterableThread,
+          latestUserMessageAt: null,
+          latestTurn: {
+            ...makeLatestTurn({
+              completedAt: "not-a-date",
+              startedAt: "2026-03-01T10:00:00.000Z",
+            }),
+            requestedAt: "not-a-date",
+          },
+          updatedAt: "2026-03-01T10:00:00.000Z",
+          createdAt: "2026-03-01T09:00:00.000Z",
+        },
+        providerDriverKind: ProviderDriverKind.make("codex"),
+        filters: {
+          ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+          recentOnly: true,
+        },
+        nowMs: Date.parse("2026-03-10T10:00:00.000Z"),
+      }),
+    ).toBe(false);
+  });
+
+  it("recognizes the default filter state and meaningful deviations", () => {
+    expect(hasActiveSidebarThreadFilters(DEFAULT_SIDEBAR_THREAD_FILTERS)).toBe(false);
+    expect(hasNarrowingSidebarThreadFilters(DEFAULT_SIDEBAR_THREAD_FILTERS)).toBe(false);
+    expect(
+      hasActiveSidebarThreadFilters({
+        ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+        statuses: ["needs_attention", "unread", "working"],
+      }),
+    ).toBe(true);
+    expect(
+      hasActiveSidebarThreadFilters({
+        ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+        includeArchived: true,
+      }),
+    ).toBe(true);
+    expect(
+      hasNarrowingSidebarThreadFilters({
+        ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+        includeArchived: true,
+      }),
+    ).toBe(false);
+    expect(
+      hasActiveSidebarThreadFilters({
+        ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+        attentionOnly: true,
+      }),
+    ).toBe(true);
+    expect(
+      hasActiveSidebarThreadFilters({
+        ...DEFAULT_SIDEBAR_THREAD_FILTERS,
+        recentOnly: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("sidebar filter scoping", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+  it("scopes provider instance ids by environment", () => {
+    const instanceId = ProviderInstanceId.make("codex_work");
+
+    expect(sidebarProviderInstanceKey(localEnvironmentId, instanceId)).not.toBe(
+      sidebarProviderInstanceKey(remoteEnvironmentId, instanceId),
+    );
+  });
+
+  it("loads archived snapshots only for selected environments", () => {
+    expect(
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: [localEnvironmentId, remoteEnvironmentId],
+        selectedEnvironmentIds: [remoteEnvironmentId],
+        includeArchived: true,
+      }),
+    ).toEqual([remoteEnvironmentId]);
+    expect(
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: [localEnvironmentId, remoteEnvironmentId],
+        selectedEnvironmentIds: [],
+        includeArchived: true,
+      }),
+    ).toEqual([localEnvironmentId, remoteEnvironmentId]);
+    expect(
+      resolveSidebarArchiveEnvironmentIds({
+        availableEnvironmentIds: [localEnvironmentId, remoteEnvironmentId],
+        selectedEnvironmentIds: [remoteEnvironmentId],
+        includeArchived: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("excludes archived rows from shift-range selection order", () => {
+    expect(
+      getSidebarRangeSelectionThreadKeys([
+        { threadKey: "active-1", archivedAt: null },
+        { threadKey: "archived", archivedAt: "2026-03-09T11:00:00.000Z" },
+        { threadKey: "active-2", archivedAt: null },
+      ]),
+    ).toEqual(["active-1", "active-2"]);
   });
 });
 
@@ -991,6 +1496,55 @@ describe("resolveProjectStatusIndicator", () => {
 });
 
 describe("getVisibleThreadsForProject", () => {
+  it("keeps only the active route when every thread fails the filters", () => {
+    const threads = [
+      { threadKey: "environment-local:thread-active", matches: false },
+      { threadKey: "environment-local:thread-hidden", matches: false },
+    ];
+
+    const filteredThreads = filterSidebarThreadsForActiveRoute({
+      threads,
+      activeThreadKey: "environment-local:thread-active",
+      getThreadKey: (thread) => thread.threadKey,
+      matchesFilters: (thread) => thread.matches,
+    });
+
+    expect(filteredThreads).toEqual([threads[0]]);
+    expect(
+      resolvePinnedCollapsedSidebarThread({
+        threads: filteredThreads,
+        activeThreadKey: "environment-local:thread-active",
+        projectExpanded: false,
+        getThreadKey: (thread) => thread.threadKey,
+      }),
+    ).toBe(threads[0]);
+    expect(
+      resolvePinnedCollapsedSidebarThread({
+        threads: filteredThreads,
+        activeThreadKey: "environment-local:thread-active",
+        projectExpanded: true,
+        getThreadKey: (thread) => thread.threadKey,
+      }),
+    ).toBeNull();
+  });
+
+  it("continues applying filters to non-active rows", () => {
+    const threads = [
+      { threadKey: "active", matches: false },
+      { threadKey: "matching", matches: true },
+      { threadKey: "hidden", matches: false },
+    ];
+
+    expect(
+      filterSidebarThreadsForActiveRoute({
+        threads,
+        activeThreadKey: "active",
+        getThreadKey: (thread) => thread.threadKey,
+        matchesFilters: (thread) => thread.matches,
+      }).map((thread) => thread.threadKey),
+    ).toEqual(["active", "matching"]);
+  });
+
   it("includes the active thread even when it falls below the folded preview", () => {
     const threads = Array.from({ length: 8 }, (_, index) =>
       makeThread({
@@ -1001,7 +1555,8 @@ describe("getVisibleThreadsForProject", () => {
 
     const result = getVisibleThreadsForProject({
       threads,
-      activeThreadId: ThreadId.make("thread-8"),
+      activeThreadKey: "environment-local:thread-8",
+      getThreadKey: (thread) => `environment-local:${thread.id}`,
       isThreadListExpanded: false,
       previewLimit: 6,
     });
@@ -1028,7 +1583,8 @@ describe("getVisibleThreadsForProject", () => {
 
     const result = getVisibleThreadsForProject({
       threads,
-      activeThreadId: ThreadId.make("thread-8"),
+      activeThreadKey: "environment-local:thread-8",
+      getThreadKey: (thread) => `environment-local:${thread.id}`,
       isThreadListExpanded: true,
       previewLimit: 6,
     });
