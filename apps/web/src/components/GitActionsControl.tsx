@@ -280,6 +280,7 @@ function getMenuActionDisabledReason({
   const hasChanges = gitStatus.hasWorkingTreeChanges;
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
+  const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const isBehind = gitStatus.behindCount > 0;
   const terminology = getSourceControlPresentation(gitStatus.sourceControlProvider).terminology;
 
@@ -312,12 +313,6 @@ function getMenuActionDisabledReason({
   if (hasOpenPr) {
     return `View ${terminology.singular} is currently unavailable.`;
   }
-  if (!changeRequestProviderReadiness.ready) {
-    return (
-      changeRequestProviderReadiness.hint ??
-      `Create ${terminology.singular} is currently unavailable.`
-    );
-  }
   if (!hasBranch) {
     return `Detached HEAD: checkout a refName before creating a ${terminology.singular}.`;
   }
@@ -327,11 +322,19 @@ function getMenuActionDisabledReason({
   if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
     return `Add an "origin" remote before creating a ${terminology.singular}.`;
   }
-  if (!isAhead) {
+  if (!hasDefaultBranchDelta) {
     return `No local commits to include in a ${terminology.singular}.`;
   }
   if (isBehind) {
     return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
+  }
+  // Auth readiness last: git-state blockers above are the user's immediate
+  // next step; the provider hint shows once the branch is otherwise PR-ready.
+  if (!changeRequestProviderReadiness.ready) {
+    return (
+      changeRequestProviderReadiness.hint ??
+      `Create ${terminology.singular} is currently unavailable.`
+    );
   }
   return `Create ${terminology.singular} is currently unavailable.`;
 }
