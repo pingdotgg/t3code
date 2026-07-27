@@ -54,7 +54,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
 export const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Show and initialize a collaborative browser tab. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab. Newly created tabs return after server creation while requested presentation and page loading continue; reopening an existing shown tab waits for stable panel presentation. Wait on the returned tab before interacting while its initial page loads.",
+      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab. Newly created tabs return after server creation while requested presentation and page loading continue; reopening an existing shown tab waits for stable presentation. Wait on the returned tab before interacting while its initial page loads.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -191,7 +191,8 @@ export const PreviewRecordingStartTool = safeBrowserTool(
 
 export const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
-    description: "Stop the active browser recording and save it as a local evidence artifact.",
+    description:
+      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and save it as a local evidence artifact.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,

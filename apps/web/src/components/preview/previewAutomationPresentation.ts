@@ -4,6 +4,7 @@ import {
   acquireBrowserSurfaceBackgroundCapture,
   useBrowserSurfaceStore,
 } from "~/browser/browserSurfaceStore";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { setActivePreviewTab } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -59,15 +60,19 @@ async function waitForPreviewAutomationCompositorFrame(
 
 export function revealPreviewAutomationTab(ref: ScopedThreadRef, tabId: string): void {
   setActivePreviewTab(ref, tabId);
-  useRightPanelStore.getState().openBrowser(ref, tabId);
+  usePreviewMiniPlayerStore.getState().open(ref, tabId);
 }
 
 export function isPreviewAutomationTabPresented(ref: ScopedThreadRef, tabId: string): boolean {
   const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+  const miniPlayer = selectThreadPreviewMiniPlayer(
+    usePreviewMiniPlayerStore.getState().byThreadKey,
+    ref,
+  );
+  const requestedSurfaceIsActive =
+    (panel.isOpen && panel.activeSurfaceId === `browser:${tabId}`) || miniPlayer?.tabId === tabId;
   return (
-    panel.isOpen &&
-    panel.activeSurfaceId === `browser:${tabId}` &&
-    (useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false)
+    requestedSurfaceIsActive && (useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false)
   );
 }
 

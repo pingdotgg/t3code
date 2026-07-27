@@ -8,7 +8,7 @@ import {
   readThreadPreviewState,
   resetPreviewStateForTests,
 } from "~/previewStateStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 
 import {
   isPreviewAutomationTabPresented,
@@ -31,11 +31,11 @@ const snapshot = (tabId: string, updatedAt: string): PreviewSessionSnapshot => (
 describe("preview automation presentation", () => {
   beforeEach(() => {
     resetPreviewStateForTests();
-    useRightPanelStore.setState({ byThreadKey: {} });
+    usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
     useBrowserSurfaceStore.setState({ byTabId: {}, backgroundCaptureCountByTabId: {} });
   });
 
-  it("selects the requested preview tab and its right-panel surface together", () => {
+  it("selects the requested preview tab and its inline preview surface together", () => {
     applyPreviewServerSnapshot(threadRef, snapshot("tab-1", "2026-07-25T00:00:00.000Z"));
     applyPreviewServerSnapshot(threadRef, snapshot("tab-2", "2026-07-25T00:00:01.000Z"));
 
@@ -43,10 +43,9 @@ describe("preview automation presentation", () => {
 
     expect(readThreadPreviewState(threadRef).activeTabId).toBe("tab-1");
     expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, threadRef),
     ).toMatchObject({
-      isOpen: true,
-      activeSurfaceId: "browser:tab-1",
+      tabId: "tab-1",
     });
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
 
@@ -55,7 +54,7 @@ describe("preview automation presentation", () => {
 
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(true);
 
-    useRightPanelStore.getState().openBrowser(threadRef, "tab-2");
+    usePreviewMiniPlayerStore.getState().open(threadRef, "tab-2");
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
     surface.release();
   });
@@ -119,7 +118,7 @@ describe("preview automation presentation", () => {
     }
   });
 
-  it("stages a visible surface when another right-panel surface is selected", async () => {
+  it("stages a visible surface when another inline preview surface is selected", async () => {
     vi.stubGlobal("document", {
       querySelectorAll: () => [
         {
