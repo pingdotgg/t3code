@@ -743,12 +743,16 @@ const CANONICAL_TOOL_TITLES: ReadonlyMap<string, string> = new Map(
 /**
  * Identity of a tool row title across the in-flight -> settled rename, for
  * clients that must fold a completion onto its running row without a
- * `toolCallId` to correlate on. Titles this module never rewrites (skills,
- * MCP calls, raw tool names) are their own identity.
+ * `toolCallId` to correlate on.
+ *
+ * Only the pairs above are folded. Every other title — a skill, an MCP
+ * server · tool pair, a raw tool name — is returned as it came (trimmed),
+ * case included: those names are the provider's, and two of them that differ
+ * only in case are two different tools, not one row to merge.
  */
 export function canonicalToolTitle(title: string): string {
-  const normalized = title.trim().toLowerCase();
-  return CANONICAL_TOOL_TITLES.get(normalized) ?? normalized;
+  const trimmed = title.trim();
+  return CANONICAL_TOOL_TITLES.get(trimmed.toLowerCase()) ?? trimmed;
 }
 
 function titleFor(

@@ -300,9 +300,20 @@ describe("tool lifecycle titles", () => {
     }
   });
 
-  it("leaves titles it never rewrites as their own identity", () => {
-    expect(canonicalToolTitle("Skill: brainstorm")).toBe("skill: brainstorm");
+  it("returns titles it never rewrites verbatim, case and all", () => {
+    // A provider's own names are not ours to normalize: two MCP tools whose
+    // names differ only in case are two tools, and folding them would merge
+    // unrelated rows.
+    expect(canonicalToolTitle("Skill: brainstorm")).toBe("Skill: brainstorm");
     expect(canonicalToolTitle("linear · create_issue")).toBe("linear · create_issue");
+    expect(canonicalToolTitle("linear · Create_Issue")).not.toBe(
+      canonicalToolTitle("linear · create_issue"),
+    );
+  });
+
+  it("matches a lifecycle title regardless of how the row cased it", () => {
+    expect(canonicalToolTitle("  RUNNING COMMAND ")).toBe("command");
+    expect(canonicalToolTitle("ran command")).toBe("command");
   });
 
   it("keeps the macOS mirror of the lifecycle titles in sync", () => {

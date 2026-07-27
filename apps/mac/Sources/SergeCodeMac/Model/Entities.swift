@@ -668,12 +668,15 @@ public enum ToolLifecycleTitle {
         "updated plan": "todo",
     ]
 
-    /// Identity of a tool title across the running -> settled rename. Titles
-    /// the server does not rewrite (skills, MCP calls, raw tool names) are
-    /// their own identity.
+    /// Identity of a tool title across the running -> settled rename.
+    ///
+    /// Only the pairs above fold. Titles the server does not rewrite (skills,
+    /// MCP calls, raw tool names) come back as they came in, case included —
+    /// those names are the provider's, and two that differ only in case are
+    /// two different tools rather than one row to merge.
     public static func canonical(_ name: String) -> String {
-        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return lifecycleTitles[normalized] ?? normalized
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return lifecycleTitles[trimmed.lowercased()] ?? trimmed
     }
 
     /// Whether two tool row titles can name the same invocation.

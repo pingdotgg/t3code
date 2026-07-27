@@ -175,6 +175,32 @@ struct TimelineUpsertIndexTests {
         assertIndexMatchesArray(indexed, indexByID: indexByID)
     }
 
+    @Test("only the known lifecycle pairs fold; other titles stay case-exact")
+    func nonLifecycleTitlesStayExact() {
+        #expect(ToolLifecycleTitle.namesMatch("Running command", "Ran command"))
+        #expect(ToolLifecycleTitle.namesMatch("Reading file", "Read file"))
+        // A provider's own names are not ours to normalize: two MCP tools
+        // whose names differ only in case are two tools.
+        #expect(ToolLifecycleTitle.canonical("linear · create_issue") == "linear · create_issue")
+        #expect(!ToolLifecycleTitle.namesMatch("linear · Create_Issue", "linear · create_issue"))
+        #expect(!ToolLifecycleTitle.namesMatch("Skill: Review", "Skill: review"))
+
+        let running = TimelineItem.toolEvent(
+            id: "activity-1", name: "linear · Create_Issue", detail: "", kind: .mcpCall,
+            status: .running, at: date(2), output: nil, outputIsError: false)
+        let otherCompleted = TimelineItem.toolEvent(
+            id: "activity-2", name: "linear · create_issue", detail: "", kind: .mcpCall,
+            status: .succeeded, at: date(3), output: "SER-1", outputIsError: false)
+
+        var indexed: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
+        for item in [running, otherCompleted] {
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+        #expect(indexed.count == 2)
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+    }
+
     @Test("angle brackets that are part of the command stay part of the detail")
     func angleBracketDetailIsNotAMarker() {
         // Only the runtime's exit marker is dropped when details are compared;
