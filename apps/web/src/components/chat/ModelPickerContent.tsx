@@ -43,6 +43,10 @@ type ModelPickerItem = {
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 
+function ModelListSeparator() {
+  return <div className="h-0.5" />;
+}
+
 // Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
 // can contain colons (e.g. some vendor model ids), so we only split on the
 // first colon — anything after that is the slug.
@@ -618,8 +622,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             </div>
 
             {/* Model list */}
-            <div className="relative min-h-0 flex-1 overflow-hidden">
-              <ComboboxListVirtualized className="model-picker-list size-full min-w-0 p-0">
+            <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
+              <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredModelKeys}
@@ -656,10 +660,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   estimatedItemSize={60}
                   drawDistance={480}
                   recycleItems
+                  contentContainerClassName="pl-2 pr-px"
+                  ItemSeparatorComponent={ModelListSeparator}
                   onLayout={updateModelListScrollFades}
                   onScroll={updateModelListScrollFades}
                   className={cn(
-                    "scrollbar-gutter-both h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
+                    "h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
                     showTopScrollFade && "mask-t-from-[calc(100%-var(--fade-size))]",
                     showBottomScrollFade && "mask-b-from-[calc(100%-var(--fade-size))]",
                   )}
