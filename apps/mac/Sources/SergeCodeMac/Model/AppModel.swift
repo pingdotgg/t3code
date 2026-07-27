@@ -834,6 +834,7 @@ public final class AppModel {
             interactionThreadByID = interactionThreadByID.filter { $0.value != id }
             pruneTimelineTasks.removeValue(forKey: id)?.cancel()
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
+            RunTapeCache.evict(threadID: scopedThreadKey(id))
             StreamingMarkdownCache.evict(threadID: scopedThreadKey(id))
             StreamingRevealStore.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
@@ -1674,9 +1675,9 @@ public final class AppModel {
         }
     }
 
-    public func respond(to approval: ApprovalRequest, approve: Bool) async {
+    public func respond(to approval: ApprovalRequest, decision: ApprovalDecision) async {
         do {
-            try await backend.respondToApproval(id: approval.id, approve: approve)
+            try await backend.respondToApproval(id: approval.id, decision: decision)
         } catch {
             lastError = String(describing: error)
         }

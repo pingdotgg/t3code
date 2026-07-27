@@ -100,6 +100,7 @@
             snapshot("1-inspector-timeline", dir: dir)
             probeToolbarNavigationAccessibility(phase: model.connection)
             await probeChatTurnRail(model: model, dir: dir)
+            await probeApprovalCard(model: model, multi: multi, dir: dir)
             await probeCommandTaskCard(model: model, dir: dir)
 
             // Unified activity panel: scroll to the checkpoint history, then
@@ -1150,10 +1151,42 @@
             let settled = model.thread(threadID: threadID)?.status.isSettled ?? false
             let turns = ChatTurnRailModel.turns(
                 from: items.groupedForDisplay(threadIsSettled: settled))
+            let tape = RunTapeProjection.tape(timeline: items)
             print(
                 "UIProbe: turn rail turns=\(turns.count) "
-                    + "visible=\(turns.count >= 2)")
+                    + "visible=\(turns.count >= 2) "
+                    + "tape=\(tape.map(\.signal.rawValue).joined(separator: ","))")
             snapshot("1c-chat-turn-rail", dir: dir)
+        }
+
+        /// The approval card is the thread's customs checkpoint: kind label,
+        /// manifest detail, and three stamps (Deny / Approve for Session /
+        /// Approve). The mock seeds its pending approval on thread-2, so hop
+        /// there, capture, and hop back.
+        private static func probeApprovalCard(
+            model: AppModel, multi: MultiDeviceModel, dir: String
+        ) async {
+            let previous = model.selectedThreadID
+            guard
+                let approvalThread = model.threads.first(where: { $0.hasPendingApproval })?.id
+                    ?? model.threads.first(where: { $0.id == "thread-2" })?.id
+            else {
+                print("UIProbe: approval card probe skipped (no approval thread)")
+                return
+            }
+            multi.select(threadID: approvalThread, on: model.deviceID)
+            await model.loadTimelineIfNeeded(threadID: approvalThread)
+            try? await Task.sleep(for: .seconds(1))
+            let hasApproval = model.timeline(threadID: approvalThread).contains {
+                if case .approval = $0 { return true }
+                return false
+            }
+            print("UIProbe: approval card present=\(hasApproval)")
+            snapshot("1e-approval-card", dir: dir)
+            if let previous {
+                multi.select(threadID: previous, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(0.5))
+            }
         }
 
         /// Command tasks render as shell work, not as delegated agents, and a

@@ -329,8 +329,8 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         try await state.stopTask(threadID: threadID, taskId: taskId)
     }
 
-    public func respondToApproval(id: String, approve: Bool) async throws {
-        await state.respondToApproval(id: id, approve: approve)
+    public func respondToApproval(id: String, decision: ApprovalDecision) async throws {
+        await state.respondToApproval(id: id, decision: decision)
     }
 
     public func models() async throws -> [ModelOption] {
@@ -1160,7 +1160,10 @@ private actor MockState {
         emit(.threadUpserted(thread))
     }
 
-    func respondToApproval(id: String, approve: Bool) {
+    func respondToApproval(id: String, decision: ApprovalDecision) {
+        // The mock has no session-scoped policy to update, so a standing
+        // approval behaves like a plain one.
+        let approve = decision.isApproval
         guard let approval = approvalsByID.removeValue(forKey: id) else { return }
         emit(.approvalResolved(id: id))
 

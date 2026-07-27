@@ -1400,6 +1400,7 @@ private struct SidebarThreadRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            SidebarRunTape(item: item)
             if item.thread.backgroundAgentCount > 0 {
                 Text("\(item.thread.backgroundAgentCount)")
                     .font(.caption2.monospacedDigit().weight(.semibold))
@@ -1446,6 +1447,67 @@ private struct SidebarThreadRow: View {
             parts.append(item.thread.provider.displayName)
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Miniature run tape at a sidebar row's trailing edge: one bar per recent
+/// turn, tinted by the turn's dominant signal, so "which of my running
+/// agents is thrashing" reads from the sidebar without opening anything.
+///
+/// The tape only exists where the timeline does — the app retains a handful
+/// of timeline subscriptions, so unvisited threads simply show no tape
+/// rather than a fabricated one. Reading `model.timeline` here subscribes
+/// the row to that one thread's timeline writes, which is the observation
+/// granularity `ThreadState` exists to provide.
+private struct SidebarRunTape: View {
+    let item: SidebarThreadItem
+
+    /// Cap so a 100-turn thread doesn't grow a mural; the recent tail is
+    /// the actionable part.
+    private static let maxCells = 12
+
+    var body: some View {
+        let model = item.member.location.model
+        let threadID = item.thread.id
+        let timeline = model.timeline(threadID: threadID)
+        if !timeline.isEmpty {
+            let cells = RunTapeCache.tape(
+                timeline: timeline,
+                threadID: model.scopedThreadKey(threadID),
+                structureVersion: model.timelineStructureVersion(threadID: threadID)
+            ).suffix(Self.maxCells)
+            if cells.count >= 2 {
+                HStack(spacing: 2) {
+                    ForEach(cells) { cell in
+                        Capsule()
+                            .fill(tint(for: cell).opacity(0.6))
+                            .frame(width: 3, height: 7)
+                    }
+                }
+                .help(helpText(Array(cells)))
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func tint(for cell: RunTapeCell) -> Color {
+        if cell.hasRunningTool && !item.thread.status.isSettled {
+            return AlpineTheme.accent
+        }
+        switch cell.signal {
+        case .fail: return AlpineTheme.destructive
+        case .edit: return AlpineTheme.statusSuccess
+        case .work: return AlpineTheme.sky
+        case .talk: return Color.secondary
+        }
+    }
+
+    private func helpText(_ cells: [RunTapeCell]) -> String {
+        let failed = cells.reduce(0) { $0 + $1.failedCount }
+        let tools = cells.reduce(0) { $0 + $1.toolCount }
+        var line = "Last \(cells.count) turns · \(tools) tools"
+        if failed > 0 { line += " · \(failed) failed" }
+        return line
     }
 }
 

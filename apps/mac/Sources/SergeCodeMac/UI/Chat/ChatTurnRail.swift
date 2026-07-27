@@ -42,8 +42,18 @@ enum ChatTurnRailModel {
 /// Codex-style turn navigation rail: a quiet column of notches pinned to the
 /// leading edge of the chat timeline, one per conversation turn. Selecting a
 /// notch scrolls the timeline to that turn's user message.
+///
+/// Each notch doubles as one cell of the thread's run tape: its tint carries
+/// the turn's dominant `RunSignal` (failure, edit, tool work, talk), so a
+/// long thread's shape — where it thrashed, where work landed — reads at a
+/// glance without opening anything.
 struct ChatTurnRail: View {
     let turns: [ChatTurnRailModel.Turn]
+    /// Run-tape cell per turn, keyed by the opening user message's row id.
+    /// Missing entries degrade to the neutral notch.
+    let tape: [String: RunTapeCell]
+    /// A dangling `.running` tool on a settled thread is not live work.
+    let threadIsSettled: Bool
     let onSelect: (String) -> Void
 
     var body: some View {
@@ -51,7 +61,12 @@ struct ChatTurnRail: View {
         if turns.count >= 2 {
             VStack(spacing: 9) {
                 ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
-                    ChatTurnNotch(number: index + 1, preview: turn.preview) {
+                    ChatTurnNotch(
+                        number: index + 1,
+                        preview: turn.preview,
+                        cell: tape[turn.id],
+                        threadIsSettled: threadIsSettled
+                    ) {
                         onSelect(turn.id)
                     }
                 }
@@ -68,21 +83,47 @@ struct ChatTurnRail: View {
     }
 }
 
-/// A single rail notch: a slim capsule that widens and brightens on hover.
+/// A single rail notch: a slim capsule that widens and brightens on hover,
+/// tinted by its turn's run-tape signal.
 private struct ChatTurnNotch: View {
     /// 1-based position in the rail; the only thing distinguishing two notches
     /// for VoiceOver when the prompts read alike or the excerpt is empty.
     let number: Int
     let preview: String
+    let cell: RunTapeCell?
+    let threadIsSettled: Bool
     let action: () -> Void
 
     @UIState private var isHovering = false
 
+    private var isLive: Bool {
+        cell?.hasRunningTool == true && !threadIsSettled
+    }
+
+    /// Signal tints stay in the rail's quiet register: full strength only on
+    /// hover, and the familiar neutral for talk/unknown turns so a
+    /// conversation-only thread's rail looks exactly as it always has.
+    private var tint: Color {
+        if isLive { return AlpineTheme.accent }
+        switch cell?.signal {
+        case .fail: return AlpineTheme.destructive
+        case .edit: return AlpineTheme.statusSuccess
+        case .work: return AlpineTheme.sky
+        case .talk, nil: return Color.secondary
+        }
+    }
+
+    private var help: String {
+        guard let cell, cell.toolCount > 0 else { return preview }
+        return preview.isEmpty ? cell.summaryLine : "\(preview) — \(cell.summaryLine)"
+    }
+
     var body: some View {
         Button(action: action) {
             Capsule()
-                .fill(Color.secondary.opacity(isHovering ? 0.9 : 0.45))
+                .fill(tint.opacity(isHovering ? 0.9 : 0.55))
                 .frame(width: isHovering ? 14 : 10, height: 3)
+                .pulseGlow(isActive: isLive)
                 // Roomier invisible hit area; the visible pill stays subtle.
                 .padding(.vertical, 3)
                 .padding(.trailing, 4)
@@ -91,8 +132,8 @@ private struct ChatTurnNotch: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(Motion.feedback, value: isHovering)
-        .help(preview)
+        .help(help)
         .accessibilityLabel(
-            preview.isEmpty ? "Jump to turn \(number)" : "Jump to turn \(number): \(preview)")
+            help.isEmpty ? "Jump to turn \(number)" : "Jump to turn \(number): \(help)")
     }
 }
