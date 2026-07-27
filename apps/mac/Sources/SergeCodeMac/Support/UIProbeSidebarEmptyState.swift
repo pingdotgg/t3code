@@ -122,6 +122,23 @@
                 snapshot("sidebar-empty-state-churned", window: window, dir: dir)
             }
 
+            // Re-rank the fixture project over and over: a stall promotes a
+            // thread into the attention tier and clearing it demotes the thread
+            // again, which moves rows without any row arriving or leaving. This
+            // is the churn a working session actually produces — sessions start,
+            // stall, ask for approval, go quiet — and "threads duplicated in
+            // place, worse the longer the app is open" is what a move stranding
+            // a row view looks like.
+            await shuffleRanking(model: model, multi: multi, table: table)
+            snapshot("sidebar-empty-state-reranked", window: window, dir: dir)
+
+            // Settling is the removal a working session performs most: the row
+            // leaves the active list and the "Settled" toggle arrives in the
+            // same update — one row out, one row in, which is exactly the shape
+            // that stranded views.
+            await settleAndReopen(model: model, multi: multi, table: table)
+            snapshot("sidebar-empty-state-settled", window: window, dir: dir)
+
             // Then drain it again, one thread at a time. Plain row removals
             // under the same structure animation — the control for the
             // placeholder above, which is a whole branch of the section's
@@ -163,7 +180,8 @@
 
         // MARK: - Census
 
-        /// What the list holds versus what the model can account for.
+        /// What the list holds versus what the model can account for, plus any
+        /// row view the table is drawing without owning.
         ///
         /// Polled rather than sampled once: the mock keeps mutating threads while
         /// the probe runs, so a single disagreement is as likely to be a count
@@ -174,18 +192,24 @@
         ) async {
             var observed = table.numberOfRows
             var expected = expectedRows(in: multi)
+            var stranded = UIProbeSidebar.strandedRowViews(in: table).count
             let agreed = await UIProbeWait.until {
                 observed = table.numberOfRows
                 expected = expectedRows(in: multi)
-                return observed == expected
+                stranded = UIProbeSidebar.strandedRowViews(in: table).count
+                return observed == expected && stranded == 0
             }
-            print("UIProbe: \(name) rows=\(observed) expected=\(expected)")
+            print("UIProbe: \(name) rows=\(observed) expected=\(expected) stranded=\(stranded)")
             if agreed {
-                UIProbeAssertions.pass(name, "\(observed) row(s) accounted for")
-            } else {
+                UIProbeAssertions.pass(name, "\(observed) row(s) accounted for, none stranded")
+            } else if observed != expected {
                 UIProbeAssertions.fail(
                     name,
                     "list holds \(observed) rows, model accounts for \(expected)")
+            } else {
+                UIProbeAssertions.fail(
+                    name,
+                    "\(stranded) row view(s) still drawn after the table stopped owning them")
             }
         }
 
@@ -208,6 +232,128 @@
                     + (hidden > 0 ? 1 : 0)
                     + (split.settled.isEmpty ? 0 : 1)
                     + (revealed.contains(group.id) ? split.settled.count : 0)
+            }
+        }
+
+        /// Settles a session and reopens it, checking after each half that the
+        /// table still owns every row view it draws.
+        ///
+        /// Both directions matter and they are not the same shape: settling
+        /// takes a row out of the active list and puts the "Settled" toggle in,
+        /// while reopening takes the toggle out and puts the row back.
+        private static func settleAndReopen(
+            model: AppModel, multi: MultiDeviceModel, table: NSTableView
+        ) async {
+            guard
+                let thread = model.threads.first(where: {
+                    $0.status != .archived && ThreadInboxSemantics.canSettle($0)
+                        && !ThreadInboxSemantics.effectiveSettled($0)
+                })
+            else {
+                UIProbeAssertions.fail("sidebar-settle", "no settleable session in the fixture")
+                return
+            }
+
+            await model.settleThread(thread)
+            guard
+                await UIProbeWait.until({
+                    model.threads.contains {
+                        $0.id == thread.id && ThreadInboxSemantics.effectiveSettled($0)
+                    }
+                })
+            else {
+                UIProbeAssertions.fail("sidebar-settle", "\(thread.title) never settled")
+                return
+            }
+            await settleEntrance()
+            let afterSettle = UIProbeSidebar.strandedRowViews(in: table).count
+
+            await model.unsettleThread(thread)
+            _ = await UIProbeWait.until {
+                model.threads.contains {
+                    $0.id == thread.id && !ThreadInboxSemantics.effectiveSettled($0)
+                }
+            }
+            await settleEntrance()
+            let afterReopen = UIProbeSidebar.strandedRowViews(in: table).count
+
+            print(
+                "UIProbe: sidebar-settle thread=\(thread.id) strandedAfterSettle=\(afterSettle) "
+                    + "strandedAfterReopen=\(afterReopen) rows=\(table.numberOfRows) "
+                    + "expected=\(expectedRows(in: multi))")
+            if afterSettle == 0 && afterReopen == 0 {
+                UIProbeAssertions.pass("sidebar-settle", "settle and reopen stranded nothing")
+            } else {
+                UIProbeAssertions.fail(
+                    "sidebar-settle",
+                    "settle left \(afterSettle) and reopen left \(afterReopen) "
+                        + "row view(s) drawn but unowned")
+            }
+        }
+
+        /// Rounds of promote/demote churn. Enough that a leak of one row view
+        /// per move is unmistakable, few enough to stay inside the watchdog.
+        private static let rerankRounds = 8
+
+        /// Promotes and demotes threads in the seeded projects, checking after
+        /// every round that the table still owns every row view it draws.
+        ///
+        /// Reported as one assertion with the worst round attached, rather than
+        /// one per round: what matters is whether row views accumulate at all.
+        private static func shuffleRanking(
+            model: AppModel, multi: MultiDeviceModel, table: NSTableView
+        ) async {
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: sidebar-rerank skipped (live backend run)")
+                return
+            }
+            // Threads that are already on screen, so every flip is a move
+            // between tiers rather than a row arriving or leaving.
+            let targets = model.threads
+                .filter { $0.status != .archived && !ThreadInboxSemantics.effectiveSettled($0) }
+                .prefix(3)
+                .map(\.id)
+            guard !targets.isEmpty else {
+                UIProbeAssertions.fail("sidebar-rerank", "no rankable threads in the fixture")
+                return
+            }
+
+            var worst = 0
+            var worstRound = 0
+            for round in 1...rerankRounds {
+                let stalled = round.isMultiple(of: 2)
+                for threadID in targets {
+                    await mock.probeSetThreadHealth(threadID: threadID, stalled: stalled)
+                }
+                _ = await UIProbeWait.until(tries: 12) {
+                    model.threads.contains { $0.id == targets[0] && $0.isStalled == stalled }
+                }
+                await settleEntrance()
+                let stranded = UIProbeSidebar.strandedRowViews(in: table).count
+                if stranded > worst {
+                    worst = stranded
+                    worstRound = round
+                }
+            }
+            // Leave the fixture as it was found, so the drain below is not
+            // reading a state this phase invented.
+            for threadID in targets {
+                await mock.probeSetThreadHealth(threadID: threadID, stalled: false)
+            }
+            await settleEntrance()
+
+            let rows = table.numberOfRows
+            let expected = expectedRows(in: multi)
+            print(
+                "UIProbe: sidebar-rerank rounds=\(rerankRounds) rows=\(rows) "
+                    + "expected=\(expected) worstStranded=\(worst)")
+            if worst == 0 {
+                UIProbeAssertions.pass(
+                    "sidebar-rerank", "\(rerankRounds) re-rank round(s) stranded nothing")
+            } else {
+                UIProbeAssertions.fail(
+                    "sidebar-rerank",
+                    "round \(worstRound) left \(worst) row view(s) drawn but unowned")
             }
         }
 
