@@ -70,10 +70,10 @@ describe("compressImageForStash", () => {
 
     const result = await compressImageForStash(makeFile(1024));
 
-    expect(result).not.toBeNull();
-    expect(result?.recompressed).toBe(false);
-    expect(result?.mimeType).toBe("image/png");
-    expect(result?.dataUrl.startsWith("data:image/png")).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.image.recompressed).toBe(false);
+    expect(result.ok && result.image.mimeType).toBe("image/png");
+    expect(result.ok && result.image.dataUrl.startsWith("data:image/png")).toBe(true);
     // Untouched payloads must not pay for a decode.
     expect(bitmapSpy).not.toHaveBeenCalled();
   });
@@ -84,12 +84,12 @@ describe("compressImageForStash", () => {
 
     const result = await compressImageForStash(makeFile(4_000_000));
 
-    expect(result).not.toBeNull();
-    expect(result?.recompressed).toBe(true);
-    expect(result?.mimeType).toBe("image/webp");
-    expect(result?.dataUrl.length).toBeLessThanOrEqual(MAX_STASH_IMAGE_DATA_URL_CHARS);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.image.recompressed).toBe(true);
+    expect(result.ok && result.image.mimeType).toBe("image/webp");
+    expect(result.ok && result.image.dataUrl.length <= MAX_STASH_IMAGE_DATA_URL_CHARS).toBe(true);
     // sizeBytes should describe the re-encoded payload, not the 4MB original.
-    expect(result?.sizeBytes).toBeLessThan(4_000_000);
+    expect(result.ok && result.image.sizeBytes).toBeLessThan(4_000_000);
     // WebP keeps alpha, so no white matte should be painted.
     expect(fillRect).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalled();
@@ -100,8 +100,8 @@ describe("compressImageForStash", () => {
 
     const result = await compressImageForStash(makeFile(4_000_000));
 
-    expect(result?.recompressed).toBe(true);
-    expect(result?.mimeType).toBe("image/jpeg");
+    expect(result.ok && result.image.recompressed).toBe(true);
+    expect(result.ok && result.image.mimeType).toBe("image/jpeg");
     // JPEG has no alpha, so transparent regions must be matted white.
     expect(fillRect).toHaveBeenCalled();
   });
@@ -112,29 +112,32 @@ describe("compressImageForStash", () => {
 
     const result = await compressImageForStash(makeFile(9_000_000));
 
-    expect(result?.recompressed).toBe(true);
-    expect(result?.dataUrl.length).toBeLessThanOrEqual(MAX_STASH_IMAGE_DATA_URL_CHARS);
+    expect(result.ok && result.image.recompressed).toBe(true);
+    expect(result.ok && result.image.dataUrl.length <= MAX_STASH_IMAGE_DATA_URL_CHARS).toBe(true);
     expect(close).toHaveBeenCalled();
   });
 
-  it("returns null when even the smallest encoding overflows the budget", async () => {
+  it("reports too-large when even the smallest encoding overflows the budget", async () => {
     const { close } = stubCanvasPipeline(() => 8_000_000);
 
     const result = await compressImageForStash(makeFile(9_000_000));
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ ok: false, reason: "too-large" });
     // The bitmap must still be released on the give-up path.
     expect(close).toHaveBeenCalled();
   });
 
-  it("returns null for an oversized image when the browser cannot re-encode", async () => {
+  it("reports too-large for an oversized image when the browser cannot re-encode", async () => {
     vi.stubGlobal("createImageBitmap", undefined);
     vi.stubGlobal("OffscreenCanvas", undefined);
 
-    expect(await compressImageForStash(makeFile(4_000_000))).toBeNull();
+    expect(await compressImageForStash(makeFile(4_000_000))).toEqual({
+      ok: false,
+      reason: "too-large",
+    });
   });
 
-  it("returns null when the image fails to decode", async () => {
+  it("reports unreadable when the image fails to decode", async () => {
     vi.stubGlobal(
       "createImageBitmap",
       vi.fn(async () => {
@@ -150,6 +153,46 @@ describe("compressImageForStash", () => {
       },
     );
 
-    expect(await compressImageForStash(makeFile(4_000_000))).toBeNull();
+    expect(await compressImageForStash(makeFile(4_000_000))).toEqual({
+      ok: false,
+      reason: "unreadable",
+    });
+  });
+
+  it("shrinks below the source size when the image is already under MAX_DIMENSION", async () => {
+    // A small-but-heavy source (e.g. a dense PNG): only a real downscale can
+    // get it under budget, since quality alone is stubbed to never suffice.
+    let smallestRequested = Number.POSITIVE_INFINITY;
+    const close = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => ({ width: 800, height: 600, close })),
+    );
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        constructor(
+          public width: number,
+          public height: number,
+        ) {
+          smallestRequested = Math.min(smallestRequested, width);
+        }
+        getContext() {
+          return { fillStyle: "", fillRect: vi.fn(), drawImage: vi.fn() };
+        }
+        async convertToBlob({ type }: { type: string; quality: number }) {
+          // Only a genuinely downscaled pass fits the budget.
+          const size = smallestRequested < 800 ? 100_000 : 5_000_000;
+          return new Blob([new Uint8Array(size)], { type });
+        }
+      },
+    );
+
+    const result = await compressImageForStash(makeFile(4_000_000));
+
+    expect(result.ok).toBe(true);
+    // Fallback passes must scale off the bitmap, not a fixed 2048 ceiling
+    // that would never go below an 800px source.
+    expect(smallestRequested).toBeLessThan(800);
   });
 });

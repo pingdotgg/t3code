@@ -48,6 +48,13 @@ const StashEntrySchema = Schema.Struct({
    * existed decode without it.
    */
   unreadableImageNames: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * Images still being encoded when the entry was written. The entry is
+   * persisted before its images so a crash mid-encode cannot lose the prompt;
+   * this field lets the UI show "N images still saving" until
+   * `finalizeEntryImages` lands, and flags entries orphaned by a reload.
+   */
+  pendingImageCount: Schema.optionalKey(Schema.Number),
 });
 export type PromptStashEntry = typeof StashEntrySchema.Type;
 
@@ -125,10 +132,26 @@ function createQuotaSafeStorage(base: StateStorage): StateStorage {
   };
 }
 
+/**
+ * Reading the `localStorage` property itself can throw `SecurityError` when
+ * storage is blocked by policy or the page is a sandboxed iframe — so the
+ * access has to be guarded, not just the get/set calls on it. Otherwise
+ * importing this module would crash the app at load.
+ */
+function resolveBaseStorage(): StateStorage {
+  try {
+    if (typeof localStorage !== "undefined") {
+      return localStorage;
+    }
+  } catch {
+    // Fall through to the in-memory store: the stash still works for the
+    // session, it just will not survive a reload.
+  }
+  return createMemoryStorage();
+}
+
 const promptStashDebouncedStorage = createDebouncedStorage(
-  createQuotaSafeStorage(
-    typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
-  ),
+  createQuotaSafeStorage(resolveBaseStorage()),
   PROMPT_STASH_PERSIST_DEBOUNCE_MS,
 );
 
@@ -147,6 +170,20 @@ interface PromptStashStoreState {
   stashEntry: (entry: PromptStashEntry) => PromptStashEntry | null;
   /** Removes and returns an entry from a scope's queue (restore + delete). */
   takeEntry: (scopeKey: string, entryId: string) => PromptStashEntry | null;
+  /**
+   * Attaches the encoded images to an entry written earlier by `stashEntry`,
+   * clearing its pending count. No-ops when the entry is gone (restored or
+   * deleted while encoding was still running).
+   */
+  finalizeEntryImages: (
+    scopeKey: string,
+    entryId: string,
+    images: {
+      attachments: ReadonlyArray<PersistedComposerImageAttachment>;
+      droppedImageNames: ReadonlyArray<string>;
+      unreadableImageNames: ReadonlyArray<string>;
+    },
+  ) => void;
 }
 
 export const usePromptStashStore = create<PromptStashStoreState>()(
@@ -181,6 +218,26 @@ export const usePromptStashStore = create<PromptStashStoreState>()(
           return { queuesByScopeKey: nextQueues };
         });
         return entry;
+      },
+      finalizeEntryImages: (scopeKey, entryId, images) => {
+        set((state) => {
+          const queue = readQueue(state.queuesByScopeKey, scopeKey);
+          const index = queue.findIndex((candidate) => candidate.id === entryId);
+          // Restored or deleted mid-encode: nothing to attach to.
+          if (index === -1) return state;
+          const existing = queue[index];
+          if (!existing) return state;
+          const nextEntry: PromptStashEntry = {
+            ...existing,
+            attachments: images.attachments,
+            droppedImageNames: images.droppedImageNames,
+            unreadableImageNames: images.unreadableImageNames,
+            pendingImageCount: 0,
+          };
+          const nextQueue = [...queue];
+          nextQueue[index] = nextEntry;
+          return { queuesByScopeKey: { ...state.queuesByScopeKey, [scopeKey]: nextQueue } };
+        });
       },
     }),
     {

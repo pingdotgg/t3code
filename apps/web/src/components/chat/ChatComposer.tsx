@@ -59,6 +59,7 @@ import {
 import {
   EMPTY_PROMPT_STASH_QUEUE,
   flushPromptStashStorage,
+  MAX_STASH_ENTRIES_PER_QUEUE,
   partitionStashAttachments,
   promptStashScopeKey,
   usePromptStashStore,
@@ -1906,6 +1907,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
+  const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
   const stashProviderLabel = noProviderAvailable
     ? "No provider"
     : getProviderDisplayName(providerStatuses, selectedProvider);
@@ -2049,72 +2051,95 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (stashInFlightRef.current) return;
     stashInFlightRef.current = true;
 
-    // Clear synchronously, before any await. Image serialization is async, and
-    // the editor stays live throughout: clearing afterwards would wipe
-    // whatever the user typed in the meantime. Only the prompt and images are
-    // cleared — terminal/element contexts, preview annotations, and review
-    // comments are not stashable, so destroying them here would be
-    // unrecoverable.
     const stashTarget = composerDraftTarget;
-    promptRef.current = "";
-    clearComposerDraftPromptAndImages(stashTarget);
-    setComposerCursor(0);
-    setComposerTrigger(null);
-    // The badge pulse is the whole confirmation — no toast. Anything that
-    // didn't survive the save is recorded on the entry and shown in the
-    // stash menu, so nothing is silently lost.
-    pulseStashBadge();
+    const entryId = randomUUID();
+    const scopeKey = promptStashScopeKey(stashScopeInstanceId);
+    try {
+      // Persist the text-only entry *first*, then clear. Ordering matters in
+      // both directions: writing before clearing means a crash or closed tab
+      // mid-encode still leaves the prompt recoverable, while clearing before
+      // the async image work means edits typed during encoding are not wiped.
+      // Images are appended to the stored entry as they finish encoding.
+      const evicted = stashEntryToQueue({
+        id: entryId,
+        createdAt: new Date().toISOString(),
+        prompt,
+        attachments: [],
+        providerInstanceId: stashScopeInstanceId,
+        modelSelection: noProviderAvailable ? null : selectedModelSelection,
+        droppedImageNames: [],
+        unreadableImageNames: [],
+        pendingImageCount: images.length,
+      });
+      flushPromptStashStorage();
 
-    // Images are re-encoded for the stash rather than stored verbatim: the
-    // composer allows up to 10MB per image, but localStorage gives the whole
-    // origin ~5MB. Only the stashed copy shrinks; the live attachment (and
-    // anything sent without stashing) keeps the original file.
-    const candidateAttachments: PersistedComposerImageAttachment[] = [];
-    const unreadableImageNames: string[] = [];
-    for (const image of images) {
-      try {
-        const compressed = await compressImageForStash(image.file);
-        if (!compressed) {
-          unreadableImageNames.push(image.name);
+      // Only the prompt and images are cleared — terminal/element contexts,
+      // preview annotations, and review comments are not stashable, so
+      // destroying them here would be unrecoverable.
+      promptRef.current = "";
+      clearComposerDraftPromptAndImages(stashTarget);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      pulseStashBadge();
+
+      if (evicted) {
+        toastManager.add({
+          type: "warning",
+          title: "Oldest stashed prompt discarded",
+          description: `The ${stashProviderLabel} stash holds ${MAX_STASH_ENTRIES_PER_QUEUE} prompts; the oldest was removed to make room.`,
+          data: { hideCopyButton: true },
+        });
+      }
+
+      // Images are re-encoded for the stash rather than stored verbatim: the
+      // composer allows up to 10MB per image, but localStorage gives the whole
+      // origin ~5MB. Only the stashed copy shrinks; the live attachment (and
+      // anything sent without stashing) keeps the original file.
+      const candidateAttachments: PersistedComposerImageAttachment[] = [];
+      const oversizedImageNames: string[] = [];
+      const unreadableImageNames: string[] = [];
+      for (const image of images) {
+        const result = await compressImageForStash(image.file);
+        if (!result.ok) {
+          // "too large" and "could not be read" are distinct outcomes; the
+          // menu and restore toast report them separately.
+          (result.reason === "too-large" ? oversizedImageNames : unreadableImageNames).push(
+            image.name,
+          );
           continue;
         }
         candidateAttachments.push({
           id: image.id,
           name: image.name,
-          mimeType: compressed.mimeType,
-          sizeBytes: compressed.sizeBytes,
-          dataUrl: compressed.dataUrl,
+          mimeType: result.image.mimeType,
+          sizeBytes: result.image.sizeBytes,
+          dataUrl: result.image.dataUrl,
         });
-      } catch {
-        unreadableImageNames.push(image.name);
       }
-    }
-    const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
+      const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
 
-    const entry: PromptStashEntry = {
-      id: randomUUID(),
-      createdAt: new Date().toISOString(),
-      prompt,
-      attachments: kept,
-      providerInstanceId: stashScopeInstanceId,
-      modelSelection: noProviderAvailable ? null : selectedModelSelection,
-      // Kept separate so the menu can say *why* an image is missing rather
-      // than blaming everything on the size budget.
-      droppedImageNames: droppedNames,
-      unreadableImageNames,
-    };
-    stashEntryToQueue(entry);
-    flushPromptStashStorage();
-    stashInFlightRef.current = false;
+      finalizeStashEntryImages(scopeKey, entryId, {
+        attachments: kept,
+        droppedImageNames: [...oversizedImageNames, ...droppedNames],
+        unreadableImageNames,
+      });
+      flushPromptStashStorage();
+    } finally {
+      // Must clear on every path: a throw that left this set would wedge ⌘S
+      // until the composer remounts.
+      stashInFlightRef.current = false;
+    }
   }, [
     clearComposerDraftPromptAndImages,
     composerDraftTarget,
     composerImagesRef,
+    finalizeStashEntryImages,
     noProviderAvailable,
     promptRef,
     pulseStashBadge,
     selectedModelSelection,
     stashEntryToQueue,
+    stashProviderLabel,
     stashScopeInstanceId,
   ]);
 

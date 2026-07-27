@@ -34,6 +34,16 @@ export interface CompressedStashImage {
   recompressed: boolean;
 }
 
+/**
+ * Why an image could not be stashed. Callers report these differently:
+ * "too large" is a budget outcome, "unreadable" is a decode failure.
+ */
+export type StashImageFailureReason = "too-large" | "unreadable";
+
+export type CompressStashImageResult =
+  | { ok: true; image: CompressedStashImage }
+  | { ok: false; reason: StashImageFailureReason };
+
 /** Chunked so a large image can't blow the argument limit of `fromCharCode`. */
 const BASE64_CHUNK_SIZE = 0x8000;
 
@@ -166,40 +176,57 @@ async function encodeWithinBudget(
 export async function compressImageForStash(
   file: File,
   budgetChars: number = MAX_STASH_IMAGE_DATA_URL_CHARS,
-): Promise<CompressedStashImage | null> {
-  const originalDataUrl = await blobToDataUrl(file);
+): Promise<CompressStashImageResult> {
+  let originalDataUrl: string;
+  try {
+    originalDataUrl = await blobToDataUrl(file);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
   if (originalDataUrl.length <= budgetChars) {
     return {
-      dataUrl: originalDataUrl,
-      mimeType: file.type,
-      sizeBytes: file.size,
-      recompressed: false,
+      ok: true,
+      image: {
+        dataUrl: originalDataUrl,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        recompressed: false,
+      },
     };
   }
   if (!canRecompress()) {
-    return null;
+    return { ok: false, reason: "too-large" };
   }
 
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(file);
   } catch {
-    return null;
+    return { ok: false, reason: "unreadable" };
   }
 
   try {
+    // Each pass shrinks relative to the *previous target*, capped by
+    // MAX_DIMENSION. Scaling a fixed ceiling instead would be a no-op for
+    // images already smaller than that ceiling — the fallback passes would
+    // all resolve to the source size and never actually reduce resolution.
+    const baseDimension = Math.min(MAX_DIMENSION, Math.max(bitmap.width, bitmap.height));
     for (const dimensionScale of [1, ...FALLBACK_SCALE_STEPS]) {
-      const encoded = await encodeWithinBudget(bitmap, MAX_DIMENSION * dimensionScale, budgetChars);
+      const targetDimension = Math.max(1, Math.round(baseDimension * dimensionScale));
+      const encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars);
       if (encoded && encoded.dataUrl.length <= budgetChars) {
         return {
-          dataUrl: encoded.dataUrl,
-          mimeType: encoded.mimeType,
-          sizeBytes: dataUrlByteLength(encoded.dataUrl),
-          recompressed: true,
+          ok: true,
+          image: {
+            dataUrl: encoded.dataUrl,
+            mimeType: encoded.mimeType,
+            sizeBytes: dataUrlByteLength(encoded.dataUrl),
+            recompressed: true,
+          },
         };
       }
     }
-    return null;
+    return { ok: false, reason: "too-large" };
   } finally {
     bitmap.close();
   }
