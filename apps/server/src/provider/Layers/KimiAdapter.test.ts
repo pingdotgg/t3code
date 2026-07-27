@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { waitForFileContent } from "../testing/waitForFileContent.ts";
 import { makeKimiAdapter } from "./KimiAdapter.ts";
 const decodeKimiSettings = Schema.decodeSync(KimiSettings);
 
@@ -50,31 +51,6 @@ exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
 const kimiAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-kimi-adapter-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
-
-function waitForFileContent(
-  filePath: string,
-  attempts = 40,
-  expectedContent?: string,
-): Effect.Effect<string> {
-  const readAttempt = (remainingAttempts: number): Effect.Effect<string> =>
-    Effect.gen(function* () {
-      if (remainingAttempts <= 0) {
-        return yield* Effect.die(new Error(`Timed out waiting for file content at ${filePath}`));
-      }
-      const raw = yield* Effect.tryPromise(() => NodeFSP.readFile(filePath, "utf8")).pipe(
-        Effect.orElseSucceed(() => ""),
-      );
-      if (
-        raw.trim().length > 0 &&
-        (expectedContent === undefined || raw.includes(expectedContent))
-      ) {
-        return raw;
-      }
-      yield* Effect.sleep("25 millis");
-      return yield* readAttempt(remainingAttempts - 1);
-    });
-  return readAttempt(attempts);
-}
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeKimiAdapter>[1]) =>
   makeKimiAdapter(decodeKimiSettings({ binaryPath }), options).pipe(Effect.orDie);

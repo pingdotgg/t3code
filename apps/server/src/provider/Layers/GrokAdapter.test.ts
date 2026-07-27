@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { waitForFileContent } from "../testing/waitForFileContent.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -46,31 +47,6 @@ exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
   await NodeFSP.chmod(wrapperPath, 0o755);
   return wrapperPath;
-}
-
-function waitForFileContent(
-  filePath: string,
-  attempts = 40,
-  expectedContent?: string,
-): Effect.Effect<string> {
-  const readAttempt = (remainingAttempts: number): Effect.Effect<string> =>
-    Effect.gen(function* () {
-      if (remainingAttempts <= 0) {
-        return yield* Effect.die(new Error(`Timed out waiting for file content at ${filePath}`));
-      }
-      const raw = yield* Effect.tryPromise(() => NodeFSP.readFile(filePath, "utf8")).pipe(
-        Effect.orElseSucceed(() => ""),
-      );
-      if (
-        raw.trim().length > 0 &&
-        (expectedContent === undefined || raw.includes(expectedContent))
-      ) {
-        return raw;
-      }
-      yield* Effect.sleep("25 millis");
-      return yield* readAttempt(remainingAttempts - 1);
-    });
-  return readAttempt(attempts);
 }
 
 async function readJsonLines(filePath: string) {
