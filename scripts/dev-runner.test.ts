@@ -27,7 +27,6 @@ import {
   getDevRunnerModeArgs,
   resolveModePortOffsets,
   resolveOffset,
-  resolveStopCommand,
   runDevRunnerWithInput,
 } from "./dev-runner.ts";
 
@@ -73,28 +72,6 @@ const devServerInput = {
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
-  describe("resolveStopCommand", () => {
-    // The printed command must target the process *group*, resolved at kill
-    // time via ps: under `bun run dev` the group leader is bun, not the
-    // runner, so a hardcoded `kill -- -<runnerPid>` would name a nonexistent
-    // group. The group is what reaps the `node --watch` children that
-    // otherwise outlive the runner holding the server port.
-    it.effect("resolves the group id from the pid rather than assuming them equal", () =>
-      Effect.sync(() => {
-        assert.strictEqual(
-          resolveStopCommand(4321, "linux"),
-          `kill -TERM -"$(ps -o pgid= -p 4321 | tr -d ' ')"`,
-        );
-      }),
-    );
-
-    it.effect("uses taskkill's tree flag on Windows, where process groups do not exist", () =>
-      Effect.sync(() => {
-        assert.strictEqual(resolveStopCommand(4321, "win32"), "taskkill /pid 4321 /T");
-      }),
-    );
-  });
-
   describe("getDevRunnerModeArgs", () => {
     it.effect("lets Vite+ honor the desktop dev task graph", () =>
       Effect.sync(() => {

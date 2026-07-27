@@ -22,8 +22,6 @@ The worktree-local default deliberately outranks an ambient `T3CODE_HOME`; do no
 
 Ports are derived from the worktree path but can shift when occupied. Always read the actual values from the `[dev-runner]` line.
 
-To stop the stack, run the exact command from the `[dev-runner] stop:` line — it kills the runner's process group, including the watch-mode children that outlive the runner itself. Never kill dev servers by name or path pattern (`pkill -f`, `pgrep | xargs kill`): the pattern matches your own agent process and can take down other worktrees' servers.
-
 Shared browser dev is single-origin: Vite proxies the backend paths, so never set `VITE_HTTP_URL` or `VITE_WS_URL` for `dev`/`dev:web`.
 
 The dev runner disables browser auto-open by default. Do not pass `--browser` during automated testing: an automatically opened page can consume the one-time bootstrap token before the controlled browser uses it.
