@@ -35,6 +35,7 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
@@ -79,21 +80,6 @@ interface BranchToolbarBranchSelectorProps {
 
 function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
-}
-
-function getBranchTriggerLabel(input: {
-  activeWorktreePath: string | null;
-  effectiveEnvMode: "local" | "worktree";
-  resolvedActiveBranch: string | null;
-}): string {
-  const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch } = input;
-  if (!resolvedActiveBranch) {
-    return "Select ref";
-  }
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    return `From ${resolvedActiveBranch}`;
-  }
-  return resolvedActiveBranch;
 }
 
 export function BranchToolbarBranchSelector({
@@ -584,10 +570,11 @@ export function BranchToolbarBranchSelector({
     maybeFetchNextBranchPage();
   }, [refs.length, maybeFetchNextBranchPage]);
 
-  const triggerLabel = getBranchTriggerLabel({
+  const triggerLabel = resolveBranchTriggerLabel({
     activeWorktreePath,
     effectiveEnvMode,
     resolvedActiveBranch,
+    startFromOrigin,
   });
 
   // PR pill shown next to the branch selector when the active branch has one.

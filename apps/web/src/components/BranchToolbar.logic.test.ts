@@ -9,6 +9,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
+  resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
@@ -171,6 +172,60 @@ describe("resolveBranchToolbarValue", () => {
         currentGitBranch: "main",
       }),
     ).toBe("main");
+  });
+});
+
+describe("resolveBranchTriggerLabel", () => {
+  it("shows the origin ref when a new worktree will start from origin", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "main",
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/main");
+  });
+
+  it("shows the local ref when start from origin is disabled", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "main",
+        startFromOrigin: false,
+      }),
+    ).toBe("From main");
+  });
+
+  it("does not duplicate the origin prefix for an explicit remote ref", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "origin/feature/demo",
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/feature/demo");
+  });
+
+  it("keeps current-checkout labels and empty state unchanged", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "local",
+        resolvedActiveBranch: "main",
+        startFromOrigin: true,
+      }),
+    ).toBe("main");
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: null,
+        startFromOrigin: true,
+      }),
+    ).toBe("Select ref");
   });
 });
 
