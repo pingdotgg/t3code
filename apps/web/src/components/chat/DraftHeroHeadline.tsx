@@ -1,7 +1,7 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { FolderPlusIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { FolderPlusIcon, HistoryIcon } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
@@ -23,6 +23,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { ResumeSessionDialog } from "./ResumeSessionDialog";
 
 interface DraftHeroHeadlineProps {
   readonly activeProjectRef: ScopedProjectRef | null;
@@ -41,6 +42,7 @@ export function DraftHeroHeadline({
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const handleNewThread = useNewThreadHandler();
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+  const [isResumeDialogOpen, setIsResumeDialogOpen] = useState(false);
 
   const environmentLabelById = useMemo(
     () =>
@@ -132,6 +134,10 @@ export function DraftHeroHeadline({
           <FolderPlusIcon />
           New project
         </MenuItem>
+        <MenuItem onClick={() => setIsResumeDialogOpen(true)}>
+          <HistoryIcon />
+          Resume a Claude session
+        </MenuItem>
       </MenuPopup>
     </Menu>
   ) : (
@@ -145,14 +151,17 @@ export function DraftHeroHeadline({
   );
 
   return (
-    <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-      {hasResolvedProject ? (
-        <>What should we build in {projectSelector}?</>
-      ) : canChooseProject ? (
-        <>{projectSelector} to start</>
-      ) : (
-        <>Add a project to start</>
-      )}
-    </h1>
+    <>
+      <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+        {hasResolvedProject ? (
+          <>What should we build in {projectSelector}?</>
+        ) : canChooseProject ? (
+          <>{projectSelector} to start</>
+        ) : (
+          <>Add a project to start</>
+        )}
+      </h1>
+      <ResumeSessionDialog open={isResumeDialogOpen} onOpenChange={setIsResumeDialogOpen} />
+    </>
   );
 }

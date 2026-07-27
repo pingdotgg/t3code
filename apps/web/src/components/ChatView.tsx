@@ -177,6 +177,7 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import { useResumeSessionIntentStore } from "../resumeSessionIntentStore";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -4718,6 +4719,9 @@ function ChatViewContent(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const resumeExternalSessionId = isLocalDraftThread
+        ? (useResumeSessionIntentStore.getState().intentByThreadId[activeThread.id] ?? undefined)
+        : undefined;
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -4732,6 +4736,7 @@ function ChatViewContent(props: ChatViewProps) {
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
+                      ...(resumeExternalSessionId ? { resumeExternalSessionId } : {}),
                     },
                   }
                 : {}),
@@ -4771,6 +4776,9 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (resumeExternalSessionId) {
+          useResumeSessionIntentStore.getState().clearResumeSessionIntent(activeThread.id);
+        }
       }
     }
 

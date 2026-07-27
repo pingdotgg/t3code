@@ -648,6 +648,14 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
+  // Claude-only "resume a previous session" support: when set, the server
+  // binds this brand-new thread's provider session directory entry to the
+  // named on-disk Claude Code session (`--resume <uuid>`) immediately after
+  // `thread.create` succeeds, before the first turn is dispatched. See
+  // `apps/server/src/ws.ts`'s `dispatchBootstrapTurnStart`. Scoped to Claude
+  // because only Claude's on-disk transcript format is verified; other
+  // providers' resume cursors are not derived from this field.
+  resumeExternalSessionId: Schema.optional(TrimmedNonEmptyString),
 });
 
 const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({

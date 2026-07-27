@@ -393,6 +393,33 @@ export const ServerProcessResourceHistoryResult = Schema.Struct({
 });
 export type ServerProcessResourceHistoryResult = typeof ServerProcessResourceHistoryResult.Type;
 
+/**
+ * One resumable Claude Code session discovered on disk for a given
+ * workspace root — read from `<claudeHome>/projects/<encodedCwd>/*.jsonl`
+ * transcripts. Claude-only: other providers' on-disk session formats are
+ * unverified. See `apps/server/src/provider/Layers/ClaudeSessionHistory.ts`.
+ */
+export const ServerClaudeResumableSession = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyString,
+  label: Schema.NullOr(TrimmedNonEmptyString),
+  lastActiveAt: IsoDateTime,
+  messageCount: NonNegativeInt,
+});
+export type ServerClaudeResumableSession = typeof ServerClaudeResumableSession.Type;
+
+export const ServerListClaudeResumableSessionsInput = Schema.Struct({
+  workspaceRoot: TrimmedNonEmptyString,
+});
+export type ServerListClaudeResumableSessionsInput =
+  typeof ServerListClaudeResumableSessionsInput.Type;
+
+export const ServerListClaudeResumableSessionsResult = Schema.Struct({
+  sessions: Schema.Array(ServerClaudeResumableSession),
+});
+export type ServerListClaudeResumableSessionsResult =
+  typeof ServerListClaudeResumableSessionsResult.Type;
+
 export const ServerSignalProcessInput = Schema.Struct({
   pid: PositiveInt,
   signal: ServerProcessSignal,

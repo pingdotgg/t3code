@@ -298,6 +298,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    listClaudeResumableSessions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:list-claude-resumable-sessions",
+      tag: WS_METHODS.serverListClaudeResumableSessions,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

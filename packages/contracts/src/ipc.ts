@@ -34,6 +34,8 @@ import type {
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
   ServerConfig,
+  ServerListClaudeResumableSessionsInput,
+  ServerListClaudeResumableSessionsResult,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
@@ -1154,6 +1156,9 @@ export interface LocalApi {
     getProcessResourceHistory: (
       input: ServerProcessResourceHistoryInput,
     ) => Promise<ServerProcessResourceHistoryResult>;
+    listClaudeResumableSessions: (
+      input: ServerListClaudeResumableSessionsInput,
+    ) => Promise<ServerListClaudeResumableSessionsResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
   };
 }

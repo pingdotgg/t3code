@@ -273,9 +273,17 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    remoteControl: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Remote Control",
+        description:
+          "Start sessions with Claude Code's Remote Control enabled (--remote-control), so you can attach from claude.ai or the Claude mobile app.",
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "launchArgs", "remoteControl"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -513,6 +521,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
   launchArgs: Schema.optionalKey(TrimmedString),
+  remoteControl: Schema.optionalKey(Schema.Boolean),
 });
 
 const CursorSettingsPatch = Schema.Struct({
