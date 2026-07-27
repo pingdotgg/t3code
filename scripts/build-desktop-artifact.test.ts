@@ -2014,6 +2014,53 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("disables publishing when no update repository is configured", () =>
+    Effect.gen(function* () {
+      // An ambient GH_TOKEN must not let electron-builder infer a GitHub
+      // publisher for a local build: it cannot resolve owner/repo from the
+      // staged app and crashes while building update metadata.
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.strictEqual(config.publish, null);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { GH_TOKEN: "test-token" } })),
+      ),
+    ),
+  );
+
+  it.effect("publishes to the configured GitHub update repository", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.deepStrictEqual(config.publish, [
+        { provider: "github", owner: "pingdotgg", repo: "t3code", releaseType: "release" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",

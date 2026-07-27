@@ -2679,6 +2679,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           url: resolveMockUpdateServerUrl(mockUpdateServerPort),
         },
       ];
+    } else {
+      // Must be an explicit null, not left unset: with no publish config,
+      // electron-builder infers a GitHub publisher from an ambient GH_TOKEN /
+      // GITHUB_TOKEN, then fails to resolve owner/repo (the staged app has no
+      // .git and no package.json "repository") and hands its update-info builder
+      // a null config, which crashes with "Cannot read properties of null
+      // (reading 'channel')". `null` disables publishing and update metadata
+      // outright, which is what a local build wants. CI always sets
+      // GITHUB_REPOSITORY, so it keeps the real GitHub config above.
+      buildConfig.publish = null;
     }
   }
 
