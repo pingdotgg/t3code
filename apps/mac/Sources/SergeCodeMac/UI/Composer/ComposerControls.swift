@@ -247,6 +247,13 @@ private struct RunProfileMenu: View {
                 guard Motion.profile.allowsDecorativeEffects else { return }
                 burstToken += 1
             }
+            // UIProbe (DEBUG runs) opens the popover through the section-toggle
+            // hook — same-process AX can't press SwiftUI buttons.
+            .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+                if note.object as? String == "run-profile" {
+                    DispatchQueue.main.async { isPresented.toggle() }
+                }
+            }
             .popover(isPresented: $isPresented, arrowEdge: .top) {
                 runProfilePopover(option)
             }
@@ -254,7 +261,7 @@ private struct RunProfileMenu: View {
     }
 
     private func runProfilePopover(_ option: ModelOption) -> some View {
-        ComposerPickerSurface(width: 330) {
+        ComposerPickerSurface(width: showsEffortSlider(option) ? 380 : 330) {
             VStack(spacing: 0) {
                 ComposerPickerHeader(
                     icon: "slider.horizontal.3",
@@ -265,17 +272,32 @@ private struct RunProfileMenu: View {
                 VStack(spacing: 3) {
                     if !option.effortChoices.isEmpty {
                         ComposerPickerSectionLabel(title: "Reasoning effort")
-                        ForEach(Array(option.effortChoices.enumerated()), id: \.element.id) { index, choice in
-                            let style = EffortLevelStyle.resolve(
-                                choiceID: choice.id, index: index, count: option.effortChoices.count)
-                            ComposerPickerChoiceRow(
-                                icon: style.symbolName,
-                                title: choice.label,
-                                detail: choice.isDefault ? "Provider default" : nil,
-                                isSelected: choice.id == effectiveEffort(of: option),
-                                tint: AlpineTheme.effortColor(slot: style.slot)
-                            ) {
-                                Task { await model.setReasoningEffort(choice.id) }
+                        if showsEffortSlider(option) {
+                            EffortSlider(
+                                stops: effortStops(option),
+                                selectedID: effectiveEffort(of: option),
+                                onSelect: { id in
+                                    Task { await model.setReasoningEffort(id) }
+                                }
+                            )
+                            .padding(.horizontal, 2)
+                            .padding(.bottom, 2)
+                        } else {
+                            // A single choice has no ramp to travel; the row
+                            // still states which one is in force.
+                            ForEach(Array(option.effortChoices.enumerated()), id: \.element.id) { index, choice in
+                                let style = EffortLevelStyle.resolve(
+                                    choiceID: choice.id, index: index,
+                                    count: option.effortChoices.count)
+                                ComposerPickerChoiceRow(
+                                    icon: style.symbolName,
+                                    title: choice.label,
+                                    detail: choice.isDefault ? "Provider default" : nil,
+                                    isSelected: choice.id == effectiveEffort(of: option),
+                                    tint: AlpineTheme.effortColor(slot: style.slot)
+                                ) {
+                                    Task { await model.setReasoningEffort(choice.id) }
+                                }
                             }
                         }
                     }
@@ -311,6 +333,24 @@ private struct RunProfileMenu: View {
 
     private func effectiveEffort(of option: ModelOption) -> String? {
         thread.reasoningEffort ?? option.effortChoices.first(where: \.isDefault)?.id
+    }
+
+    /// Effort is an ordered level, so two or more choices earn the ramp
+    /// slider; a lone choice is not a range and stays a plain row.
+    private func showsEffortSlider(_ option: ModelOption) -> Bool {
+        option.effortChoices.count > 1
+    }
+
+    private func effortStops(_ option: ModelOption) -> [EffortSlider.Stop] {
+        option.effortChoices.enumerated().map { index, choice in
+            EffortSlider.Stop(
+                id: choice.id,
+                label: choice.label,
+                isProviderDefault: choice.isDefault,
+                style: EffortLevelStyle.resolve(
+                    choiceID: choice.id, index: index, count: option.effortChoices.count)
+            )
+        }
     }
 
     /// Ramp color of the currently effective effort; nil when the model has
