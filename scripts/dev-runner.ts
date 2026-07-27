@@ -36,6 +36,26 @@ const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
 // which silently moved the ports out from under a URL that had just been shared.
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "::1"] as const;
 
+/**
+ * Bind hosts on which a backend still answers `http://localhost:<port>`, which
+ * is where single-origin browser dev proxies to. Loopback and the wildcards
+ * qualify; a specific interface (e.g. a LAN IP) does not — the OS binds only
+ * that address and the proxy target goes dark.
+ */
+export function isProxiableBindHost(host: string): boolean {
+  const normalized = host.trim();
+  return (
+    normalized === "" ||
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]" ||
+    normalized === "0.0.0.0" ||
+    normalized === "::" ||
+    normalized === "[::]"
+  );
+}
+
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(NodeOS.homedir(), ".t3"),
 );
@@ -143,8 +163,21 @@ export class DevRunnerProcessExitError extends Schema.TaggedErrorClass<DevRunner
   }
 }
 
+export class DevRunnerHostNotProxiableError extends Schema.TaggedErrorClass<DevRunnerHostNotProxiableError>()(
+  "DevRunnerHostNotProxiableError",
+  {
+    mode: Schema.Literals(["dev", "dev:web"]),
+    host: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `--host ${this.host} cannot be combined with ${this.mode}: single-origin browser dev proxies the backend at localhost, and a backend bound only to ${this.host} leaves localhost unanswered, so every proxied request fails. Use a wildcard (0.0.0.0 or ::) to serve that interface and loopback together, or --share for remote access.`;
+  }
+}
+
 export const DevRunnerError = Schema.Union([
   DevRunnerConfigurationError,
+  DevRunnerHostNotProxiableError,
   DevRunnerInvalidPortOffsetError,
   DevRunnerPortExhaustedError,
   DevRunnerProcessError,
@@ -581,6 +614,19 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
           }),
       ),
     );
+
+    // Single-origin browser dev proxies the backend at localhost. A wildcard
+    // bind still answers there; a specific non-loopback interface does not,
+    // which breaks every proxied request in a way that reads as "server is
+    // broken" rather than "flag combination is unsupported". Reject it up
+    // front instead. (dev:server and dev:desktop don't proxy — untouched.)
+    if (
+      (input.mode === "dev" || input.mode === "dev:web") &&
+      input.host !== undefined &&
+      !isProxiableBindHost(input.host)
+    ) {
+      return yield* new DevRunnerHostNotProxiableError({ mode: input.mode, host: input.host });
+    }
 
     const worktreePath = yield* resolveGitWorktreePath(yield* HostProcessWorkingDirectory);
 

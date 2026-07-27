@@ -853,6 +853,90 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       });
     });
 
+    // Single-origin browser dev proxies the backend at localhost, so a backend
+    // bound only to a specific interface breaks every proxied request in a way
+    // that looks like a broken server. Reject the combination up front.
+    it.effect("rejects a specific non-loopback --host for browser dev modes", () => {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.succeed(mockProcess(0))),
+      );
+
+      return Effect.gen(function* () {
+        const error = yield* runDevRunnerWithInput({
+          ...devServerInput,
+          mode: "dev",
+          port: undefined,
+          host: "192.168.1.10",
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.flip,
+        );
+
+        if (error._tag !== "DevRunnerHostNotProxiableError") {
+          assert.fail(`Unexpected error: ${error._tag}`);
+        }
+        assert.equal(error.mode, "dev");
+        assert.equal(error.host, "192.168.1.10");
+        assert.include(error.message, "0.0.0.0");
+        assert.include(error.message, "--share");
+      });
+    });
+
+    // Wildcards keep loopback answering, so the proxy target stays valid and
+    // the combination must keep working — it is the documented way to serve a
+    // LAN interface and the browser proxy at once.
+    it.effect("still spawns the stack for a wildcard --host in dev mode", () => {
+      let spawnCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => {
+          spawnCount += 1;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* runDevRunnerWithInput({
+          ...devServerInput,
+          mode: "dev",
+          port: undefined,
+          host: "0.0.0.0",
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+
+        assert.equal(spawnCount, 1);
+      });
+    });
+
+    // dev:server does not proxy — the client talks to the backend directly —
+    // so a specific interface bind stays legitimate there.
+    it.effect("keeps a specific --host working for dev:server", () => {
+      let spawnCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => {
+          spawnCount += 1;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* runDevRunnerWithInput({
+          ...devServerInput,
+          host: "192.168.1.10",
+        }).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+
+        assert.equal(spawnCount, 1);
+      });
+    });
+
     it.effect("spawns nothing when --dry-run is combined with --share", () => {
       let spawnCount = 0;
       const spawnerLayer = Layer.succeed(
