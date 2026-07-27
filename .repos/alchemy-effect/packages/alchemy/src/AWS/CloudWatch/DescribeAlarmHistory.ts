@@ -1,17 +1,35 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface DescribeAlarmHistoryRequest
   extends cloudwatch.DescribeAlarmHistoryInput {}
 
 /**
- * Runtime binding for `cloudwatch:DescribeAlarmHistory`.
+ * Runtime binding for `cloudwatch:DescribeAlarmHistory` — read state
+ * transitions and configuration changes recorded for alarms in the
+ * account/region.
+ *
+ * Provide `CloudWatch.DescribeAlarmHistoryHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Reading Alarm State
+ * @example Read an Alarm's Recent History
+ * ```typescript
+ * // init — grants cloudwatch:DescribeAlarmHistory
+ * const describeAlarmHistory = yield* AWS.CloudWatch.DescribeAlarmHistory();
+ *
+ * // runtime
+ * const result = yield* describeAlarmHistory({
+ *   AlarmName: yield* alarm.alarmName,
+ *   MaxRecords: 10,
+ * });
+ * const items = result.AlarmHistoryItems ?? [];
+ * ```
  */
-export class DescribeAlarmHistory extends Binding.Service<
+export interface DescribeAlarmHistory extends Binding.Service<
   DescribeAlarmHistory,
+  "AWS.CloudWatch.DescribeAlarmHistory",
   () => Effect.Effect<
     (
       request?: DescribeAlarmHistoryRequest,
@@ -20,47 +38,8 @@ export class DescribeAlarmHistory extends Binding.Service<
       cloudwatch.DescribeAlarmHistoryError
     >
   >
->()("AWS.CloudWatch.DescribeAlarmHistory") {}
+> {}
 
-export const DescribeAlarmHistoryLive = Layer.effect(
-  DescribeAlarmHistory,
-  Effect.gen(function* () {
-    const Policy = yield* DescribeAlarmHistoryPolicy;
-    const describeAlarmHistory = yield* cloudwatch.describeAlarmHistory;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (request: DescribeAlarmHistoryRequest = {}) {
-        return yield* describeAlarmHistory(request);
-      });
-    });
-  }),
+export const DescribeAlarmHistory = Binding.Service<DescribeAlarmHistory>(
+  "AWS.CloudWatch.DescribeAlarmHistory",
 );
-
-export class DescribeAlarmHistoryPolicy extends Binding.Policy<
-  DescribeAlarmHistoryPolicy,
-  () => Effect.Effect<void>
->()("AWS.CloudWatch.DescribeAlarmHistory") {}
-
-export const DescribeAlarmHistoryPolicyLive =
-  DescribeAlarmHistoryPolicy.layer.succeed(
-    Effect.fn(function* (host) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.DescribeAlarmHistory())`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:DescribeAlarmHistory"],
-                Resource: ["*"],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `DescribeAlarmHistoryPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

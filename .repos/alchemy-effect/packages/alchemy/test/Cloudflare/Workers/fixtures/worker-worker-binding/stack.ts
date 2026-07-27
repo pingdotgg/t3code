@@ -1,5 +1,5 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
+import * as Alchemy from "@/index";
 import * as Effect from "effect/Effect";
 import * as pathe from "pathe";
 import BindingEffectCaller from "./binding-effect-caller.ts";
@@ -18,7 +18,7 @@ const asyncCallerMain = pathe.resolve(
  * - `BindingAsyncCaller` — plain `{ fetch }` Cloudflare worker that calls
  *   `env.TARGET.greet(name)` over a service binding.
  * - `BindingEffectCaller` — Effect-native worker that uses
- *   `Cloudflare.bindWorker(BindingTargetWorker)` to call `greet` from
+ *   `Cloudflare.Workers.bindWorker(BindingTargetWorker)` to call `greet` from
  *   inside an Effect.
  */
 export default Alchemy.Stack(
