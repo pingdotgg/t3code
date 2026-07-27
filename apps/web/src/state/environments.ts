@@ -39,6 +39,7 @@ export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  const environmentIds = useMemo(() => new Set(catalog.entries.keys()), [catalog.entries]);
 
   const environments = useMemo(
     () =>
@@ -51,6 +52,7 @@ export function useEnvironments() {
   return {
     isReady: catalog.isReady,
     networkStatus,
+    environmentIds,
     environments,
     presentationById,
   };

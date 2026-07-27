@@ -9,6 +9,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { removePreviewThread, useActivePreviewSessions } from "~/previewStateStore";
 import { useLiveEnvironmentIds, useThreadRefs } from "~/state/entities";
+import { useEnvironments } from "~/state/environments";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserPointerStore } from "./browserPointerStore";
@@ -20,6 +21,8 @@ export function ElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   const activeThreadRefs = useThreadRefs();
   const liveEnvironmentIds = useLiveEnvironmentIds();
+  const { environmentIds: catalogEnvironmentIds, isReady: environmentCatalogReady } =
+    useEnvironments();
   const previousActiveThreadRefs = useRef(activeThreadRefs);
   const sessions = useMemo(
     () =>
@@ -40,6 +43,7 @@ export function ElectronBrowserHost() {
     const reconciliation = reconcilePreviewThreadRefs({
       previousActiveThreadRefs: previousActiveThreadRefs.current,
       activeThreadRefs,
+      catalogEnvironmentIds: environmentCatalogReady ? catalogEnvironmentIds : null,
       liveEnvironmentIds,
     });
     previousActiveThreadRefs.current = reconciliation.nextActiveThreadRefs;
@@ -47,7 +51,7 @@ export function ElectronBrowserHost() {
       removePreviewThread(threadRef);
       usePreviewMiniPlayerStore.getState().removeThread(threadRef);
     }
-  }, [activeThreadRefs, liveEnvironmentIds]);
+  }, [activeThreadRefs, catalogEnvironmentIds, environmentCatalogReady, liveEnvironmentIds]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;

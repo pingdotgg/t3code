@@ -153,7 +153,6 @@ const make = Effect.gen(function* () {
       return;
     }
     const { threadId } = job;
-    yield* closeThreadPreviews(threadId);
     if (job.type === "archive") {
       // Archiving must not snapshot or delete hot rows while any active writer
       // can still mutate them. A failure leaves the durable archived shell or
@@ -227,10 +226,18 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (event.type === "thread.deleted") {
-          return enqueueLifecycleJob({ type: "delete", threadId: event.payload.threadId });
+          return closeThreadPreviews(event.payload.threadId).pipe(
+            Effect.andThen(
+              enqueueLifecycleJob({ type: "delete", threadId: event.payload.threadId }),
+            ),
+          );
         }
         if (event.type === "thread.archived") {
-          return enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId });
+          return closeThreadPreviews(event.payload.threadId).pipe(
+            Effect.andThen(
+              enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId }),
+            ),
+          );
         }
         return Effect.void;
       }),

@@ -196,7 +196,7 @@ effectIt.effect("archives a settled thread when its provider binding is already 
   }),
 );
 
-effectIt.effect("closes previews before archiving a thread lifecycle job", () =>
+effectIt.effect("closes previews when observing an archive event", () =>
   Effect.gen(function* () {
     const events = yield* PubSub.unbounded<OrchestrationEvent>();
     const subscription = yield* PubSub.subscribe(events);
@@ -230,6 +230,62 @@ effectIt.effect("closes previews before archiving a thread lifecycle job", () =>
       yield* reactor.drain;
 
       expect(yield* Ref.get(previewCloseCalls)).toEqual([threadId]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("does not close a restored preview from a delayed archive job", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const blockingThreadId = ThreadId.make("thread-blocking-archive");
+    const restoredThreadId = ThreadId.make("thread-restored-before-archive-job");
+    const blockingArchiveStarted = yield* Deferred.make<void>();
+    const releaseBlockingArchive = yield* Deferred.make<void>();
+    const restoredPreviewClosed = yield* Deferred.make<void>();
+    const restoredArchiveStarted = yield* Deferred.make<void>();
+    const restored = yield* Ref.make(false);
+    const latePreviewCloseCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closePreview: ({ threadId }) =>
+        Ref.get(restored).pipe(
+          Effect.flatMap((isRestored) =>
+            threadId === restoredThreadId && isRestored
+              ? Ref.update(latePreviewCloseCalls, (count) => count + 1)
+              : Effect.void,
+          ),
+          Effect.andThen(
+            threadId === restoredThreadId
+              ? Deferred.succeed(restoredPreviewClosed, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      archiveThread: (threadId) =>
+        threadId === blockingThreadId
+          ? Deferred.succeed(blockingArchiveStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseBlockingArchive)),
+            )
+          : Deferred.succeed(restoredArchiveStarted, undefined).pipe(Effect.asVoid),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(blockingThreadId));
+      yield* Deferred.await(blockingArchiveStarted);
+
+      yield* PubSub.publish(events, archivedEvent(restoredThreadId));
+      yield* Deferred.await(restoredPreviewClosed);
+      yield* Ref.set(restored, true);
+      yield* Deferred.succeed(releaseBlockingArchive, undefined);
+      yield* Deferred.await(restoredArchiveStarted);
+      yield* reactor.drain;
+
+      expect(yield* Ref.get(latePreviewCloseCalls)).toBe(0);
     }).pipe(Effect.provide(layer));
   }),
 );

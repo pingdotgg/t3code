@@ -16,6 +16,7 @@ describe("reconcilePreviewThreadRefs", () => {
       reconcilePreviewThreadRefs({
         previousActiveThreadRefs: [activeRef, archivedRef, deletedRef],
         activeThreadRefs: [activeRef],
+        catalogEnvironmentIds: new Set([environmentOne, environmentTwo]),
         liveEnvironmentIds: new Set([environmentOne]),
       }),
     ).toEqual({
@@ -28,6 +29,7 @@ describe("reconcilePreviewThreadRefs", () => {
     const synchronizing = reconcilePreviewThreadRefs({
       previousActiveThreadRefs: [activeRef, archivedRef],
       activeThreadRefs: [activeRef],
+      catalogEnvironmentIds: new Set([environmentOne]),
       liveEnvironmentIds: new Set(),
     });
     expect(synchronizing).toEqual({
@@ -39,6 +41,7 @@ describe("reconcilePreviewThreadRefs", () => {
       reconcilePreviewThreadRefs({
         previousActiveThreadRefs: synchronizing.nextActiveThreadRefs,
         activeThreadRefs: [activeRef],
+        catalogEnvironmentIds: new Set([environmentOne]),
         liveEnvironmentIds: new Set([environmentOne]),
       }),
     ).toEqual({
@@ -47,11 +50,40 @@ describe("reconcilePreviewThreadRefs", () => {
     });
   });
 
+  it("removes retained preview state when an environment leaves the catalog", () => {
+    expect(
+      reconcilePreviewThreadRefs({
+        previousActiveThreadRefs: [activeRef, deletedRef],
+        activeThreadRefs: [activeRef],
+        catalogEnvironmentIds: new Set([environmentOne]),
+        liveEnvironmentIds: new Set([environmentOne]),
+      }),
+    ).toEqual({
+      removedThreadRefs: [deletedRef],
+      nextActiveThreadRefs: [activeRef],
+    });
+  });
+
+  it("retains the prior baseline while the environment catalog is unavailable", () => {
+    expect(
+      reconcilePreviewThreadRefs({
+        previousActiveThreadRefs: [activeRef, deletedRef],
+        activeThreadRefs: [],
+        catalogEnvironmentIds: null,
+        liveEnvironmentIds: new Set(),
+      }),
+    ).toEqual({
+      removedThreadRefs: [],
+      nextActiveThreadRefs: [activeRef, deletedRef],
+    });
+  });
+
   it("does not report unchanged reordered thread references", () => {
     expect(
       reconcilePreviewThreadRefs({
         previousActiveThreadRefs: [activeRef, archivedRef],
         activeThreadRefs: [{ ...archivedRef }, { ...activeRef }],
+        catalogEnvironmentIds: new Set([environmentOne]),
         liveEnvironmentIds: new Set([environmentOne]),
       }).removedThreadRefs,
     ).toEqual([]);
