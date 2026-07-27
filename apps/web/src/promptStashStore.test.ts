@@ -174,6 +174,48 @@ describe("promptStashStore", () => {
     expect(store.takeEntry("__proto__", "missing")).toBeNull();
   });
 
+  it("finalizeEntryImages attaches images and clears the pending count", () => {
+    const store = usePromptStashStore.getState();
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    store.stashEntry({ ...makeEntry({ id: "pending" }), pendingImageCount: 2 });
+
+    const attached = store.finalizeEntryImages(scopeKey, "pending", {
+      attachments: [
+        {
+          id: "img-1",
+          name: "a.webp",
+          mimeType: "image/webp",
+          sizeBytes: 10,
+          dataUrl: "data:image/webp;base64,AAAA",
+        },
+      ],
+      droppedImageNames: ["big.png"],
+      unreadableImageNames: [],
+    });
+
+    expect(attached).toBe(true);
+    const entry = usePromptStashStore.getState().queuesByScopeKey[scopeKey]?.[0];
+    expect(entry?.attachments).toHaveLength(1);
+    expect(entry?.droppedImageNames).toEqual(["big.png"]);
+    expect(entry?.pendingImageCount).toBe(0);
+  });
+
+  it("finalizeEntryImages reports false when the entry was already taken", () => {
+    const store = usePromptStashStore.getState();
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    store.stashEntry({ ...makeEntry({ id: "racing" }), pendingImageCount: 1 });
+    // Restored (or deleted) while its images were still encoding.
+    store.takeEntry(scopeKey, "racing");
+
+    const attached = store.finalizeEntryImages(scopeKey, "racing", {
+      attachments: [],
+      droppedImageNames: [],
+      unreadableImageNames: [],
+    });
+
+    expect(attached).toBe(false);
+  });
+
   it("drops the scope key entirely when its queue empties", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "only" }));

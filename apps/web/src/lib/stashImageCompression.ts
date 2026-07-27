@@ -213,7 +213,16 @@ export async function compressImageForStash(
     const baseDimension = Math.min(MAX_DIMENSION, Math.max(bitmap.width, bitmap.height));
     for (const dimensionScale of [1, ...FALLBACK_SCALE_STEPS]) {
       const targetDimension = Math.max(1, Math.round(baseDimension * dimensionScale));
-      const encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars);
+      let encoded: { dataUrl: string; mimeType: string } | null;
+      try {
+        encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars);
+      } catch {
+        // Canvas allocation, drawing, or the codec itself can throw (OOM on a
+        // huge bitmap, a hostile decoder). Never let that escape: the caller
+        // finalizes the stash entry after this returns, and an exception here
+        // would strand the entry as permanently "still saving".
+        return { ok: false, reason: "unreadable" };
+      }
       if (encoded && encoded.dataUrl.length <= budgetChars) {
         return {
           ok: true,

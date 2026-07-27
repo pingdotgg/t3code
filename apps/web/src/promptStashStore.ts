@@ -108,9 +108,16 @@ export function partitionStashAttachments(
 }
 
 /**
+ * Tracks whether the most recent write actually reached disk. Callers clear
+ * the composer on the strength of a stash write, so "the write silently
+ * failed" has to be observable rather than only logged.
+ */
+let lastWriteFailed = false;
+
+/**
  * Base64 image payloads can hit the origin's localStorage quota. A quota
  * failure must not become an uncaught exception inside the debounce timer:
- * the in-memory queue still works for the session, so log and move on.
+ * the in-memory queue still works for the session, so record it and move on.
  */
 function createQuotaSafeStorage(base: StateStorage): StateStorage {
   return {
@@ -118,7 +125,9 @@ function createQuotaSafeStorage(base: StateStorage): StateStorage {
     setItem: (name, value) => {
       try {
         base.setItem(name, value);
+        lastWriteFailed = false;
       } catch (error) {
+        lastWriteFailed = true;
         console.error("[PROMPT-STASH] Could not persist stash (storage quota?).", error);
       }
     },
@@ -172,8 +181,9 @@ interface PromptStashStoreState {
   takeEntry: (scopeKey: string, entryId: string) => PromptStashEntry | null;
   /**
    * Attaches the encoded images to an entry written earlier by `stashEntry`,
-   * clearing its pending count. No-ops when the entry is gone (restored or
-   * deleted while encoding was still running).
+   * clearing its pending count. Returns false when the entry is gone (restored
+   * or deleted while encoding was still running) so the caller can tell the
+   * user their images did not make it.
    */
   finalizeEntryImages: (
     scopeKey: string,
@@ -183,7 +193,7 @@ interface PromptStashStoreState {
       droppedImageNames: ReadonlyArray<string>;
       unreadableImageNames: ReadonlyArray<string>;
     },
-  ) => void;
+  ) => boolean;
 }
 
 export const usePromptStashStore = create<PromptStashStoreState>()(
@@ -220,6 +230,12 @@ export const usePromptStashStore = create<PromptStashStoreState>()(
         return entry;
       },
       finalizeEntryImages: (scopeKey, entryId, images) => {
+        // Read before the update so the caller learns whether the entry
+        // survived long enough to receive its images.
+        const found = readQueue(get().queuesByScopeKey, scopeKey).some(
+          (candidate) => candidate.id === entryId,
+        );
+        if (!found) return false;
         set((state) => {
           const queue = readQueue(state.queuesByScopeKey, scopeKey);
           const index = queue.findIndex((candidate) => candidate.id === entryId);
@@ -238,6 +254,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()(
           nextQueue[index] = nextEntry;
           return { queuesByScopeKey: { ...state.queuesByScopeKey, [scopeKey]: nextQueue } };
         });
+        return true;
       },
     }),
     {
@@ -260,9 +277,16 @@ export const usePromptStashStore = create<PromptStashStoreState>()(
   ),
 );
 
-/** Flushes pending stash writes immediately (e.g. right after a stash). */
-export function flushPromptStashStorage(): void {
+/**
+ * Flushes pending stash writes immediately (e.g. right after a stash) and
+ * reports whether the write landed. Returns false when storage rejected it
+ * (quota, blocked storage), meaning the queue exists only in memory and will
+ * not survive a reload.
+ */
+export function flushPromptStashStorage(): boolean {
+  lastWriteFailed = false;
   promptStashDebouncedStorage.flush();
+  return !lastWriteFailed;
 }
 
 export const EMPTY_PROMPT_STASH_QUEUE: ReadonlyArray<PromptStashEntry> = [];

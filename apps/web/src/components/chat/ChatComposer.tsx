@@ -2071,7 +2071,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         unreadableImageNames: [],
         pendingImageCount: images.length,
       });
-      flushPromptStashStorage();
+
+      // Clearing the composer is only safe once the entry is durable. If the
+      // write was rejected (quota, blocked storage) the stash exists only in
+      // memory, so leave the composer untouched rather than making it the
+      // second casualty of a reload.
+      if (!flushPromptStashStorage()) {
+        takeStashEntry(scopeKey, entryId);
+        toastManager.add({
+          type: "error",
+          title: "Could not stash this prompt",
+          description:
+            "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
+          data: { hideCopyButton: true },
+        });
+        return;
+      }
 
       // Only the prompt and images are cleared — terminal/element contexts,
       // preview annotations, and review comments are not stashable, so
@@ -2118,12 +2133,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
 
-      finalizeStashEntryImages(scopeKey, entryId, {
+      const finalized = finalizeStashEntryImages(scopeKey, entryId, {
         attachments: kept,
         droppedImageNames: [...oversizedImageNames, ...droppedNames],
         unreadableImageNames,
       });
-      flushPromptStashStorage();
+      if (finalized) {
+        flushPromptStashStorage();
+      } else if (kept.length > 0) {
+        // The entry was restored or deleted before its images finished
+        // encoding, so they have nowhere to land. Say so rather than letting
+        // them evaporate.
+        toastManager.add({
+          type: "warning",
+          title: "Stashed images did not attach",
+          description: `That prompt was restored or deleted before ${kept.length} image${kept.length === 1 ? "" : "s"} finished saving. Re-attach ${kept.length === 1 ? "it" : "them"} if you still need ${kept.length === 1 ? "it" : "them"}.`,
+          data: { hideCopyButton: true },
+        });
+      }
     } finally {
       // Must clear on every path: a throw that left this set would wedge ⌘S
       // until the composer remounts.
@@ -2141,6 +2168,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashEntryToQueue,
     stashProviderLabel,
     stashScopeInstanceId,
+    takeStashEntry,
   ]);
 
   const toggleStashMenu = useCallback(() => {
