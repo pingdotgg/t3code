@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 import threading
 import time
@@ -120,6 +121,10 @@ class ServiceDefinitionTest(unittest.TestCase):
                 "integrations.hermes_plugin.service._command",
                 return_value=completed,
             ),
+            patch(
+                "integrations.hermes_plugin.service._wait_for_service_up",
+                return_value=123,
+            ),
             patch("integrations.hermes_plugin.service._seed_supervise_skeleton"),
         ):
             _install_watchdog(config)
@@ -182,6 +187,10 @@ class ServiceDefinitionTest(unittest.TestCase):
                 "integrations.hermes_plugin.service._command",
                 side_effect=write_service,
             ) as command,
+            patch(
+                "integrations.hermes_plugin.service._verify_t3_service_up",
+                return_value=123,
+            ),
             patch("integrations.hermes_plugin.service._install_watchdog") as watchdog,
             patch(
                 "integrations.hermes_plugin.service.status",
@@ -256,6 +265,10 @@ class ServiceDefinitionTest(unittest.TestCase):
                 "integrations.hermes_plugin.service._command",
                 side_effect=write_service,
             ) as command,
+            patch(
+                "integrations.hermes_plugin.service._verify_t3_service_up",
+                return_value=123,
+            ),
             patch("integrations.hermes_plugin.service._install_watchdog") as watchdog,
             patch(
                 "integrations.hermes_plugin.service.status",
@@ -380,6 +393,10 @@ class ServiceDefinitionTest(unittest.TestCase):
                 side_effect=run_command,
             ) as command,
             patch(
+                "integrations.hermes_plugin.service._verify_t3_service_up",
+                return_value=123,
+            ),
+            patch(
                 "integrations.hermes_plugin.service._install_watchdog",
                 side_effect=install_watchdog,
             ) as watchdog,
@@ -417,9 +434,14 @@ class ServiceDefinitionTest(unittest.TestCase):
             (service_dir / "run").touch()
         completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
+        def run_command(args, **_kwargs):
+            if args[0] == "s6-svok" and Path(args[1]).name.startswith("."):
+                return CompletedProcess(args=args, returncode=1, stdout="", stderr="")
+            return completed
+
         with patch(
             "integrations.hermes_plugin.service._command",
-            return_value=completed,
+            side_effect=run_command,
         ) as command:
             result = uninstall(config)
             recovery = reconcile(config)
@@ -523,7 +545,7 @@ class ServiceDefinitionTest(unittest.TestCase):
                 return CompletedProcess(
                     args=args,
                     returncode=0,
-                    stdout="up (pid 123) 1 seconds\n",
+                    stdout=f"up (pid {456 if updates else 123}) 1 seconds\n",
                     stderr="",
                 )
             if args[1:3] == ["service", "update"]:
@@ -556,6 +578,10 @@ class ServiceDefinitionTest(unittest.TestCase):
                 side_effect=run_command,
             ) as command,
             patch(
+                "integrations.hermes_plugin.service._process_has_expected_hermes_home",
+                return_value=True,
+            ),
+            patch(
                 "integrations.hermes_plugin.service.install_release"
             ) as install_release,
         ):
@@ -575,6 +601,371 @@ class ServiceDefinitionTest(unittest.TestCase):
             service_run.read_text(encoding="utf-8"),
         )
         install_release.assert_not_called()
+
+    def test_update_success_is_not_repaired_when_service_never_stably_starts(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            hermes_home=root / "hermes",
+            runtime_root=root / "hermes" / "t3code",
+            binary_path=root / "hermes" / "t3code" / "bin" / "t3",
+            data_dir=root / "hermes" / "t3code" / "data",
+            service_dir=root / "service" / "t3code",
+            watchdog_service_dir=root / "service" / "t3code-plugin-watchdog",
+        )
+        config.binary_path.parent.mkdir(parents=True)
+        config.binary_path.write_bytes(b"verified replacement binary")
+        _set_desired_state(config, "installed", version="1.2.4")
+        config.service_dir.mkdir(parents=True)
+        service_run = config.service_dir / "run"
+        service_run.write_text(
+            "#!/bin/sh\n"
+            "  # t3-service-environment:begin\n"
+            "  # t3-service-environment:end\n"
+            "exec old-deleted-launcher serve\n",
+            encoding="utf-8",
+        )
+        config.watchdog_service_dir.mkdir(parents=True)
+        (config.watchdog_service_dir / "run").touch()
+
+        def run_command(args, **_kwargs):
+            if args[0] == "s6-svstat":
+                return CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="down (exitcode 1) 0 seconds\n",
+                    stderr="",
+                )
+            if args[1:3] == ["service", "update"]:
+                service_run.write_text(
+                    "#!/bin/sh\n"
+                    "  # t3-service-environment:begin\n"
+                    f"  export HERMES_HOME='{config.hermes_home}'\n"
+                    "  # t3-service-environment:end\n"
+                    "exec current-launcher serve\n",
+                    encoding="utf-8",
+                )
+                return CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected command: {args}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value="1.2.4",
+            ),
+            patch(
+                "integrations.hermes_plugin.service._command",
+                side_effect=run_command,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._SERVICE_START_TIMEOUT_SECONDS",
+                0,
+                create=True,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._reachable",
+                return_value=False,
+            ),
+            self.assertRaisesRegex(ServiceError, "stable positive pid"),
+        ):
+            reconcile(config)
+
+        current = status(config)
+        self.assertEqual(current.reconciliation_status, "failed")
+        self.assertNotEqual(current.reconciliation_status, "repaired")
+
+    def test_stable_service_verification_requires_same_positive_pid_twice(
+        self,
+    ) -> None:
+        service_dir = Path(self.temporary.name) / "service" / "t3code"
+        service_dir.mkdir(parents=True)
+        (service_dir / "run").touch()
+        outputs = iter(
+            [
+                "up (pid -1) 0 seconds\n",
+                "up (pid 41) 0 seconds\n",
+                "up (pid 42) 0 seconds\n",
+                "up (pid 42) 1 seconds\n",
+            ]
+        )
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._command",
+                side_effect=lambda args, **_kwargs: CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=next(outputs),
+                    stderr="",
+                ),
+            ) as command,
+            patch("integrations.hermes_plugin.service.time.sleep"),
+        ):
+            pid = service_module._wait_for_service_up(
+                service_dir,
+                timeout=5,
+                poll_interval=0,
+                stable_seconds=0,
+            )
+
+        self.assertEqual(pid, 42)
+        self.assertEqual(command.call_count, 4)
+
+    def test_split_brain_cleanup_refuses_ambiguous_exact_orphans(self) -> None:
+        candidates = [
+            service_module._StaleServiceProcess(child_pid=2882, supervisor_pid=2850),
+            service_module._StaleServiceProcess(child_pid=3882, supervisor_pid=3850),
+        ]
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._find_stale_service_processes",
+                return_value=candidates,
+            ),
+            patch("integrations.hermes_plugin.service.os.pidfd_open") as pidfd_open,
+            self.assertRaisesRegex(ServiceError, "2 exact stale service processes"),
+        ):
+            service_module._terminate_exact_stale_service(self.config)
+
+        pidfd_open.assert_not_called()
+
+    def test_finds_only_exact_deleted_slot_process_that_owns_configured_port(
+        self,
+    ) -> None:
+        proc_root = Path(self.temporary.name) / "proc"
+        (proc_root / "net").mkdir(parents=True)
+        (proc_root / "net" / "tcp").write_text(
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when "
+            "retrnsmt   uid  timeout inode\n"
+            "   0: 00000000:0EBD 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000 10000 0 555\n",
+            encoding="ascii",
+        )
+        config = replace(
+            self.config,
+            binary_path=Path("/opt/data/t3code/bin/t3"),
+            service_dir=Path("/run/service/t3code"),
+            watchdog_service_dir=Path("/run/service/t3code-plugin-watchdog"),
+            service_user="10000",
+            port=3773,
+        )
+
+        child = proc_root / "2882"
+        (child / "fd").mkdir(parents=True)
+        (child / "status").write_text(
+            "Name:\tt3\nPPid:\t2850\nUid:\t10000\t10000\t10000\t10000\n",
+            encoding="utf-8",
+        )
+        (child / "cmdline").write_bytes(b"/opt/data/t3code/bin/t3\0serve\0")
+        os.symlink("/opt/data/t3code/bin/t3 (deleted)", child / "exe")
+        os.symlink("/run/service/t3code (deleted)", child / "cwd")
+        os.symlink("socket:[555]", child / "fd" / "3")
+
+        supervisor = proc_root / "2850"
+        supervisor.mkdir()
+        (supervisor / "status").write_text(
+            "Name:\ts6-supervise\nPPid:\t1\nUid:\t0\t0\t0\t0\n",
+            encoding="utf-8",
+        )
+        (supervisor / "cmdline").write_bytes(
+            b"/command/s6-supervise\0t3code\0"
+        )
+        os.symlink("/command/s6-supervise", supervisor / "exe")
+        os.symlink("/run/service/t3code (deleted)", supervisor / "cwd")
+
+        self.assertEqual(
+            service_module._find_stale_service_processes(
+                config,
+                proc_root=proc_root,
+            ),
+            [
+                service_module._StaleServiceProcess(
+                    child_pid=2882,
+                    supervisor_pid=2850,
+                )
+            ],
+        )
+
+    def test_live_process_must_have_exact_configured_hermes_home(self) -> None:
+        proc_root = Path(self.temporary.name) / "proc"
+        process = proc_root / "9621"
+        process.mkdir(parents=True)
+        process.joinpath("environ").write_bytes(
+            b"PATH=/usr/bin\0HERMES_HOME=/opt/data\0"
+        )
+        config = replace(self.config, hermes_home=Path("/opt/data"))
+
+        self.assertTrue(
+            service_module._process_has_expected_hermes_home(
+                9621,
+                config,
+                proc_root=proc_root,
+            )
+        )
+        process.joinpath("environ").write_bytes(b"PATH=/usr/bin\0")
+        self.assertFalse(
+            service_module._process_has_expected_hermes_home(
+                9621,
+                config,
+                proc_root=proc_root,
+            )
+        )
+
+    def test_missing_live_hermes_home_fails_without_orphan_cleanup(self) -> None:
+        with (
+            patch(
+                "integrations.hermes_plugin.service._wait_for_service_up",
+                return_value=9621,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._process_has_expected_hermes_home",
+                return_value=False,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._terminate_exact_stale_service",
+            ) as terminate,
+            self.assertRaisesRegex(ServiceError, "missing the configured HERMES_HOME"),
+        ):
+            service_module._verify_t3_service_up(self.config)
+
+        terminate.assert_not_called()
+
+    def test_failed_start_reaps_exact_old_service_then_verifies_current_slot(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            service_dir=root / "service" / "t3code",
+            watchdog_service_dir=root / "service" / "t3code-plugin-watchdog",
+        )
+        service_dir = config.service_dir
+        service_dir.mkdir(parents=True)
+        (service_dir / "run").touch()
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._wait_for_service_up",
+                side_effect=[
+                    ServiceError("never reached a stable positive pid"),
+                    9621,
+                ],
+            ) as wait_for_up,
+            patch(
+                "integrations.hermes_plugin.service._reachable",
+                return_value=True,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._terminate_exact_stale_service",
+            ) as terminate,
+            patch(
+                "integrations.hermes_plugin.service._process_has_expected_hermes_home",
+                return_value=True,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._command",
+                return_value=CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                ),
+            ) as command,
+        ):
+            pid = service_module._verify_t3_service_up(config)
+
+        self.assertEqual(pid, 9621)
+        terminate.assert_called_once_with(config)
+        command.assert_called_once_with(
+            ["s6-svc", "-u", str(service_dir)],
+            timeout=5,
+        )
+        self.assertEqual(wait_for_up.call_count, 2)
+
+    def test_watchdog_update_reuses_existing_supervised_slot(self) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            service_dir=root / "service" / "t3code",
+            watchdog_service_dir=root / "service" / "t3code-plugin-watchdog",
+        )
+        config.watchdog_service_dir.mkdir(parents=True)
+        old_run = config.watchdog_service_dir / "run"
+        old_run.write_text("#!/bin/sh\nexec old-watchdog\n", encoding="utf-8")
+        slot_inode = config.watchdog_service_dir.stat().st_ino
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._command",
+                return_value=CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                ),
+            ),
+            patch(
+                "integrations.hermes_plugin.service._wait_for_service_up",
+                return_value=99,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._remove_service_dir"
+            ) as remove_service_dir,
+        ):
+            _install_watchdog(config)
+
+        self.assertEqual(config.watchdog_service_dir.stat().st_ino, slot_inode)
+        remove_service_dir.assert_not_called()
+        self.assertIn(
+            "plugin-watchdog.py",
+            old_run.read_text(encoding="utf-8"),
+        )
+
+    def test_incomplete_supervisor_reap_blocks_duplicate_scan_name(self) -> None:
+        service_dir = Path(self.temporary.name) / "service" / "t3code"
+        tombstone = service_dir.with_name(".t3code.removing.2850")
+        tombstone.mkdir(parents=True)
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._command",
+                return_value=CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                ),
+            ),
+            self.assertRaisesRegex(ServiceError, "old supervisor removal"),
+        ):
+            service_module._prepare_service_dir(service_dir)
+
+        self.assertFalse(service_dir.exists())
+        self.assertTrue(tombstone.exists())
+
+    def test_reaped_tombstone_is_removed_before_reusing_scan_name(self) -> None:
+        service_dir = Path(self.temporary.name) / "service" / "t3code"
+        tombstone = service_dir.with_name(".t3code.removing.2850")
+        tombstone.mkdir(parents=True)
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._command",
+                return_value=CompletedProcess(
+                    args=[],
+                    returncode=1,
+                    stdout="",
+                    stderr="",
+                ),
+            ),
+            patch("integrations.hermes_plugin.service._seed_supervise_skeleton"),
+        ):
+            service_module._prepare_service_dir(service_dir)
+
+        self.assertTrue(service_dir.is_dir())
+        self.assertFalse(tombstone.exists())
 
     def test_reconcile_adapts_complete_stopped_service_before_starting(
         self,
@@ -637,6 +1028,14 @@ class ServiceDefinitionTest(unittest.TestCase):
                 "integrations.hermes_plugin.service._command",
                 side_effect=run_command,
             ) as command,
+            patch(
+                "integrations.hermes_plugin.service._verify_t3_service_up",
+                return_value=123,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._wait_for_service_up",
+                return_value=124,
+            ),
             patch(
                 "integrations.hermes_plugin.service._install_watchdog"
             ) as watchdog,
@@ -925,14 +1324,28 @@ class ServiceDefinitionTest(unittest.TestCase):
         service_dir.mkdir(parents=True)
         completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
+        def run_command(args, **_kwargs):
+            if args[0] == "s6-svscanctl":
+                self.assertFalse(service_dir.exists())
+                self.assertEqual(
+                    len(list(service_dir.parent.glob(".t3code.removing.*"))),
+                    1,
+                )
+            return CompletedProcess(
+                args=args,
+                returncode=1 if args[0] == "s6-svok" else 0,
+                stdout="",
+                stderr="",
+            )
+
         with patch(
             "integrations.hermes_plugin.service._command",
-            return_value=completed,
+            side_effect=run_command,
         ) as command:
             _remove_service_dir(service_dir)
 
         self.assertFalse(service_dir.exists())
-        command.assert_called_once_with(
+        command.assert_any_call(
             ["s6-svscanctl", "-an", str(service_dir.parent)],
             timeout=5,
         )

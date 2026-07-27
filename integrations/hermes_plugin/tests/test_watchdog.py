@@ -24,11 +24,11 @@ class WatchdogTest(unittest.TestCase):
             with (
                 patch(
                     "integrations.hermes_plugin.watchdog._run",
-                    return_value=True,
+                    side_effect=lambda args, **_kwargs: args[0] != "s6-svok",
                 ) as run,
                 patch("integrations.hermes_plugin.watchdog.time.sleep"),
             ):
-                cleanup_orphaned_services(
+                cleaned_up = cleanup_orphaned_services(
                     plugin_root=scan_dir / "plugin",
                     scan_dir=scan_dir,
                     t3_service_dir=t3_service,
@@ -36,12 +36,17 @@ class WatchdogTest(unittest.TestCase):
                     service_state_path=service_state,
                     lifecycle_lock_path=lifecycle_lock,
                 )
+                watchdog_tombstones = list(
+                    scan_dir.glob(".t3code-plugin-watchdog.removing.*")
+                )
             desired_state = json.loads(
                 service_state.read_text(encoding="utf-8")
             )["desired_state"]
 
         self.assertFalse(t3_service.exists())
         self.assertFalse(watchdog_service.exists())
+        self.assertTrue(cleaned_up)
+        self.assertEqual(len(watchdog_tombstones), 1)
         self.assertEqual(desired_state, "uninstalled")
         run.assert_any_call(["s6-svscanctl", "-an", str(scan_dir)], timeout=5)
 
@@ -159,14 +164,45 @@ class WatchdogTest(unittest.TestCase):
             service_dir.mkdir()
             with patch(
                 "integrations.hermes_plugin.watchdog._run",
-                return_value=True,
+                side_effect=lambda args, **_kwargs: args[0] != "s6-svok",
             ) as run:
                 from integrations.hermes_plugin.watchdog import remove_service
 
                 removed = remove_service(service_dir, scan_dir=scan_dir)
 
             self.assertTrue(removed)
-            run.assert_called_once_with(
+            run.assert_any_call(
                 ["s6-svscanctl", "-an", str(scan_dir)],
                 timeout=5,
+            )
+            self.assertFalse(
+                list(scan_dir.glob(".t3code.removing.*"))
+            )
+
+    def test_unreaped_supervisor_keeps_hidden_tree_and_blocks_success(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            scan_dir = Path(temporary)
+            service_dir = scan_dir / "t3code"
+            service_dir.mkdir()
+            with (
+                patch(
+                    "integrations.hermes_plugin.watchdog._run",
+                    return_value=True,
+                ),
+                patch(
+                    "integrations.hermes_plugin.watchdog._SUPERVISOR_REAP_TIMEOUT_SECONDS",
+                    0,
+                ),
+            ):
+                from integrations.hermes_plugin.watchdog import remove_service
+
+                removed = remove_service(service_dir, scan_dir=scan_dir)
+
+            self.assertFalse(removed)
+            self.assertFalse(service_dir.exists())
+            self.assertEqual(
+                len(list(scan_dir.glob(".t3code.removing.*"))),
+                1,
             )
