@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { DraftId } from "../composerDraftStore";
 import {
+  selectThreadPreviewMiniPlayer,
+  usePreviewMiniPlayerStore,
+} from "../previewMiniPlayerStore";
+import {
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -34,6 +38,7 @@ const expectedBranch = "feature/previous-ref";
 
 beforeEach(() => {
   useRightPanelStore.setState({ byThreadKey: {} });
+  usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
 });
 
 describe("sourceControlMetadataErrorFromFailure", () => {
@@ -202,6 +207,75 @@ describe("source control right panel surface visibility", () => {
     });
 
     expect(useRightPanelStore.getState().byThreadKey).toBe(initialByThreadKey);
+  });
+
+  it("keeps the active singleton Source Control target stable across a preview mini-player lifecycle", () => {
+    const gitCwd = "/repos/active-project";
+    const previewTabId = "background-preview";
+
+    useRightPanelStore.getState().open(activeThreadRef, "source-control");
+    usePreviewMiniPlayerStore.getState().open(activeThreadRef, previewTabId);
+    useRightPanelStore.getState().reconcileBrowserSurfaces(activeThreadRef, [previewTabId]);
+
+    const assertActiveSourceControlTarget = () => {
+      const byThreadKey = useRightPanelStore.getState().byThreadKey;
+      const panelState = selectThreadRightPanelState(byThreadKey, activeThreadRef);
+      const activeSurface = selectActiveRightPanelSurface(byThreadKey, activeThreadRef);
+      const visibleSurfaces = filterVisibleSourceControlSurfaces({
+        sourceControlAvailable: true,
+        surfaces: panelState.surfaces,
+      });
+      const visibleActiveSurface = resolveVisibleSourceControlSurface({
+        sourceControlAvailable: true,
+        surface: activeSurface,
+        visibleSurfaces,
+      });
+
+      expect(panelState.isOpen).toBe(true);
+      expect(panelState.surfaces.filter((surface) => surface.kind === "source-control")).toEqual([
+        sourceControlSurface,
+      ]);
+      expect(visibleSurfaces).toContainEqual(sourceControlSurface);
+      expect(visibleActiveSurface).toEqual(sourceControlSurface);
+      expect(
+        resolveSourceControlPanelTarget({
+          activeThreadRef,
+          gitCwd,
+          surface: visibleActiveSurface,
+        }),
+      ).toEqual({
+        environmentId,
+        threadId,
+        cwd: gitCwd,
+      });
+    };
+
+    assertActiveSourceControlTarget();
+    expect(
+      selectThreadPreviewMiniPlayer(
+        usePreviewMiniPlayerStore.getState().byThreadKey,
+        activeThreadRef,
+      ),
+    ).toMatchObject({ tabId: previewTabId });
+
+    // Match ChatView's lifecycle order when the background preview session
+    // disappears: reconcile browser surfaces, then close its mini-player.
+    useRightPanelStore.getState().reconcileBrowserSurfaces(activeThreadRef, []);
+    usePreviewMiniPlayerStore.getState().close(activeThreadRef);
+
+    assertActiveSourceControlTarget();
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, activeThreadRef),
+    ).toMatchObject({
+      activeSurfaceId: "source-control",
+      surfaces: [sourceControlSurface],
+    });
+    expect(
+      selectThreadPreviewMiniPlayer(
+        usePreviewMiniPlayerStore.getState().byThreadKey,
+        activeThreadRef,
+      ),
+    ).toBeNull();
   });
 });
 
