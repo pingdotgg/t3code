@@ -8,7 +8,16 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("034_035_OrchestrationV2", (it) => {
+layer("035_036_OrchestrationV2", (it) => {
+  it.effect("keeps released and private migration ids contiguous", () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(
+        migrationEntries.map(([id]) => id),
+        Array.from({ length: 43 }, (_, index) => index + 1),
+      );
+    }),
+  );
+
   it.effect("installs the orchestration v2 and subagent schemas", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -97,3 +106,57 @@ layer("034_035_OrchestrationV2", (it) => {
     }),
   );
 });
+
+it.effect("upgrades a database already at released main migration 034", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+
+    yield* runMigrations({ toMigrationInclusive: 34 });
+    const snoozeColumns = yield* sql<{ readonly name: string }>`
+      PRAGMA table_info(projection_threads)
+    `;
+    assert.ok(snoozeColumns.some((column) => column.name === "snoozed_until"));
+    assert.ok(snoozeColumns.some((column) => column.name === "snoozed_at"));
+
+    yield* runMigrations({ toMigrationInclusive: 43 });
+
+    const migrations = yield* sql<{
+      readonly migration_id: number;
+      readonly name: string;
+    }>`
+      SELECT migration_id, name
+      FROM effect_sql_migrations
+      WHERE migration_id BETWEEN 34 AND 43
+      ORDER BY migration_id
+    `;
+    assert.deepStrictEqual(
+      migrations.map(({ migration_id, name }) => [migration_id, name]),
+      [
+        [34, "ProjectionThreadsSnoozed"],
+        [35, "OrchestrationV2"],
+        [36, "OrchestrationV2Subagents"],
+        [37, "OrchestrationV2Foundation"],
+        [38, "OrchestrationV2ProviderSessionBindings"],
+        [39, "OrchestrationV2ThreadLaunchWorkflows"],
+        [40, "ApplicationEventSource"],
+        [41, "OrchestrationV2EffectCancellation"],
+        [42, "ScheduledTasks"],
+        [43, "LegacyV1ImportState"],
+      ],
+    );
+
+    const v2Tables = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'orchestration_v2_projection_threads'
+    `;
+    assert.strictEqual(v2Tables.length, 1);
+
+    const legacyImportTables = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'orchestration_v2_legacy_imports'
+    `;
+    assert.strictEqual(legacyImportTables.length, 1);
+  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+);
