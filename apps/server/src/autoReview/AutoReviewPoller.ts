@@ -10,6 +10,7 @@ import type {
   ServerSettings,
 } from "@t3tools/contracts";
 import {
+  clampAutoReviewConcurrency,
   clampAutoReviewPollIntervalMs,
   matchAutoReviewMention,
   resolveAutoReviewPolicy,
@@ -100,6 +101,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
               headBranch: pr.headRefName,
               trigger: "open_or_push",
               modelSelection: policy.modelSelection as ModelSelection,
+              fixModelSelection: policy.fixModelSelection,
               maxAttempts: policy.maxAttempts,
             });
             continue;
@@ -160,7 +162,7 @@ export const make = (deps: AutoReviewPollerDeps) =>
         .drain(
           (job) =>
             deps.contextForJob(job).pipe(Effect.orElseSucceed(() => ({ cwd: "", candidates: [] }))),
-          settings.autoReview.concurrency,
+          clampAutoReviewConcurrency(settings.autoReview.concurrency),
         )
         .pipe(Effect.orElseSucceed(() => 0));
 

@@ -196,3 +196,73 @@ describe("AutoReviewJobStore in-memory", () => {
     }).pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
   });
 });
+
+describe("AutoReviewJobStore claimNextBatch", () => {
+  it("claims several PRs at once and marks them running", async () => {
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      for (const prNumber of [1, 2, 3]) {
+        yield* store.enqueue({
+          projectId: "proj",
+          prNumber,
+          headSha: `sha-${prNumber}`,
+          trigger: "open_or_push",
+          modelSelection,
+        });
+      }
+
+      const claimed = yield* store.claimNextBatch(2);
+
+      expect(claimed.map((job) => job.prNumber)).toEqual([1, 2]);
+      expect(claimed.every((job) => job.status === "running")).toBe(true);
+      // The claim is persisted, so a second batch cannot re-claim them.
+      const next = yield* store.claimNextBatch(2);
+      expect(next.map((job) => job.prNumber)).toEqual([3]);
+    }).pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
+  });
+
+  it("never claims a second job for a PR that is already running", async () => {
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "sha-a",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+      const first = yield* store.claimNextBatch(4);
+      expect(first).toHaveLength(1);
+
+      // A push lands a new head sha while the first review is still running.
+      yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "sha-b",
+        trigger: "open_or_push",
+        modelSelection,
+      });
+
+      expect(yield* store.claimNextBatch(4)).toHaveLength(0);
+    }).pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
+  });
+
+  it("persists the fix model selection on the job", async () => {
+    await Effect.gen(function* () {
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const fixModelSelection = {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "opus-5",
+      };
+      const { job } = yield* store.enqueue({
+        projectId: "proj",
+        prNumber: 1,
+        headSha: "abc",
+        trigger: "open_or_push",
+        modelSelection,
+        fixModelSelection,
+      });
+      expect(job.fixModelSelection).toEqual(fixModelSelection);
+    }).pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
+  });
+});

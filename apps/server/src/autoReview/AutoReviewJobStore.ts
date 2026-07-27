@@ -14,6 +14,7 @@ import type {
 import {
   clampAutoReviewMaxAttempts,
   nextAutoReviewAttempt,
+  selectClaimableAutoReviewJobs,
   shouldEnqueueAutoReviewJob,
 } from "@t3tools/shared/autoReview";
 
@@ -26,6 +27,11 @@ export interface EnqueueAutoReviewJobInput {
   readonly trigger: AutoReviewTrigger;
   readonly commentId?: string | null;
   readonly modelSelection: ModelSelection;
+  /**
+   * Model the auto-fix turn must run under, or null/omitted to leave the
+   * origin thread on its own model.
+   */
+  readonly fixModelSelection?: ModelSelection | null | undefined;
   /**
    * Total attempts allowed for this (project, PR, headSha) chain before the
    * store stops handing out retries. Defaults to
@@ -48,6 +54,11 @@ export class AutoReviewJobStore extends Context.Service<
       input: EnqueueAutoReviewJobInput,
     ) => Effect.Effect<{ readonly job: AutoReviewJob; readonly created: boolean }>;
     readonly claimNext: () => Effect.Effect<AutoReviewJob | null>;
+    /**
+     * Claim up to `limit` queued jobs to run in parallel, never two for the
+     * same pull request. Returned in FIFO order.
+     */
+    readonly claimNextBatch: (limit: number) => Effect.Effect<ReadonlyArray<AutoReviewJob>>;
     readonly update: (
       id: AutoReviewJobId | string,
       patch: Partial<
@@ -226,6 +237,7 @@ export const makeInMemory = Effect.gen(function* () {
         status: "queued",
         attempt,
         modelSelection: input.modelSelection,
+        fixModelSelection: input.fixModelSelection ?? null,
         findingsCount: null,
         reviewUrl: null,
         githubReviewId: null,
@@ -244,23 +256,24 @@ export const makeInMemory = Effect.gen(function* () {
       return { job, created: true };
     });
 
-  const claimNext: AutoReviewJobStore["Service"]["claimNext"] = () =>
+  const claimNextBatch: AutoReviewJobStore["Service"]["claimNextBatch"] = (limit) =>
     Effect.gen(function* () {
       const jobs = yield* Ref.get(jobsRef);
-      const next = jobs.find((job) => job.status === "queued");
-      if (!next) {
-        return null;
+      const selected = selectClaimableAutoReviewJobs({ jobs, limit });
+      if (selected.length === 0) {
+        return [];
       }
-      const updated: AutoReviewJob = {
-        ...next,
-        status: "running",
-        updatedAt: yield* nowIso,
-      };
-      yield* Ref.update(jobsRef, (current) =>
-        current.map((job) => (job.id === next.id ? updated : job)),
+      const stamp = yield* nowIso;
+      const claimed = selected.map(
+        (job): AutoReviewJob => ({ ...job, status: "running", updatedAt: stamp }),
       );
-      return updated;
+      const byId = new Map(claimed.map((job) => [job.id, job]));
+      yield* Ref.update(jobsRef, (current) => current.map((job) => byId.get(job.id) ?? job));
+      return claimed;
     });
+
+  const claimNext: AutoReviewJobStore["Service"]["claimNext"] = () =>
+    claimNextBatch(1).pipe(Effect.map((jobs) => jobs[0] ?? null));
 
   const update: AutoReviewJobStore["Service"]["update"] = (id, patch) =>
     Effect.gen(function* () {
@@ -328,6 +341,7 @@ export const makeInMemory = Effect.gen(function* () {
   return AutoReviewJobStore.of({
     enqueue,
     claimNext,
+    claimNextBatch,
     update,
     get,
     list,
