@@ -125,6 +125,30 @@ struct ModelPickerCatalogTests {
         #expect(searchResults.map(\.option.modelID) == ["gpt-5"])
     }
 
+    @Test("the selected instance stays the representative despite id casing drift")
+    func selectedInstanceSurvivesCasingDrift() {
+        let options = [
+            option(instance: "codex-a", modelID: "GPT-5", name: "GPT-5", provider: .codex),
+            option(
+                instance: "codex-b", modelID: "GPT-5", name: "GPT-5", provider: .codex,
+                isDefault: true),
+        ]
+
+        // The thread stores the model id it was created with; a provider that
+        // re-advertises the same model in another casing must not cost the
+        // picker its knowledge of which instance the thread runs on.
+        let item = ModelPickerCatalog.items(
+            from: options,
+            selectedInstanceID: "codex-a",
+            selectedModelID: "gpt-5 "
+        ).first
+
+        #expect(item?.option.instanceID == "codex-a")
+        #expect(
+            ModelPickerCatalog.instanceKey(for: options[0])
+                == ModelPickerCatalog.instanceKey(instanceID: "codex-a", modelID: " gpt-5"))
+    }
+
     @Test("keys ignore the provider instance so favorites survive a reconnect")
     func keysAreInstanceIndependent() {
         let first = option(instance: "codex-a", modelID: "GPT-5", name: "GPT-5", provider: .codex)

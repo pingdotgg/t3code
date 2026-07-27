@@ -33,13 +33,19 @@ enum ModelPickerCatalog {
         selectedInstanceID: String?,
         selectedModelID: String?
     ) -> [ModelPickerItem] {
-        let selectedID = selectedInstanceID.map { "\($0)/\(selectedModelID ?? "")" }
+        // Normalized on both sides: the thread's stored model id and the
+        // provider's advertised one can differ in case or padding, and a
+        // mismatch there would silently stop the picker from preferring the
+        // instance the thread is actually running on.
+        let selectedID = selectedInstanceID.map { instanceID in
+            instanceKey(instanceID: instanceID, modelID: selectedModelID ?? "")
+        }
         let grouped = Dictionary(grouping: options) { key(for: $0) }
 
         return grouped.values.map { matches in
             let representative = matches.sorted { lhs, rhs in
-                let lhsSelected = lhs.id == selectedID
-                let rhsSelected = rhs.id == selectedID
+                let lhsSelected = instanceKey(for: lhs) == selectedID
+                let rhsSelected = instanceKey(for: rhs) == selectedID
                 if lhsSelected != rhsSelected { return lhsSelected }
                 if lhs.isDefault != rhs.isDefault { return lhs.isDefault }
                 return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
@@ -53,6 +59,17 @@ enum ModelPickerCatalog {
     /// recents survive a reconnect minting a new instance id.
     static func key(for option: ModelOption) -> String {
         "\(option.provider.rawValue)/\(normalized(option.modelID))"
+    }
+
+    /// Identity of one concrete provider instance's model, used to pick which
+    /// of several merged instances represents a row. Unlike `key(for:)` this
+    /// keeps the instance, since choosing between instances is the point.
+    static func instanceKey(for option: ModelOption) -> String {
+        instanceKey(instanceID: option.instanceID, modelID: option.modelID)
+    }
+
+    static func instanceKey(instanceID: String, modelID: String) -> String {
+        "\(instanceID)/\(normalized(modelID))"
     }
 
     static func filteredItems(

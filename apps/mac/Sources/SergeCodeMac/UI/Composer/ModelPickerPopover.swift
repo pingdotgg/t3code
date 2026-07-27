@@ -124,6 +124,21 @@ struct ModelPickerMenu: View {
     }
 }
 
+/// The model browser's one chord, kept separate from the view so its modifier
+/// rules are testable.
+enum ModelPickerShortcut {
+    /// `KeyEquivalent` is `ExpressibleByExtendedGraphemeClusterLiteral`, so a
+    /// plain character literal is the same value as `.upArrow` and friends.
+    static let favoriteKey: KeyEquivalent = "d"
+
+    /// True only for ⌘D. Caps Lock and the numeric-pad flag ride along on real
+    /// key events without changing intent — the same subtraction ComposerBar
+    /// applies to Return — but any other modifier is a different chord.
+    static func isFavoriteToggle(modifiers: EventModifiers) -> Bool {
+        modifiers.subtracting([.capsLock, .numericPad]) == .command
+    }
+}
+
 /// Optional leading "clear" row for pickers that allow selecting none.
 struct ModelPickerClearRowConfig {
     let icon: String
@@ -256,6 +271,17 @@ struct ModelPickerPopoverContent: View {
         }?.id
     }
 
+    /// Where the keyboard starts when the popover opens. The current model
+    /// when it is on offer — but a thread can run a model the connected
+    /// providers no longer advertise, and leaving the highlight nil there made
+    /// ⌘D and Return do nothing until the user pressed an arrow key first.
+    private var initialHighlightKey: String? {
+        if isClearSelected { return Self.clearRowKey }
+        let keys = navigableKeys
+        if let selectedItemKey, keys.contains(selectedItemKey) { return selectedItemKey }
+        return ModelPickerCatalog.firstModelRowKey(in: keys, clearRowKey: Self.clearRowKey)
+    }
+
     private var selectedItemKey: String? {
         guard
             let option = models.first(where: {
@@ -297,7 +323,7 @@ struct ModelPickerPopoverContent: View {
         }
         .onAppear {
             searchFocused = true
-            highlightedKey = isClearSelected ? Self.clearRowKey : selectedItemKey
+            highlightedKey = initialHighlightKey
         }
         .onChange(of: searchText) { _, _ in resetHighlightToFirstRow() }
         .onChange(of: scope) { _, _ in resetHighlightToFirstRow() }
@@ -331,8 +357,12 @@ struct ModelPickerPopoverContent: View {
                     return .handled
                 }
                 // ⌘D stars the highlighted model, matching the star button.
-                .onKeyPress(keys: ["d"]) { press in
-                    guard press.modifiers.contains(.command) else { return .ignored }
+                // Plain "d" must keep reaching the field, and ⌥⌘D / ⇧⌘D are
+                // different chords the picker does not own.
+                .onKeyPress(keys: [ModelPickerShortcut.favoriteKey]) { press in
+                    guard ModelPickerShortcut.isFavoriteToggle(modifiers: press.modifiers) else {
+                        return .ignored
+                    }
                     toggleFavoriteOnHighlightedRow()
                     return .handled
                 }

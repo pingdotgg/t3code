@@ -325,6 +325,22 @@
             toggleSection("model-picker")
             try? await Task.sleep(for: .seconds(1))
             snapshotAllWindows("7b-model-picker", dir: dir)
+
+            // ⌘D stars the highlighted row. The chord travels the responder
+            // chain to the popover's `onKeyPress`, which no unit test can
+            // exercise, so drive it with a real event and check the store.
+            let favoritesBeforeChord = ModelPickerPreferences.shared.favorites
+            sendKey("d", keyCode: 2, modifiers: .command)
+            try? await Task.sleep(for: .seconds(1))
+            let starred = ModelPickerPreferences.shared.favorites.subtracting(favoritesBeforeChord)
+            print("UIProbe: model picker cmd-D starred=\(starred.count)")
+            // A check that only logs cannot fail a run: without this the chord
+            // could stop reaching the popover and the probe would still print
+            // a clean `done`.
+            if starred.count != 1 { probeFailures.append("model-picker-favorite-chord") }
+            // Leave the store as the later favorites capture expects it.
+            for key in starred { ModelPickerPreferences.shared.toggleFavorite(key) }
+
             toggleSection("model-picker")
             try? await Task.sleep(for: .seconds(1))
 
@@ -2039,6 +2055,47 @@
         private static func toggleSection(_ key: String) {
             NotificationCenter.default.post(name: .uiProbeToggleSection, object: key)
             print("UIProbe: toggled section '\(key)'")
+        }
+
+        /// Sends a real key-down to the key window. SwiftUI's `onKeyPress`
+        /// handlers sit on the responder chain, so a synthesized `NSEvent` is
+        /// the only way to prove a chord actually reaches them in-process —
+        /// asserting the handler's predicate in a unit test cannot show that
+        /// the event arrives at all.
+        @discardableResult
+        private static func sendKey(
+            _ character: String,
+            keyCode: UInt16,
+            modifiers: NSEvent.ModifierFlags = []
+        ) -> Bool {
+            // A popover hosts in its own window, and an app driven headlessly
+            // has no key window at all, so neither `keyWindow` nor "the first
+            // visible window" finds the surface under test. Prefer the popover
+            // when one is up: that is where the picker's handlers live.
+            let visible = NSApp.windows.filter(\.isVisible)
+            let popover = visible.first { String(describing: type(of: $0)).contains("Popover") }
+            guard let window = popover ?? NSApp.keyWindow ?? visible.first else {
+                print("UIProbe: FAIL sendKey no target window")
+                return false
+            }
+            guard
+                let event = NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: modifiers,
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    characters: character,
+                    charactersIgnoringModifiers: character,
+                    isARepeat: false,
+                    keyCode: keyCode)
+            else {
+                print("UIProbe: FAIL sendKey could not build event")
+                return false
+            }
+            window.sendEvent(event)
+            return true
         }
 
         /// Drives a structural column to a known state instead of flipping
