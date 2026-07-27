@@ -294,10 +294,24 @@ struct StatusBadge: View {
             .labelStyle(.titleAndIcon)
             .font(.caption)
             .foregroundStyle(color)
+            // Matches the sidebar glyph: the badge breathes only while work
+            // is actually in flight, and a stall freezes it — a stalled turn
+            // that kept pulsing would be the badge contradicting its own
+            // label.
+            .pulseGlow(isActive: !stalled && isWorking)
             .contentTransition(
                 Motion.reduceMotion ? .identity : .symbolEffect(.replace))
             .animation(Motion.ambient, value: status)
             .animation(Motion.ambient, value: stalled)
+    }
+
+    private var isWorking: Bool {
+        switch status {
+        case .running, .backgroundWork, .reviewing, .fixing: true
+        case .idle, .waiting, .waitingApproval, .waitingInput, .error, .archived, .settled,
+            .done, .readyToMerge:
+            false
+        }
     }
 
     private var text: String {

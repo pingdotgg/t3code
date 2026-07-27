@@ -1,38 +1,14 @@
 import SwiftUI
 
-/// Ephemeral parent-agent "Thinking…" cue for silent model reasoning.
-///
-/// Distinct from subagent "Working..." rows and generic ProgressView loading:
-/// soft meadow/lavender dots, quiet Geist label, no busy spinner. One instance is
-/// pinned to the timeline tail so long silent periods never flood the transcript.
-struct ThinkingIndicator: View {
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            ThinkingDots()
-                .frame(width: TranscriptMetrics.iconColumn, alignment: .center)
+// The quiet half of the live-turn indicator: soft meadow/lavender dots and an
+// animated ellipsis, with no busy spinner. `AgentActivityDock` renders these
+// instead of its aurora orb under Reduce Motion and when playful motion is
+// switched off, so the calm presentation the app shipped with survives both
+// opt-outs unchanged.
 
-            HStack(spacing: 0) {
-                Text("Thinking")
-                    .font(SurgeTypography.agentStatus)
-                    .foregroundStyle(.secondary)
-                ThinkingEllipsis()
-                    .font(SurgeTypography.agentStatus)
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Thinking")
-
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, TranscriptMetrics.cardPadH)
-        .padding(.vertical, 2)
-        .accessibilityAddTraits(.updatesFrequently)
-    }
-}
-
-/// Three soft pastel dots that breathe in sequence while the model reasons.
+/// Three soft pastel dots that breathe in sequence while the model works.
 /// Under Reduce Motion the dots stay fully opaque with no pulse.
-private struct ThinkingDots: View {
+struct ThinkingDots: View {
     var body: some View {
         TimelineView(
             .animation(
@@ -68,8 +44,9 @@ private struct ThinkingDots: View {
     }
 }
 
-/// Animated "…" after Thinking. Reduce Motion renders a static ellipsis.
-private struct ThinkingEllipsis: View {
+/// Animated "…" trailing the status label. Reduce Motion renders a static
+/// ellipsis. Fixed width so the label beside it never reflows as dots land.
+struct ThinkingEllipsis: View {
     var body: some View {
         if Motion.reduceMotion {
             Text("…")

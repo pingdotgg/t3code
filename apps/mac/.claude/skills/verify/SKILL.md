@@ -49,6 +49,18 @@ another's PNGs (or a crashed run's leftovers). The probe echoes
 - The probe self-terminates after 300 s if an await wedges (live-backend
   runs can stall on the sidecar). Override with
   `SERGECODE_UI_PROBE_TIMEOUT=<seconds>`.
+- `SERGECODE_PLAYFUL_MOTION=0` (DEBUG only) renders every playful surface —
+  the live activity dock's aurora orb, the auto-review pet — in its opt-out
+  presentation for the whole run, so the fallbacks can be captured. Re-run
+  the probe with it to check both sides of that branch. It never writes the
+  stored preference.
+  - Do NOT try to reach the fallback by flipping `PlayfulMotionPreferences`
+    mid-run instead: the change notification fires and the policy re-resolves
+    (logged `surfaces=false`), but the offscreen `cacheDisplay` capture is
+    taken before SwiftUI flushes the resulting update, so the PNG still shows
+    the old presentation and the capture silently lies. Same trap for any
+    other state a probe mutates on an already-mounted view — set it before
+    the first render.
 
 ## Reading the PNGs
 

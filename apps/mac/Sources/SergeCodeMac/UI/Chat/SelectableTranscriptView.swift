@@ -603,19 +603,3 @@ enum TranscriptTextBuilder {
         result.append(NSAttributedString(attributed))
     }
 }
-
-extension ToolEventKind {
-    /// Wire item type for ParsedToolDetail — same mapping ToolEventRow uses.
-    fileprivate var wireItemType: String? {
-        switch self {
-        case .command: "command_execution"
-        case .fileChange: "file_change"
-        case .fileRead: "file_read"
-        case .webSearch: "web_search"
-        case .mcpCall: "mcp_tool_call"
-        case .subagent: "collab_agent_tool_call"
-        case .imageView: "image_view"
-        case .skill, .computerUse, .other: nil
-        }
-    }
-}

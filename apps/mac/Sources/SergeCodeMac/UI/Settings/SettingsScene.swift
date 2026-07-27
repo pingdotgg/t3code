@@ -208,6 +208,7 @@ private struct GeneralSettingsTab: View {
     @UIState private var notifyFailed = AgentNotificationPreferences.isEnabled(.failed)
     @UIState private var notificationsDenied = false
     @UIState private var hapticsEnabled = HapticsPreferences.isEnabled
+    @UIState private var playfulMotionEnabled = PlayfulMotionPreferences.isEnabled
 
     var body: some View {
         VStack(spacing: 18) {
@@ -289,6 +290,15 @@ private struct GeneralSettingsTab: View {
                     // would be the one toggle in the app with no feedback.
                     .onChange(of: hapticsEnabled) { _, enabled in
                         Haptics.setPreference(enabled: enabled)
+                    }
+                SettingsDivider()
+                SettingsToggleRow(
+                    title: "Playful motion",
+                    description:
+                        "The animated activity indicator while the agent works, and the auto-review marmot. Turning this off leaves the status badges; macOS Reduce Motion stills them instead.",
+                    isOn: $playfulMotionEnabled)
+                    .onChange(of: playfulMotionEnabled) { _, enabled in
+                        PlayfulMotionPreferences.isEnabled = enabled
                     }
             }
 

@@ -111,6 +111,8 @@
             // session.exited stderr disclosure.
             await probeSubagentStability(model: model, multi: multi, dir: dir)
             await probeGitActionFailure(model: model, dir: dir)
+            probeFailures.append(
+                contentsOf: await probeLiveActivitySurfaces(model: model, multi: multi, dir: dir))
 
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
@@ -652,6 +654,244 @@
             }
             print("UIProbe: session-exit row present=\(hasSessionExit)")
             snapshot("2d-session-stderr", dir: dir)
+        }
+
+        /// Pins which thread a scene is looking at.
+        ///
+        /// The assertions below otherwise read model state *by thread id*,
+        /// which says nothing about what is on screen. A `select` that
+        /// silently did not take would leave every one of them passing while
+        /// the PNG showed a different conversation.
+        private static func expectSelected(
+            _ threadID: String, model: AppModel, scene: String
+        ) -> [String] {
+            guard model.selectedThreadID != threadID else { return [] }
+            print(
+                "UIProbe: FAIL \(scene) expected \(threadID) selected, "
+                    + "got \(model.selectedThreadID ?? "none")")
+            return ["\(scene)-selection"]
+        }
+
+        /// The live-turn surfaces that only exist while something is working,
+        /// so no other scene can reach them: the activity dock on a thread
+        /// parked on a running tool (mock `thread-7`), the auto-review pet on
+        /// a thread whose PR is under review (`thread-8`), and the dock's
+        /// thinking phase on a thread that has been silent long enough for
+        /// its copy to escalate (`thread-9`).
+        ///
+        /// Each asserts its gate as well as capturing a PNG — the pet in
+        /// particular is a corner overlay that a full-window capture can
+        /// easily *look* right without actually having mounted.
+        ///
+        /// Returns soft-failure slugs for the exit line, and that return is
+        /// the point: `UIProbe: done` with no `FAIL=` suffix is the
+        /// documented success signal, so a check that only prints cannot fail
+        /// a run and is decoration. Every gate here is asserted rather than
+        /// merely logged for the same reason — a dock that stopped mounting
+        /// entirely would otherwise log `phase=none`, write a perfectly
+        /// valid-looking PNG of a thread with no dock in it, and pass.
+        /// Asserts a SwiftUI surface is mounted for `threadID`, and that its
+        /// reported state matches.
+        ///
+        /// This replaced a view-hierarchy heuristic ("the deepest
+        /// `NSSplitView`'s first pane is the detail column"). That heuristic
+        /// was a guess about SwiftUI's private layout, and its failure mode
+        /// was not merely a loud one: had it landed on the *outer* split's
+        /// second pane, that subtree contains the detail column, so the
+        /// search would have kept passing while proving nothing. The views
+        /// report themselves now — see `UIProbeSurfaces`.
+        private static func expectSurface(
+            _ key: String, threadID: String, detail: String, scene: String
+        ) -> [String] {
+            guard let entry = UIProbeSurfaces.entry(key, threadID: threadID) else {
+                print(
+                    "UIProbe: FAIL \(scene) surface '\(key)' is not mounted for \(threadID) "
+                        + "(mounted: \(UIProbeSurfaces.entries))")
+                return ["\(scene)-not-mounted"]
+            }
+            guard entry.detail == detail else {
+                print(
+                    "UIProbe: FAIL \(scene) surface '\(key)' reports \"\(entry.detail)\", "
+                        + "expected \"\(detail)\"")
+                return ["\(scene)-wrong-state"]
+            }
+            return []
+        }
+
+        private static func probeLiveActivitySurfaces(
+            model: AppModel, multi: MultiDeviceModel, dir: String
+        ) async -> [String] {
+            let previousThreadID = model.selectedThreadID
+            var failures: [String] = []
+
+            if model.threads.contains(where: { $0.id == "thread-7" }) {
+                multi.select(threadID: "thread-7", on: model.deviceID)
+                try? await Task.sleep(for: .seconds(1.5))
+                let activity = AgentActivityPresentation.activity(
+                    threadStatus: model.thread(threadID: "thread-7")?.status,
+                    isStalled: false,
+                    items: model.timeline(threadID: "thread-7"))
+                let phase: String
+                var isRunningCommand = false
+                switch activity?.phase {
+                case .tool(let tool):
+                    phase = "tool(\(tool.kind.rawValue))"
+                    isRunningCommand = tool.kind == .command
+                case .thinking: phase = "thinking"
+                case .stalled: phase = "stalled"
+                case nil: phase = "none"
+                }
+                print(
+                    "UIProbe: activity dock phase=\(phase) "
+                        + "tape=\(activity?.recentToolKinds.count ?? 0) "
+                        + "playful=\(PlayfulMotionPreferences.isEnabled)")
+                failures.append(
+                    contentsOf: expectSelected("thread-7", model: model, scene: "activity-dock"))
+                // The fixture parks this thread on a running command with
+                // three finished calls behind it; anything else means the
+                // capture is not of the tool phase it claims to show.
+                if !isRunningCommand {
+                    print("UIProbe: FAIL activity dock expected the running-command tool phase")
+                    failures.append("activity-dock-tool-phase")
+                }
+                if (activity?.recentToolKinds.count ?? 0) < 2 {
+                    print("UIProbe: FAIL activity dock tool tape is empty")
+                    failures.append("activity-dock-tape")
+                }
+                // Everything above is derived from the model, which only says
+                // what *should* render. This says the dock is on screen.
+                failures.append(
+                    contentsOf: expectSurface(
+                        UIProbeSurfaces.activityDock, threadID: "thread-7",
+                        detail: "tool(command)", scene: "activity-dock"))
+                snapshot("18-activity-dock", dir: dir)
+            } else {
+                print("UIProbe: activity dock skipped (live backend run)")
+            }
+
+            if model.threads.contains(where: { $0.id == "thread-8" }) {
+                multi.select(threadID: "thread-8", on: model.deviceID)
+                // Long enough for the pet's entrance spring to settle.
+                try? await Task.sleep(for: .seconds(2))
+                let status = model.thread(threadID: "thread-8")?.status
+                let petPhase = status.flatMap(ReviewPetPhase.init(status:))
+                // `ThreadStatus.reviewing` (the server's auto-review phase)
+                // and `ThreadState.isReviewing` (the local diff-review pane)
+                // are unrelated despite the names, and only the latter routes
+                // ChatScreen away from the timeline the pet hangs off. Assert
+                // it, so a future change that couples the two fails here
+                // instead of quietly capturing the wrong surface.
+                let onChatSurface = model.threadState("thread-8")?.isReviewing != true
+                let petMounted = UIProbeSurfaces.entry(
+                    UIProbeSurfaces.reviewPet, threadID: "thread-8") != nil
+                let playfulSurfaces = Motion.playful.showsPlayfulSurfaces
+                print(
+                    "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
+                        + "phase=\(petPhase?.rawValue ?? "none") "
+                        + "chatSurface=\(onChatSurface) mounted=\(petMounted) "
+                        + "playful=\(playfulSurfaces)")
+                failures.append(
+                    contentsOf: expectSelected("thread-8", model: model, scene: "review-pet"))
+                if petPhase != .reviewing {
+                    print("UIProbe: FAIL review pet expected the reviewing phase")
+                    failures.append("review-pet-phase")
+                }
+                if playfulSurfaces {
+                    // Doubles as the surface check. The pet is rendered inside
+                    // ChatScreen's chat branch, so it cannot be mounted while
+                    // `DiffReviewView` owns the detail column — a registration
+                    // for this thread *is* proof the capture is of the chat
+                    // surface, with no guess about the view hierarchy.
+                    failures.append(
+                        contentsOf: expectSurface(
+                            UIProbeSurfaces.reviewPet, threadID: "thread-8",
+                            detail: "reviewing", scene: "review-pet"))
+                } else if petMounted {
+                    // The opt-out has to actually remove it, not just still it.
+                    print("UIProbe: FAIL review pet mounted with playful motion off")
+                    failures.append("review-pet-opt-out")
+                }
+                // Secondary, and deliberately still `!= true`: it mirrors
+                // ChatScreen's own `?.isReviewing == true` routing, in which a
+                // missing ThreadState means the chat surface renders. Making
+                // this a non-nil requirement would be stricter than the code
+                // it checks and would fail runs that are in fact correct. The
+                // on-screen assertion above is what actually closes the gap,
+                // because it cannot pass on absent state.
+                if !onChatSurface {
+                    print("UIProbe: FAIL review pet routing says the diff pane is mounted")
+                    failures.append("review-pet-review-pane")
+                }
+                snapshot("19-review-pet", dir: dir)
+            } else {
+                print("UIProbe: review pet skipped (live backend run)")
+            }
+
+            // The thinking phase, and the elapsed-driven copy that goes with
+            // it. `thread-9` has been silent for over three minutes, so the
+            // escalated wording is reachable without the probe waiting out
+            // the 20s/60s/180s thresholds in real time.
+            if model.threads.contains(where: { $0.id == "thread-9" }) {
+                multi.select(threadID: "thread-9", on: model.deviceID)
+                try? await Task.sleep(for: .seconds(1.5))
+                let thinking = AgentActivityPresentation.activity(
+                    threadStatus: model.thread(threadID: "thread-9")?.status,
+                    isStalled: false,
+                    items: model.timeline(threadID: "thread-9"))
+                let elapsed = thinking?.since.map { Date().timeIntervalSince($0) } ?? 0
+                let label = AgentActivityPresentation.thinkingLabel(elapsed: elapsed)
+                // Whichever presentation this run is configured for has to
+                // show the same escalated copy: the quiet fallback froze on
+                // "Thinking" when it was built once at body-evaluation time
+                // instead of riding a tick. Re-run with
+                // `SERGECODE_PLAYFUL_MOTION=0` for the fallback.
+                let playful = Motion.playful.showsPlayfulSurfaces
+                print(
+                    "UIProbe: activity dock thinking=\(thinking?.phase == .thinking) "
+                        + "label=\"\(label)\" playful=\(playful)")
+                failures.append(
+                    contentsOf: expectSelected(
+                        "thread-9", model: model, scene: "activity-dock-thinking"))
+                if thinking?.phase != .thinking {
+                    print("UIProbe: FAIL activity dock expected the thinking phase")
+                    failures.append("activity-dock-thinking-phase")
+                }
+                // Pinned to the *top* of the escalation ramp, expressed
+                // through the policy rather than a hardcoded string.
+                //
+                // Comparing against the zero-elapsed wording instead would be
+                // no check at all: the probe takes ~25s to reach this scene,
+                // which clears the first threshold on its own no matter how
+                // young the fixture is. Only the last threshold actually
+                // requires the aged timestamp, so only it can catch someone
+                // shortening the fixture out from under this capture.
+                let fullyEscalated = AgentActivityPresentation.thinkingLabel(
+                    elapsed: .greatestFiniteMagnitude)
+                if label != fullyEscalated {
+                    print(
+                        "UIProbe: FAIL activity dock thinking copy stopped at \"\(label)\", "
+                            + "expected \"\(fullyEscalated)\" (elapsed \(Int(elapsed))s)")
+                    failures.append("activity-dock-thinking-label")
+                }
+                // Mounted in both presentations: the playful dock and the
+                // quiet fallback are branches *inside* `AgentActivityDock`,
+                // so this holds with playful motion either way.
+                failures.append(
+                    contentsOf: expectSurface(
+                        UIProbeSurfaces.activityDock, threadID: "thread-9",
+                        detail: "thinking", scene: "activity-dock-thinking"))
+                snapshot(
+                    playful ? "20-activity-dock-thinking" : "20-activity-dock-thinking-quiet",
+                    dir: dir)
+            } else {
+                print("UIProbe: activity dock thinking skipped (live backend run)")
+            }
+
+            if let previousThreadID {
+                multi.select(threadID: previousThreadID, on: model.deviceID)
+                try? await Task.sleep(for: .seconds(1))
+            }
+            return failures
         }
 
         /// Renders the VCS failure pill: every mock git action succeeds unless
