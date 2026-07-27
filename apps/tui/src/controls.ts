@@ -10,6 +10,7 @@ import type { OrchestrationThread } from "./connection.ts";
 export const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
   "approval-required",
   "auto-accept-edits",
+  "auto",
   "full-access",
 ];
 
@@ -29,6 +30,11 @@ export const RUNTIME_MODE_META: Record<RuntimeMode, RuntimeModeMeta> = {
     label: "Auto-accept edits",
     description: "Auto-approve edits, ask before other actions.",
     glyph: "✎",
+  },
+  auto: {
+    label: "Auto",
+    description: "An AI reviewer approves routine actions; risky ones still ask.",
+    glyph: "✦",
   },
   "full-access": {
     label: "Full access",

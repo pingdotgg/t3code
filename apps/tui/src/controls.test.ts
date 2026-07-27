@@ -12,6 +12,7 @@ describe("friendly labels", () => {
   it("maps runtime modes to the web's labels", () => {
     expect(runtimeModeLabel("approval-required")).toBe("Supervised");
     expect(runtimeModeLabel("auto-accept-edits")).toBe("Auto-accept edits");
+    expect(runtimeModeLabel("auto")).toBe("Auto");
     expect(runtimeModeLabel("full-access")).toBe("Full access");
   });
 
