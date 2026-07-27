@@ -29,8 +29,6 @@ import {
   reconcilePreviewServerSessions,
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
-import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
   readActiveBrowserRecordingTabIds,
@@ -48,6 +46,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { previewBridge } from "./previewBridge";
 import {
   isPreviewAutomationTabPresented,
+  readPreviewAutomationPresentationDiagnostics,
   revealPreviewAutomationTab,
   withPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
@@ -126,22 +125,13 @@ const waitForBrowserSurfaceVisibility = async (
     }
     await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
   }
-  const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
-  const miniPlayer = selectThreadPreviewMiniPlayer(
-    usePreviewMiniPlayerStore.getState().byThreadKey,
-    threadRef,
-  );
-  const presentation = useBrowserSurfaceStore.getState().byTabId[tabId];
   throw new PreviewAutomationVisibilityTimeoutError({
     requestId,
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
     tabId,
     timeoutMs,
-    activeSurfaceId: miniPlayer ? `mini-player:${miniPlayer.tabId}` : panel.activeSurfaceId,
-    rightPanelOpen: panel.isOpen,
-    surfaceRegistered: presentation !== undefined,
-    presentationRectAvailable: presentation?.rect !== null && presentation?.rect !== undefined,
+    ...readPreviewAutomationPresentationDiagnostics(threadRef, tabId),
   });
 };
 

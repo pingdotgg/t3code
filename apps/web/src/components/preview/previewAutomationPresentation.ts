@@ -63,6 +63,31 @@ export function revealPreviewAutomationTab(ref: ScopedThreadRef, tabId: string):
   usePreviewMiniPlayerStore.getState().open(ref, tabId);
 }
 
+export function readPreviewAutomationPresentationDiagnostics(ref: ScopedThreadRef, tabId: string) {
+  const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+  const miniPlayer = selectThreadPreviewMiniPlayer(
+    usePreviewMiniPlayerStore.getState().byThreadKey,
+    ref,
+  );
+  const presentation = useBrowserSurfaceStore.getState().byTabId[tabId];
+  const activeSurfaceKind =
+    miniPlayer !== null
+      ? ("inline-preview" as const)
+      : panel.isOpen && panel.activeSurfaceId !== null
+        ? ("right-panel" as const)
+        : ("none" as const);
+  return {
+    activeSurfaceKind,
+    activeSurfaceId: miniPlayer?.tabId ?? panel.activeSurfaceId,
+    inlinePreviewOpen: miniPlayer !== null,
+    inlinePreviewTabId: miniPlayer?.tabId ?? null,
+    rightPanelOpen: panel.isOpen,
+    rightPanelSurfaceId: panel.activeSurfaceId,
+    surfaceRegistered: presentation !== undefined,
+    presentationRectAvailable: presentation?.rect !== null && presentation?.rect !== undefined,
+  };
+}
+
 export function isPreviewAutomationTabPresented(ref: ScopedThreadRef, tabId: string): boolean {
   const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
   const miniPlayer = selectThreadPreviewMiniPlayer(

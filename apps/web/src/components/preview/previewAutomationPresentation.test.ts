@@ -9,9 +9,11 @@ import {
   resetPreviewStateForTests,
 } from "~/previewStateStore";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 import {
   isPreviewAutomationTabPresented,
+  readPreviewAutomationPresentationDiagnostics,
   revealPreviewAutomationTab,
   withPreviewAutomationBackgroundPresentation,
   waitForPreviewAutomationBackgroundPresentation,
@@ -32,6 +34,7 @@ describe("preview automation presentation", () => {
   beforeEach(() => {
     resetPreviewStateForTests();
     usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+    useRightPanelStore.setState({ byThreadKey: {} });
     useBrowserSurfaceStore.setState({ byTabId: {}, backgroundCaptureCountByTabId: {} });
   });
 
@@ -48,15 +51,44 @@ describe("preview automation presentation", () => {
       tabId: "tab-1",
     });
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
+    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1")).toEqual({
+      activeSurfaceKind: "inline-preview",
+      activeSurfaceId: "tab-1",
+      inlinePreviewOpen: true,
+      inlinePreviewTabId: "tab-1",
+      rightPanelOpen: false,
+      rightPanelSurfaceId: null,
+      surfaceRegistered: false,
+      presentationRectAvailable: false,
+    });
 
     const surface = acquireBrowserSurface("tab-1");
     surface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
 
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(true);
+    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1")).toMatchObject({
+      surfaceRegistered: true,
+      presentationRectAvailable: true,
+    });
 
     usePreviewMiniPlayerStore.getState().open(threadRef, "tab-2");
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
     surface.release();
+  });
+
+  it("reports a right-panel presentation separately from the inline preview", () => {
+    useRightPanelStore.getState().openBrowser(threadRef, "tab-panel");
+
+    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+      activeSurfaceKind: "right-panel",
+      activeSurfaceId: "browser:tab-panel",
+      inlinePreviewOpen: false,
+      inlinePreviewTabId: null,
+      rightPanelOpen: true,
+      rightPanelSurfaceId: "browser:tab-panel",
+      surfaceRegistered: false,
+      presentationRectAvailable: false,
+    });
   });
 
   it("uses the operation budget when background staging does not render", async () => {
