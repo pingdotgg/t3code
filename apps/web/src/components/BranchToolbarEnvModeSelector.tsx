@@ -50,7 +50,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
 
   if (envLocked) {
     return (
-      <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      <span className="inline-flex shrink-0 items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
         {activeWorktreePath ? (
           <>
             <FolderGitIcon className="size-3" />
@@ -79,7 +79,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       }}
       items={envModeItems}
     >
-      <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Workspace">
+      <SelectTrigger
+        variant="ghost"
+        size="xs"
+        className="shrink-0 font-medium"
+        aria-label="Workspace"
+      >
         {effectiveEnvMode === "worktree" ? (
           <FolderGit2Icon className="size-3" />
         ) : activeWorktreePath ? (
