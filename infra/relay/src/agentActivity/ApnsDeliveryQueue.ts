@@ -208,21 +208,20 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(ApnsDeliveryQueue, make);
 
-export const layerCloudflareQueues = (sender: Cloudflare.Queues.WriteQueueClient) =>
+export const layerCloudflareQueues = (
+  sender: Cloudflare.Queues.WriteQueueClient,
+  alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
+) =>
   layer.pipe(
     Layer.provide(
-      Layer.effect(
+      Layer.succeed(
         ApnsDeliveryQueueSender,
-        Alchemy.RuntimeContext.pipe(
-          Effect.map((alchemyRuntimeContext) =>
-            ApnsDeliveryQueueSender.of({
-              send: (body) =>
-                sender
-                  .send(body)
-                  .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
-            }),
-          ),
-        ),
+        ApnsDeliveryQueueSender.of({
+          send: (body) =>
+            sender
+              .send(body)
+              .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
+        }),
       ),
     ),
   );

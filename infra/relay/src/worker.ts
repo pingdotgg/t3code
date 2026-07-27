@@ -154,6 +154,8 @@ export const ApiLive = Api.make(
     //
     // 3. Runtime layers and app construction
     //
+    const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
+
     const loadSettings = Effect.gen(function* () {
       return RelayConfiguration.RelayConfiguration.of({
         relayIssuer: relayPublicOrigin,
@@ -193,12 +195,15 @@ export const ApiLive = Api.make(
         ManagedEndpointProvider.layerCloudflareBindings(
           managedEndpointTunnelBinding,
           managedEndpointDnsBinding,
+          alchemyRuntimeContext,
         ),
       ),
       Layer.provideMerge(DpopProofs.layer),
       Layer.provideMerge(ApnsDeliveries.layer),
       Layer.provideMerge(ApnsClient.layer.pipe(Layer.provideMerge(ApnsProviderTokens.layer))),
-      Layer.provideMerge(ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender)),
+      Layer.provideMerge(
+        ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
+      ),
       Layer.provideMerge(AgentActivityRows.layer),
       Layer.provideMerge(Devices.layer),
       Layer.provideMerge(EnvironmentCredentials.layer),

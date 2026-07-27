@@ -2,6 +2,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -280,6 +282,47 @@ function expectedManagedTunnelName(environmentId: string, userId = "user_ABC"): 
 }
 
 describe("ManagedEndpointProvider", () => {
+  it.effect("does not require the deployment RuntimeContext when building the Worker layer", () => {
+    const tunnelClient = {
+      list: () => Effect.succeed({ result: [] }),
+      create: (request: { readonly name: string }) =>
+        Effect.succeed({ id: "tunnel-id", name: request.name }),
+      putConfiguration: () => Effect.void,
+      getToken: () => Effect.succeed("connector-token"),
+      delete: () => Effect.void,
+    } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
+    const dnsClient = {
+      listDnsRecords: () => Effect.succeed({ result: [] }),
+      createDnsRecord: () => Effect.succeed({ id: "dns-record-id" }),
+      updateDnsRecord: () => Effect.void,
+      deleteDnsRecord: () => Effect.void,
+    } as unknown as Cloudflare.DNS.ReadWriteDnsClient;
+    const runtimeContext = {} as Alchemy.BaseRuntimeContext;
+    const layer = ManagedEndpointProvider.layerCloudflareBindings(
+      tunnelClient,
+      dnsClient,
+      runtimeContext,
+    ).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(RelayConfiguration.layer(config)),
+      Layer.provide(
+        Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
+      ),
+      Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, makeTunnelLimits())),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const result = yield* provider.provision({
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      expect(result.runtime.connectorToken).toBe("connector-token");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("provisions a Cloudflare tunnel endpoint and connector token", () => {
     const tunnelCalls: TunnelCall[] = [];
     const dnsCalls: DnsCall[] = [];
