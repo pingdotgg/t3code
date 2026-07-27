@@ -653,6 +653,22 @@
             snapshot("2d-session-stderr", dir: dir)
         }
 
+        /// Pins which thread a scene is looking at.
+        ///
+        /// The assertions below otherwise read model state *by thread id*,
+        /// which says nothing about what is on screen. A `select` that
+        /// silently did not take would leave every one of them passing while
+        /// the PNG showed a different conversation.
+        private static func expectSelected(
+            _ threadID: String, model: AppModel, scene: String
+        ) -> [String] {
+            guard model.selectedThreadID != threadID else { return [] }
+            print(
+                "UIProbe: FAIL \(scene) expected \(threadID) selected, "
+                    + "got \(model.selectedThreadID ?? "none")")
+            return ["\(scene)-selection"]
+        }
+
         /// The live-turn surfaces that only exist while something is working,
         /// so no other scene can reach them: the activity dock on a thread
         /// parked on a running tool (mock `thread-7`), the auto-review pet on
@@ -698,6 +714,8 @@
                     "UIProbe: activity dock phase=\(phase) "
                         + "tape=\(activity?.recentToolKinds.count ?? 0) "
                         + "playful=\(PlayfulMotionPreferences.isEnabled)")
+                failures.append(
+                    contentsOf: expectSelected("thread-7", model: model, scene: "activity-dock"))
                 // The fixture parks this thread on a running command with
                 // three finished calls behind it; anything else means the
                 // capture is not of the tool phase it claims to show.
@@ -727,17 +745,48 @@
                 // it, so a future change that couples the two fails here
                 // instead of quietly capturing the wrong surface.
                 let onChatSurface = model.threadState("thread-8")?.isReviewing != true
+                // The load-bearing check, read back off the live window
+                // rather than off the model: the thread's own transcript text
+                // is on screen. `DiffReviewView` renders a file list and diff
+                // hunks and contains none of it, so this cannot be satisfied
+                // by the pane the pet must not be captured on.
+                //
+                // Pulled from the timeline rather than hardcoded so the
+                // fixture and the assertion cannot drift apart.
+                let transcriptExcerpt = model.timeline(threadID: "thread-8")
+                    .compactMap { item -> String? in
+                        if case .userMessage(_, let text, _, _) = item { return text }
+                        return nil
+                    }
+                    .first
+                    .map { String($0.prefix(40)) }
+                let onChatTranscript = transcriptExcerpt.map(mainWindowText().contains) ?? false
                 print(
                     "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
                         + "phase=\(petPhase?.rawValue ?? "none") "
-                        + "chatSurface=\(onChatSurface)")
+                        + "chatSurface=\(onChatSurface) transcriptOnScreen=\(onChatTranscript)")
+                failures.append(
+                    contentsOf: expectSelected("thread-8", model: model, scene: "review-pet"))
                 if petPhase != .reviewing {
                     print("UIProbe: FAIL review pet expected the reviewing phase")
                     failures.append("review-pet-phase")
                 }
-                if !onChatSurface {
-                    print("UIProbe: FAIL review pet captured the diff pane, not the chat surface")
+                if !onChatTranscript {
+                    print(
+                        "UIProbe: FAIL review pet captured a surface with no transcript on it "
+                            + "(looked for \"\(transcriptExcerpt ?? "")\")")
                     failures.append("review-pet-wrong-surface")
+                }
+                // Secondary, and deliberately still `!= true`: it mirrors
+                // ChatScreen's own `?.isReviewing == true` routing, in which a
+                // missing ThreadState means the chat surface renders. Making
+                // this a non-nil requirement would be stricter than the code
+                // it checks and would fail runs that are in fact correct. The
+                // on-screen assertion above is what actually closes the gap,
+                // because it cannot pass on absent state.
+                if !onChatSurface {
+                    print("UIProbe: FAIL review pet routing says the diff pane is mounted")
+                    failures.append("review-pet-review-pane")
                 }
                 snapshot("19-review-pet", dir: dir)
             } else {
@@ -766,6 +815,9 @@
                 print(
                     "UIProbe: activity dock thinking=\(thinking?.phase == .thinking) "
                         + "label=\"\(label)\" playful=\(playful)")
+                failures.append(
+                    contentsOf: expectSelected(
+                        "thread-9", model: model, scene: "activity-dock-thinking"))
                 if thinking?.phase != .thinking {
                     print("UIProbe: FAIL activity dock expected the thinking phase")
                     failures.append("activity-dock-thinking-phase")
