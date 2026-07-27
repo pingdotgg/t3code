@@ -15,7 +15,9 @@ Each thread gets its own git worktree, which starts with no `node_modules`.
 `scripts/setup-worktree.sh` installs dependencies, links `.env.local` from the
 main checkout, and fails fast if a remote points at the upstream repo.
 `.vite-hooks/post-checkout` runs it automatically when git creates the
-worktree, so normally there is nothing to do.
+worktree, so normally there is nothing to do. The install is bounded by
+`SERGECODE_SETUP_TIMEOUT_SECONDS` (300s), so a wedged pnpm reports itself
+instead of stalling worktree creation.
 
 If a command fails with `vp: command not found`,
 `Could not resolve 'vite-plus/test/config'`, or `Cannot find module`, that is
@@ -39,11 +41,12 @@ it.
 120 commits across 45 threads used `git commit --no-verify`, after which
 nothing in this repo is formatted or linted locally.
 
-If the pre-commit hook fails with `Cannot find package 'vite-plus'`, the
-worktree was never bootstrapped: run `pnpm run setup` and commit normally. If
-a hook genuinely must be skipped, `VITE_GIT_HOOKS=0 git commit …` is the
-supported way (`.vite-hooks/_/h` honours it), and run `vp fmt` before opening
-the PR.
+An unbootstrapped worktree is no longer a reason to skip it: the pre-commit
+hook bootstraps the worktree itself and then runs the real check. If it does
+fail, the bootstrap failed for a reason worth reading — fix that and commit
+again. If a hook genuinely must be skipped, `VITE_GIT_HOOKS=0 git commit …` is
+the supported way (`.vite-hooks/_/h` honours it), and run `vp fmt` before
+opening the PR.
 
 ### A push that fails on credentials is not a missing login
 
