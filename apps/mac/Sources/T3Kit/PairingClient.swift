@@ -12,6 +12,11 @@ public enum PairingClientError: Error, LocalizedError, Sendable {
     /// an actionable fix instead of a raw transport error dump.
     case localNetworkDenied(endpoint: String)
     case decoding(endpoint: String, detail: String)
+    /// Something answered at this address, but it is not a SergeCode server.
+    /// The common cause is a hostname whose port is owned by another service
+    /// — a Tailscale MagicDNS name already serving a web server, say — where
+    /// dumping the foreign response body explains nothing.
+    case notEnvironmentEndpoint(host: String, statusCode: Int?)
 
     public var errorDescription: String? {
         switch self {
@@ -22,7 +27,10 @@ public enum PairingClientError: Error, LocalizedError, Sendable {
         case .missingToken(let host):
             return "Pairing URL for \(host) is missing its token."
         case .httpStatus(let endpoint, let statusCode, let body):
-            return "HTTP \(statusCode) from \(endpoint): \(body)"
+            let summary = PairingClientError.summarize(body)
+            return summary.isEmpty
+                ? "HTTP \(statusCode) from \(endpoint)."
+                : "HTTP \(statusCode) from \(endpoint): \(summary)"
         case .nonHTTPResponse(let endpoint):
             return "Non-HTTP response from \(endpoint)."
         case .network(let endpoint, let detail):
@@ -31,7 +39,28 @@ public enum PairingClientError: Error, LocalizedError, Sendable {
             return "macOS is blocking local network access to \(endpoint)."
         case .decoding(let endpoint, let detail):
             return "Failed to decode \(endpoint) response: \(detail)"
+        case .notEnvironmentEndpoint(let host, let statusCode):
+            let status = statusCode.map { " (HTTP \($0))" } ?? ""
+            return """
+                \(host) answered\(status) but is not running SergeCode. \
+                Another service on that host is serving this address. \
+                On the other Mac, open Settings ▸ Devices and copy its current pairing link.
+                """
         }
+    }
+
+    /// Collapses a foreign response body to a single short line. Error bodies
+    /// are frequently a full HTML error page, which fills the pairing sheet
+    /// with markup and buries the status code.
+    static func summarize(_ body: String, limit: Int = 120) -> String {
+        let collapsed = body
+            .replacingOccurrences(
+                of: "<[^>]+>", with: " ", options: .regularExpression, range: nil
+            )
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return collapsed.count <= limit ? collapsed : "\(collapsed.prefix(limit))…"
     }
 }
 
@@ -239,8 +268,24 @@ public enum PairingClient {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let data = try await perform(request, urlSession: urlSession)
-        return try decode(EnvironmentDescriptor.self, from: data, endpoint: endpoint)
+        // The descriptor is unauthenticated and served by every SergeCode
+        // version, so a status or decoding failure here means the host is not
+        // SergeCode — not that pairing hit a transient server error.
+        let host = httpBaseURL.host ?? endpoint.absoluteString
+        let data: Data
+        do {
+            data = try await perform(request, urlSession: urlSession)
+        } catch let error as PairingClientError {
+            if case .httpStatus(_, let statusCode, _) = error {
+                throw PairingClientError.notEnvironmentEndpoint(host: host, statusCode: statusCode)
+            }
+            throw error
+        }
+        do {
+            return try JSONDecoder().decode(EnvironmentDescriptor.self, from: data)
+        } catch {
+            throw PairingClientError.notEnvironmentEndpoint(host: host, statusCode: nil)
+        }
     }
 
     public static func redeem(

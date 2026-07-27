@@ -189,4 +189,108 @@ struct PairingClientHTTPErrorTests {
             Issue.record("expected PairingClientError, got \(error)")
         }
     }
+
+    /// The reported failure: a Tailscale MagicDNS name whose :443 is owned by
+    /// another web server. Pairing used to render that server's HTML error
+    /// page verbatim, which says nothing about what to do next.
+    @Test("reports a foreign host as not running SergeCode")
+    func foreignHost() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ForeignHostURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        do {
+            _ = try await PairingClient.fetchDescriptor(
+                httpBaseURL: URL(string: "https://m1-dev.tailb5ff83.ts.net")!,
+                urlSession: session)
+            Issue.record("expected a notEnvironmentEndpoint error")
+        } catch let error as PairingClientError {
+            guard case .notEnvironmentEndpoint(let host, let statusCode) = error else {
+                Issue.record("expected notEnvironmentEndpoint, got \(error)")
+                return
+            }
+            #expect(host == "m1-dev.tailb5ff83.ts.net")
+            #expect(statusCode == 404)
+            let description = error.errorDescription ?? ""
+            #expect(description.contains("m1-dev.tailb5ff83.ts.net"))
+            #expect(description.contains("not running SergeCode"))
+            #expect(!description.contains("<html>"))
+        } catch {
+            Issue.record("expected PairingClientError, got \(error)")
+        }
+    }
+
+    @Test("reports a 200 that is not a descriptor as not running SergeCode")
+    func foreignHostAnswering200() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ForeignHostOKURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        do {
+            _ = try await PairingClient.fetchDescriptor(
+                httpBaseURL: URL(string: "https://m1-dev.tailb5ff83.ts.net")!,
+                urlSession: session)
+            Issue.record("expected a notEnvironmentEndpoint error")
+        } catch let error as PairingClientError {
+            guard case .notEnvironmentEndpoint(let host, let statusCode) = error else {
+                Issue.record("expected notEnvironmentEndpoint, got \(error)")
+                return
+            }
+            #expect(host == "m1-dev.tailb5ff83.ts.net")
+            #expect(statusCode == nil)
+        } catch {
+            Issue.record("expected PairingClientError, got \(error)")
+        }
+    }
+
+    @Test("collapses an HTML error body to one short line")
+    func summarizesHtmlBodies() {
+        let body = """
+            <html>
+            <head><title>404 Not Found</title></head>
+            <body>
+            <center><h1>404 Not Found</h1></center>
+            <hr><center>nginx/1.27.5</center>
+            </body>
+            </html>
+            """
+
+        let summary = PairingClientError.summarize(body)
+        #expect(summary == "404 Not Found 404 Not Found nginx/1.27.5")
+        #expect(PairingClientError.summarize(String(repeating: "a", count: 500)).count == 121)
+    }
+}
+
+private final class ForeignHostURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 404, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/html"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("<html>404 Not Found</html>".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private final class ForeignHostOKURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/html"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("<html>hello</html>".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
