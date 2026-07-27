@@ -5475,8 +5475,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             pr: null,
           }),
         );
-        const fetchRemote = vi.fn(
-          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
+        const fetchRemoteTrackingBranch = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
             Effect.sync(() => {
               bootstrapGitOperations.push("fetch");
             }),
@@ -5522,7 +5522,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         yield* buildAppUnderTest({
           layers: {
             gitVcsDriver: {
-              fetchRemote,
+              fetchRemoteTrackingBranch,
               resolveRemoteTrackingCommit,
               createWorktree,
             },
@@ -5602,9 +5602,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           baseRefName: "main",
           path: null,
         });
-        assert.deepEqual(fetchRemote.mock.calls[0]?.[0], {
+        assert.deepEqual(fetchRemoteTrackingBranch.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           remoteName: "origin",
+          remoteBranch: "main",
         });
         assert.deepEqual(resolveRemoteTrackingCommit.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
@@ -5645,14 +5646,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     () =>
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
-        const fetchRemote = vi.fn(
-          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
+        const fetchRemoteTrackingBranch = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
             Effect.fail(
               new GitCommandError({
-                operation: "fetchRemote",
-                command: "git fetch --quiet origin",
+                operation: "fetchRemoteTrackingBranch",
+                command: "git fetch --quiet --no-tags origin main",
                 cwd: "/tmp/project",
                 detail: "network unreachable",
+              }),
+            ),
+        );
+        // With no reachable remote there is also no remote-tracking ref to
+        // resolve, which is what pushes the worktree back onto the local base.
+        const resolveRemoteTrackingCommit = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "resolveRemoteTrackingCommit",
+                command: "git rev-parse origin/main",
+                cwd: "/tmp/project",
+                detail: "unknown revision",
               }),
             ),
         );
@@ -5669,7 +5683,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         yield* buildAppUnderTest({
           layers: {
             gitVcsDriver: {
-              fetchRemote,
+              fetchRemoteTrackingBranch,
+              resolveRemoteTrackingCommit,
               createWorktree,
             },
             orchestrationEngine: {
@@ -5729,7 +5744,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           dispatchedCommands.map((command) => command.type),
           ["thread.create", "thread.meta.update", "thread.turn.start"],
         );
-        assert.equal(fetchRemote.mock.calls.length, 1);
+        assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 1);
+        assert.equal(resolveRemoteTrackingCommit.mock.calls.length, 1);
         assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           refName: "main",

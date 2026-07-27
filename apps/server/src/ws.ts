@@ -858,9 +858,13 @@ const makeWsRpcLayer = (
               let worktreeBaseRef = prepareWorktree.baseBranch;
               if (prepareWorktree.startFromOrigin) {
                 const resolvedRemoteBase = yield* Effect.gen(function* () {
-                  yield* gitWorkflow.fetchRemote({
+                  // Only the base branch is needed here, and the refresh is
+                  // shared (and rate-limited) with the eager worktree path, so
+                  // a first turn right after thread creation does not re-fetch.
+                  yield* gitWorkflow.refreshRemoteBase({
                     cwd: prepareWorktree.projectCwd,
                     remoteName: "origin",
+                    remoteBranch: prepareWorktree.baseBranch,
                   });
                   return yield* gitWorkflow.resolveRemoteTrackingCommit({
                     cwd: prepareWorktree.projectCwd,
