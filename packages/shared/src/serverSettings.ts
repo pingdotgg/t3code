@@ -98,12 +98,24 @@ export function applyServerSettingsPatch(
         }
       : {}),
     ...(patch.extensions !== undefined ? { extensions: patch.extensions } : {}),
-    ...(patch.autoReview?.projects !== undefined
+    // Sub-values of autoReview that must be replaced wholesale rather than
+    // deep-merged. `projects` is a map the client owns end to end, and the two
+    // model selections carry optional `options` that a deep merge would leave
+    // attached to the model that replaced them — the same staleness
+    // `shouldReplaceTextGenerationModelSelection` guards against above.
+    ...(patch.autoReview !== undefined
       ? {
           autoReview: {
             ...next.autoReview,
-            ...patch.autoReview,
-            projects: patch.autoReview.projects,
+            ...(patch.autoReview.projects !== undefined
+              ? { projects: patch.autoReview.projects }
+              : {}),
+            ...(patch.autoReview.modelSelection !== undefined
+              ? { modelSelection: patch.autoReview.modelSelection }
+              : {}),
+            ...(patch.autoReview.fixModelSelection !== undefined
+              ? { fixModelSelection: patch.autoReview.fixModelSelection }
+              : {}),
           },
         }
       : {}),

@@ -1,6 +1,7 @@
 import type {
   AutoReviewDecision,
   AutoReviewFindings,
+  AutoReviewFixModelMode,
   AutoReviewJob,
   AutoReviewJobStatus,
   AutoReviewMode,
@@ -10,20 +11,35 @@ import type {
   ModelSelection,
   ProjectId,
 } from "@t3tools/contracts";
-import { DEFAULT_AUTO_REVIEW_MAX_ATTEMPTS } from "@t3tools/contracts";
+import {
+  DEFAULT_AUTO_REVIEW_CONCURRENCY,
+  DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY,
+  DEFAULT_AUTO_REVIEW_MAX_ATTEMPTS,
+} from "@t3tools/contracts";
 
 export const AUTO_REVIEW_POLL_INTERVAL_MIN_MS = 15_000;
 export const AUTO_REVIEW_POLL_INTERVAL_MAX_MS = 600_000;
 export const AUTO_REVIEW_MAX_ATTEMPTS_LIMIT = 10;
+/**
+ * Upper bound on both fan-outs. Each parallel slot is a full agent turn
+ * (reviews shell out to `gh` and a model; fixes run a whole coding turn), so
+ * the cap keeps a mis-set slider from saturating the machine and the GitHub
+ * API. Distinct-PR / distinct-thread rules bound it further in practice.
+ */
+export const AUTO_REVIEW_CONCURRENCY_LIMIT = 8;
 
 export interface ResolvedAutoReviewPolicy {
   readonly enabled: boolean;
   readonly mode: AutoReviewMode;
   readonly modelSelection: ModelSelection;
   readonly autoFixOriginThread: boolean;
+  readonly fixModelMode: AutoReviewFixModelMode;
+  /** Model the fix turn runs under, or null to keep the thread's own model. */
+  readonly fixModelSelection: ModelSelection | null;
   readonly mentionHandle: string;
   readonly maxDiffBytes: number;
   readonly concurrency: number;
+  readonly fixConcurrency: number;
   readonly maxAttempts: number;
 }
 
@@ -35,16 +51,58 @@ export function resolveAutoReviewPolicy(
   const projectEnabled = override.enabled ?? true;
   const rawHandle = override.mentionHandle ?? settings.mentionHandle ?? "surgecode";
   const handle = String(rawHandle).replace(/^@/u, "").trim();
+  const modelSelection = override.modelSelection ?? settings.modelSelection;
+  const fixModelMode = override.fixModelMode ?? settings.fixModelMode ?? "thread";
   return {
     enabled: Boolean(settings.enabled) && projectEnabled,
     mode: override.mode ?? settings.mode ?? "auto",
-    modelSelection: override.modelSelection ?? settings.modelSelection,
+    modelSelection,
     autoFixOriginThread: override.autoFixOriginThread ?? settings.autoFixOriginThread ?? true,
+    fixModelMode,
+    fixModelSelection: resolveAutoReviewFixModel({
+      fixModelMode,
+      modelSelection,
+      fixModelSelection: override.fixModelSelection ?? settings.fixModelSelection ?? null,
+    }),
     mentionHandle: handle.length > 0 ? handle : "surgecode",
     maxDiffBytes: settings.maxDiffBytes ?? 400_000,
-    concurrency: settings.concurrency ?? 1,
+    concurrency: clampAutoReviewConcurrency(settings.concurrency, DEFAULT_AUTO_REVIEW_CONCURRENCY),
+    fixConcurrency: clampAutoReviewConcurrency(
+      settings.fixConcurrency,
+      DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY,
+    ),
     maxAttempts: clampAutoReviewMaxAttempts(settings.maxAttempts),
   };
+}
+
+/**
+ * Model override for the auto-fix turn, or null when the origin thread should
+ * keep its own model. `custom` with no stored selection degrades to null
+ * rather than silently reusing the reviewer: the user picked "a specific
+ * model" and never named one, so changing nothing is the honest outcome.
+ */
+export function resolveAutoReviewFixModel(input: {
+  readonly fixModelMode: AutoReviewFixModelMode;
+  readonly modelSelection: ModelSelection;
+  readonly fixModelSelection: ModelSelection | null | undefined;
+}): ModelSelection | null {
+  if (input.fixModelMode === "review") {
+    return input.modelSelection;
+  }
+  if (input.fixModelMode === "custom") {
+    return input.fixModelSelection ?? null;
+  }
+  return null;
+}
+
+export function clampAutoReviewConcurrency(
+  value: number | undefined,
+  fallback: number = DEFAULT_AUTO_REVIEW_CONCURRENCY,
+): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(AUTO_REVIEW_CONCURRENCY_LIMIT, Math.max(1, Math.trunc(value)));
 }
 
 export function clampAutoReviewMaxAttempts(value: number | undefined): number {
@@ -73,6 +131,128 @@ export function nextAutoReviewAttempt(input: {
     return null;
   }
   return latest.attempt + 1;
+}
+
+const autoReviewPrKey = (job: { readonly projectId: string; readonly prNumber: number }) =>
+  `${job.projectId}#${job.prNumber}`;
+
+export type AutoReviewClaimCandidate = {
+  readonly id: string;
+  readonly projectId: string;
+  readonly prNumber: number;
+  readonly status: AutoReviewJobStatus;
+};
+
+/**
+ * Pick the next batch of queued jobs to run in parallel, in FIFO order.
+ *
+ * Two reviews of the same pull request must never overlap: they would race on
+ * the same head SHA and post duplicate GitHub reviews, and the second one's
+ * findings would be redundant. So a PR with a job already running is skipped,
+ * and at most one job per PR is taken per batch. Parallelism therefore only
+ * materialises across *different* PRs, which is exactly the case the
+ * concurrency setting exists for.
+ */
+export function selectClaimableAutoReviewJobs<T extends AutoReviewClaimCandidate>(input: {
+  readonly jobs: ReadonlyArray<T>;
+  readonly limit: number;
+}): ReadonlyArray<T> {
+  const limit = clampAutoReviewConcurrency(input.limit);
+  const takenPrs = new Set(
+    input.jobs.filter((job) => job.status === "running").map(autoReviewPrKey),
+  );
+  const picked: T[] = [];
+  for (const job of input.jobs) {
+    if (picked.length >= limit) {
+      break;
+    }
+    if (job.status !== "queued") {
+      continue;
+    }
+    const key = autoReviewPrKey(job);
+    if (takenPrs.has(key)) {
+      continue;
+    }
+    takenPrs.add(key);
+    picked.push(job);
+  }
+  return picked;
+}
+
+export type AutoReviewFixSlotJob = {
+  readonly autoFixEnqueued: boolean;
+  readonly pendingFix: { readonly threadId: string } | null | undefined;
+  readonly originThreadId?: string | null | undefined;
+  readonly autoFixDispatchedAt?: string | null | undefined;
+};
+
+/**
+ * How long a just-dispatched fix holds its slot before the origin thread has
+ * to look busy for it to keep holding one.
+ *
+ * A slot is normally released by the thread settling, which is observed
+ * through the shell snapshot. But the snapshot lags the dispatch — the turn
+ * takes a moment to be adopted — so between the two a fix would look like it
+ * occupies nothing and the budget could be spent twice. The dispatch stamp
+ * covers exactly that window. It also bounds the damage if a dispatch is
+ * accepted but the turn never starts: the slot frees itself after this long
+ * instead of leaking for the process lifetime.
+ */
+export const AUTO_REVIEW_FIX_DISPATCH_GRACE_MS = 60_000;
+
+/**
+ * Origin threads whose auto-fix turn currently occupies a concurrency slot.
+ *
+ * A dispatched fix holds its slot while its thread is still working, or while
+ * it is within the dispatch grace window above. Parked fixes (`pendingFix`)
+ * hold nothing — they have not started. Threads are the unit rather than jobs
+ * because a thread runs one turn at a time, so two jobs pointing at the same
+ * thread cannot consume two slots.
+ */
+export function occupiedAutoReviewFixThreads(input: {
+  readonly jobs: ReadonlyArray<AutoReviewFixSlotJob>;
+  readonly busyThreadIds: ReadonlySet<string>;
+  readonly now?: string;
+  readonly graceMs?: number;
+}): ReadonlySet<string> {
+  const nowMs = input.now == null ? Number.NaN : Date.parse(input.now);
+  const graceMs = input.graceMs ?? AUTO_REVIEW_FIX_DISPATCH_GRACE_MS;
+  const threads = new Set<string>();
+  for (const job of input.jobs) {
+    if (!job.autoFixEnqueued || job.pendingFix != null) {
+      continue;
+    }
+    const threadId = job.originThreadId == null ? null : String(job.originThreadId);
+    if (threadId == null) {
+      continue;
+    }
+    if (input.busyThreadIds.has(threadId)) {
+      threads.add(threadId);
+      continue;
+    }
+    if (job.autoFixDispatchedAt == null || Number.isNaN(nowMs)) {
+      continue;
+    }
+    const dispatchedMs = Date.parse(job.autoFixDispatchedAt);
+    if (Number.isNaN(dispatchedMs)) {
+      continue;
+    }
+    // Bounded on both sides: a stamp from a clock that runs ahead must not
+    // hold a slot indefinitely.
+    if (Math.abs(nowMs - dispatchedMs) < graceMs) {
+      threads.add(threadId);
+    }
+  }
+  return threads;
+}
+
+export function countInFlightAutoReviewFixes(input: {
+  readonly jobs: ReadonlyArray<AutoReviewFixSlotJob>;
+  readonly busyThreadIds: ReadonlySet<string>;
+  readonly now?: string;
+  readonly graceMs?: number;
+}): number {
+  return occupiedAutoReviewFixThreads(input).size;
 }
 
 export function matchAutoReviewMention(body: string, handle: string): boolean {

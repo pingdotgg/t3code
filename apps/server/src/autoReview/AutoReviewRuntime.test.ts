@@ -48,7 +48,11 @@ const withStore = <A, E>(effect: Effect.Effect<A, E, AutoReviewJobStore.AutoRevi
 
 const enqueueSucceededWithFix = (
   store: AutoReviewJobStore.AutoReviewJobStore["Service"],
-  input: { readonly headSha: string; readonly threadId?: string | null },
+  input: {
+    readonly headSha: string;
+    readonly threadId?: string | null;
+    readonly fixModelSelection?: typeof modelSelection | null;
+  },
 ) =>
   Effect.gen(function* () {
     const { job } = yield* store.enqueue({
@@ -57,6 +61,7 @@ const enqueueSucceededWithFix = (
       headSha: input.headSha,
       trigger: "open_or_push",
       modelSelection,
+      fixModelSelection: input.fixModelSelection ?? null,
     });
     const updated = yield* store.update(job.id, {
       status: "succeeded",
@@ -65,6 +70,7 @@ const enqueueSucceededWithFix = (
       pendingFix: {
         threadId: ThreadId.make("thread-1"),
         prompt: `fix ${input.headSha}`,
+        modelSelection: input.fixModelSelection ?? null,
         queuedAt: NOW as never,
       },
     });
@@ -72,6 +78,128 @@ const enqueueSucceededWithFix = (
   });
 
 describe("makeQueueOrDispatchFix", () => {
+  it("carries the fix model through to the dispatch", async () => {
+    const dispatched: Array<typeof modelSelection | null> = [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 1,
+          headSha: "abc",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        const fixModel = { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" };
+        const queueOrDispatchFix = makeQueueOrDispatchFix({
+          shell: makeShell([makeThread({ session: { status: "idle" } })]),
+          store,
+          fixConcurrency: 1,
+          dispatchFix: (_threadId, _prompt, selection) =>
+            Effect.sync(() => {
+              dispatched.push(selection);
+              return true;
+            }),
+        });
+
+        const outcome = yield* queueOrDispatchFix({
+          jobId: job.id,
+          threadId: "thread-1",
+          prompt: "fix it",
+          modelSelection: fixModel,
+        });
+
+        expect(outcome).toBe("dispatched");
+        expect(dispatched).toEqual([fixModel]);
+      }),
+    );
+  });
+
+  it("parks the fix model on the job when the thread is busy", async () => {
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 1,
+          headSha: "abc",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        const fixModel = { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" };
+        const queueOrDispatchFix = makeQueueOrDispatchFix({
+          shell: makeShell([makeThread({ session: { status: "running" } })]),
+          store,
+          fixConcurrency: 1,
+          dispatchFix: () => Effect.succeed(true),
+        });
+
+        yield* queueOrDispatchFix({
+          jobId: job.id,
+          threadId: "thread-1",
+          prompt: "fix it",
+          modelSelection: fixModel,
+        });
+
+        const stored = yield* store.get(job.id);
+        expect(stored?.pendingFix?.modelSelection).toEqual(fixModel);
+      }),
+    );
+  });
+
+  it("parks the fix when the fix concurrency budget is already spent", async () => {
+    const dispatched: string[] = [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        // thread-2 is mid-fix and busy, consuming the single slot.
+        const { job: busyJob } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 2,
+          headSha: "old",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        yield* store.update(busyJob.id, {
+          status: "succeeded",
+          autoFixEnqueued: true,
+          originThreadId: "thread-2" as never,
+        });
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 1,
+          headSha: "abc",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+
+        const queueOrDispatchFix = makeQueueOrDispatchFix({
+          shell: makeShell([
+            makeThread({ id: "thread-1", session: { status: "idle" } }),
+            makeThread({ id: "thread-2", session: { status: "running" } }),
+          ]),
+          store,
+          fixConcurrency: 1,
+          dispatchFix: (threadId) =>
+            Effect.sync(() => {
+              dispatched.push(threadId);
+              return true;
+            }),
+        });
+
+        const outcome = yield* queueOrDispatchFix({
+          jobId: job.id,
+          threadId: "thread-1",
+          prompt: "fix it",
+          modelSelection: null,
+        });
+
+        expect(outcome).toBe("queued");
+        expect(dispatched).toHaveLength(0);
+      }),
+    );
+  });
+
   it("stores pendingFix instead of dispatching when the thread is busy", async () => {
     const dispatched: Array<{ threadId: string; prompt: string }> = [];
     await withStore(
@@ -87,6 +215,7 @@ describe("makeQueueOrDispatchFix", () => {
         const queueOrDispatchFix = makeQueueOrDispatchFix({
           shell: makeShell([makeThread({ session: { status: "running" } })]),
           store,
+          fixConcurrency: 1,
           dispatchFix: (threadId, prompt) =>
             Effect.sync(() => {
               dispatched.push({ threadId, prompt });
@@ -98,6 +227,7 @@ describe("makeQueueOrDispatchFix", () => {
           jobId: job.id,
           threadId: "thread-1",
           prompt: "fix it",
+          modelSelection: null,
         });
 
         expect(outcome).toBe("queued");
@@ -124,6 +254,7 @@ describe("makeQueueOrDispatchFix", () => {
         const queueOrDispatchFix = makeQueueOrDispatchFix({
           shell: makeShell([makeThread({ session: { status: "idle" } })]),
           store,
+          fixConcurrency: 1,
           dispatchFix: (threadId, prompt) =>
             Effect.sync(() => {
               dispatched.push({ threadId, prompt });
@@ -135,6 +266,7 @@ describe("makeQueueOrDispatchFix", () => {
           jobId: job.id,
           threadId: "thread-1",
           prompt: "fix it",
+          modelSelection: null,
         });
 
         expect(outcome).toBe("dispatched");
@@ -159,6 +291,7 @@ describe("makeQueueOrDispatchFix", () => {
         const queueOrDispatchFix = makeQueueOrDispatchFix({
           shell: makeShell([makeThread({ session: { status: "idle" } })]),
           store,
+          fixConcurrency: 1,
           dispatchFix: () => Effect.succeed(false),
         });
 
@@ -166,6 +299,7 @@ describe("makeQueueOrDispatchFix", () => {
           jobId: job.id,
           threadId: "thread-1",
           prompt: "fix it",
+          modelSelection: null,
         });
 
         expect(outcome).toBe("queued");
@@ -177,6 +311,130 @@ describe("makeQueueOrDispatchFix", () => {
 });
 
 describe("makeDrainPendingFixes", () => {
+  it("dispatches at most fixConcurrency fixes per pass", async () => {
+    const dispatched: string[] = [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        // Two idle threads each holding a parked fix, one slot available.
+        for (const [index, threadId] of ["thread-1", "thread-2"].entries()) {
+          const { job } = yield* store.enqueue({
+            projectId: "proj",
+            prNumber: index + 1,
+            headSha: `sha-${index}`,
+            trigger: "open_or_push",
+            modelSelection,
+          });
+          yield* store.update(job.id, {
+            status: "succeeded",
+            actionableFindings: true,
+            originThreadId: threadId as never,
+            pendingFix: {
+              threadId: ThreadId.make(threadId),
+              prompt: `fix ${threadId}`,
+              modelSelection: null,
+              queuedAt: NOW as never,
+            },
+          });
+        }
+
+        const drain = makeDrainPendingFixes({
+          getShell: Effect.succeed(
+            makeShell([
+              makeThread({ id: "thread-1", session: { status: "idle" } }),
+              makeThread({ id: "thread-2", session: { status: "idle" } }),
+            ]),
+          ),
+          store,
+          getFixConcurrency: Effect.succeed(1),
+          dispatchFix: (threadId) =>
+            Effect.sync(() => {
+              dispatched.push(threadId);
+              return true;
+            }),
+        });
+
+        yield* drain;
+
+        expect(dispatched).toHaveLength(1);
+      }),
+    );
+  });
+
+  it("dispatches both fixes when fixConcurrency allows it", async () => {
+    const dispatched: string[] = [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        for (const [index, threadId] of ["thread-1", "thread-2"].entries()) {
+          const { job } = yield* store.enqueue({
+            projectId: "proj",
+            prNumber: index + 1,
+            headSha: `sha-${index}`,
+            trigger: "open_or_push",
+            modelSelection,
+          });
+          yield* store.update(job.id, {
+            status: "succeeded",
+            actionableFindings: true,
+            originThreadId: threadId as never,
+            pendingFix: {
+              threadId: ThreadId.make(threadId),
+              prompt: `fix ${threadId}`,
+              modelSelection: null,
+              queuedAt: NOW as never,
+            },
+          });
+        }
+
+        const drain = makeDrainPendingFixes({
+          getShell: Effect.succeed(
+            makeShell([
+              makeThread({ id: "thread-1", session: { status: "idle" } }),
+              makeThread({ id: "thread-2", session: { status: "idle" } }),
+            ]),
+          ),
+          store,
+          getFixConcurrency: Effect.succeed(2),
+          dispatchFix: (threadId) =>
+            Effect.sync(() => {
+              dispatched.push(threadId);
+              return true;
+            }),
+        });
+
+        yield* drain;
+
+        expect(dispatched.sort()).toEqual(["thread-1", "thread-2"]);
+      }),
+    );
+  });
+
+  it("dispatches the parked fix model rather than the thread default", async () => {
+    const dispatched: Array<typeof modelSelection | null> = [];
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const fixModel = { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" };
+        yield* enqueueSucceededWithFix(store, { headSha: "abc", fixModelSelection: fixModel });
+        const drain = makeDrainPendingFixes({
+          getShell: Effect.succeed(makeShell([makeThread({ session: { status: "idle" } })])),
+          store,
+          getFixConcurrency: Effect.succeed(1),
+          dispatchFix: (_threadId, _prompt, selection) =>
+            Effect.sync(() => {
+              dispatched.push(selection);
+              return true;
+            }),
+        });
+
+        yield* drain;
+
+        expect(dispatched).toEqual([fixModel]);
+      }),
+    );
+  });
+
   it("dispatches a pending fix once the thread is idle", async () => {
     const dispatched: Array<{ threadId: string; prompt: string }> = [];
     await withStore(
@@ -186,6 +444,7 @@ describe("makeDrainPendingFixes", () => {
         const drain = makeDrainPendingFixes({
           getShell: Effect.succeed(makeShell([makeThread({ session: { status: "idle" } })])),
           store,
+          getFixConcurrency: Effect.succeed(1),
           dispatchFix: (threadId, prompt) =>
             Effect.sync(() => {
               dispatched.push({ threadId, prompt });
@@ -212,6 +471,7 @@ describe("makeDrainPendingFixes", () => {
         const drain = makeDrainPendingFixes({
           getShell: Effect.succeed(makeShell([makeThread({ session: { status: "running" } })])),
           store,
+          getFixConcurrency: Effect.succeed(1),
           dispatchFix: (threadId, prompt) =>
             Effect.sync(() => {
               dispatched.push({ threadId, prompt });
@@ -238,6 +498,7 @@ describe("makeDrainPendingFixes", () => {
         const drain = makeDrainPendingFixes({
           getShell: Effect.succeed(makeShell([makeThread({ session: { status: "idle" } })])),
           store,
+          getFixConcurrency: Effect.succeed(1),
           dispatchFix: (threadId, prompt) =>
             Effect.sync(() => {
               dispatched.push({ threadId, prompt });
@@ -267,6 +528,7 @@ describe("makeDrainPendingFixes", () => {
             makeShell([makeThread({ archivedAt: "2026-05-25T11:00:00.000Z" })]),
           ),
           store,
+          getFixConcurrency: Effect.succeed(1),
           dispatchFix: (threadId, prompt) =>
             Effect.sync(() => {
               dispatched.push({ threadId, prompt });
@@ -293,6 +555,7 @@ describe("makeDrainPendingFixes", () => {
         const drain = makeDrainPendingFixes({
           getShell: Effect.succeed(makeShell([])),
           store,
+          getFixConcurrency: Effect.succeed(1),
           dispatchFix: (threadId, prompt) =>
             Effect.sync(() => {
               dispatched.push({ threadId, prompt });
@@ -465,6 +728,114 @@ describe("makeSyncThreadPhases", () => {
         yield* sync;
 
         expect(phases).toEqual([]);
+      }),
+    );
+  });
+});
+
+describe("fix concurrency under parallel reviews", () => {
+  const makeIdleShell = (threadIds: ReadonlyArray<string>) =>
+    makeShell(threadIds.map((id) => makeThread({ id, session: { status: "idle" } })));
+
+  /**
+   * Reviews run in parallel now, so several can finish and want a fix at the
+   * same instant. Before the slot was reserved atomically, each concurrent
+   * caller read a budget none of them had spent yet and every fix dispatched —
+   * `fixConcurrency` had no effect at all on the path this PR introduced.
+   */
+  const raceFixes = (input: {
+    readonly threadIds: ReadonlyArray<string>;
+    readonly fixConcurrency: number;
+  }) =>
+    Effect.gen(function* () {
+      const dispatched: string[] = [];
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const jobs: Array<{ jobId: string; threadId: string }> = [];
+      for (const [index, threadId] of input.threadIds.entries()) {
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: index + 1,
+          headSha: `sha-${index}`,
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        yield* store.update(job.id, { originThreadId: threadId as never });
+        jobs.push({ jobId: job.id, threadId });
+      }
+      const queueOrDispatchFix = makeQueueOrDispatchFix({
+        shell: makeIdleShell(input.threadIds),
+        store,
+        fixConcurrency: input.fixConcurrency,
+        dispatchFix: (threadId) =>
+          Effect.sync(() => {
+            dispatched.push(threadId);
+            return true;
+          }),
+      });
+      const outcomes = yield* Effect.forEach(
+        jobs,
+        ({ jobId, threadId }) =>
+          queueOrDispatchFix({ jobId, threadId, prompt: "fix", modelSelection: null }),
+        { concurrency: input.threadIds.length },
+      );
+      return { dispatched, outcomes };
+    });
+
+  it("dispatches at most fixConcurrency fixes when reviews finish together", async () => {
+    const { dispatched, outcomes } = await withStore(
+      raceFixes({
+        threadIds: ["thread-1", "thread-2", "thread-3", "thread-4"],
+        fixConcurrency: 1,
+      }),
+    );
+    expect(dispatched).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome === "dispatched")).toHaveLength(1);
+    // The rest are parked, not dropped.
+    expect(outcomes.filter((outcome) => outcome === "queued")).toHaveLength(3);
+  });
+
+  it("uses the whole budget when it allows more", async () => {
+    const { dispatched } = await withStore(
+      raceFixes({
+        threadIds: ["thread-1", "thread-2", "thread-3", "thread-4"],
+        fixConcurrency: 3,
+      }),
+    );
+    expect(dispatched).toHaveLength(3);
+    expect(new Set(dispatched).size).toBe(3);
+  });
+
+  it("frees the slot again when the dispatch fails", async () => {
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 1,
+          headSha: "abc",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        yield* store.update(job.id, { originThreadId: "thread-1" as never });
+        const queueOrDispatchFix = makeQueueOrDispatchFix({
+          shell: makeIdleShell(["thread-1"]),
+          store,
+          fixConcurrency: 1,
+          dispatchFix: () => Effect.succeed(false),
+        });
+
+        yield* queueOrDispatchFix({
+          jobId: job.id,
+          threadId: "thread-1",
+          prompt: "fix",
+          modelSelection: null,
+        });
+
+        const stored = yield* store.get(job.id);
+        // Slot handed back and the fix parked, so the next tick can retry.
+        expect(stored?.autoFixEnqueued).toBe(false);
+        expect(stored?.autoFixDispatchedAt).toBeNull();
+        expect(stored?.pendingFix?.prompt).toBe("fix");
       }),
     );
   });

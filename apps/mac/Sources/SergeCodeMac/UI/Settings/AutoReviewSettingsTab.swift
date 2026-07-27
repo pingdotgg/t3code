@@ -69,6 +69,31 @@ struct AutoReviewSettingsTab: View {
                         )
                 }
 
+                SettingsSection(header: "Who fixes") {
+                    SettingsToggleRow(
+                        title: "Use a different model for fixes",
+                        description:
+                            "Off, the thread that wrote the code fixes it on its own model. On, the fix turn runs on the model you pick below.",
+                        isOn: Binding(
+                            get: { (draft ?? settings).autoReview.usesDedicatedFixModel },
+                            set: { isOn in
+                                var next = draft ?? settings
+                                next.autoReview.fixModelMode = isOn ? "review" : "thread"
+                                draft = next
+                                Task {
+                                    if await model.saveSettings(next) == false { rollbackDraft() }
+                                }
+                            })
+                    )
+                    .disabled(
+                        !settings.autoReview.enabled || !settings.autoReview.autoFixOriginThread)
+
+                    if (draft ?? settings).autoReview.usesDedicatedFixModel {
+                        SettingsDivider()
+                        fixModelPicker(settings)
+                    }
+                }
+
                 SettingsSection(header: "Model") {
                     if model.models.isEmpty {
                         SettingsCardRow {
@@ -136,6 +161,27 @@ struct AutoReviewSettingsTab: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+
+                SettingsSection(header: "Parallelism") {
+                    concurrencySlider(
+                        settings,
+                        title: "Parallel reviews",
+                        value: \.autoReview.concurrency,
+                        caption:
+                            "Reviews running at once. One PR is never reviewed twice at the same time, so this only helps when several PRs are open."
+                    )
+                    .disabled(!settings.autoReview.enabled)
+                    SettingsDivider()
+                    concurrencySlider(
+                        settings,
+                        title: "Parallel fixes",
+                        value: \.autoReview.fixConcurrency,
+                        caption:
+                            "Auto-fix turns running at once, across different threads. Extra fixes wait until a thread frees up."
+                    )
+                    .disabled(
+                        !settings.autoReview.enabled || !settings.autoReview.autoFixOriginThread)
                 }
 
                 if !settings.autoReview.projectOverrides.isEmpty {
@@ -268,6 +314,110 @@ struct AutoReviewSettingsTab: View {
             }
         }
         .disabled(!settings.autoReview.enabled)
+    }
+
+    /// Picker for the fix model: "Same as review model" (`fixModelMode ==
+    /// "review"`) plus every configured model, which selects `"custom"`.
+    @ViewBuilder
+    private func fixModelPicker(_ settings: AppSettings) -> some View {
+        let current = draft ?? settings
+        let options = model.models
+        let selectionID: String = {
+            guard current.autoReview.fixModelMode == "custom",
+                let instanceID = current.autoReview.fixModelInstanceID,
+                let modelID = current.autoReview.fixModelID
+            else { return Self.sameAsReviewTag }
+            return "\(instanceID)/\(modelID)"
+        }()
+
+        SettingsPickerRow(
+            "Fix model",
+            selection: Binding(
+                get: { selectionID },
+                set: { pairID in
+                    var next = draft ?? settings
+                    if pairID == Self.sameAsReviewTag {
+                        next.autoReview.fixModelMode = "review"
+                        next.autoReview.fixModelInstanceID = nil
+                        next.autoReview.fixModelID = nil
+                    } else {
+                        guard let option = options.first(where: { $0.id == pairID }) else { return }
+                        next.autoReview.fixModelMode = "custom"
+                        next.autoReview.fixModelInstanceID = option.instanceID
+                        next.autoReview.fixModelID = option.modelID
+                    }
+                    draft = next
+                    Task {
+                        if await model.saveSettings(next) == false { rollbackDraft() }
+                    }
+                })
+        ) {
+            Text("Same as review model").tag(Self.sameAsReviewTag)
+            // Keep a selection that no longer resolves to an enabled provider
+            // visible, so it is not silently swapped for another model.
+            if selectionID != Self.sameAsReviewTag,
+                !options.contains(where: { $0.id == selectionID })
+            {
+                Text("\(selectionID) (unavailable)").tag(selectionID)
+            }
+            ForEach(groupedModelOptions(options), id: \.kind) { group in
+                Section(group.kind.displayName) {
+                    ForEach(group.options) { option in
+                        Text(optionLabel(option, in: group.options))
+                            .tag(option.id)
+                    }
+                }
+            }
+        }
+        .disabled(!settings.autoReview.enabled || !settings.autoReview.autoFixOriginThread)
+    }
+
+    /// Sentinel tag for the "reuse the reviewer's model" row, which is a mode
+    /// rather than a model id and so cannot collide with an `instance/model`.
+    private static let sameAsReviewTag = "__same_as_review__"
+
+    /// 1–8 slider over an integer setting, saved on release rather than on
+    /// every intermediate value the drag passes through.
+    @ViewBuilder
+    private func concurrencySlider(
+        _ settings: AppSettings,
+        title: String,
+        value keyPath: WritableKeyPath<AppSettings, Int>,
+        caption: String
+    ) -> some View {
+        let current = (draft ?? settings)[keyPath: keyPath]
+        SettingsCardRow {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(title)
+                        .font(.callout)
+                    Spacer()
+                    Text("\(current)")
+                        .font(SurgeTypography.technicalMetadata)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double((draft ?? settings)[keyPath: keyPath]) },
+                        set: { newValue in
+                            var next = draft ?? settings
+                            next[keyPath: keyPath] = min(8, max(1, Int(newValue.rounded())))
+                            draft = next
+                        }),
+                    in: 1...8,
+                    step: 1,
+                    onEditingChanged: { isEditing in
+                        // Dragging fires continuously; only the released value
+                        // is worth a round-trip to the server.
+                        if !isEditing { commitTextFields() }
+                    }
+                )
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     /// Models grouped by provider kind, preserving first-appearance order.

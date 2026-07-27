@@ -31,15 +31,25 @@ public struct AutoReviewSettingsPatch: Encodable, Sendable {
     /// Milliseconds (DurationFromMillis on the wire).
     public var pollInterval: Double?
     public var autoFixOriginThread: Bool?
+    /// `"thread"`, `"review"`, or `"custom"`.
+    public var fixModelMode: String?
+    /// Sent only for `"custom"`; the server ignores it in the other modes.
+    public var fixModelSelection: ModelSelection?
     /// Max review attempts per PR head (1–10).
     public var maxAttempts: Int?
+    /// Parallel reviews (1–8).
+    public var concurrency: Int?
+    /// Parallel auto-fix turns (1–8).
+    public var fixConcurrency: Int?
     /// Whole-map replacement of per-project overrides.
     public var projects: [String: AutoReviewProjectOverridePatch]?
 
     public init(
         enabled: Bool? = nil, mode: String? = nil, modelSelection: ModelSelection? = nil,
         mentionHandle: String? = nil, pollInterval: Double? = nil,
-        autoFixOriginThread: Bool? = nil, maxAttempts: Int? = nil,
+        autoFixOriginThread: Bool? = nil, fixModelMode: String? = nil,
+        fixModelSelection: ModelSelection? = nil, maxAttempts: Int? = nil,
+        concurrency: Int? = nil, fixConcurrency: Int? = nil,
         projects: [String: AutoReviewProjectOverridePatch]? = nil
     ) {
         self.enabled = enabled
@@ -48,7 +58,11 @@ public struct AutoReviewSettingsPatch: Encodable, Sendable {
         self.mentionHandle = mentionHandle
         self.pollInterval = pollInterval
         self.autoFixOriginThread = autoFixOriginThread
+        self.fixModelMode = fixModelMode
+        self.fixModelSelection = fixModelSelection
         self.maxAttempts = maxAttempts
+        self.concurrency = concurrency
+        self.fixConcurrency = fixConcurrency
         self.projects = projects
     }
 }

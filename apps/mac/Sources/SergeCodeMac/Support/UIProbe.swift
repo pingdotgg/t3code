@@ -444,6 +444,11 @@
                 await snapshotSettings(
                     tab: .autoReview, name: "17-settings-auto-review", model: model,
                     scenery: scenery, dir: dir)
+                // The fix-model picker only exists once "use a different model
+                // for fixes" is on, and the parallelism sliders sit below the
+                // fold at the default height — so enable the feature first and
+                // capture it in a window tall enough to hold the whole tab.
+                await snapshotAutoReviewFixLanes(model: model, scenery: scenery, dir: dir)
 
                 // Window glass translucency: capture solid (1.0) and floor
                 // (0.5) states, logging NSWindow isOpaque/clear + behind-window
@@ -1410,11 +1415,80 @@
             print("UIProbe: brand about+empty snapshots captured")
         }
 
+        /// Auto-review with the fix lanes configured: enables auto-review and
+        /// picks a dedicated fix model, so the fix-model picker is mounted and
+        /// both parallelism sliders are non-default. Seeded before the view is
+        /// built — flipping it after the first render captures the old tree.
+        private static func snapshotAutoReviewFixLanes(
+            model: AppModel, scenery: SceneryStore, dir: String
+        ) async {
+            // The previous auto-review capture commits its (default) draft from
+            // `onDisappear` in a detached Task. Seeding before that lands would
+            // be overwritten by it, and the capture would silently show the
+            // defaults instead of the configuration under test.
+            try? await Task.sleep(for: .seconds(1))
+            await model.loadSettings()
+            guard var settings = model.settings else {
+                print("UIProbe: auto-review fix lanes skipped (no settings)")
+                return
+            }
+            settings.autoReview.enabled = true
+            settings.autoReview.autoFixOriginThread = true
+            settings.autoReview.fixModelMode = "custom"
+            settings.autoReview.fixModelInstanceID = "claude"
+            settings.autoReview.fixModelID = "opus-5"
+            settings.autoReview.concurrency = 4
+            settings.autoReview.fixConcurrency = 3
+            guard await model.saveSettings(settings) else {
+                print("UIProbe: auto-review fix lanes skipped (save rejected)")
+                return
+            }
+            let stored = model.settings?.autoReview
+            print(
+                "UIProbe: auto-review fix lanes seeded enabled=\(stored?.enabled ?? false) "
+                    + "fixModelMode=\(stored?.fixModelMode ?? "?") "
+                    + "concurrency=\(stored?.concurrency ?? -1) "
+                    + "fixConcurrency=\(stored?.fixConcurrency ?? -1)")
+            // Two captures: the tab is taller than any window AppKit will
+            // grant, and the two features live at opposite ends of it — the
+            // fix-model picker up top, the parallelism sliders at the bottom.
+            await snapshotSettings(
+                tab: .autoReview, name: "17b-settings-auto-review-fix-model", model: model,
+                scenery: scenery, dir: dir)
+            await snapshotSettings(
+                tab: .autoReview, name: "17c-settings-auto-review-parallelism", model: model,
+                scenery: scenery, dir: dir, scrollToBottom: true)
+        }
+
+        /// Depth-first search for the first `NSScrollView` under `view`.
+        private static func firstScrollView(in view: NSView) -> NSScrollView? {
+            if let scrollView = view as? NSScrollView { return scrollView }
+            for subview in view.subviews {
+                if let found = firstScrollView(in: subview) { return found }
+            }
+            return nil
+        }
+
+        /// Scrolls a settings pane to its bottom. The window cannot simply be
+        /// made tall enough to hold the whole tab — AppKit clamps a window to
+        /// the visible screen, so a 1400pt request silently comes back 560pt
+        /// and the capture looks identical to the unscrolled one.
+        private static func scrollToBottom(_ view: NSView) -> Bool {
+            guard let scrollView = firstScrollView(in: view) else { return false }
+            let documentHeight = scrollView.documentView?.bounds.height ?? 0
+            let visibleHeight = scrollView.contentView.bounds.height
+            guard documentHeight > visibleHeight else { return false }
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: documentHeight - visibleHeight))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            return true
+        }
+
         /// Hosts SettingsScene in its own window on `tab` and captures it —
         /// the real Settings scene can't be opened programmatically without
         /// the menu, and this exercises the identical view tree.
         private static func snapshotSettings(
-            tab: SettingsTab, name: String, model: AppModel, scenery: SceneryStore, dir: String
+            tab: SettingsTab, name: String, model: AppModel, scenery: SceneryStore, dir: String,
+            scrollToBottom shouldScrollToBottom: Bool = false
         ) async {
             let hosting = NSHostingView(
                 rootView: SettingsScene(
@@ -1429,6 +1503,14 @@
             window.orderFront(nil)
             // Let async .task loads (reachability check, pairing mint) land.
             try? await Task.sleep(for: .seconds(2))
+            if shouldScrollToBottom, let view = window.contentView {
+                if scrollToBottom(view) {
+                    // Let SwiftUI flush the scrolled layout before capturing.
+                    try? await Task.sleep(for: .seconds(1))
+                } else {
+                    print("UIProbe: \(name) not scrolled (no scrollable content)")
+                }
+            }
             if let view = window.contentView,
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             {
