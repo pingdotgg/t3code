@@ -100,6 +100,21 @@ public final class AppModel {
     }
     public var lastError: String?
 
+    /// Records a user-facing failure — the single funnel into `lastError`.
+    ///
+    /// Cancellation is filtered out. Every fetch on the chat surface is driven
+    /// by a `.task(id: threadID)` modifier, and SwiftUI cancels those bodies on
+    /// each identity change; selecting a freshly created thread is exactly such
+    /// a change. The in-flight timeline/diff/checkpoint RPCs then throw
+    /// `CancellationError`, which used to land in `lastError` and greet the new
+    /// thread with a "CancellationError()" banner over its composer. A cancelled
+    /// request is ordinary navigation, and the caller that superseded it will
+    /// report anything that genuinely fails.
+    public func report(_ error: Error) {
+        guard !error.isCancellation else { return }
+        lastError = String(describing: error)
+    }
+
     /// Per-thread `@Observable` children. The dictionary itself only mutates
     /// on first-touch create and `threadRemoved` — rare — so streaming a
     /// token on thread B never dirties views bound to thread A's child.
@@ -1083,7 +1098,7 @@ public final class AppModel {
                 Task { await sweepClosedPullRequestSettles() }
             }
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1113,7 +1128,7 @@ public final class AppModel {
             models = refreshedModels
             modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1158,7 +1173,7 @@ public final class AppModel {
             // first snapshot was in flight — ordinary navigation, not a
             // failure worth a global error banner.
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1171,7 +1186,7 @@ public final class AppModel {
             state(creating: threadID).diff = files
         } catch {
             guard refreshDiffTokens[threadID] == token else { return }
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1184,7 +1199,7 @@ public final class AppModel {
             state(creating: threadID).checkpoints = checkpoints
         } catch {
             guard refreshCheckpointsTokens[threadID] == token else { return }
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1258,6 +1273,8 @@ public final class AppModel {
             }
         } catch {
             guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
+            // A superseded load is not a failure to show — see `report(_:)`.
+            guard !error.isCancellation else { return }
             // The review pane is the only surface for this one — review mode
             // hides the composer — so it gets the readable form, not the enum.
             let message = Self.revertErrorMessage(error)
@@ -1406,7 +1423,7 @@ public final class AppModel {
             message.sendAttempts += 1
             failedMessage = message
             requeue(message, atFrontOf: threadID)
-            lastError = String(describing: error)
+            report(error)
         }
         if tracksDequeue {
             queuedSendInFlightThreadIDs.remove(threadID)
@@ -1677,7 +1694,7 @@ public final class AppModel {
                 projectID: projectID, provider: provider, title: title)
             return thread
         } catch {
-            lastError = String(describing: error)
+            report(error)
             return nil
         }
     }
@@ -1686,7 +1703,7 @@ public final class AppModel {
         do {
             try await backend.respondToApproval(id: approval.id, decision: decision)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1694,7 +1711,7 @@ public final class AppModel {
         do {
             try await backend.respondToUserInput(id: request.id, answers: answers)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1703,7 +1720,7 @@ public final class AppModel {
         do {
             try await backend.setRuntimeMode(threadID: threadID, mode: mode)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1712,7 +1729,7 @@ public final class AppModel {
         do {
             try await backend.setInteractionMode(threadID: threadID, mode: mode)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1732,7 +1749,7 @@ public final class AppModel {
                 modelPickerPreferences.recordUsage(for: requested)
             }
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1744,7 +1761,7 @@ public final class AppModel {
             // rejected change must not promote the model in the picker.
             modelPickerPreferences.recordUsage(for: model)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1834,7 +1851,7 @@ public final class AppModel {
         do {
             try await backend.setReasoningEffort(threadID: threadID, value: value)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1843,7 +1860,7 @@ public final class AppModel {
         do {
             try await backend.setServiceTier(threadID: threadID, value: value)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1851,7 +1868,7 @@ public final class AppModel {
         do {
             try await backend.implementPlan(threadID: plan.threadID, planID: plan.id)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1861,7 +1878,7 @@ public final class AppModel {
         do {
             try await backend.cancelTurn(threadID: threadID)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1935,7 +1952,7 @@ public final class AppModel {
             _ = try await backend.addProject(path: path, createWorkspaceRootIfMissing: false)
             await refreshAll()
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -1974,7 +1991,7 @@ public final class AppModel {
             }
             return project
         } catch {
-            lastError = String(describing: error)
+            report(error)
             return nil
         }
     }
@@ -2015,7 +2032,7 @@ public final class AppModel {
                 projects[index].name = trimmed
             }
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2030,7 +2047,7 @@ public final class AppModel {
             projects.removeAll { $0.id == project.id }
             rebuildProjectPathIndex()
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2058,7 +2075,7 @@ public final class AppModel {
         do {
             settings = try await backend.settings()
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2090,7 +2107,7 @@ public final class AppModel {
             return true
         } catch {
             guard token == settingsSaveToken else { return true }
-            lastError = String(describing: error)
+            report(error)
             return false
         }
     }
@@ -2101,7 +2118,7 @@ public final class AppModel {
         do {
             autoReviewJobs = try await backend.listAutoReviewJobs(projectID: projectID, limit: 30)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2109,7 +2126,7 @@ public final class AppModel {
         do {
             try await backend.refreshProviders()
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2117,7 +2134,7 @@ public final class AppModel {
         do {
             try await backend.updateProvider(instanceID: instanceID)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2128,7 +2145,7 @@ public final class AppModel {
         do {
             return try await backend.listWorkspace(threadID: threadID, subpath: subpath)
         } catch {
-            lastError = String(describing: error)
+            report(error)
             return []
         }
     }
@@ -2138,7 +2155,7 @@ public final class AppModel {
         do {
             return try await backend.readWorkspaceFile(threadID: threadID, path: path)
         } catch {
-            lastError = String(describing: error)
+            report(error)
             return nil
         }
     }
@@ -2153,7 +2170,7 @@ public final class AppModel {
         do {
             try await backend.openInEditor(threadID: threadID, subpath: subpath, editor: editor)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2179,7 +2196,7 @@ public final class AppModel {
         do {
             return try await backend.listBranches(threadID: threadID, query: query)
         } catch {
-            lastError = String(describing: error)
+            report(error)
             return []
         }
     }
@@ -2189,7 +2206,7 @@ public final class AppModel {
         do {
             try await backend.switchBranch(threadID: threadID, name: name)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2198,7 +2215,7 @@ public final class AppModel {
         do {
             try await backend.createBranch(threadID: threadID, name: name)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2207,7 +2224,7 @@ public final class AppModel {
         do {
             try await backend.pull(threadID: threadID)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2293,7 +2310,7 @@ public final class AppModel {
             await releaseTimeline(threadID: thread.id)
             await refreshArchivedThreads()
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2335,7 +2352,7 @@ public final class AppModel {
             try await backend.unarchiveThread(id: thread.id)
             await refreshArchivedThreads()
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2343,7 +2360,7 @@ public final class AppModel {
         do {
             try await backend.settleThread(id: thread.id)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2351,7 +2368,7 @@ public final class AppModel {
         do {
             try await backend.unsettleThread(id: thread.id)
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
@@ -2361,7 +2378,7 @@ public final class AppModel {
             await releaseTimeline(threadID: thread.id)
             await refreshArchivedThreads()
         } catch {
-            lastError = String(describing: error)
+            report(error)
         }
     }
 
