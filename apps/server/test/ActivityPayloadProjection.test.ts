@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadFeed } from "../../mobile/src/lib/threadActivity.ts";
+import { buildThreadFeed, type ThreadFeedActivity } from "../../mobile/src/lib/threadActivity.ts";
 import { deriveWorkLogEntries } from "../../web/src/session-logic.ts";
 import {
   projectActivityEvent,
@@ -134,6 +134,27 @@ const fixtures = [
 ] satisfies ReadonlyArray<OrchestrationThreadActivity>;
 
 describe("projectActivityPayload", () => {
+  function comparableActivity(activity: ThreadFeedActivity) {
+    return {
+      ...activity,
+      fullDetail: activity.getFullDetail(),
+      copyText: activity.getCopyText(),
+      getFullDetail: undefined,
+      getCopyText: undefined,
+    };
+  }
+
+  function comparableThreadFeed(activities: ReadonlyArray<OrchestrationThreadActivity>) {
+    return buildThreadFeed(makeThread(activities)).map((entry) =>
+      entry.type === "activity-group"
+        ? {
+            ...entry,
+            activities: entry.activities.map(comparableActivity),
+          }
+        : entry,
+    );
+  }
+
   it("drops unread bulk while retaining command, file, tool, and summary inputs", () => {
     const projected = projectActivityPayload(fixtures[0]!);
     expect(projected.payload).toEqual({
@@ -170,9 +191,7 @@ describe("projectActivityPayload", () => {
     for (const activity of fixtures) {
       const projected = projectActivityPayload(activity);
       expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([activity]));
-      expect(buildThreadFeed(makeThread([projected]))).toEqual(
-        buildThreadFeed(makeThread([activity])),
-      );
+      expect(comparableThreadFeed([projected])).toEqual(comparableThreadFeed([activity]));
     }
   });
 
