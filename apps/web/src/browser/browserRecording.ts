@@ -82,7 +82,10 @@ type BrowserRecordingLifecycle =
     };
 
 interface ActiveRecording {
+  /** Desktop-scoped identity used by capture and surface stores. */
   readonly tabId: string;
+  /** Server-local identity returned by preview automation tools. */
+  readonly serverTabId: string;
   readonly threadRef: ScopedThreadRef | null;
   readonly canvas: HTMLCanvasElement;
   readonly context: CanvasRenderingContext2D;
@@ -97,6 +100,11 @@ interface ActiveRecording {
   frameSequence: number;
   lastDrawnFrameSequence: number;
   lifecycle: BrowserRecordingLifecycle;
+}
+
+export interface ActiveBrowserRecordingTarget {
+  readonly runtimeTabId: string;
+  readonly serverTabId: string;
 }
 
 interface ActiveBrowserRecordingIndex {
@@ -129,6 +137,28 @@ export function readActiveBrowserRecordingTabIds(threadRef?: ScopedThreadRef): R
     }
   }
   return tabIds;
+}
+
+export function readActiveBrowserRecordingTargets(
+  threadRef: ScopedThreadRef,
+): ReadonlyArray<ActiveBrowserRecordingTarget> {
+  return Array.from(activeRecordings.values()).flatMap((recording) =>
+    recording.threadRef?.environmentId === threadRef.environmentId &&
+    recording.threadRef.threadId === threadRef.threadId
+      ? [{ runtimeTabId: recording.tabId, serverTabId: recording.serverTabId }]
+      : [],
+  );
+}
+
+export function findActiveBrowserRecordingRuntimeTabId(
+  threadRef: ScopedThreadRef,
+  serverTabId: string,
+): string | null {
+  return (
+    readActiveBrowserRecordingTargets(threadRef).find(
+      (recording) => recording.serverTabId === serverTabId,
+    )?.runtimeTabId ?? null
+  );
 }
 
 const preferredMimeType = (): string => {
@@ -283,6 +313,7 @@ const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperatio
 export async function startBrowserRecording(
   tabId: string,
   threadRef: ScopedThreadRef | null = null,
+  serverTabId = tabId,
 ): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
@@ -294,6 +325,14 @@ export async function startBrowserRecording(
     throw new BrowserRecordingConflictError({
       requestedTabId: tabId,
       activeTabId: activeRecording.tabId,
+    });
+  }
+  const activeLogicalRecording =
+    threadRef === null ? null : findActiveBrowserRecordingRuntimeTabId(threadRef, serverTabId);
+  if (activeLogicalRecording !== null) {
+    throw new BrowserRecordingConflictError({
+      requestedTabId: tabId,
+      activeTabId: activeLogicalRecording,
     });
   }
   const surface = useBrowserSurfaceStore.getState().byTabId[tabId];
@@ -321,6 +360,7 @@ export async function startBrowserRecording(
   });
   const recording: ActiveRecording = {
     tabId,
+    serverTabId,
     threadRef,
     canvas,
     context,

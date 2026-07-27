@@ -323,10 +323,11 @@ export function reconcilePreviewServerSessions(
     if (sameServer && result.revision < current.serverRevision) return current;
     const snapshots = result.sessions;
     const sessions: Record<string, PreviewSessionSnapshot> = {};
+    const currentSuppressedTabIds = sameServer ? current.suppressedTabIds : new Set<string>();
     let recentlySeenUrls = current.recentlySeenUrls;
     for (const snapshot of snapshots) {
-      if (current.suppressedTabIds.has(snapshot.tabId)) continue;
-      const existing = current.sessions[snapshot.tabId];
+      if (currentSuppressedTabIds.has(snapshot.tabId)) continue;
+      const existing = sameServer ? current.sessions[snapshot.tabId] : undefined;
       const next = existing && existing.updatedAt > snapshot.updatedAt ? existing : snapshot;
       sessions[next.tabId] = next;
       recentlySeenUrls = rememberSnapshotUrl(recentlySeenUrls, next);
@@ -338,11 +339,13 @@ export function reconcilePreviewServerSessions(
         ? current.activeTabId
         : (fallback?.tabId ?? null);
     const snapshot = activeTabId ? (sessions[activeTabId] ?? null) : null;
-    const desktopByTabId = Object.fromEntries(
-      Object.entries(current.desktopByTabId).filter(([tabId]) => sessions[tabId] !== undefined),
-    );
+    const desktopByTabId = sameServer
+      ? Object.fromEntries(
+          Object.entries(current.desktopByTabId).filter(([tabId]) => sessions[tabId] !== undefined),
+        )
+      : {};
     const suppressedTabIds = new Set(
-      [...current.suppressedTabIds].filter((tabId) =>
+      [...currentSuppressedTabIds].filter((tabId) =>
         snapshots.some((snapshot) => snapshot.tabId === tabId),
       ),
     );

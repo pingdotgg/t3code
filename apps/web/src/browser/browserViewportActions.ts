@@ -15,6 +15,41 @@ export class BrowserViewportCommitTimeoutError extends Error {
 const handlers = new Map<string, BrowserViewportHandler>();
 const commitTails = new Map<string, Promise<void>>();
 
+const queueBrowserViewportMutation = <A>(
+  tabId: string,
+  start: () => Promise<A>,
+): {
+  readonly started: Promise<{ readonly operation: Promise<A> }>;
+  readonly execution: Promise<A>;
+} => {
+  const previous = commitTails.get(tabId) ?? Promise.resolve();
+  const started = previous
+    .catch(() => undefined)
+    .then(() => ({
+      operation: Promise.resolve().then(start),
+    }));
+  const execution = started.then(({ operation }) => operation);
+  const tail = execution.then(() => undefined);
+  commitTails.set(tabId, tail);
+  const clear = () => {
+    if (commitTails.get(tabId) === tail) commitTails.delete(tabId);
+  };
+  void tail.then(clear, clear);
+  return { started, execution };
+};
+
+/**
+ * Serializes every server-side viewport mutation for one desktop runtime tab.
+ * Both visible UI commits and background automation use this queue so a
+ * compensating rollback cannot overtake a newer resize.
+ */
+export function runBrowserViewportMutation<A>(
+  tabId: string,
+  mutation: () => Promise<A>,
+): Promise<A> {
+  return queueBrowserViewportMutation(tabId, mutation).execution;
+}
+
 const runHandlerWithTimeout = (tabId: string, operation: Promise<void>): Promise<void> => {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -42,25 +77,14 @@ export function commitBrowserViewportChange(
   tabId: string,
   setting: PreviewViewportSetting,
 ): Promise<void> {
-  const previous = commitTails.get(tabId) ?? Promise.resolve();
-  const started = previous
-    .catch(() => undefined)
-    .then(() => {
-      const handler = handlers.get(tabId);
-      const operation = handler
-        ? Promise.resolve().then(() => handler(setting))
-        : Promise.reject(new Error(`No visible browser viewport handler for tab ${tabId}`));
-      return { operation };
-    });
-  // The queue follows the real handler lifetime, not the caller-facing timeout.
-  // A slow commit therefore cannot time out, release the queue, and overwrite a
-  // newer viewport after that newer request has already completed.
-  const execution = started.then(({ operation }) => operation);
+  const { started } = queueBrowserViewportMutation(tabId, () => {
+    const handler = handlers.get(tabId);
+    return handler
+      ? handler(setting)
+      : Promise.reject(new Error(`No visible browser viewport handler for tab ${tabId}`));
+  });
+  // The queue follows the real handler lifetime, while the caller-facing
+  // timeout starts only once this commit reaches the front of that queue.
   const result = started.then(({ operation }) => runHandlerWithTimeout(tabId, operation));
-  commitTails.set(tabId, execution);
-  const clear = () => {
-    if (commitTails.get(tabId) === execution) commitTails.delete(tabId);
-  };
-  void execution.then(clear, clear);
   return result;
 }

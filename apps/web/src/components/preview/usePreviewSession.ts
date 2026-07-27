@@ -39,7 +39,6 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
   return Atom.make((get) => {
     let disposed = false;
-    let sessionsVersion = 0;
     let eventsVersion = 0;
 
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
@@ -60,10 +59,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     get.addFinalizer(() => {
       disposed = true;
     });
-    const initialSessions = get.once(sessionsAtom);
     const initialEvent = get.once(eventsAtom);
     get.subscribe(sessionsAtom, (result) => {
-      sessionsVersion += 1;
       reconcileSessions(result);
     });
     get.subscribe(eventsAtom, (result) => {
@@ -72,7 +69,10 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     });
     queueMicrotask(() => {
       if (disposed) return;
-      if (sessionsVersion === 0) reconcileSessions(initialSessions);
+      // The cached list can predate an automation-created tab. Keep the local
+      // snapshot visible until an authoritative refresh arrives instead of
+      // reconciling against a stale empty result when the panel first mounts.
+      get.refresh(sessionsAtom);
       if (eventsVersion === 0) applyLatestEvent(initialEvent);
     });
   }).pipe(Atom.setIdleTTL(1_000), Atom.withLabel(`preview:session-sync:${threadKey}`));

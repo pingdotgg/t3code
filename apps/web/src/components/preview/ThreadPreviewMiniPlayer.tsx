@@ -5,6 +5,7 @@ import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef } from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { useThreadPreviewState } from "~/previewStateStore";
@@ -49,6 +50,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   );
   const previewState = useThreadPreviewState(threadRef);
   const snapshot = previewState.sessions[tabId] ?? null;
+  const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);
   const desktopOverlay = previewState.desktopByTabId[tabId] ?? null;
   const position = miniPlayer?.tabId === tabId ? miniPlayer.position : null;
   const size =
@@ -69,7 +71,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     const operation = desktopOverlay?.pictureInPicture
       ? previewBridge.pictureInPicture.close
       : previewBridge.pictureInPicture.open;
-    void operation(tabId).catch((error) => {
+    void operation(runtimeTabId).catch((error) => {
       toastManager.add({
         type: "error",
         title: "Unable to update popped-out preview",
@@ -284,7 +286,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
       <div className="relative h-full min-h-0">
         <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-2xl/35" />
         <BrowserSurfaceSlot
-          tabId={tabId}
+          tabId={runtimeTabId}
           visible={Boolean(desktopOverlay?.hasWebContents)}
           cornerRadius={12}
           fitSourceContent

@@ -4,11 +4,27 @@ import {
   resizeBrowserViewportFromRail,
   resizeFreeformViewport,
   resolveBrowserDeviceViewportLayout,
+  resolveFittedBrowserViewport,
   resolveBrowserViewportLayout,
   resolveResponsiveBrowserViewportSize,
 } from "./browserViewportLayout";
 
 describe("resolveBrowserViewportLayout", () => {
+  it("uses the current fixed viewport instead of stale fitted source dimensions", () => {
+    expect(
+      resolveFittedBrowserViewport(
+        { _tag: "freeform", width: 900, height: 600 },
+        { width: 1280, height: 800, scale: 1 },
+      ),
+    ).toEqual({ _tag: "freeform", width: 900, height: 600 });
+  });
+
+  it("preserves the last logical viewport when fitting a fill-mode surface", () => {
+    expect(
+      resolveFittedBrowserViewport({ _tag: "fill" }, { width: 320, height: 200, scale: 0.25 }),
+    ).toEqual({ _tag: "freeform", width: 1280, height: 800 });
+  });
+
   it("fills the available surface in fill mode", () => {
     expect(resolveBrowserViewportLayout({ width: 700, height: 500 }, { _tag: "fill" })).toEqual({
       canvasWidth: 700,
