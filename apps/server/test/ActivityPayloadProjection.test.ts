@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadFeed } from "../../mobile/src/lib/threadActivity.ts";
+import { buildThreadFeed, type ThreadFeedActivity } from "../../mobile/src/lib/threadActivity.ts";
 import { deriveWorkLogEntries } from "../../web/src/session-logic.ts";
 import {
   projectActivityEvent,
@@ -134,18 +134,22 @@ const fixtures = [
 ] satisfies ReadonlyArray<OrchestrationThreadActivity>;
 
 describe("projectActivityPayload", () => {
+  function comparableActivity(activity: ThreadFeedActivity) {
+    return {
+      ...activity,
+      fullDetail: activity.getFullDetail(),
+      copyText: activity.getCopyText(),
+      getFullDetail: undefined,
+      getCopyText: undefined,
+    };
+  }
+
   function comparableThreadFeed(activities: ReadonlyArray<OrchestrationThreadActivity>) {
     return buildThreadFeed(makeThread(activities)).map((entry) =>
-      entry.type === "activity"
+      entry.type === "activity-group"
         ? {
             ...entry,
-            activity: {
-              ...entry.activity,
-              fullDetail: entry.activity.getFullDetail(),
-              copyText: entry.activity.getCopyText(),
-              getFullDetail: undefined,
-              getCopyText: undefined,
-            },
+            activities: entry.activities.map(comparableActivity),
           }
         : entry,
     );
