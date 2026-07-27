@@ -257,9 +257,9 @@ const ProjectActionEnvironmentValue = Schema.String.check(Schema.isMaxLength(8_1
 const ProjectAutomaticGitFetchIntervalMs = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const ProjectActionEnvironment = Schema.Record(
-  ProjectActionEnvironmentKey,
+  Schema.String,
   ProjectActionEnvironmentValue,
-).check(Schema.isMaxProperties(128));
+).check(Schema.isPropertyNames(ProjectActionEnvironmentKey), Schema.isMaxProperties(128));
 export type ProjectActionEnvironment = typeof ProjectActionEnvironment.Type;
 
 export const ProjectSettings = Schema.Struct({
