@@ -493,9 +493,17 @@ private actor MockState {
             })
     }
 
+    /// Ids for things created during a run.
+    ///
+    /// Namespaced away from the fixture, which numbers its own rows `project-1`,
+    /// `thread-1`, … from one: a bare `"\(prefix)-\(counter)"` handed the first
+    /// created project the id `project-1`, and the dictionary write then
+    /// *replaced* the seeded SergeCode project, stranding its threads. One
+    /// counter is shared by every prefix, so the first created thread collided
+    /// the same way.
     private func nextID(_ prefix: String) -> String {
         counter += 1
-        return "\(prefix)-\(counter)"
+        return "\(prefix)-new-\(counter)"
     }
 
     // MARK: Lifecycle

@@ -76,6 +76,9 @@
             case "sidebar-outline":
                 await SidebarOutlineProbe.run(multi: multi, scenery: scenery, dir: dir)
                 return
+            case "sidebar-empty-state":
+                await SidebarEmptyStateProbe.run(multi: multi, scenery: scenery, dir: dir)
+                return
             case "tool-group-receive":
                 await runToolGroupReceive(model: model, multi: multi, dir: dir)
                 return

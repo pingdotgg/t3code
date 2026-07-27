@@ -54,6 +54,11 @@ struct SidebarView: View {
     @UIState private var revealedSettled: Set<String> = []
     /// Project whose settled disclosure row is hovered (reveals archive-all).
     @UIState private var hoveredSettledGroup: String?
+    /// Remembers what the list last rendered so a structural update can be
+    /// animated or snapped. Reference type on purpose: it is read during an
+    /// update, not rendered from, and must not invalidate the view when it
+    /// records the new census.
+    @UIState private var structureGate = SidebarStructureGate()
 
     @AppStorage("sidebarMachineScope") private var machineScopeStorage =
         SidebarMachineScope.allStorageValue
@@ -107,6 +112,7 @@ struct SidebarView: View {
                     isCollapsed: isCollapsed,
                     split: isCollapsed ? nil : SidebarProjection.groupThreads(group))
             }
+        let census = rowCensus(searching: searching, sections: sections, results: results)
 
         VStack(spacing: 0) {
             SidebarCommandBar(
@@ -131,13 +137,20 @@ struct SidebarView: View {
             .listStyle(.sidebar)
             // Thread updates stream in from the backend outside any
             // transaction, so a re-sort (a thread starts running, needs
-            // approval, settles) snapped rows to their new slots. The
-            // signature gives the list a transaction to move, insert and
-            // remove rows with, while tints, titles and badges keep their own
-            // finer-grained curves.
-            .animation(
-                Motion.structure,
-                value: rowSignature(sections: sections, results: results))
+            // approval, settles) snapped rows to their new slots. The census
+            // gives the list a transaction to move and insert rows with, while
+            // tints, titles and badges keep their own finer-grained curves.
+            //
+            // Not `.animation(_:value:)`: that animated row *removals* too, and
+            // an animated removal strands its row view — see
+            // `SidebarStructureGate`.
+            .transaction { transaction in
+                switch structureGate.decide(census) {
+                case .inherit: break
+                case .animate: transaction.animation = Motion.structure
+                case .snap: transaction.animation = nil
+                }
+            }
 
             Divider()
             SidebarConnectionsFooter(
@@ -268,9 +281,8 @@ struct SidebarView: View {
         }
     }
 
-    /// What the list animates on: which rows are on screen, in which section
-    /// and which bucket, at which sort tier — deliberately *not* their exact
-    /// order, and never their status, title or badge state.
+    /// The census the list animates on — see `SidebarRowCensus` for what the
+    /// two halves mean and `SidebarStructureGate` for what is done with them.
     ///
     /// A full render-order fingerprint was too eager a key. Active rows also
     /// re-sort within a tier by `updatedAt`, and a handful of chatty
@@ -285,28 +297,55 @@ struct SidebarView: View {
     /// Project sections re-sort by recency for the same reason and are keyed
     /// the same way: a section arriving or leaving animates, a section
     /// overtaking another does not.
-    private func rowSignature(
+    ///
+    /// The untiered half counts the affordance rows too — the "n more" pill and
+    /// the settled toggle come and go with the rows around them.
+    private func rowCensus(
+        searching: Bool,
         sections: [RenderedSection],
         results: [SidebarThreadItem]
-    ) -> Set<String> {
-        var signature: Set<String> = []
+    ) -> SidebarRowCensus {
+        var census = SidebarRowCensus()
+        // `rows` has to name every row the list can hold, including the empty
+        // states: they are rows like any other, and a row missing from the
+        // census is a row the gate below cannot see leaving.
+        if searching {
+            census.rows.insert("search:section")
+            if results.isEmpty {
+                census.rows.insert("search/empty")
+            }
+        } else if sections.isEmpty {
+            census.rows.insert("projects:section")
+            census.rows.insert("projects/empty")
+        }
         for item in results {
-            signature.insert("search/\(tieredRowKey(item))")
+            census.standing.insert("search/\(tieredRowKey(item))")
+            census.rows.insert("search/\(rowKey(item))")
         }
         for section in sections {
-            signature.insert("section:\(section.id)")
+            census.standing.insert("section:\(section.id)")
+            census.rows.insert("section:\(section.id)")
             guard let split = section.split else { continue }
-            for item in visibleActive(split, sectionID: section.id) {
-                signature.insert("\(section.id)/active/\(tieredRowKey(item))")
+            let visible = visibleActive(split, sectionID: section.id)
+            for item in visible {
+                census.standing.insert("\(section.id)/active/\(tieredRowKey(item))")
+                census.rows.insert("\(section.id)/active/\(rowKey(item))")
+            }
+            if split.active.count > visible.count {
+                census.rows.insert("\(section.id)/more")
+            }
+            if !split.settled.isEmpty {
+                census.rows.insert("\(section.id)/settled-toggle")
             }
             guard revealedSettled.contains(section.id) else { continue }
             // The disclosure orders purely by how recently each thread
             // settled, so membership alone decides whether it animates.
             for item in split.settled {
-                signature.insert("\(section.id)/settled/\(rowKey(item))")
+                census.standing.insert("\(section.id)/settled/\(rowKey(item))")
+                census.rows.insert("\(section.id)/settled/\(rowKey(item))")
             }
         }
-        return signature
+        return census
     }
 
     /// Stable across machines: the same thread id can appear twice when one
@@ -347,7 +386,9 @@ struct SidebarView: View {
     }
 
     /// Rows shown per project before the "Show more" affordance kicks in.
-    private static let visibleThreadCap = 5
+    /// Not private: the `sidebar-empty-state` probe censuses the list against
+    /// the model, and the cap is part of how many rows a section should hold.
+    static let visibleThreadCap = 5
 
     @ViewBuilder
     private func projectSections(_ sections: [RenderedSection]) -> some View {
@@ -396,38 +437,36 @@ struct SidebarView: View {
         let group = section.group
         let showMachine = group.members.count > 1
         let accent = projectAccent(group)
-        if split.active.isEmpty && split.settled.isEmpty {
-            SidebarEmptyRow(
-                title: "No sessions",
-                systemImage: "bubble.left",
-                detail: "Use + above to start a session in this project.")
-        } else {
-            let visible = visibleActive(split, sectionID: section.id)
-            let hiddenCount = split.active.count - visible.count
-            // The outline's guide has to know where it stops, and that is not
-            // "the last visible row": a "Show more" pill or a settled
-            // disclosure keeps the section going below it.
-            let activeRunsOn = hiddenCount > 0 || !split.settled.isEmpty
-            ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
-                threadRow(
-                    item,
-                    context: .project(
-                        showMachine: showMachine,
-                        accent: accent,
-                        index: index,
-                        isLast: !activeRunsOn && index == visible.count - 1),
-                    index: index)
-            }
-            if hiddenCount > 0 {
-                showMoreRow(group: group, hiddenCount: hiddenCount, accent: accent)
-            }
-            if !split.settled.isEmpty {
-                settledDisclosure(
-                    group: group,
-                    settled: split.settled,
+        let visible = visibleActive(split, sectionID: section.id)
+        let hiddenCount = split.active.count - visible.count
+        // The outline's guide has to know where it stops, and that is not
+        // "the last visible row": a "Show more" pill or a settled
+        // disclosure keeps the section going below it.
+        let activeRunsOn = hiddenCount > 0 || !split.settled.isEmpty
+        // A project with no sessions renders no rows at all. Its header already
+        // says "No sessions" on the census line and carries the "+" that starts
+        // one, so a placeholder row underneath repeated the same two words one
+        // line lower — and, being the only row of its section, it was the row
+        // the list stranded when the first session arrived.
+        ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
+            threadRow(
+                item,
+                context: .project(
                     showMachine: showMachine,
-                    accent: accent)
-            }
+                    accent: accent,
+                    index: index,
+                    isLast: !activeRunsOn && index == visible.count - 1),
+                index: index)
+        }
+        if hiddenCount > 0 {
+            showMoreRow(group: group, hiddenCount: hiddenCount, accent: accent)
+        }
+        if !split.settled.isEmpty {
+            settledDisclosure(
+                group: group,
+                settled: split.settled,
+                showMachine: showMachine,
+                accent: accent)
         }
     }
 
