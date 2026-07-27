@@ -1,25 +1,10 @@
 /**
- * Effect-based socket abstractions for bidirectional connections that exchange
- * text frames, binary frames, and close events.
+ * Models bidirectional socket connections in Effect.
  *
- * This module defines the `Socket` service, constructors for WebSocket-backed
- * and transform-stream-backed sockets, typed socket errors, and adapters that
- * expose a socket as a bidirectional `Channel`. It is intended for WebSocket
- * clients, HTTP server upgrades, protocol clients and servers, and tests or
- * adapters that need a scoped duplex transport inside Effect programs.
- *
- * Incoming data can be consumed as raw frames, binary bytes, or strings.
- * `runRaw` preserves whether the transport delivered a string or `Uint8Array`,
- * while `run` encodes string frames as UTF-8 bytes and `runString` decodes
- * binary frames with `TextDecoder`. Use the raw or mapping APIs when preserving
- * frame boundaries, binary payloads, or text encodings matters.
- *
- * Writers are scoped to an active run and are gated until the underlying
- * connection is open; use `onOpen` when startup writes must wait for that
- * point. Outgoing strings and bytes are sent as data frames, while `CloseEvent`
- * values request a close. Close events are modeled as `SocketCloseError` by
- * default, and `closeCodeIsError` controls which close codes should fail a run
- * versus complete cleanly.
+ * The `Socket` service runs handlers for binary, string, or raw frames and
+ * provides a scoped writer for outgoing bytes, text, or close events. This
+ * module also includes socket errors, channel adapters, WebSocket layers, and
+ * transform-stream-backed sockets.
  *
  * @since 4.0.0
  */
@@ -66,7 +51,7 @@ export const isSocket = (u: unknown): u is Socket => Predicate.hasProperty(u, Ty
  * Use to access or provide the socket implementation used by programs that
  * read and write frames through the Effect environment.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const Socket: Context.Service<Socket, Socket> = Context.Service<Socket>("effect/socket/Socket")
@@ -237,7 +222,7 @@ export const isSocketError = (u: unknown): u is SocketError => Predicate.hasProp
  */
 export class SocketReadError extends Schema.ErrorClass<SocketReadError>("effect/socket/Socket/SocketReadError")({
   _tag: Schema.tag("SocketReadError"),
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {
   /**
    * Default message used for socket read failures.
@@ -255,7 +240,7 @@ export class SocketReadError extends Schema.ErrorClass<SocketReadError>("effect/
  */
 export class SocketWriteError extends Schema.ErrorClass<SocketWriteError>("effect/socket/Socket/SocketWriteError")({
   _tag: Schema.tag("SocketWriteError"),
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {
   /**
    * Default message used for socket write failures.
@@ -275,7 +260,7 @@ export class SocketWriteError extends Schema.ErrorClass<SocketWriteError>("effec
 export class SocketOpenError extends Schema.ErrorClass<SocketOpenError>("effect/socket/Socket/SocketOpenError")({
   _tag: Schema.tag("SocketOpenError"),
   kind: Schema.Literals(["Unknown", "Timeout"]),
-  cause: Schema.Defect
+  cause: Schema.Defect()
 }) {
   /**
    * Formats timeout and unknown open failures for display.
@@ -298,7 +283,7 @@ export class SocketOpenError extends Schema.ErrorClass<SocketOpenError>("effect/
  */
 export class SocketCloseError extends Schema.ErrorClass<SocketCloseError>("effect/socket/Socket/SocketCloseError")({
   _tag: Schema.tag("SocketCloseError"),
-  code: Schema.Number,
+  code: Schema.Int,
   closeReason: Schema.optional(Schema.String)
 }) {
   /**
@@ -556,7 +541,7 @@ export const defaultCloseCodeIsError = (_code: number) => true
  * Context service for the active `WebSocket` instance available while a
  * WebSocket-backed socket run is handling events.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class WebSocket extends Context.Service<WebSocket, globalThis.WebSocket>()(
@@ -567,7 +552,7 @@ export class WebSocket extends Context.Service<WebSocket, globalThis.WebSocket>(
  * Context service for constructing `WebSocket` instances from a URL and
  * optional protocols.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class WebSocketConstructor extends Context.Service<

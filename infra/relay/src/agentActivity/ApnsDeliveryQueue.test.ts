@@ -30,7 +30,7 @@ const config: RelayConfiguration.RelayConfiguration["Service"] = {
 describe("ApnsDeliveryQueue", () => {
   it.effect("preserves job identity and the queue sender cause", () => {
     const cause = new Error("queue unavailable");
-    const senderCause = new Cloudflare.QueueSendError({
+    const senderCause = new Cloudflare.Queues.SendError({
       message: cause.message,
       cause,
     });

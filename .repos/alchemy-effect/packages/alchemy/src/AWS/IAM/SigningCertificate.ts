@@ -1,5 +1,6 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -25,10 +26,15 @@ export interface SigningCertificate extends Resource<
   "AWS.IAM.SigningCertificate",
   SigningCertificateProps,
   {
+    /** The IAM user the signing certificate belongs to. */
     userName: string;
+    /** The unique ID of the signing certificate. */
     certificateId: string;
+    /** The PEM-encoded certificate body. */
     certificateBody: string;
+    /** Whether the certificate is `Active` or `Inactive`. */
     status: iam.StatusType;
+    /** When the certificate was uploaded. */
     uploadDate: Date | undefined;
   },
   never,
@@ -40,7 +46,7 @@ export interface SigningCertificate extends Resource<
  *
  * `SigningCertificate` uploads an X.509 signing certificate for legacy
  * IAM-integrated workflows that still depend on user-scoped certificates.
- *
+ * @resource
  * @section Managing User Certificates
  * @example Upload a Signing Certificate
  * ```typescript
@@ -61,6 +67,42 @@ export const SigningCertificate = Resource<SigningCertificate>(
 export const SigningCertificateProvider = () =>
   Provider.succeed(SigningCertificate, {
     stables: ["certificateId"],
+    // IAM is a global service. `listSigningCertificates` requires a `UserName`,
+    // so we enumerate every IAM user first (paginated) and then list each
+    // user's signing certificates (also paginated) with bounded concurrency.
+    // The list response carries the full certificate body, so each entry maps
+    // directly to the `Attributes` shape `read` returns without further
+    // hydration.
+    list: Effect.fn(function* () {
+      const users = yield* iam.listUsers.pages({}).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) => page.Users ?? []),
+        ),
+      );
+      const perUser = yield* Effect.forEach(
+        users,
+        (user) =>
+          iam.listSigningCertificates.pages({ UserName: user.UserName }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk)
+                .flatMap((page) => page.Certificates ?? [])
+                .map((cert) => ({
+                  userName: cert.UserName,
+                  certificateId: cert.CertificateId,
+                  certificateBody: cert.CertificateBody,
+                  status: cert.Status,
+                  uploadDate: cert.UploadDate,
+                })),
+            ),
+            // The user may be deleted between enumeration and per-user list.
+            Effect.catchTag("NoSuchEntityException", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return perUser.flat();
+    }),
     diff: Effect.fn(function* ({ olds, news }) {
       if (!isResolved(news)) return;
       if (

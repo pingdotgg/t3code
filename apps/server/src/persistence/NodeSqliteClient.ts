@@ -139,20 +139,22 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
       return value;
     };
 
+    const prepare = (sql: string) =>
+      Effect.try({
+        try: () => db.prepare(sql),
+        catch: (cause) =>
+          new SqlError({
+            reason: classifySqliteError(cause, {
+              message: "Failed to prepare statement",
+              operation: "prepare",
+            }),
+          }),
+      });
+
     const prepareCache = yield* Cache.make({
       capacity: options.prepareCacheSize ?? 200,
       timeToLive: options.prepareCacheTTL ?? Duration.minutes(10),
-      lookup: (sql: string) =>
-        Effect.try({
-          try: () => db.prepare(sql),
-          catch: (cause) =>
-            new SqlError({
-              reason: classifySqliteError(cause, {
-                message: "Failed to prepare statement",
-                operation: "prepare",
-              }),
-            }),
-        }),
+      lookup: prepare,
     });
 
     const runStatement = (
@@ -183,9 +185,12 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
     const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
       Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
 
-    const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
+    const runStatementValues = (
+      statement: NodeSqlite.StatementSync,
+      params: ReadonlyArray<unknown>,
+    ) =>
       Effect.acquireUseRelease(
-        Cache.get(prepareCache, sql),
+        Effect.succeed(statement),
         (statement) =>
           Effect.try({
             try: () => {
@@ -224,6 +229,11 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
           }).pipe(Effect.orDie),
       );
 
+    const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
+      Effect.flatMap(Cache.get(prepareCache, sql), (statement) =>
+        runStatementValues(statement, params),
+      );
+
     return identity<Connection>({
       execute(sql, params, rowTransform) {
         return rowTransform ? Effect.map(run(sql, params), rowTransform) : run(sql, params);
@@ -234,17 +244,15 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
       executeValues(sql, params) {
         return runValues(sql, params);
       },
+      executeValuesUnprepared(sql, params) {
+        return Effect.flatMap(prepare(sql), (statement) =>
+          runStatementValues(statement, params ?? []),
+        );
+      },
       executeUnprepared(sql, params, rowTransform) {
-        const effect = Effect.try({
-          try: () => db.prepare(sql),
-          catch: (cause) =>
-            new SqlError({
-              reason: classifySqliteError(cause, {
-                message: "Failed to prepare statement",
-                operation: "prepare",
-              }),
-            }),
-        }).pipe(Effect.flatMap((statement) => runStatement(statement, params ?? [], false)));
+        const effect = prepare(sql).pipe(
+          Effect.flatMap((statement) => runStatement(statement, params ?? [], false)),
+        );
         return rowTransform ? Effect.map(effect, rowTransform) : effect;
       },
       executeStream(_sql, _params) {

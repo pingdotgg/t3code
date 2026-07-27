@@ -108,6 +108,49 @@ describe.sequential("Atom", () => {
     expect(second).toEqual(1)
   })
 
+  it("withEquality skips notifications for equivalent values", () => {
+    const point = Atom.make({ x: 0, y: 0 }).pipe(
+      Atom.withEquality<{ x: number; y: number }>((a, b) => a.x === b.x && a.y === b.y),
+      Atom.keepAlive
+    )
+    const r = AtomRegistry.make()
+    const initial = r.get(point)
+    let count = 0
+    r.subscribe(point, () => {
+      count++
+    })
+
+    r.set(point, { x: 0, y: 0 })
+    expect(count).toEqual(0)
+    expect(r.get(point)).toBe(initial)
+
+    r.set(point, { x: 1, y: 0 })
+    expect(count).toEqual(1)
+    expect(r.get(point)).toEqual({ x: 1, y: 0 })
+  })
+
+  it("withEquality skips invalidation of derived atoms", () => {
+    const point = Atom.make({ x: 0, y: 0 }).pipe(
+      Atom.withEquality<{ x: number; y: number }>((a, b) => a.x === b.x && a.y === b.y),
+      Atom.keepAlive
+    )
+    let builds = 0
+    const x = Atom.map(point, (p) => {
+      builds++
+      return p.x
+    })
+    const r = AtomRegistry.make()
+    r.subscribe(x, () => {})
+
+    expect(r.get(x)).toEqual(0)
+    expect(builds).toEqual(1)
+    r.set(point, { x: 0, y: 0 })
+    expect(builds).toEqual(1)
+    r.set(point, { x: 2, y: 0 })
+    expect(r.get(x)).toEqual(2)
+    expect(builds).toEqual(2)
+  })
+
   it("searchParam with schema reads initial query value", () => {
     const previousWindow = (globalThis as any).window
     const r = AtomRegistry.make()
@@ -348,6 +391,39 @@ describe.sequential("Atom", () => {
     assert(AsyncResult.isSuccess(result))
     expect(result.value).toEqual(111)
     expect(rebuilds).toEqual(2)
+  })
+
+  it("keeps parent child links when a parent is read more than once", () => {
+    const flag = Atom.make(true)
+    const base = Atom.make(0)
+    const derived = Atom.make((get) => {
+      const value = get(base)
+      if (get(flag)) {
+        get(base)
+      }
+      return value
+    })
+    const registry = AtomRegistry.make()
+    const unsubscribe = registry.subscribe(derived, () => {
+    }, { immediate: true })
+    const nodes = registry.getNodes()
+    const baseNode = nodes.get(base)
+    const derivedNode = nodes.get(derived)
+
+    assert(baseNode !== undefined)
+    assert(derivedNode !== undefined)
+    assert.strictEqual(baseNode.children.has(derivedNode), true)
+    assert.strictEqual(derivedNode.parents.has(baseNode), true)
+
+    registry.set(flag, false)
+
+    assert.strictEqual(baseNode.children.has(derivedNode), true)
+    assert.strictEqual(derivedNode.parents.has(baseNode), true)
+
+    registry.set(base, 1)
+
+    assert.strictEqual(registry.get(derived), 1)
+    unsubscribe()
   })
 
   it("refresh derived before mount resolves base effect", async () => {
@@ -2471,6 +2547,12 @@ describe.sequential("Atom", () => {
       expect(result.value).toEqual(42)
       expect(result.waiting).toEqual(false)
       expect(storage.get("test-key")).toEqual(JSON.stringify(42))
+
+      r.set(atom, 24)
+
+      const updated = r.get(atom)
+      assert(AsyncResult.isSuccess(updated))
+      expect(updated.value).toEqual(24)
     })
   })
 })

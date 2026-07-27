@@ -3,6 +3,20 @@ import { deepStrictEqual } from "@effect/vitest/utils"
 import * as JsonSchema from "effect/JsonSchema"
 
 describe("JsonSchema", () => {
+  describe("resolve$ref", () => {
+    it("ignores inherited definitions", () => {
+      deepStrictEqual(JsonSchema.resolve$ref("#/$defs/constructor", {}), undefined)
+    })
+
+    it("resolves __proto__ when it is an own definition", () => {
+      const definition: JsonSchema.JsonSchema = { type: "string" }
+      deepStrictEqual(
+        JsonSchema.resolve$ref("#/$defs/__proto__", { ["__proto__"]: definition }),
+        definition
+      )
+    })
+  })
+
   describe("sanitizeOpenApiComponentsKey", () => {
     const sanitizeOpenApiComponentsKey = JsonSchema.sanitizeOpenApiComponentsSchemasKey
 

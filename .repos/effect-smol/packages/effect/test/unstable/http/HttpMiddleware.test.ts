@@ -1,7 +1,10 @@
 import { assert, describe, it } from "@effect/vitest"
+import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
 import * as Logger from "effect/Logger"
 import * as References from "effect/References"
+import * as Tracer from "effect/Tracer"
 import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
@@ -52,6 +55,44 @@ describe("HttpMiddleware", () => {
         yield* loggedApp.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request2))
 
         assert.deepStrictEqual(spans, [["http.span"], ["http.span"]])
+      }))
+  })
+
+  describe("tracer", () => {
+    it.effect("excludes the sent response from a failed stream span", () =>
+      Effect.gen(function*() {
+        let serverSpan: Tracer.NativeSpan | undefined
+        const tracer = Tracer.make({
+          span(options) {
+            serverSpan = new Tracer.NativeSpan(options)
+            return serverSpan
+          }
+        })
+        const request = HttpServerRequest.fromWeb(new Request("http://localhost:3000/stream"))
+        const response = HttpServerResponse.empty({
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+        const streamError = new Error("stream failed")
+
+        // Once headers have been sent, the platform attaches the response to
+        // the stream failure so the server can finish the request correctly.
+        const app = Effect.failCause(Cause.combine(Cause.fail(streamError), Cause.die(response)))
+
+        yield* Effect.exit(
+          HttpMiddleware.tracer(app).pipe(
+            Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+            Effect.provideService(Tracer.Tracer, tracer)
+          )
+        )
+        yield* Effect.yieldNow
+
+        assert(serverSpan !== undefined)
+        assert.strictEqual(serverSpan.attributes.get("http.response.status_code"), 200)
+        assert.strictEqual(serverSpan.status._tag, "Ended")
+        if (serverSpan.status._tag === "Ended") {
+          assert.deepStrictEqual(serverSpan.status.exit, Exit.fail(streamError))
+        }
       }))
   })
 })

@@ -257,7 +257,7 @@ authoritative is what the cloud says right now.
 Once `create` and `update` have both grown an "observe live
 state, then converge per-aspect" prefix, the split is
 purely cosmetic. This is the actual reconciler in
-[`AWS/DynamoDB/Table.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AWS/DynamoDB/Table.ts),
+[`AWS/DynamoDB/Table.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/DynamoDB/Table.ts),
 which collapses both into one flow:
 
 ```typescript
@@ -313,7 +313,7 @@ your `create` body is *already* a reconciler. It's reading
 observed state and applying deltas. It just happens to be
 named `create`.
 
-[`Cloudflare/Workers/Worker.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Cloudflare/Workers/Worker.ts)
+[`Cloudflare/Workers/Worker.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/Workers/Worker.ts)
 makes the reconciler explicit. `putWorker` is a true upsert;
 `reconcileDomains` queries the live domain list and computes
 attach/detach deltas. There's no "first time" path. Crash
@@ -380,7 +380,7 @@ The provider surface is now three operations:
 
 `read` is called first whenever there's no prior state. If
 it finds a resource, the engine checks the
-[`AdoptPolicy`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AdoptPolicy.ts)
+[`AdoptPolicy`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AdoptPolicy.ts)
 — set globally with `--adopt`, or per-scope with
 `.pipe(adopt(true))`. If adoption is allowed (or the
 resource carries our ownership tags), the engine seeds state
@@ -421,7 +421,7 @@ we just deleted.
 ## Plan didn't change
 
 This is important: the *plan* still talks about create and
-update. Open [`Plan.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Plan.ts)
+update. Open [`Plan.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Plan.ts)
 and you'll find an `action` field on every node, with the
 same values as before:
 
@@ -457,11 +457,11 @@ the ground truth, and the apply/plan integration tests as
 the safety net for the engine changes themselves.
 
 - [Part 2 — Migrating 50+ providers in an afternoon](/blog/2026-05-06-reconcile-ai-migration)
-- [`AdoptPolicy`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AdoptPolicy.ts)
+- [`AdoptPolicy`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AdoptPolicy.ts)
   — the engine-side spec for `read` → `Unowned` → adopt/fail routing.
 - Canonical reconcilers:
-  [`AWS/S3/Bucket.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AWS/S3/Bucket.ts),
-  [`AWS/Kinesis/Stream.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AWS/Kinesis/Stream.ts),
-  [`AWS/DynamoDB/Table.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/AWS/DynamoDB/Table.ts).
-- [PR #179](https://github.com/alchemy-run/alchemy-effect/issues/179)
+  [`AWS/S3/Bucket.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/S3/Bucket.ts),
+  [`AWS/Kinesis/Stream.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/Kinesis/Stream.ts),
+  [`AWS/DynamoDB/Table.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/AWS/DynamoDB/Table.ts).
+- [PR #179](https://github.com/alchemy-run/alchemy/issues/179)
   — the migration itself, every provider in one diff.

@@ -2,6 +2,7 @@ import type * as EC2 from "@distilled.cloud/aws/ec2";
 import * as ec2 from "@distilled.cloud/aws/ec2";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
 import { isResolved } from "../../Diff.ts";
@@ -73,6 +74,67 @@ export interface RouteTableAssociation extends Resource<
   never,
   Providers
 > {}
+/**
+ * Associates a {@link RouteTable} with a subnet (or a gateway), making that
+ * route table govern traffic for the associated resource. A subnet can be
+ * associated with exactly one route table at a time; multiple subnets may share
+ * the same route table.
+ *
+ * Provide exactly one of `subnetId` or `gatewayId`. Changing the subnet or
+ * gateway replaces the association, whereas pointing an existing association at
+ * a different route table is applied in place via
+ * `ReplaceRouteTableAssociation`.
+ *
+ * @resource
+ * @section Associating Subnets
+ * Associating a subnet overrides the VPC's main route table for that subnet.
+ * This is how you make a subnet "public" (associate it with a table that has an
+ * internet-gateway route) or "private" (associate it with a NAT-gateway table).
+ *
+ * @example Associate a Subnet with a Route Table
+ * ```typescript
+ * const association = yield* AWS.EC2.RouteTableAssociation("PublicSubnetAssociation", {
+ *   routeTableId: publicRouteTable.routeTableId,
+ *   subnetId: publicSubnet.subnetId,
+ * });
+ * ```
+ * Binds a single subnet to the route table so its instances follow that
+ * table's routes. The returned `associationId` (prefixed `rtbassoc-`) can be
+ * used to track or replace the association.
+ *
+ * @example Share One Route Table Across Multiple Subnets
+ * ```typescript
+ * const subnet1Association = yield* AWS.EC2.RouteTableAssociation("PublicSubnet1Association", {
+ *   routeTableId: publicRouteTable.routeTableId,
+ *   subnetId: publicSubnet1.subnetId,
+ * });
+ *
+ * const subnet2Association = yield* AWS.EC2.RouteTableAssociation("PublicSubnet2Association", {
+ *   routeTableId: publicRouteTable.routeTableId,
+ *   subnetId: publicSubnet2.subnetId,
+ * });
+ * ```
+ * Declaring multiple associations against the same `routeTableId` gives every
+ * listed subnet identical routing — a concise way to apply one public (or
+ * private) routing policy across all subnets in a tier.
+ *
+ * @section Associating Gateways (Edge Routing)
+ * Instead of a subnet, an association can target an internet gateway or
+ * virtual private gateway via `gatewayId`. This "gateway route table
+ * association" enables edge routing, where inbound traffic is inspected or
+ * redirected (e.g. to a firewall appliance) as it enters the VPC.
+ *
+ * @example Associate a Route Table with an Internet Gateway
+ * ```typescript
+ * const edgeAssociation = yield* AWS.EC2.RouteTableAssociation("EdgeAssociation", {
+ *   routeTableId: ingressRouteTable.routeTableId,
+ *   gatewayId: internetGateway.internetGatewayId,
+ * });
+ * ```
+ * Attaches the route table at the gateway rather than at a subnet, so traffic
+ * arriving from the internet is steered by this table — typically toward an
+ * inspection appliance before reaching its destination subnet.
+ */
 export const RouteTableAssociation = Resource<RouteTableAssociation>(
   "AWS.EC2.RouteTableAssociation",
 );
@@ -83,6 +145,46 @@ export const RouteTableAssociationProvider = () =>
     Effect.gen(function* () {
       return {
         stables: ["associationId", "subnetId", "gatewayId"],
+
+        // Associations are embedded in describeRouteTables — each RouteTable
+        // carries an Associations[] of {subnet/gateway, routeTable,
+        // associationId}. Flatten every page's associations across the region.
+        // The implicit "main" association (the VPC default route-table binding)
+        // is skipped: it isn't a standalone resource we create or manage.
+        list: () =>
+          ec2.describeRouteTables.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.RouteTables ?? []).flatMap((rt) =>
+                  (rt.Associations ?? [])
+                    .filter(
+                      (
+                        a,
+                      ): a is EC2.RouteTableAssociation & {
+                        RouteTableAssociationId: string;
+                        RouteTableId: string;
+                      } =>
+                        a.Main !== true &&
+                        a.RouteTableAssociationId != null &&
+                        a.RouteTableId != null,
+                    )
+                    .map((a) => ({
+                      associationId:
+                        a.RouteTableAssociationId as RouteTableAssociationId,
+                      routeTableId: a.RouteTableId as RouteTableId,
+                      subnetId: a.SubnetId as SubnetId | undefined,
+                      gatewayId: a.GatewayId,
+                      associationState: {
+                        state: a.AssociationState?.State ?? "associated",
+                        statusMessage: a.AssociationState?.StatusMessage,
+                      },
+                    })),
+                ),
+              ),
+            ),
+          ),
+
         diff: Effect.fn(function* ({ news, olds }) {
           if (!isResolved(news)) return;
           // Subnet/Gateway change requires replacement (use ReplaceRouteTableAssociation internally)
@@ -310,13 +412,11 @@ const waitForAssociationState = (
       );
     }),
     {
-      schedule: Schedule.fixed(1000).pipe(
-        // Check every second
-        Schedule.both(Schedule.recurs(30)), // Max 30 seconds
-        Schedule.tapOutput(([, attempt]) =>
+      schedule: Schedule.max([Schedule.fixed(1000), Schedule.recurs(30)]).pipe(
+        Schedule.tap(({ attempt }) =>
           session
             ? session.note(
-                `Waiting for association to be ${targetState}... (${attempt + 1}s)`,
+                `Waiting for association to be ${targetState}... (${attempt}s)`,
               )
             : Effect.void,
         ),

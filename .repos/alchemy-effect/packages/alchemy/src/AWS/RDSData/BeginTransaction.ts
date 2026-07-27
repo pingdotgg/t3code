@@ -1,8 +1,7 @@
 import * as rdsdata from "@distilled.cloud/aws/rds-data";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import type { DBCluster } from "../RDS/DBCluster.ts";
 import type { Secret } from "../SecretsManager/Secret.ts";
 
@@ -13,85 +12,60 @@ export interface BeginTransactionOptions {
 }
 
 /**
- * Runtime binding for `rds-data:BeginTransaction`.
+ * Runtime binding for `rds-data:BeginTransaction` — open a Data API
+ * transaction and get back a `transactionId` to thread through subsequent
+ * `ExecuteStatement`/`BatchExecuteStatement` calls.
+ *
+ * Bind it to a Data-API-enabled `DBCluster` and its credentials secret;
+ * provide the implementation with
+ * `Effect.provide(AWS.RDSData.BeginTransactionHttp)`. Pair with
+ * `AWS.RDSData.CommitTransaction` / `AWS.RDSData.RollbackTransaction` to
+ * finish the transaction.
+ * @binding
+ * @section Transactions
+ * @example Begin, Write, Commit
+ * ```typescript
+ * // init
+ * const beginTransaction = yield* AWS.RDSData.BeginTransaction(db.cluster, {
+ *   secret: db.secret,
+ *   database: "app",
+ * });
+ * const executeStatement = yield* AWS.RDSData.ExecuteStatement(db.cluster, {
+ *   secret: db.secret,
+ *   database: "app",
+ * });
+ * const commitTransaction = yield* AWS.RDSData.CommitTransaction(db.cluster, {
+ *   secret: db.secret,
+ * });
+ *
+ * // runtime
+ * const tx = yield* beginTransaction();
+ * yield* executeStatement({
+ *   sql: "INSERT INTO todos (id, title) VALUES (:id, :title)",
+ *   parameters: [
+ *     { name: "id", value: { longValue: 1 } },
+ *     { name: "title", value: { stringValue: "buy milk" } },
+ *   ],
+ *   transactionId: tx.transactionId,
+ * });
+ * yield* commitTransaction({ transactionId: tx.transactionId! });
+ * ```
  */
-export class BeginTransaction extends Binding.Service<
+export interface BeginTransaction extends Binding.Service<
   BeginTransaction,
+  "AWS.RDSData.BeginTransaction",
   (
     cluster: DBCluster,
     options: BeginTransactionOptions,
   ) => Effect.Effect<
     () => Effect.Effect<
       rdsdata.BeginTransactionResponse,
-      rdsdata.BeginTransactionError
+      rdsdata.BeginTransactionError,
+      RuntimeContext
     >
   >
->()("AWS.RDSData.BeginTransaction") {}
+> {}
 
-export const BeginTransactionLive = Layer.effect(
-  BeginTransaction,
-  Effect.gen(function* () {
-    const Policy = yield* BeginTransactionPolicy;
-    const beginTransaction = yield* rdsdata.beginTransaction;
-
-    return Effect.fn(function* (
-      cluster: DBCluster,
-      options: BeginTransactionOptions,
-    ) {
-      const resourceArn = yield* cluster.dbClusterArn;
-      const secretArn = yield* options.secret.secretArn;
-      yield* Policy(cluster, options);
-      return Effect.fn(function* () {
-        const clusterArn = yield* resourceArn;
-        const resolvedSecretArn = yield* secretArn;
-        return yield* beginTransaction({
-          resourceArn: clusterArn,
-          secretArn: resolvedSecretArn,
-          database: options.database,
-          schema: options.schema,
-        });
-      });
-    });
-  }),
-);
-
-export class BeginTransactionPolicy extends Binding.Policy<
-  BeginTransactionPolicy,
-  (cluster: DBCluster, options: BeginTransactionOptions) => Effect.Effect<void>
->()("AWS.RDSData.BeginTransaction") {}
-
-export const BeginTransactionPolicyLive = BeginTransactionPolicy.layer.succeed(
-  Effect.fn(function* (host, cluster, options) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.RDSData.BeginTransaction(${cluster}))`(
-        {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: ["rds-data:BeginTransaction"],
-              Resource: [cluster.dbClusterArn, options.secret.secretArn],
-            },
-          ],
-        },
-      );
-      yield* host.bind`Allow(${host}, AWS.SecretsManager.GetSecretValue(${options.secret}))`(
-        {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: [
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-              ],
-              Resource: [options.secret.secretArn],
-            },
-          ],
-        },
-      );
-    } else {
-      return yield* Effect.die(
-        `BeginTransactionPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const BeginTransaction = Binding.Service<BeginTransaction>(
+  "AWS.RDSData.BeginTransaction",
 );
