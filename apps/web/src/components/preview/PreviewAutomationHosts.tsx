@@ -39,7 +39,7 @@ import {
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
-import { isCurrentPreviewRuntimeTab, previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -48,7 +48,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 import {
-  PreviewAutomationNavigationTimeoutError,
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
@@ -60,6 +59,10 @@ import {
   previewAutomationOpenNeedsOverlay,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
+import {
+  assertPreviewRuntimeCurrent,
+  waitForNavigationReadiness,
+} from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 import {
@@ -78,29 +81,6 @@ const waitForPreviewPresentation = async (runtimeTabId: string): Promise<void> =
     if (useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible) return;
     await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
   }
-};
-
-const assertPreviewRuntimeCurrent = (
-  threadRef: ScopedThreadRef,
-  tabId: string,
-  runtimeTabId: string,
-  request: Pick<PreviewAutomationRequest, "operation" | "requestId">,
-) => {
-  const state = readThreadPreviewState(threadRef);
-  if (
-    state.sessions[tabId] &&
-    isCurrentPreviewRuntimeTab(threadRef, state.serverEpoch, tabId, runtimeTabId)
-  ) {
-    return state;
-  }
-  throw new PreviewAutomationTargetUnavailableError({
-    requestId: request.requestId,
-    operation: request.operation,
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
-    tabId,
-    bridgeAvailable: Boolean(previewBridge),
-  });
 };
 
 const waitForDesktopOverlay = async (
@@ -127,41 +107,6 @@ const waitForDesktopOverlay = async (
     requestId,
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
-    timeoutMs,
-  });
-};
-
-const waitForNavigationReadiness = async (
-  threadRef: ScopedThreadRef,
-  requestId: string,
-  tabId: string,
-  runtimeTabId: string,
-  operation: PreviewAutomationRequest["operation"],
-  readiness: PreviewAutomationNavigateInput["readiness"],
-  timeoutMs: number,
-): Promise<void> => {
-  const targetReadiness = readiness ?? "load";
-  if (!previewBridge || targetReadiness === "none") return;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
-    assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, { operation, requestId });
-    if (targetReadiness === "domContentLoaded") {
-      const readyState = await previewBridge.automation.evaluate(runtimeTabId, {
-        expression: "document.readyState",
-      });
-      if (readyState === "interactive" || readyState === "complete") return;
-    } else {
-      const status = await previewBridge.automation.status(runtimeTabId);
-      if (status.available && !status.loading) return;
-    }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
-  }
-  throw new PreviewAutomationNavigationTimeoutError({
-    requestId,
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
-    tabId,
-    readiness: targetReadiness,
     timeoutMs,
   });
 };
