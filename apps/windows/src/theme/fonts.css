@@ -1,0 +1,50 @@
+/*
+ * Geist Sans/Mono (SIL OFL — see src/assets/fonts/OFL.txt), the same faces the
+ * macOS app bundles under `Vendor/Geist`.
+ *
+ * macOS has to register these at launch through CTFontManager because the app
+ * is a hand-assembled SwiftPM bundle; the web build just declares them and
+ * Vite fingerprints the files into `dist/assets`. `font-display: block` is
+ * deliberate: the chat and composer metrics are tuned for Geist, and a flash of
+ * Segoe UI at a different x-height reflows the whole timeline on first paint.
+ */
+
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist-Medium.otf") format("opentype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist-SemiBold.otf") format("opentype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../assets/fonts/GeistMono-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../assets/fonts/GeistMono-Medium.otf") format("opentype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}

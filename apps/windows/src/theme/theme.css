@@ -1,0 +1,416 @@
+/*
+ * The app's chrome, expressed as the same layer stack `GlassLayering.swift`
+ * describes. Read `src/theme/glass.ts` first — the numbers here come from it
+ * at runtime via `applyTheme()`, and nothing in this file may hard-code an
+ * alpha that belongs to that model.
+ *
+ * Layer order, bottom to top (`--layer-*` z-indices below):
+ *   0  the DWM system backdrop, composited *outside* the document — nothing
+ *      here may paint over it opaquely or the window stops being translucent
+ *   1  window plate       (--plate-alpha)
+ *   2  scenery photo      (--photo-opacity, on an isolated group)
+ *   3  legibility wash    (--wash-alpha)
+ *   4  content + chrome glass
+ */
+
+@import "./fonts.css";
+
+:root {
+  color-scheme: dark;
+
+  /* Nature palette — mirrors AlpineTheme. Written by applyTheme() so the
+     TypeScript tokens stay the single source of truth; these are fallbacks. */
+  --color-accent: rgb(145 201 163);
+  --color-forest: rgb(20 56 36);
+  --color-meadow: rgb(120 184 140);
+  --color-sky: rgb(145 191 199);
+  --color-clay: rgb(209 153 125);
+  --color-lichen: rgb(209 194 133);
+  --color-lavender: rgb(176 163 194);
+  --color-user-bubble: rgb(36 66 48);
+  --color-user-bubble-stroke: rgb(145 201 163 / 0.22);
+
+  --color-text-primary: rgb(255 255 255 / 0.92);
+  --color-text-secondary: rgb(255 255 255 / 0.62);
+  --color-text-tertiary: rgb(255 255 255 / 0.42);
+  --color-separator: rgb(255 255 255 / 0.1);
+  --color-plate: rgb(14 17 16);
+
+  /* Geometry — AlpineTheme.Corners. */
+  --radius-compact: 5px;
+  --radius-control: 8px;
+  --radius-card: 10px;
+  --radius-composer: 14px;
+  --radius-hero: 16px;
+  --content-header-height: 61px;
+
+  /* Layer alphas, recomputed from the translucency slider. */
+  --plate-alpha: 0;
+  --wash-alpha: 0.425;
+  --photo-opacity: 0.739;
+
+  --layer-plate: 0;
+  --layer-scenery: 1;
+  --layer-wash: 2;
+  --layer-content: 3;
+  --layer-overlay: 10;
+
+  /* Motion — written by applyTheme() from motion.ts. */
+  --motion-feedback: 0.14s cubic-bezier(0.23, 1, 0.32, 1);
+  --motion-reveal: 0.19s cubic-bezier(0.23, 1, 0.32, 1);
+  --motion-structure: 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-delight: 0.4s cubic-bezier(0.34, 1.32, 0.64, 1);
+  --motion-burst: 0.6s ease-out;
+  --motion-ambient: 0.22s cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-scenery: 0.3s cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-decorative-opacity: 1;
+
+  /* Chrome glass. The macOS rule holds here: glass is for chrome (toolbars,
+     composer, sheets) and never behind long-form text. */
+  --glass-fill: rgb(255 255 255 / 0.06);
+  --glass-stroke: rgb(255 255 255 / 0.09);
+  --glass-blur: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html.surge-root,
+body {
+  /* Transparent all the way down so DWM's Mica reaches the user. An opaque
+     background anywhere in this chain silently turns the window into a plain
+     dark rectangle — the same trap the macOS window plate encodes. */
+  background: transparent;
+}
+
+body {
+  font: var(--font-chat-body, 400 14.5px system-ui);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  /* The whole app is a single non-scrolling shell; only panes scroll. */
+  user-select: none;
+  cursor: default;
+}
+
+/* Text the user is meant to read and copy opts back in. */
+.selectable {
+  user-select: text;
+  cursor: auto;
+}
+
+/* ---------------------------------------------------------------- layers -- */
+
+.window-layers {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.window-plate {
+  position: absolute;
+  inset: 0;
+  z-index: var(--layer-plate);
+  background: var(--color-plate);
+  opacity: var(--plate-alpha);
+  transition: opacity var(--motion-scenery);
+}
+
+/*
+ * The scenery group is isolated and fades as ONE layer. Fading the gradient
+ * fallback and the photo separately composites both, which covers far more
+ * than the requested alpha — the CSS equivalent of the missing
+ * `.compositingGroup()` that silently made the macOS window opaque.
+ */
+.scenery {
+  position: absolute;
+  inset: 0;
+  z-index: var(--layer-scenery);
+  isolation: isolate;
+  opacity: var(--photo-opacity);
+  transition: opacity var(--motion-scenery);
+}
+
+.scenery__gradient,
+.scenery__photo {
+  position: absolute;
+  inset: 0;
+}
+
+.scenery__photo {
+  background-size: cover;
+  background-position: center;
+}
+
+.legibility-wash {
+  position: absolute;
+  inset: 0;
+  z-index: var(--layer-wash);
+  background: rgb(0 0 0 / var(--wash-alpha));
+  transition: background-color var(--motion-scenery);
+}
+
+/* --------------------------------------------------------------- surfaces -- */
+
+.glass {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-stroke);
+  border-radius: var(--radius-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+}
+
+/* ------------------------------------------------------------------ shell -- */
+
+.shell {
+  position: relative;
+  z-index: var(--layer-content);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+}
+
+/*
+ * The toolbar band. Windows keeps its native caption buttons (snap layouts and
+ * the maximize hover menu are worth more than a pixel-identical unified
+ * titlebar), so this strip sits *below* the caption rather than replacing it —
+ * see ARCHITECTURE.md "Window chrome".
+ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--color-separator);
+  -webkit-app-region: drag;
+}
+
+.toolbar__spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar button,
+.toolbar .no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  transition:
+    background-color var(--motion-feedback),
+    color var(--motion-feedback),
+    border-color var(--motion-feedback);
+}
+
+.icon-button:hover {
+  background: var(--glass-fill);
+  border-color: var(--glass-stroke);
+  color: var(--color-text-primary);
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr) var(--inspector-width, 0px);
+  min-height: 0;
+  transition: grid-template-columns var(--motion-structure);
+}
+
+.columns[data-sidebar="collapsed"] {
+  --sidebar-width: 0px;
+}
+
+.columns[data-inspector="shown"] {
+  --inspector-width: 360px;
+}
+
+.column {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.column--sidebar {
+  border-right: 1px solid var(--color-separator);
+}
+
+.column--inspector {
+  border-left: 1px solid var(--color-separator);
+}
+
+.content-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--content-header-height);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--color-separator);
+}
+
+.pane-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Windows 11 scrollbars are heavy over glass; match the macOS overlay feel. */
+.pane-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.pane-scroll::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.16);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+.pane-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.28);
+  background-clip: content-box;
+}
+
+/* ------------------------------------------------------------- status pill */
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font: var(--font-technical-metadata, 500 11.5px ui-monospace);
+  color: var(--color-text-secondary);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-stroke);
+  white-space: nowrap;
+}
+
+.status-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-text-tertiary);
+  transition: background-color var(--motion-ambient);
+}
+
+.status-pill[data-phase="ready"] .status-pill__dot {
+  background: var(--color-meadow);
+}
+
+.status-pill[data-phase="launchingServer"] .status-pill__dot,
+.status-pill[data-phase="connecting"] .status-pill__dot,
+.status-pill[data-phase="reconnecting"] .status-pill__dot {
+  background: var(--color-lichen);
+  animation: pulse 1.6s ease-in-out infinite;
+  /* Reduce Motion drops the pulse; the color still carries the state. */
+  opacity: var(--motion-decorative-opacity);
+}
+
+.status-pill[data-phase="failed"] .status-pill__dot {
+  background: var(--color-clay);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-pill__dot {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------ empty state */
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px;
+  text-align: center;
+}
+
+.empty-state__title {
+  font: var(--font-inspector-empty-state-title, 600 15px system-ui);
+  color: var(--color-text-primary);
+}
+
+.empty-state__body {
+  font: var(--font-agent-status, 400 13px system-ui);
+  color: var(--color-text-secondary);
+  max-width: 44ch;
+  line-height: 1.5;
+}
+
+.empty-state__detail {
+  font: var(--font-tool-payload, 400 12px ui-monospace);
+  color: var(--color-text-tertiary);
+  max-width: 70ch;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.primary-button {
+  -webkit-app-region: no-drag;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--color-user-bubble-stroke);
+  border-radius: var(--radius-control);
+  background: var(--color-user-bubble);
+  color: var(--color-text-primary);
+  font: var(--font-sidebar-task-title, 500 13px system-ui);
+  transition:
+    background-color var(--motion-feedback),
+    transform var(--motion-feedback);
+}
+
+.primary-button:hover {
+  background: color-mix(in srgb, var(--color-user-bubble) 80%, var(--color-accent));
+}
+
+.primary-button:active {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary-button:active {
+    transform: none;
+  }
+}

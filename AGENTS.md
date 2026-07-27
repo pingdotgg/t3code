@@ -91,6 +91,7 @@ Long term maintainability is a core priority. If you add new functionality, firs
 ## Package Roles
 
 - `apps/mac`: Native SwiftUI macOS app. Supervises the local server sidecar and owns the desktop UI.
+- `apps/windows`: Windows 11 desktop app — Tauri 2 shell (Rust) around a WebView2 renderer (React/TypeScript). Supervises the same server sidecar. Unlike `apps/mac`, it does not hand-port the wire protocol: the renderer consumes `packages/client-runtime` directly. See `apps/windows/ARCHITECTURE.md`.
 - `apps/mobile`: Expo/React Native iPhone companion. Connects to a SergeCode backend over LAN or relay.
 - `apps/server`: Node.js HTTP/WebSocket backend. Wraps provider runtimes and manages sessions, persistence, git, and orchestration.
 - `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.

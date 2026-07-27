@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "windows-only",
+  "description": "Auto-update permissions. Kept in a platform-scoped capability because the updater plugin is only compiled into the Windows build — the crate also type-checks on macOS/Linux for development, and an unconditional permission reference would fail that build.",
+  "platforms": ["windows"],
+  "windows": ["main"],
+  "permissions": ["updater:default"]
+}

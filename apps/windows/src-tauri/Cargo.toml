@@ -1,0 +1,67 @@
+[package]
+name = "sergecode-windows"
+version = "0.3.1"
+description = "SurgeCode for Windows"
+authors = ["SergeCode"]
+edition = "2021"
+rust-version = "1.82"
+default-run = "sergecode-windows"
+
+[lib]
+# Tauri's mobile/desktop split expects the app to live in a library so the
+# generated entry points can call into it; `main.rs` is a thin shim.
+name = "sergecode_windows_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools", "protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-os = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "process",
+  "time",
+  "sync",
+  "io-util",
+  "net",
+  "fs",
+] }
+# Loopback-only readiness probe: no TLS stack needed, and dropping it keeps
+# the installer small. `charset`/`http2` are equally unnecessary for a
+# `GET http://127.0.0.1:<port>/.well-known/t3/environment`.
+reqwest = { version = "0.12", default-features = false }
+rand = "0.9"
+base64 = "0.22"
+thiserror = "2"
+dirs = "6"
+
+[target.'cfg(windows)'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Security",
+  "Win32_Security_Credentials",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[features]
+# This feature is used for production builds where `devtools` is disabled.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

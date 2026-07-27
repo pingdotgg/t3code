@@ -1,0 +1,352 @@
+name: Release Windows App
+
+# Manual-only for now. The macOS release workflow is label-triggered because
+# its signing identity, notarization, and Sparkle appcast are all wired up;
+# the Windows equivalent needs three secrets that do not exist yet
+# (TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, and an
+# Authenticode certificate). Until those are set, a label-triggered build would
+# publish an unsigned installer that SmartScreen blocks — so this stays
+# `workflow_dispatch` and the version input must match version.json exactly,
+# the same rule the macOS manual path follows.
+#
+# Draft vs published decides whether anyone receives the update: a draft's
+# assets are not downloadable, so the updater manifest is only committed for a
+# published release. Drafting is the right default while the installer is still
+# being eyeballed by hand, and wrong the moment you intend to update users, so
+# it is an input rather than a constant — uncheck `draft` to publish on demand.
+#
+# See apps/windows/HANDOVER.md ▸ "Signing and updates" for the one-time setup.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version from apps/windows/version.json to release"
+        required: true
+        type: string
+      draft:
+        description: "Create a draft for manual review. Uncheck to publish immediately — the updater cannot see a draft."
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    # Not "publish": whether the release goes live is the `draft` input's
+    # decision, and it defaults to a draft for manual review.
+    name: Build the Windows installer and create its release
+    runs-on: windows-latest
+    # The job now runs the full check suite before a release-profile Tauri
+    # build (`lto = true`, `codegen-units = 1`), on top of the server bundle
+    # and the sidecar download. Timing out midway is a genuinely bad failure —
+    # it can leave a tag without its release — so the ceiling is generous.
+    timeout-minutes: 120
+
+    steps:
+      # No `ref:` — check out exactly the ref the dispatch selected, so the
+      # artifact is built from what the operator picked in the UI. Pinning
+      # `main` here silently packaged `main` no matter what was chosen, which
+      # is precisely the wrong behaviour during a hotfix or when validating a
+      # release candidate. The guard below then refuses anything but `main`,
+      # loudly, keeping the macOS policy that releases ship from merged `main`.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a release from main
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}" -ne "refs/heads/main") {
+            Write-Error ("Releases ship from merged main. This run was " +
+              "dispatched from ${{ github.ref }}; merge the release commit " +
+              "first, then run this workflow from main.")
+            exit 1
+          }
+
+      - name: Require the requested version to match version.json
+        shell: pwsh
+        run: |
+          $manifest = Get-Content apps/windows/version.json | ConvertFrom-Json
+          if ($manifest.version -ne "${{ inputs.version }}") {
+            Write-Error "version.json is $($manifest.version), workflow input is ${{ inputs.version }}"
+            exit 1
+          }
+
+      - name: Set up vp
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Restore cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/windows/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('apps/windows/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # `AGENTS.md` requires these before anything is considered done, and
+      # `release-mac.yml` runs them before shipping for the same reason. A
+      # release is the last place that should skip them: `ci-windows.yml` is
+      # path-filtered, so a merge that touched nothing it watches can reach
+      # `main` unverified, and nothing else would catch it before an installer
+      # went out.
+      #
+      # Separate steps, not one multi-line `run:` — GitHub's `pwsh` propagates
+      # only the last command's exit code, so a failing `vp check` followed by
+      # a passing typecheck would report green.
+      - name: Repository lint and format check
+        run: vp check
+
+      - name: Repository typecheck
+        run: vp run typecheck
+
+      - name: Test the renderer
+        run: vp run --filter @sergecode/windows test
+
+      - name: Build the server bundle
+        run: vp run --filter t3 build:bundle
+
+      # Downloads the pinned node.exe (checksum-verified) and materializes the
+      # production server payload the installer embeds.
+      - name: Stage the sidecar
+        run: node apps/windows/scripts/stage-sidecar.mjs
+
+      - name: Build the renderer
+        run: vp run --filter @sergecode/windows build
+
+      # The Rust gates run here rather than alongside the TypeScript ones
+      # above: `generate_context!` reads `frontendDist`, so nothing in this
+      # crate compiles until the renderer bundle exists. They still precede
+      # the installer build, which is the point — a clippy failure should not
+      # cost a full release-profile link first.
+      - name: Check formatting of the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo fmt --check
+
+      - name: Lint the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test the Rust shell
+        working-directory: apps/windows/src-tauri
+        run: cargo test
+
+      # `createUpdaterArtifacts` is `false` in tauri.conf.json so the build
+      # works before any signing key exists. Setting the env vars alone would
+      # therefore produce no `.sig` at all — the flag has to be turned on
+      # too — so both the build override and the artifact list are driven from
+      # one decision made here.
+      - name: Resolve updater signing
+        id: signing
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $bundle = "apps/windows/src-tauri/target/release/bundle/nsis"
+          $hasKey = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+
+          # Signing needs both secrets, and a half-configured pair is always a
+          # mistake rather than a valid state. Caught here because both halves
+          # fail badly later otherwise: a key without its password sends
+          # `tauri build` looking for an interactive passphrase prompt that a
+          # runner cannot answer, and a password without a key silently
+          # produces an unsigned installer even though the operator plainly
+          # meant to sign one.
+          #
+          # An unset secret and one set to the empty string are
+          # indistinguishable here, so this also fixes the policy: the signing
+          # key must be generated *with* a passphrase. An unencrypted minisign
+          # key sitting in a repository secret is the worse failure mode.
+          if ($hasKey -ne $hasPassword) {
+            $present = if ($hasKey) { "TAURI_SIGNING_PRIVATE_KEY" } else { "TAURI_SIGNING_PRIVATE_KEY_PASSWORD" }
+            $missing = if ($hasKey) { "TAURI_SIGNING_PRIVATE_KEY_PASSWORD" } else { "TAURI_SIGNING_PRIVATE_KEY" }
+            Write-Error ("$present is configured but $missing is not. " +
+              "Updater signing needs both; the key must be generated with a " +
+              "passphrase. See apps/windows/HANDOVER.md section 7.")
+            exit 1
+          }
+
+          $enabled = $hasKey
+          if ($enabled) {
+            # Tauri refuses to emit updater artifacts without a public key to
+            # verify them against, and fails late in the build. Catch this
+            # half-configured case here too, where the message is actionable.
+            $pubkey = (Get-Content apps/windows/src-tauri/tauri.conf.json -Raw |
+              ConvertFrom-Json).plugins.updater.pubkey
+            if ([string]::IsNullOrWhiteSpace($pubkey)) {
+              Write-Error ("TAURI_SIGNING_PRIVATE_KEY is set but " +
+                "plugins.updater.pubkey is empty in tauri.conf.json. " +
+                "See apps/windows/HANDOVER.md section 7.")
+              exit 1
+            }
+            $files = "$bundle/*.exe`n$bundle/*.sig`napps/windows/updater/latest.json"
+          } else {
+            Write-Host "No signing secrets configured: building an installer with no update feed."
+            $files = "$bundle/*.exe"
+          }
+
+          "enabled=$($enabled.ToString().ToLower())" |
+            Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+          # Multi-line output: the artifact list has to stay in step with
+          # whether signing ran, or the upload asks for a file that was never
+          # produced.
+          "files<<ARTIFACTS" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+          $files | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+          "ARTIFACTS" | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Build the installer
+        working-directory: apps/windows
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          if ("${{ steps.signing.outputs.enabled }}" -eq "true") {
+            pnpm exec tauri build --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          } else {
+            pnpm exec tauri build
+          }
+
+      # The updater reads a manifest, not the release listing: it needs the
+      # installer's URL and the *contents* of the `.sig` beside it. Tauri emits
+      # the installer and the signature but never this file, so without this
+      # step the endpoint has nothing to serve and every client sees "no
+      # update available" forever.
+      - name: Write the updater manifest
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $bundle = "apps/windows/src-tauri/target/release/bundle/nsis"
+          $installer = Get-ChildItem "$bundle/*-setup.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No NSIS installer found in $bundle."
+            exit 1
+          }
+          $signature = Join-Path $bundle "$($installer.Name).sig"
+          if (-not (Test-Path $signature)) {
+            Write-Error ("Updater signing was enabled but $signature does not " +
+              "exist. The build did not emit updater artifacts.")
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path apps/windows/updater | Out-Null
+          $manifest = [ordered]@{
+            version  = "${{ inputs.version }}"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              # Tauri's target key for 64-bit Windows. Add `windows-aarch64`
+              # here if an ARM installer is ever staged alongside it.
+              "windows-x86_64" = [ordered]@{
+                signature = (Get-Content $signature -Raw).Trim()
+                url = "https://github.com/${{ github.repository }}/releases/download/windows-v${{ inputs.version }}/$($installer.Name)"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 |
+            Set-Content apps/windows/updater/latest.json -Encoding utf8
+          Get-Content apps/windows/updater/latest.json
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-v${{ inputs.version }}
+          name: SurgeCode for Windows ${{ inputs.version }}
+          # A draft's assets are not downloadable, so the manifest published
+          # below would point at URLs that 404. That is why the manifest is
+          # only committed for a published release.
+          draft: ${{ inputs.draft }}
+          # Loud rather than silent: a release that quietly ships without its
+          # installer is worse than a failed workflow.
+          fail_on_unmatched_files: true
+          files: ${{ steps.signing.outputs.files }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # The manifest is uploaded as a release asset above, but a release asset
+      # cannot be the *feed*: it has no stable URL. `releases/latest` is
+      # repository-wide, so the next macOS release would make it resolve to a
+      # release carrying no `latest.json` at all and every Windows client would
+      # start 404ing. The feed therefore lives at a fixed path on `main`,
+      # exactly as `release-mac.yml` commits the Sparkle appcast back.
+      #
+      # Skipped for drafts on purpose — a draft's assets are not downloadable,
+      # so advertising them would hand clients a dead URL.
+      - name: Publish the updater manifest to main
+        if: steps.signing.outputs.enabled == 'true' && !inputs.draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Written through the Contents API rather than `git push` from this
+          # checkout, because the checkout is stale by the time we get here —
+          # a release build takes the better part of an hour, and `main` can
+          # easily have moved. A plain push would then be rejected *after* the
+          # release is already public, stranding users on a new installer that
+          # the feed never advertises.
+          #
+          # The API takes the current blob sha as an optimistic-concurrency
+          # token, so a write that loses a race fails cleanly and can simply be
+          # retried against the new head. Re-reading the sha each attempt is
+          # what makes the retry correct rather than a clobber. It also avoids
+          # rebasing a working tree full of build output.
+          #
+          # Last-writer-wins is the right semantic for a "latest" feed, and the
+          # job's `concurrency` group already prevents two Windows releases
+          # from overlapping.
+          $ErrorActionPreference = "Stop"
+          # Inspect exit codes directly; a non-zero `gh` is expected on the
+          # first read when the file does not exist yet.
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $repo = "${{ github.repository }}"
+          $path = "apps/windows/updater/latest.json"
+          $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
+          $message = "chore: publish Windows updater manifest for ${{ inputs.version }} [skip release]"
+
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            $sha = gh api "repos/$repo/contents/${path}?ref=main" --jq .sha
+            $arguments = @(
+              "api", "--method", "PUT", "repos/$repo/contents/$path",
+              "-f", "message=$message",
+              "-f", "content=$content",
+              "-f", "branch=main"
+            )
+            # Absent on the very first publish, when there is no blob to replace.
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($sha)) {
+              $arguments += @("-f", "sha=$sha")
+            }
+
+            gh @arguments
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Published the updater manifest to main."
+              exit 0
+            }
+
+            Write-Host "Attempt ${attempt}: main moved under the write. Retrying."
+            Start-Sleep -Seconds (5 * $attempt)
+          }
+
+          Write-Error ("Could not publish $path to main after 5 attempts. " +
+            "The GitHub Release is already live, so clients will not see this " +
+            "version until the manifest lands: commit " +
+            "apps/windows/updater/latest.json from the release run's artifacts " +
+            "by hand, or re-run this workflow.")
+          exit 1

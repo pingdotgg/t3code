@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities the main window needs: window control, the OS/process plugins, external link opening, and file dialogs for picking a project directory.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:webview:allow-internal-toggle-devtools",
+    "dialog:allow-open",
+    "dialog:allow-message",
+    "opener:allow-open-url",
+    "opener:allow-open-path",
+    "os:default",
+    "process:allow-restart"
+  ]
+}
