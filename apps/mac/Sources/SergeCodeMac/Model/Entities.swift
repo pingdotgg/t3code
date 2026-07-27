@@ -682,6 +682,30 @@ public enum ToolLifecycleTitle {
     }
 }
 
+/// Comparison form of a tool row's detail line, for correlating a settled
+/// event with the running row it belongs to when neither carries a
+/// `toolCallId`.
+public enum ToolRowDetail {
+    /// Drops the runtime marker a settled event appends to what the running
+    /// row showed — "Bash: ls" becomes "Bash: ls <exited with exit code 0>"
+    /// once the process reports, which is the same invocation and must not
+    /// read as a different one. Only a trailing `<…>` is dropped, so a detail
+    /// that merely contains angle brackets keeps them, and the same rule
+    /// applies to both sides of a comparison anyway.
+    public static func canonical(_ detail: String) -> String {
+        var trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix(">"), let marker = trimmed.lastIndex(of: "<") {
+            let head = trimmed[..<marker].trimmingCharacters(in: .whitespacesAndNewlines)
+            // A detail that is nothing but the marker has no invocation left
+            // to compare; keep it rather than collapsing it to empty, which
+            // is the "no detail at all" signal.
+            if head.isEmpty { break }
+            trimmed = head
+        }
+        return trimmed
+    }
+}
+
 extension Array where Element == TimelineItem {
     /// True once the agent has finished at least one answer here. A chat that
     /// has never answered is not a chat with work to follow up on, so the
@@ -693,14 +717,57 @@ extension Array where Element == TimelineItem {
         }
     }
 
+    /// Index of the still-running tool row an uncorrelated lifecycle event
+    /// belongs to, or nil when the event starts a row of its own.
+    ///
+    /// Searches backwards past interleaved rows (reasoning updates land
+    /// between a tool's start and its completion), not just `last` — otherwise
+    /// the completion appends a duplicate and the original row is stuck
+    /// "running" forever. Bounded at the current turn: crossing a user message
+    /// (or checkpoint, which marks a turn end) could fold a fresh same-name
+    /// invocation into a stale row from an old turn.
+    ///
+    /// Two tiers, because a settled event is not obliged to restate what the
+    /// running row already showed: an exact detail match wins outright, and a
+    /// weaker signal (an event that carries no detail at all, or an
+    /// uncorrelated event following a correlated row) is only taken when no
+    /// row matches exactly. Without that ordering a detail-less completion
+    /// would steal the row of whichever sibling call happened to start last
+    /// and leave its own row running forever.
+    fileprivate func foldableToolRowIndex(id: String, name: String, detail: String) -> Int? {
+        let incomingDetail = ToolRowDetail.canonical(detail)
+        var weakMatch: Int?
+        search: for index in indices.reversed() {
+            switch self[index] {
+            case .userMessage, .checkpoint:
+                break search
+            case .toolEvent(
+                let existingID, let existingName, let existingDetail, _, .running, _, _, _):
+                guard ToolLifecycleTitle.namesMatch(existingName, name) else { continue }
+                let runningDetail = ToolRowDetail.canonical(existingDetail)
+                if runningDetail == incomingDetail {
+                    return index
+                }
+                guard weakMatch == nil else { continue }
+                if incomingDetail.isEmpty || runningDetail.isEmpty
+                    || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))
+                {
+                    weakMatch = index
+                }
+            default:
+                continue
+            }
+        }
+        return weakMatch
+    }
+
     /// Coalescing append: an item whose id already exists replaces that row
     /// in place (tool lifecycle updates, streaming reasoning text) instead of
     /// stacking a duplicate. A tool row without a correlation id still folds
     /// into the trailing running row when it is plainly the same invocation
-    /// (mirrors the web client's consecutive-merge in session-logic.ts):
-    /// same name plus same detail, or a correlated row followed by an
-    /// uncorrelated event of the same name. Two uncorrelated tools that
-    /// merely share a name stay separate rows.
+    /// (mirrors the web client's consecutive-merge in session-logic.ts) —
+    /// see `foldableToolRowIndex`. Two uncorrelated tools that merely share a
+    /// name and both carry their own distinct detail stay separate rows.
     public mutating func upsertTimelineItem(_ item: TimelineItem) {
         if let index = lastIndex(where: { $0.id == item.id }) {
             let existing = self[index]
@@ -709,31 +776,14 @@ extension Array where Element == TimelineItem {
                 .preservingFirstLifecycleTimestamp(of: existing)
             return
         }
-        // Searches backwards past interleaved rows (reasoning updates land
-        // between a tool's start and its completion), not just `last` —
-        // otherwise the completion appends a duplicate and the original row
-        // is stuck "running" forever. Bounded at the current turn: crossing
-        // a user message (or checkpoint, which marks a turn end) could fold
-        // a fresh same-name invocation into a stale row from an old turn.
-        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item {
-            search: for index in indices.reversed() {
-                switch self[index] {
-                case .userMessage, .checkpoint:
-                    break search
-                case .toolEvent(
-                    let existingID, let existingName, let existingDetail, _, .running, _, _, _)
-                where ToolLifecycleTitle.namesMatch(existingName, name)
-                    && (existingDetail == detail
-                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
-                    let existing = self[index]
-                    self[index] = item
-                        .preservingToolMetadata(of: existing)
-                        .preservingFirstLifecycleTimestamp(of: existing)
-                    return
-                default:
-                    continue
-                }
-            }
+        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item,
+            let index = foldableToolRowIndex(id: id, name: name, detail: detail)
+        {
+            let existing = self[index]
+            self[index] = item
+                .preservingToolMetadata(of: existing)
+                .preservingFirstLifecycleTimestamp(of: existing)
+            return
         }
         append(item)
     }
@@ -761,34 +811,17 @@ extension Array where Element == TimelineItem {
                 .preservingFirstLifecycleTimestamp(of: existing)
             return
         }
-        // Searches backwards past interleaved rows (reasoning updates land
-        // between a tool's start and its completion), not just `last` —
-        // otherwise the completion appends a duplicate and the original row
-        // is stuck "running" forever. Bounded at the current turn: crossing
-        // a user message (or checkpoint, which marks a turn end) could fold
-        // a fresh same-name invocation into a stale row from an old turn.
-        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item {
-            search: for index in indices.reversed() {
-                switch self[index] {
-                case .userMessage, .checkpoint:
-                    break search
-                case .toolEvent(
-                    let existingID, let existingName, let existingDetail, _, .running, _, _, _)
-                where ToolLifecycleTitle.namesMatch(existingName, name)
-                    && (existingDetail == detail
-                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
-                    let existing = self[index]
-                    let replacedID = existing.id
-                    self[index] = item
-                        .preservingToolMetadata(of: existing)
-                        .preservingFirstLifecycleTimestamp(of: existing)
-                    indexByID.removeValue(forKey: replacedID)
-                    indexByID[item.id] = index
-                    return
-                default:
-                    continue
-                }
-            }
+        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item,
+            let index = foldableToolRowIndex(id: id, name: name, detail: detail)
+        {
+            let existing = self[index]
+            let replacedID = existing.id
+            self[index] = item
+                .preservingToolMetadata(of: existing)
+                .preservingFirstLifecycleTimestamp(of: existing)
+            indexByID.removeValue(forKey: replacedID)
+            indexByID[item.id] = index
+            return
         }
         append(item)
         indexByID[item.id] = count - 1

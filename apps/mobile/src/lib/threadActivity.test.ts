@@ -236,6 +236,53 @@ describe("buildThreadFeed", () => {
     expect(group.activities[0]?.status).toBe("success");
   });
 
+  it("collapses a renamed lifecycle with no toolCallId to correlate on", () => {
+    // Threads recorded before the server stamped a correlation id: the title
+    // is rewritten and the detail gains the runtime marker, so neither can be
+    // compared verbatim without splitting one call into two rows.
+    const thread = makeThread({
+      id: ThreadId.make("thread-legacy-lifecycle"),
+      projectId: ProjectId.make("project-1"),
+      title: "Legacy lifecycle",
+      activities: [
+        makeActivity({
+          id: EventId.make("legacy-running"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Running command",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Running command",
+            itemType: "command_execution",
+            status: "inProgress",
+            detail: "Bash: ls",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("legacy-ran"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Ran command",
+            itemType: "command_execution",
+            detail: "Bash: ls <exited with exit code 0>",
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(group.activities.map((activity) => activity.id)).toEqual(["legacy-ran"]);
+  });
+
   it("renders skills, MCP and computer-use calls under their own name and icon", () => {
     const turnId = TurnId.make("turn-native-tools");
     const thread = makeThread({

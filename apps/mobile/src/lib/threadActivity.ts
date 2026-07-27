@@ -687,6 +687,9 @@ function deriveToolLifecycleCollapseKey(
   const normalizedLabel = canonicalToolTitle(
     normalizeCompactToolLabel(entry.toolTitle ?? entry.label),
   );
+  // `entry.detail` already had the runtime marker stripped when it was built
+  // ("Bash: ls <exited with exit code 0>" -> "Bash: ls"), so the settled and
+  // running halves of one call reach this point with the same detail.
   const detail = entry.detail?.trim() ?? "";
   const itemType = entry.itemType ?? "";
   if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {
