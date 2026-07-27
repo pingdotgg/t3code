@@ -732,3 +732,111 @@ describe("makeSyncThreadPhases", () => {
     );
   });
 });
+
+describe("fix concurrency under parallel reviews", () => {
+  const makeIdleShell = (threadIds: ReadonlyArray<string>) =>
+    makeShell(threadIds.map((id) => makeThread({ id, session: { status: "idle" } })));
+
+  /**
+   * Reviews run in parallel now, so several can finish and want a fix at the
+   * same instant. Before the slot was reserved atomically, each concurrent
+   * caller read a budget none of them had spent yet and every fix dispatched —
+   * `fixConcurrency` had no effect at all on the path this PR introduced.
+   */
+  const raceFixes = (input: {
+    readonly threadIds: ReadonlyArray<string>;
+    readonly fixConcurrency: number;
+  }) =>
+    Effect.gen(function* () {
+      const dispatched: string[] = [];
+      const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+      const jobs: Array<{ jobId: string; threadId: string }> = [];
+      for (const [index, threadId] of input.threadIds.entries()) {
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: index + 1,
+          headSha: `sha-${index}`,
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        yield* store.update(job.id, { originThreadId: threadId as never });
+        jobs.push({ jobId: job.id, threadId });
+      }
+      const queueOrDispatchFix = makeQueueOrDispatchFix({
+        shell: makeIdleShell(input.threadIds),
+        store,
+        fixConcurrency: input.fixConcurrency,
+        dispatchFix: (threadId) =>
+          Effect.sync(() => {
+            dispatched.push(threadId);
+            return true;
+          }),
+      });
+      const outcomes = yield* Effect.forEach(
+        jobs,
+        ({ jobId, threadId }) =>
+          queueOrDispatchFix({ jobId, threadId, prompt: "fix", modelSelection: null }),
+        { concurrency: input.threadIds.length },
+      );
+      return { dispatched, outcomes };
+    });
+
+  it("dispatches at most fixConcurrency fixes when reviews finish together", async () => {
+    const { dispatched, outcomes } = await withStore(
+      raceFixes({
+        threadIds: ["thread-1", "thread-2", "thread-3", "thread-4"],
+        fixConcurrency: 1,
+      }),
+    );
+    expect(dispatched).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome === "dispatched")).toHaveLength(1);
+    // The rest are parked, not dropped.
+    expect(outcomes.filter((outcome) => outcome === "queued")).toHaveLength(3);
+  });
+
+  it("uses the whole budget when it allows more", async () => {
+    const { dispatched } = await withStore(
+      raceFixes({
+        threadIds: ["thread-1", "thread-2", "thread-3", "thread-4"],
+        fixConcurrency: 3,
+      }),
+    );
+    expect(dispatched).toHaveLength(3);
+    expect(new Set(dispatched).size).toBe(3);
+  });
+
+  it("frees the slot again when the dispatch fails", async () => {
+    await withStore(
+      Effect.gen(function* () {
+        const store = yield* AutoReviewJobStore.AutoReviewJobStore;
+        const { job } = yield* store.enqueue({
+          projectId: "proj",
+          prNumber: 1,
+          headSha: "abc",
+          trigger: "open_or_push",
+          modelSelection,
+        });
+        yield* store.update(job.id, { originThreadId: "thread-1" as never });
+        const queueOrDispatchFix = makeQueueOrDispatchFix({
+          shell: makeIdleShell(["thread-1"]),
+          store,
+          fixConcurrency: 1,
+          dispatchFix: () => Effect.succeed(false),
+        });
+
+        yield* queueOrDispatchFix({
+          jobId: job.id,
+          threadId: "thread-1",
+          prompt: "fix",
+          modelSelection: null,
+        });
+
+        const stored = yield* store.get(job.id);
+        // Slot handed back and the fix parked, so the next tick can retry.
+        expect(stored?.autoFixEnqueued).toBe(false);
+        expect(stored?.autoFixDispatchedAt).toBeNull();
+        expect(stored?.pendingFix?.prompt).toBe("fix");
+      }),
+    );
+  });
+});

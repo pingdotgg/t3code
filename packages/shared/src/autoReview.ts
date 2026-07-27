@@ -183,33 +183,76 @@ export type AutoReviewFixSlotJob = {
   readonly autoFixEnqueued: boolean;
   readonly pendingFix: { readonly threadId: string } | null | undefined;
   readonly originThreadId?: string | null | undefined;
+  readonly autoFixDispatchedAt?: string | null | undefined;
 };
 
 /**
- * Auto-fix turns currently occupying a concurrency slot, counted as distinct
- * busy origin threads.
+ * How long a just-dispatched fix holds its slot before the origin thread has
+ * to look busy for it to keep holding one.
  *
- * A dispatched fix holds its slot only while its thread is still working: once
- * the thread settles the fix is done and the slot frees up. Parked fixes
- * (`pendingFix`) hold nothing — they have not started. Threads are the unit
- * rather than jobs because a thread runs one turn at a time, so two jobs
- * pointing at the same thread cannot consume two slots.
+ * A slot is normally released by the thread settling, which is observed
+ * through the shell snapshot. But the snapshot lags the dispatch — the turn
+ * takes a moment to be adopted — so between the two a fix would look like it
+ * occupies nothing and the budget could be spent twice. The dispatch stamp
+ * covers exactly that window. It also bounds the damage if a dispatch is
+ * accepted but the turn never starts: the slot frees itself after this long
+ * instead of leaking for the process lifetime.
  */
-export function countInFlightAutoReviewFixes(input: {
+export const AUTO_REVIEW_FIX_DISPATCH_GRACE_MS = 60_000;
+
+/**
+ * Origin threads whose auto-fix turn currently occupies a concurrency slot.
+ *
+ * A dispatched fix holds its slot while its thread is still working, or while
+ * it is within the dispatch grace window above. Parked fixes (`pendingFix`)
+ * hold nothing — they have not started. Threads are the unit rather than jobs
+ * because a thread runs one turn at a time, so two jobs pointing at the same
+ * thread cannot consume two slots.
+ */
+export function occupiedAutoReviewFixThreads(input: {
   readonly jobs: ReadonlyArray<AutoReviewFixSlotJob>;
   readonly busyThreadIds: ReadonlySet<string>;
-}): number {
+  readonly now?: string;
+  readonly graceMs?: number;
+}): ReadonlySet<string> {
+  const nowMs = input.now == null ? Number.NaN : Date.parse(input.now);
+  const graceMs = input.graceMs ?? AUTO_REVIEW_FIX_DISPATCH_GRACE_MS;
   const threads = new Set<string>();
   for (const job of input.jobs) {
     if (!job.autoFixEnqueued || job.pendingFix != null) {
       continue;
     }
     const threadId = job.originThreadId == null ? null : String(job.originThreadId);
-    if (threadId != null && input.busyThreadIds.has(threadId)) {
+    if (threadId == null) {
+      continue;
+    }
+    if (input.busyThreadIds.has(threadId)) {
+      threads.add(threadId);
+      continue;
+    }
+    if (job.autoFixDispatchedAt == null || Number.isNaN(nowMs)) {
+      continue;
+    }
+    const dispatchedMs = Date.parse(job.autoFixDispatchedAt);
+    if (Number.isNaN(dispatchedMs)) {
+      continue;
+    }
+    // Bounded on both sides: a stamp from a clock that runs ahead must not
+    // hold a slot indefinitely.
+    if (Math.abs(nowMs - dispatchedMs) < graceMs) {
       threads.add(threadId);
     }
   }
-  return threads.size;
+  return threads;
+}
+
+export function countInFlightAutoReviewFixes(input: {
+  readonly jobs: ReadonlyArray<AutoReviewFixSlotJob>;
+  readonly busyThreadIds: ReadonlySet<string>;
+  readonly now?: string;
+  readonly graceMs?: number;
+}): number {
+  return occupiedAutoReviewFixThreads(input).size;
 }
 
 export function matchAutoReviewMention(body: string, handle: string): boolean {

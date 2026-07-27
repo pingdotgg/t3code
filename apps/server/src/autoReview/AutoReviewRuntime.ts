@@ -24,7 +24,6 @@ import {
 } from "@t3tools/contracts";
 import {
   clampAutoReviewConcurrency,
-  countInFlightAutoReviewFixes,
   deriveAutoReviewThreadPhase,
   isAutoReviewFixThreadBusy,
   resolveAutoReviewJobOriginThread,
@@ -110,14 +109,17 @@ export const makeQueueOrDispatchFix = (deps: {
         return yield* park;
       }
       // Reviews run in parallel, so several can land wanting a fix at once.
-      // Park the overflow for `drainPendingFixes` instead of firing every fix
-      // the moment its review finishes.
-      const jobs = yield* deps.store.list({ limit: AUTO_REVIEW_JOB_LIST_LIMIT });
-      const inFlight = countInFlightAutoReviewFixes({
-        jobs,
+      // The budget is taken atomically rather than read-then-spent: a plain
+      // check here would let every concurrent review see the same empty
+      // budget and dispatch. Overflow parks for `drainPendingFixes`.
+      const reserved = yield* deps.store.reserveFixSlot({
+        jobId: input.jobId,
+        threadId: input.threadId,
+        limit: deps.fixConcurrency,
         busyThreadIds: busyThreadIds(deps.shell, now),
+        now,
       });
-      if (inFlight >= Math.max(1, deps.fixConcurrency)) {
+      if (!reserved) {
         return yield* park;
       }
 
@@ -129,6 +131,9 @@ export const makeQueueOrDispatchFix = (deps: {
       if (dispatched) {
         return "dispatched" as const;
       }
+      // The slot was taken but nothing is running under it — hand it back
+      // before parking, or the budget leaks until the grace window expires.
+      yield* deps.store.releaseFixSlot(input.jobId);
       return yield* park;
     }).pipe(Effect.orElseSucceed(() => "queued" as const));
 };
@@ -154,10 +159,6 @@ export const makeDrainPendingFixes = (deps: {
     const now = DateTime.formatIso(yield* DateTime.now);
     const fixConcurrency = Math.max(1, yield* deps.getFixConcurrency);
     const busy = busyThreadIds(shell, now);
-    let slots = fixConcurrency - countInFlightAutoReviewFixes({ jobs, busyThreadIds: busy });
-    // Threads dispatched within this pass are not yet visible as busy in the
-    // snapshot, so track them here to keep the budget honest.
-    const dispatchedThreads = new Set<string>();
     for (const job of jobs) {
       const pendingFix = job.pendingFix;
       if (!pendingFix) {
@@ -184,23 +185,30 @@ export const makeDrainPendingFixes = (deps: {
       if (isAutoReviewFixThreadBusy(busyInputForThread(thread, now))) {
         continue;
       }
-      // A second fix for a thread already dispatched this pass would land on a
-      // busy thread — leave it parked for the next tick.
-      if (dispatchedThreads.has(threadId)) {
+      // Same atomic reservation the review path uses, so both share one
+      // budget. It also subsumes the per-pass bookkeeping this loop used to
+      // do by hand: a thread reserved earlier in the pass is already
+      // occupied, so a second fix for it cannot take a slot.
+      const reserved = yield* deps.store.reserveFixSlot({
+        jobId: job.id,
+        threadId,
+        limit: fixConcurrency,
+        busyThreadIds: busy,
+        now,
+      });
+      if (!reserved) {
         continue;
-      }
-      if (slots <= 0) {
-        break;
       }
       const dispatched = yield* deps.dispatchFix(
         threadId,
         pendingFix.prompt,
         pendingFix.modelSelection,
       );
-      if (dispatched) {
-        dispatchedThreads.add(threadId);
-        slots -= 1;
-        yield* deps.store.update(job.id, { pendingFix: null, autoFixEnqueued: true });
+      if (!dispatched) {
+        // Restore the parked fix: `reserveFixSlot` cleared it when it took
+        // the slot, and nothing is running to consume it.
+        yield* deps.store.releaseFixSlot(job.id);
+        yield* deps.store.update(job.id, { pendingFix });
       }
     }
   }).pipe(

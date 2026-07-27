@@ -218,6 +218,14 @@ export const AutoReviewJob = Schema.Struct({
   originThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   autoFixEnqueued: Schema.Boolean,
   /**
+   * When the auto-fix turn was dispatched. Holds the job's fix-concurrency
+   * slot across the window where the turn has been dispatched but the shell
+   * snapshot has not yet observed the thread as busy.
+   */
+  autoFixDispatchedAt: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
    * Queued auto-fix waiting for the origin thread to go idle. Set instead of
    * dispatching when the thread is busy; cleared once dispatched or dropped.
    */

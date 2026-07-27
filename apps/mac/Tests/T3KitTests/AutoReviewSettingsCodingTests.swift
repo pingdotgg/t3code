@@ -92,4 +92,20 @@ struct AutoReviewSettingsCodingTests {
         #expect(fields["concurrency"] == nil)
         #expect(fields["fixConcurrency"] == nil)
     }
+
+    @Test("an incomplete custom pick sends the mode without clearing the stored model")
+    func customModeWithoutSelectionOmitsTheModel() throws {
+        // The UI can reach "custom" before a model has been chosen. Sending a
+        // null selection then would wipe whatever the server had stored, so
+        // the mode travels alone and the previous pick survives.
+        let encoded = try encodedPatch(
+            AutoReviewSettingsPatch(fixModelMode: "custom", fixModelSelection: nil))
+
+        guard case .object(let fields) = encoded else {
+            Issue.record("expected an object, got \(encoded)")
+            return
+        }
+        #expect(fields["fixModelMode"] == .string("custom"))
+        #expect(fields["fixModelSelection"] == nil)
+    }
 }
