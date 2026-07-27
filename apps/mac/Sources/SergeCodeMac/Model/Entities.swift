@@ -636,21 +636,36 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
 
 /// Tool row titles are lifecycle-dependent: the server names a call for what
 /// it is doing while it runs and for what it did once it settles ("Running
-/// command" -> "Ran command", "Reading file" -> "Read file"; see `titleFor`
-/// in `@t3tools/shared/toolPresentation`). Rows that reach the client without
-/// a `toolCallId` correlate by name, so the two halves of one invocation must
-/// compare equal — otherwise the completion appends a second row and the
-/// original keeps ticking as "running" forever.
+/// command" -> "Ran command", "Reading file" -> "Read file"). Rows that reach
+/// the client without a `toolCallId` — threads recorded before the server
+/// stamped one, and providers that emit tool items with no runtime item id —
+/// correlate by name, so the two halves of one invocation must compare equal.
+/// Otherwise the completion appends a second row and the original keeps
+/// ticking as "running" forever.
 public enum ToolLifecycleTitle {
-    private static let lifecycleSurfaces: [String: String] = [
-        "running command": "command", "ran command": "command",
-        "reading file": "file_read", "read file": "file_read",
-        "changing files": "file_change", "changed files": "file_change",
-        "searching files": "file_search", "searched files": "file_search",
-        "searching the web": "web_search", "web search": "web_search",
-        "fetching page": "web_fetch", "fetched page": "web_fetch",
-        "viewing image": "image", "viewed image": "image",
-        "updating plan": "todo", "updated plan": "todo",
+    /// Mirror of `TOOL_LIFECYCLE_TITLES` in `@t3tools/shared/toolPresentation`,
+    /// which owns these pairs. Swift cannot read that module, so the table is
+    /// copied here and `toolPresentation.test.ts` fails the moment the two
+    /// disagree — a silently stale copy is exactly what brings the duplicate
+    /// rows back. Keep the `"<title>": "<surface>",` line shape: that test
+    /// parses this literal.
+    static let lifecycleTitles: [String: String] = [
+        "running command": "command",
+        "ran command": "command",
+        "reading file": "file_read",
+        "read file": "file_read",
+        "changing files": "file_change",
+        "changed files": "file_change",
+        "searching files": "file_search",
+        "searched files": "file_search",
+        "searching the web": "web_search",
+        "web search": "web_search",
+        "fetching page": "web_fetch",
+        "fetched page": "web_fetch",
+        "viewing image": "image",
+        "viewed image": "image",
+        "updating plan": "todo",
+        "updated plan": "todo",
     ]
 
     /// Identity of a tool title across the running -> settled rename. Titles
@@ -658,7 +673,7 @@ public enum ToolLifecycleTitle {
     /// their own identity.
     public static func canonical(_ name: String) -> String {
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return lifecycleSurfaces[normalized] ?? normalized
+        return lifecycleTitles[normalized] ?? normalized
     }
 
     /// Whether two tool row titles can name the same invocation.

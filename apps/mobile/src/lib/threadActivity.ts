@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { deriveToolIdentityFromData, type ToolIdentity } from "@t3tools/shared/toolIdentity";
+import { canonicalToolTitle } from "@t3tools/shared/toolPresentation";
 
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
@@ -680,7 +681,12 @@ function deriveToolLifecycleCollapseKey(
   if (typeof toolCallId === "string" && toolCallId.trim().length > 0) {
     return `toolCall${toolCallId.trim()}`;
   }
-  const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
+  // Rows recorded before the server stamped that id fall back to the title,
+  // which the server rewrites as the call settles — canonicalize it through
+  // the shared lifecycle table so both halves still land on one key.
+  const normalizedLabel = canonicalToolTitle(
+    normalizeCompactToolLabel(entry.toolTitle ?? entry.label),
+  );
   const detail = entry.detail?.trim() ?? "";
   const itemType = entry.itemType ?? "";
   if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {

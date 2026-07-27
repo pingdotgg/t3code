@@ -1,8 +1,19 @@
+// Reads the macOS client's mirrored lifecycle-title table off disk to fail on
+// drift; plain node fs is the whole point here, not an Effect resource.
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
+
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { ProviderDriverKind, ToolPresentation } from "@t3tools/contracts";
 
-import { deriveToolPresentation, parseToolIdentity } from "./toolPresentation.ts";
+import {
+  TOOL_LIFECYCLE_TITLES,
+  canonicalToolTitle,
+  deriveToolPresentation,
+  parseToolIdentity,
+} from "./toolPresentation.ts";
 
 const decodePresentation = Schema.decodeUnknownSync(ToolPresentation);
 const driver = Schema.decodeSync(ProviderDriverKind);
@@ -278,5 +289,48 @@ describe("deriveToolPresentation", () => {
     expect(presentation.surface).toBe("command");
     expect(presentation.subtitle).toBe("ls -la");
     expect(presentation.result?.text).toBe("a\nb");
+  });
+});
+
+describe("tool lifecycle titles", () => {
+  it("folds both halves of every lifecycle pair onto one identity", () => {
+    for (const [surface, titles] of Object.entries(TOOL_LIFECYCLE_TITLES)) {
+      expect(canonicalToolTitle(titles.inProgress)).toBe(surface);
+      expect(canonicalToolTitle(titles.settled)).toBe(surface);
+    }
+  });
+
+  it("leaves titles it never rewrites as their own identity", () => {
+    expect(canonicalToolTitle("Skill: brainstorm")).toBe("skill: brainstorm");
+    expect(canonicalToolTitle("linear · create_issue")).toBe("linear · create_issue");
+  });
+
+  it("keeps the macOS mirror of the lifecycle titles in sync", () => {
+    // The macOS client folds a completion onto its running row by title when
+    // the activity carries no `toolCallId`, so it mirrors this table in Swift.
+    // A pair added or reworded here and not there silently brings back the
+    // duplicate row that never stops running.
+    const swiftPath = NodeURL.fileURLToPath(
+      new URL("../../../apps/mac/Sources/SergeCodeMac/Model/Entities.swift", import.meta.url),
+    );
+    const source = NodeFS.readFileSync(swiftPath, "utf8");
+    const literal = /static let lifecycleTitles: \[String: String\] = \[([\s\S]*?)\n {4}\]/u.exec(
+      source,
+    );
+    expect(literal, "ToolLifecycleTitle.lifecycleTitles not found in Entities.swift").toBeTruthy();
+
+    const mirrored = new Map<string, string>();
+    for (const [, title, surface] of (literal?.[1] ?? "").matchAll(/"([^"]+)": "([^"]+)"/gu)) {
+      mirrored.set(title as string, surface as string);
+    }
+    const expected = new Map<string, string>();
+    for (const [surface, titles] of Object.entries(TOOL_LIFECYCLE_TITLES)) {
+      expected.set(titles.inProgress.toLowerCase(), surface);
+      expected.set(titles.settled.toLowerCase(), surface);
+    }
+
+    expect(Object.fromEntries([...mirrored].sort())).toEqual(
+      Object.fromEntries([...expected].sort()),
+    );
   });
 });

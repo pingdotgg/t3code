@@ -707,6 +707,50 @@ function buildPermission(
   return { decision, ...(reason ? { reason } : {}) };
 }
 
+/**
+ * Surfaces whose row title changes as the invocation settles: while it is in
+ * flight the row says what the tool is doing, afterwards what it did.
+ *
+ * This is the single definition of those pairs. Anything that has to recognize
+ * the two halves as one invocation reads it from here — `titleFor` renders
+ * them, {@link canonicalToolTitle} inverts them, and the macOS client mirrors
+ * them in `ToolLifecycleTitle` (`apps/mac/.../Model/Entities.swift`), which
+ * `toolPresentation.test.ts` fails on when the mirror drifts. A client that
+ * correlates rows by title instead of by `toolCallId` silently regresses to
+ * duplicate rows — one stuck "running" forever — when a pair is added or
+ * reworded in only one place.
+ */
+export const TOOL_LIFECYCLE_TITLES = {
+  command: { inProgress: "Running command", settled: "Ran command" },
+  file_read: { inProgress: "Reading file", settled: "Read file" },
+  file_change: { inProgress: "Changing files", settled: "Changed files" },
+  file_search: { inProgress: "Searching files", settled: "Searched files" },
+  web_search: { inProgress: "Searching the web", settled: "Web search" },
+  web_fetch: { inProgress: "Fetching page", settled: "Fetched page" },
+  image: { inProgress: "Viewing image", settled: "Viewed image" },
+  todo: { inProgress: "Updating plan", settled: "Updated plan" },
+} as const satisfies Partial<
+  Record<ToolSurface, { readonly inProgress: string; readonly settled: string }>
+>;
+
+const CANONICAL_TOOL_TITLES: ReadonlyMap<string, string> = new Map(
+  Object.entries(TOOL_LIFECYCLE_TITLES).flatMap(([surface, titles]) => [
+    [titles.inProgress.toLowerCase(), surface] as const,
+    [titles.settled.toLowerCase(), surface] as const,
+  ]),
+);
+
+/**
+ * Identity of a tool row title across the in-flight -> settled rename, for
+ * clients that must fold a completion onto its running row without a
+ * `toolCallId` to correlate on. Titles this module never rewrites (skills,
+ * MCP calls, raw tool names) are their own identity.
+ */
+export function canonicalToolTitle(title: string): string {
+  const normalized = title.trim().toLowerCase();
+  return CANONICAL_TOOL_TITLES.get(normalized) ?? normalized;
+}
+
 function titleFor(
   surface: ToolSurface,
   provenance: ToolProvenance,
@@ -716,23 +760,12 @@ function titleFor(
   // While the invocation is still in flight, describe what the tool is doing
   // rather than what it did.
   const inProgress = state === "pending" || state === "running";
+  const lifecycle: { readonly inProgress: string; readonly settled: string } | undefined =
+    TOOL_LIFECYCLE_TITLES[surface as keyof typeof TOOL_LIFECYCLE_TITLES];
+  if (lifecycle) {
+    return inProgress ? lifecycle.inProgress : lifecycle.settled;
+  }
   switch (surface) {
-    case "command":
-      return inProgress ? "Running command" : "Ran command";
-    case "file_read":
-      return inProgress ? "Reading file" : "Read file";
-    case "file_change":
-      return inProgress ? "Changing files" : "Changed files";
-    case "file_search":
-      return inProgress ? "Searching files" : "Searched files";
-    case "web_search":
-      return inProgress ? "Searching the web" : "Web search";
-    case "web_fetch":
-      return inProgress ? "Fetching page" : "Fetched page";
-    case "image":
-      return inProgress ? "Viewing image" : "Viewed image";
-    case "todo":
-      return inProgress ? "Updating plan" : "Updated plan";
     case "skill": {
       const name = provenance.skillName ?? provenance.displayName;
       return name ? `Skill: ${name}` : "Skill";
