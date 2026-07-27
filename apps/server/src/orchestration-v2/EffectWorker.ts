@@ -431,9 +431,13 @@ export const layer = layerWithOptions();
 
 export interface OrchestrationEffectDaemonOptions {
   readonly concurrency?: number;
+  readonly idlePollMinMs?: number;
+  readonly idlePollMaxMs?: number;
 }
 
 export const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+export const DEFAULT_EFFECT_WORKER_IDLE_POLL_MIN_MS = 50;
+export const DEFAULT_EFFECT_WORKER_IDLE_POLL_MAX_MS = 5_000;
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
   Effect.scoped(
@@ -443,22 +447,44 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       const concurrency = Number.isFinite(requestedConcurrency)
         ? Math.max(1, Math.floor(requestedConcurrency))
         : DEFAULT_EFFECT_WORKER_CONCURRENCY;
+      const requestedIdlePollMinMs =
+        options.idlePollMinMs ?? DEFAULT_EFFECT_WORKER_IDLE_POLL_MIN_MS;
+      const idlePollMinMs = Number.isFinite(requestedIdlePollMinMs)
+        ? Math.max(1, Math.floor(requestedIdlePollMinMs))
+        : DEFAULT_EFFECT_WORKER_IDLE_POLL_MIN_MS;
+      const requestedIdlePollMaxMs =
+        options.idlePollMaxMs ?? DEFAULT_EFFECT_WORKER_IDLE_POLL_MAX_MS;
+      const idlePollMaxMs = Number.isFinite(requestedIdlePollMaxMs)
+        ? Math.max(idlePollMinMs, Math.floor(requestedIdlePollMaxMs))
+        : Math.max(idlePollMinMs, DEFAULT_EFFECT_WORKER_IDLE_POLL_MAX_MS);
       // Notifications only reduce latency; the durable outbox remains authoritative.
-      // Every slot polls after a bounded delay so a missed or coalesced wakeup can
-      // never strand committed work. Consuming the outbox signal directly also
-      // avoids lifecycle coupling between a separate fan-out fiber and subscribers.
-      const runWorker = Effect.forever(
-        worker.runOnce.pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Orchestration effect worker failed", cause).pipe(Effect.as(false)),
-          ),
-          Effect.flatMap((worked) =>
-            worked
-              ? Effect.yieldNow
-              : Effect.raceFirst(worker.awaitWork, Effect.sleep(Duration.millis(50))),
-          ),
-        ),
-      );
+      // Every slot retains a bounded safety poll so a missed or coalesced wakeup
+      // can never strand committed work. Backing that poll off while the outbox
+      // stays empty avoids continuously querying SQLite (and tracing each query)
+      // when the server is idle. A real notification resets the short-latency
+      // window immediately.
+      const runWorker = Effect.gen(function* () {
+        let idlePollMs = idlePollMinMs;
+        while (true) {
+          const worked = yield* worker.runOnce.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Orchestration effect worker failed", cause).pipe(Effect.as(false)),
+            ),
+          );
+          if (worked) {
+            idlePollMs = idlePollMinMs;
+            yield* Effect.yieldNow;
+            continue;
+          }
+
+          const wake = yield* Effect.raceFirst(
+            worker.awaitWork.pipe(Effect.as("notified" as const)),
+            Effect.sleep(Duration.millis(idlePollMs)).pipe(Effect.as("poll" as const)),
+          );
+          idlePollMs =
+            wake === "notified" ? idlePollMinMs : Math.min(idlePollMaxMs, idlePollMs * 2);
+        }
+      });
 
       return yield* Effect.all(
         Array.from({ length: concurrency }, () => runWorker),

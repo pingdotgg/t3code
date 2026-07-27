@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -886,6 +887,31 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       if (Option.isSome(claimedByB)) {
         yield* outbox.succeed({ effectId: claimedByB.value.id, workerId: "worker-b" });
       }
+    }),
+  );
+
+  it.effect("does not emit a SQL span for an empty safety claim", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const spans: Array<string> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            spans.push(span.name);
+          };
+          return span;
+        },
+      });
+
+      const claim = yield* outbox
+        .claimNext({ workerId: "idle-safety-worker", leaseDurationMs: 30_000 })
+        .pipe(Effect.withTracer(tracer));
+
+      assert.isTrue(Option.isNone(claim));
+      assert.notInclude(spans, "sql.execute");
     }),
   );
 

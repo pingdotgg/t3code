@@ -426,7 +426,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           const leaseExpiresAt = DateTime.formatIso(
             DateTime.add(now, { milliseconds: Math.max(1, leaseDurationMs) }),
           );
-          const rows = yield* sql<EffectRow>`
+          // Empty safety claims are expected while the daemon is idle. Tracing
+          // this query records the full SQL text on every poll and can dominate
+          // the local trace without adding actionable information.
+          const claimStatement = sql<EffectRow>`
             UPDATE orchestration_v2_effect_outbox
             SET
               status = 'running',
@@ -451,6 +454,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             )
             RETURNING *
           `;
+          const rows = yield* claimStatement.pipe(Effect.withTracerEnabled(false));
           const row = rows[0];
           if (row === undefined) return Option.none();
           cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());

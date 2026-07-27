@@ -13,7 +13,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
 import type { OrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -21,6 +23,8 @@ import {
   executorLayer,
   isNonRetryableProviderTurnControlFailure,
   OrchestrationEffectExecutorV2,
+  OrchestrationEffectWorkerV2,
+  runDaemonWithOptions,
 } from "./EffectWorker.ts";
 import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -170,6 +174,58 @@ it("does not retry pure interrupt races where the turn is already gone", () => {
     ),
   );
 });
+
+it.effect("backs off idle safety polls and resets immediately when work is signalled", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const available = yield* Queue.unbounded<void>();
+    const worker = OrchestrationEffectWorkerV2.of({
+      awaitWork: Queue.take(available),
+      runOnce: Ref.updateAndGet(attempts, (count) => count + 1).pipe(Effect.as(false)),
+      drain: () => Effect.succeed(0),
+    });
+    const awaitAttempts = Effect.fnUntraced(function* (expected: number) {
+      while ((yield* Ref.get(attempts)) < expected) {
+        yield* Effect.yieldNow;
+      }
+    });
+
+    yield* runDaemonWithOptions({
+      concurrency: 1,
+      idlePollMinMs: 50,
+      idlePollMaxMs: 200,
+    }).pipe(Effect.provideService(OrchestrationEffectWorkerV2, worker), Effect.forkScoped);
+
+    yield* awaitAttempts(1);
+    yield* TestClock.adjust("49 millis");
+    assert.equal(yield* Ref.get(attempts), 1);
+
+    yield* TestClock.adjust("1 millis");
+    yield* awaitAttempts(2);
+    yield* TestClock.adjust("99 millis");
+    assert.equal(yield* Ref.get(attempts), 2);
+
+    yield* TestClock.adjust("1 millis");
+    yield* awaitAttempts(3);
+    yield* TestClock.adjust("199 millis");
+    assert.equal(yield* Ref.get(attempts), 3);
+
+    yield* TestClock.adjust("1 millis");
+    yield* awaitAttempts(4);
+    yield* TestClock.adjust("199 millis");
+    assert.equal(yield* Ref.get(attempts), 4);
+
+    yield* TestClock.adjust("1 millis");
+    yield* awaitAttempts(5);
+    yield* Queue.offer(available, undefined);
+    yield* awaitAttempts(6);
+    yield* TestClock.adjust("49 millis");
+    assert.equal(yield* Ref.get(attempts), 6);
+
+    yield* TestClock.adjust("1 millis");
+    yield* awaitAttempts(7);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
 
 it.effect("detaches a handed-off session only after the old turn terminalizes", () =>
   Effect.gen(function* () {
