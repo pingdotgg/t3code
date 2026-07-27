@@ -896,8 +896,11 @@ const CLAUDE_SETTING_SOURCES = [
 const buildEnabledClaudeMcpServerMap = Effect.fn("buildEnabledClaudeMcpServerMap")(function* (
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv,
+  // The session workspace cwd, so a relative `CLAUDE_CONFIG_DIR` resolves the
+  // same way it will inside the spawned CLI.
+  cwd: string | undefined,
 ): Effect.fn.Return<Record<string, unknown>, never, FileSystem.FileSystem | Path.Path> {
-  const definitions = yield* readClaudeMcpServers(claudeSettings, environment);
+  const definitions = yield* readClaudeMcpServers(claudeSettings, environment, cwd);
   const disabled = new Set(claudeSettings.disabledMcpServers);
   const enabled: Record<string, unknown> = {};
   for (const { name, definition } of definitions) {
@@ -3546,7 +3549,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // gap in our reader would silently drop servers the CLI would load.
       const enabledConfiguredMcpServers =
         claudeSettings.disabledMcpServers.length > 0
-          ? yield* buildEnabledClaudeMcpServerMap(claudeSettings, claudeEnvironment).pipe(
+          ? yield* buildEnabledClaudeMcpServerMap(
+              claudeSettings,
+              claudeEnvironment,
+              input.cwd,
+            ).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             )

@@ -1,7 +1,7 @@
 import { ChevronRightIcon, CopyIcon, PlugIcon, RefreshCwIcon } from "lucide-react";
 import type { McpServerInventory, McpServerInventoryEntry } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
   fetchEnvironmentMcpInventory,
@@ -131,18 +131,27 @@ function EnvironmentMcpInventory({
   const [collapsed, setCollapsed] = useState(false);
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const panelId = useId();
+  // Bumped whenever the connection (or a refresh) replaces the inventory. A
+  // toggle that resolves after a reconnect belongs to a dead generation and
+  // must not write its stale response over the new connection's data.
+  const generationRef = useRef(0);
 
   useEffect(() => {
     if (Option.isNone(prepared)) return;
+    const generation = ++generationRef.current;
     let cancelled = false;
     setState({ status: "loading" });
     void runtime
       .runPromise(fetchEnvironmentMcpInventory({ prepared: prepared.value }))
       .then((inventory) => {
-        if (!cancelled) setState({ status: "loaded", inventory });
+        if (!cancelled && generation === generationRef.current) {
+          setState({ status: "loaded", inventory });
+        }
       })
       .catch((cause: unknown) => {
-        if (!cancelled) setState({ status: "error", message: errorMessage(cause) });
+        if (!cancelled && generation === generationRef.current) {
+          setState({ status: "error", message: errorMessage(cause) });
+        }
       });
     return () => {
       cancelled = true;
@@ -153,6 +162,7 @@ function EnvironmentMcpInventory({
     (server: McpServerInventoryEntry, enabled: boolean) => {
       if (Option.isNone(prepared)) return;
       const key = mcpServerKey(server);
+      const generation = generationRef.current;
       setPendingKeys((keys) => new Set(keys).add(key));
       // Optimistic: the switch answers immediately, and the server's fresh
       // inventory replaces this state either way.
@@ -180,6 +190,7 @@ function EnvironmentMcpInventory({
           }),
         )
         .then((inventory) => {
+          if (generation !== generationRef.current) return;
           setState({ status: "loaded", inventory });
         })
         .catch((cause: unknown) => {
@@ -188,6 +199,7 @@ function EnvironmentMcpInventory({
             title: enabled ? "Could not enable server" : "Could not disable server",
             description: errorMessage(cause),
           });
+          if (generation !== generationRef.current) return;
           setState((current) =>
             current.status === "loaded"
               ? {
@@ -305,6 +317,11 @@ function McpServerRow({
           <span className="shrink-0 rounded border border-border/60 px-1 text-[10px] text-muted-foreground/80 uppercase">
             {server.transport}
           </span>
+          {server.scope && server.scope !== "user" ? (
+            <span className="shrink-0 rounded border border-border/60 px-1 text-[10px] text-muted-foreground/80 uppercase">
+              {server.scope}
+            </span>
+          ) : null}
           {server.status ? (
             <span className="shrink-0 text-muted-foreground/70 text-xs">{server.status}</span>
           ) : null}

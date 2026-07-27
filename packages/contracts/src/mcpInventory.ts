@@ -16,6 +16,8 @@ export const McpServerInventoryEntry = Schema.Struct({
   detail: Schema.optional(TrimmedNonEmptyString),
   /** Config file the entry was declared in, when the harness reports one. */
   configPath: Schema.optional(TrimmedNonEmptyString),
+  /** Claude scopes servers as user, project (`.mcp.json`), or local. */
+  scope: Schema.optional(Schema.Literals(["user", "project", "local"])),
   /** Tools advertised by a running server. Absent when only declared config is known. */
   toolCount: Schema.optional(Schema.Number),
   /** Harness-reported runtime state, e.g. Codex auth status. */

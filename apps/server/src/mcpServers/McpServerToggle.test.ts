@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import { ProviderInstanceId, ServerSettings } from "@t3tools/contracts";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { nextDisabledMcpServers, planDisabledMcpServersWrite } from "./McpServerToggle.ts";
 
@@ -59,6 +60,33 @@ describe("planDisabledMcpServersWrite", () => {
     assert.equal(plan.kind, "legacyProvider");
     if (plan.kind !== "legacyProvider") return;
     assert.deepEqual(plan.patch.providers?.codex?.disabledMcpServers, ["a"]);
+  });
+
+  it("keeps the rest of the legacy provider blob when the patch is applied", () => {
+    const settings = settingsWith({
+      providers: {
+        codex: {
+          binaryPath: "/opt/codex",
+          homePath: "~/.codex",
+          disabledMcpServers: ["a", "b"],
+        },
+      },
+    });
+
+    const plan = planDisabledMcpServersWrite(settings, {
+      instanceId: "codex",
+      name: "b",
+      enabled: true,
+    });
+    assert.equal(plan.kind, "legacyProvider");
+    if (plan.kind !== "legacyProvider") return;
+
+    // `applyServerSettingsPatch` deep-merges objects and replaces arrays, so a
+    // partial provider patch keeps sibling keys and still shrinks the list.
+    const next = applyServerSettingsPatch(settings, plan.patch);
+    assert.equal(next.providers.codex.binaryPath, "/opt/codex");
+    assert.equal(next.providers.codex.homePath, "~/.codex");
+    assert.deepEqual(next.providers.codex.disabledMcpServers, ["a"]);
   });
 
   it("rejects instances whose driver has no disable list", () => {

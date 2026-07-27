@@ -38,25 +38,6 @@ export function filterMcpInventory(
   };
 }
 
-export function displayedMcpServerCount(
-  inventory: McpServerInventory | null,
-  isConnected: boolean,
-): number | null {
-  if (!isConnected || !inventory) return null;
-  return inventory.servers.length;
-}
-
-export function setKeyCollapsed(
-  keys: ReadonlySet<string>,
-  key: string,
-  collapsed: boolean,
-): ReadonlySet<string> {
-  const next = new Set(keys);
-  if (collapsed) next.add(key);
-  else next.delete(key);
-  return next;
-}
-
 export interface McpHarnessGroup {
   readonly key: string;
   readonly harness: ProviderDriverKind;

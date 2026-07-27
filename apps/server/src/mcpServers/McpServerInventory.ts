@@ -31,7 +31,8 @@ import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { readClaudeMcpServers, resolveClaudeMcpConfigFilePath } from "./ClaudeMcpConfig.ts";
+import { ServerConfig } from "../config.ts";
+import { readClaudeMcpServers } from "./ClaudeMcpConfig.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
 import { spawnAndCollect } from "../provider/providerSnapshot.ts";
@@ -81,17 +82,17 @@ const discoverClaudeMcpServers = Effect.fn("McpServerInventory.discoverClaudeMcp
     instanceId: string,
     instance: ProviderInstanceConfig,
     environment: NodeJS.ProcessEnv,
+    cwd: string | undefined,
   ): Effect.fn.Return<ReadonlyArray<McpServerInventoryEntry>, never, McpInventoryEnv> {
     const decoded = decodeClaudeSettings(instance.config ?? {});
     if (decoded._tag === "None") return [];
     const settings = decoded.value;
 
-    const configPath = yield* resolveClaudeMcpConfigFilePath(settings, environment);
-    const definitions = yield* readClaudeMcpServers(settings, environment);
+    const definitions = yield* readClaudeMcpServers(settings, environment, cwd);
 
     const disabled = new Set(settings.disabledMcpServers);
     const entries: McpServerInventoryEntry[] = [];
-    for (const { name, definition: entry } of definitions) {
+    for (const { name, scope, sourcePath, definition: entry } of definitions) {
       const transport = claudeTransport(entry);
       const command = trimmedOrUndefined(entry.command);
       const url = trimmedOrUndefined(entry.url);
@@ -104,7 +105,8 @@ const discoverClaudeMcpServers = Effect.fn("McpServerInventory.discoverClaudeMcp
         name,
         transport,
         ...(detail ? { detail } : {}),
-        configPath,
+        configPath: sourcePath,
+        scope,
         enabled: !disabled.has(name),
         toggleable: true,
       });
@@ -208,13 +210,14 @@ const discoverInstanceMcpServers = Effect.fn("McpServerInventory.discoverInstanc
     instanceId: string,
     instance: ProviderInstanceConfig,
     environment: NodeJS.ProcessEnv,
+    cwd: string | undefined,
   ): Effect.fn.Return<
     ReadonlyArray<McpServerInventoryEntry>,
     never,
     McpInventoryEnv | ChildProcessSpawner.ChildProcessSpawner
   > {
     if (instance.driver === "claudeAgent") {
-      return yield* discoverClaudeMcpServers(instanceId, instance, environment);
+      return yield* discoverClaudeMcpServers(instanceId, instance, environment, cwd);
     }
     if (instance.driver === "codex") {
       return yield* discoverCodexMcpServers(instanceId, instance, environment);
@@ -234,17 +237,20 @@ export const discoverGlobalMcpInventory = Effect.fn(
 ): Effect.fn.Return<
   McpServerInventory,
   never,
-  McpInventoryEnv | ChildProcessSpawner.ChildProcessSpawner | ServerSettingsService
+  McpInventoryEnv | ChildProcessSpawner.ChildProcessSpawner | ServerSettingsService | ServerConfig
 > {
   const settingsService = yield* ServerSettingsService;
   const settings = yield* settingsService.getSettings.pipe(Effect.orDie);
   const providerInstances = deriveProviderInstanceConfigMap(settings);
   const resolvedEnvironment = environment ?? process.env;
+  // Sessions resolve a relative `CLAUDE_CONFIG_DIR` against the workspace cwd,
+  // so the inventory has to report the same file the runtime will read.
+  const { cwd } = yield* ServerConfig;
 
   const discovered = yield* Effect.forEach(
     Object.entries(providerInstances),
     ([instanceId, instance]) =>
-      discoverInstanceMcpServers(instanceId, instance, resolvedEnvironment),
+      discoverInstanceMcpServers(instanceId, instance, resolvedEnvironment, cwd),
     { concurrency: "unbounded" },
   );
 
