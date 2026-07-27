@@ -1,4 +1,5 @@
 import Foundation
+import T3Kit
 
 /// Shared Unsplash pool construction for the builtin World set refresh.
 ///
@@ -18,10 +19,26 @@ enum SceneryPoolBuilder {
         case noPhotosFound
     }
 
+    /// How many location searches are in flight at once. Bounded rather than
+    /// unlimited: Unsplash rate-limits per hour, and a burst of two dozen
+    /// simultaneous requests is the shape most likely to trip it.
+    static let searchConcurrency = 6
+
     /// One deduped photo per curated location (search count 2), named
     /// verbatim with the location's curated name — never captions, never
     /// pool-index numbering, never AI-generated names. A location whose
     /// search yields nothing is skipped rather than failing the whole build.
+    ///
+    /// The searches run concurrently because this build sits on the new-thread
+    /// path — `SceneryStore.start()` awaits it and `createSceneThread` awaits
+    /// that — so two dozen serial round trips showed up to the user as a new
+    /// session taking tens of seconds to open. Results are collected by
+    /// location index and deduped in location order afterwards, so the pool is
+    /// identical to the serial build's regardless of completion order. The one
+    /// behavioural difference: the serial version stopped searching once
+    /// `maxPhotos` was reached, which cannot be known in advance here. That is
+    /// moot while the curated set has exactly `maxPhotos` locations, and costs
+    /// only surplus searches (never surplus photos) if it ever grows past it.
     nonisolated static func buildFromLocations(
         client: UnsplashClient,
         locations: [SceneryLocation],
@@ -30,28 +47,44 @@ enum SceneryPoolBuilder {
         let totalSteps = max(locations.count, 1)
         await onProgress?(0, totalSteps)
 
+        let queries = locations.map { $0.query.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let fetch: @Sendable (Int) async throws -> (Int, [UnsplashClient.APIPhoto]?) = { index in
+            guard !queries[index].isEmpty else { return (index, nil) }
+            return (index, try await search(client: client, query: queries[index], count: 2))
+        }
+
+        var resultsByIndex: [Int: [UnsplashClient.APIPhoto]] = [:]
+        try await withThrowingTaskGroup(of: (Int, [UnsplashClient.APIPhoto]?).self) { group in
+            var next = 0
+            var completed = 0
+            while next < min(searchConcurrency, locations.count) {
+                let index = next
+                group.addTask { try await fetch(index) }
+                next += 1
+            }
+            while let (index, results) = try await group.next() {
+                if let results { resultsByIndex[index] = results }
+                completed += 1
+                await onProgress?(completed, totalSteps)
+                guard next < locations.count else { continue }
+                let index = next
+                group.addTask { try await fetch(index) }
+                next += 1
+            }
+        }
+
         var photos: [SceneryPhoto] = []
         var photoTags: [String: SceneryPhotoTags] = [:]
         var seen = Set<String>()
-
         for (index, loc) in locations.enumerated() {
-            try Task.checkCancellation()
-
-            if photos.count < maxPhotos {
-                let queryText = loc.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !queryText.isEmpty,
-                    let results = try await search(client: client, query: queryText, count: 2),
-                    let apiPhoto = results.first(where: { !seen.contains($0.id) })
-                {
-                    seen.insert(apiPhoto.id)
-                    photos.append(sceneryPhoto(from: apiPhoto, name: loc.name))
-                    if let tags = tags(from: loc) {
-                        photoTags[apiPhoto.id] = tags
-                    }
-                }
+            guard photos.count < maxPhotos else { break }
+            guard let apiPhoto = resultsByIndex[index]?.first(where: { !seen.contains($0.id) })
+            else { continue }
+            seen.insert(apiPhoto.id)
+            photos.append(sceneryPhoto(from: apiPhoto, name: loc.name))
+            if let tags = tags(from: loc) {
+                photoTags[apiPhoto.id] = tags
             }
-
-            await onProgress?(index + 1, totalSteps)
         }
 
         guard !photos.isEmpty else { throw BuildError.noPhotosFound }
@@ -59,22 +92,18 @@ enum SceneryPoolBuilder {
         return BuildResult(photos: photos, sceneNames: photos.map(\.name), photoTags: photoTags)
     }
 
-    /// Cancellation-aware search: rethrows cancellation (either
-    /// `CancellationError` or the `URLError.cancelled` that `URLSession`'s
-    /// async `data(for:)` surfaces when its task is cancelled) so a cancelled
-    /// build aborts instead of silently degrading to a partial pool, but
-    /// swallows ordinary API errors (returns nil) so one flaky query keeps
-    /// the existing partial-result behavior.
+    /// Cancellation-aware search: rethrows cancellation (see `isCancellation`
+    /// for the shapes it arrives in) so a cancelled build aborts instead of
+    /// silently degrading to a partial pool, but swallows ordinary API errors
+    /// (returns nil) so one flaky query keeps the existing partial-result
+    /// behavior.
     private nonisolated static func search(
         client: UnsplashClient, query: String, count: Int
     ) async throws -> [UnsplashClient.APIPhoto]? {
         do {
             return try await client.searchPhotos(query: query, count: count)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as URLError where error.code == .cancelled {
-            throw CancellationError()
         } catch {
+            if error.isCancellation { throw CancellationError() }
             return nil
         }
     }
