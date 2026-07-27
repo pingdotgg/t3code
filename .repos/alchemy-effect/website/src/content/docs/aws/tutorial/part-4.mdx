@@ -1,0 +1,173 @@
+---
+title: "Part 4: Stages"
+description: Deploy isolated dev, staging, and prod instances of your stack with --stage, and tune resources per stage.
+sidebar:
+  order: 4
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+
+In [Part 3](/aws/tutorial/part-3) you wrote integration tests against
+a deployed stack. But so far everything has landed in a single
+environment. In this part you'll use **stages** — isolated instances
+of the same Stack — to give every developer, environment, and (in
+[Part 5](/aws/tutorial/part-5)) every pull request its own copy of
+the infrastructure.
+
+## The default stage
+
+You've been using stages all along. If you don't pass `--stage`,
+Alchemy deploys to **`dev_$USER`** (e.g. `dev_sam`):
+
+```sh
+$ whoami
+sam
+
+$ bun alchemy deploy
+# deploys to stage `dev_sam`
+```
+
+Each developer on your team automatically gets a personal sandbox
+without any config. The resolution order is:
+
+1. `--stage <name>` flag
+2. `$STAGE` environment variable
+3. `dev_${USER}` (or `dev_${USERNAME}` on Windows)
+4. `dev_unknown` if no user is set
+
+## Deploy a second stage
+
+Pass `--stage` to deploy a completely separate instance of the same
+program:
+
+```sh
+bun alchemy deploy --stage staging
+```
+
+<Terminal content={`[u]Plan[/u]: [g]2 to create[/g]
+[g]+[/g] [b]Api[/b] [d](AWS.Lambda.Function)[/d]
+[g]+[/g] [b]Bucket[/b] [d](AWS.S3.Bucket)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Bucket[/b] [d](AWS.S3.Bucket)[/d] [g]created[/g]
+[g]✓[/g] [b]Api[/b] [d](AWS.Lambda.Function)[/d] [g]created[/g]
+{
+[s2]url: "https://def456uvw.lambda-url.us-east-1.on.aws",
+}`} />
+
+Everything is created fresh — a new bucket, a new function, a new
+Function URL — because `staging` has never been deployed before.
+Your `dev_sam` deployment is untouched.
+
+## How stages isolate
+
+Each stage gets its own:
+
+- **State** — the persisted record of what's deployed, kept
+  separately per stage in the `AWS.state()` S3 bucket
+- **Physical names** — `myapp-prod-bucket-7d4e` vs
+  `myapp-dev_sam-bucket-9b2c`; the stage is baked into every
+  generated resource name
+- **Logs and metrics** — scoped per deployed function
+
+Because of this, deploying or destroying one stage **never touches**
+another:
+
+```sh
+alchemy deploy --stage prod
+alchemy deploy --stage pr-42
+alchemy destroy --stage pr-42   # only removes pr-42 resources
+```
+
+Stage names must match `[a-z0-9][-_a-z0-9]*`.
+
+## Configure per stage
+
+The same program deploys to every stage, but you'll often want
+different knobs per environment — more Lambda memory in prod, say.
+`Stack.useSync` gives module-scope resources a synchronous accessor
+to the surrounding Stack context, including the current `stage`:
+
+```diff lang="typescript"
+// src/api.ts
+import * as AWS from "alchemy/AWS";
+import * as S3 from "alchemy/AWS/S3";
++import { Stack } from "alchemy/Stack";
+import * as Effect from "effect/Effect";
+// ...
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+-  { main: import.meta.url, url: true },
++  Stack.useSync((stack) => ({
++    main: import.meta.url,
++    url: true,
++    memory: stack.stage === "prod" ? 1024 : 512,
++  })),
+  Effect.gen(function* () {
+    /* ... */
+  }),
+) {}
+```
+
+Now `alchemy deploy --stage prod` provisions a 1024 MB function while
+every other stage stays at 512 MB — one program, per-stage
+configuration, no separate config files.
+
+## Destroy a stage
+
+When you're done with an environment, tear down just that stage:
+
+```sh
+bun alchemy destroy --stage staging
+```
+
+The plan lists everything in `staging` for deletion and leaves every
+other stage alone.
+
+## Stages in tests
+
+The test harness from Part 3 defaults to a stage named `test`. You
+can override it per file — or per call — which is how multiple CI
+runs can test in parallel against the same AWS account without
+colliding:
+
+```diff lang="typescript"
+// test/integ.test.ts
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: AWS.providers(),
+  state: AWS.state(),
++  stage: process.env.STAGE ?? "test",
+});
+```
+
+See [Test harness → stage](/testing/test-harness#stage) for the per-call form
+(`deploy(Stack, { stage: "ci-pr-42" })`).
+
+## Stage vs profile
+
+Stages isolate **what** is deployed (state, physical names).
+[Profiles](/environments/profiles) isolate **how** Alchemy authenticates
+to AWS. They're orthogonal — you can pair a `prod` stage with a
+`prod` profile that points at a separate AWS account, or use the same
+credentials across many stages:
+
+```sh
+alchemy deploy --stage prod --profile prod
+alchemy deploy --stage pr-42 --profile default
+```
+
+## Recap
+
+You now have:
+
+- A personal `dev_<user>` stage that every plain `alchemy deploy`
+  targets
+- A `staging` stage deployed (and destroyed) with `--stage`
+- Per-stage Lambda memory via `Stack.useSync`
+- Tests pinned to their own stage
+
+In [Part 5](/aws/tutorial/part-5), you'll put stages to work in CI:
+GitHub Actions deploys `prod` on pushes to `main` and an isolated
+`pr-<n>` preview stage for every pull request.

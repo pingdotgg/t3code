@@ -44,13 +44,22 @@ export const stripNullFields = <T>(value: T): T => stripFields(value, null);
 export const stripUndefinedFields = <T>(value: T): T =>
   stripFields(value, undefined);
 
-export const unwrapRedacted = <T>(value: T): T => {
+type UnwrapRedacted<T> =
+  T extends Redacted.Redacted<infer U>
+    ? U
+    : T extends Record<string, any>
+      ? { [K in keyof T]: UnwrapRedacted<T[K]> }
+      : T extends Array<infer U>
+        ? Array<UnwrapRedacted<U>>
+        : T;
+
+export const unwrapRedacted = <T>(value: T): UnwrapRedacted<T> => {
   if (Redacted.isRedacted(value)) {
-    return Redacted.value(value) as T;
+    return Redacted.value(value) as UnwrapRedacted<T>;
   }
   if (Array.isArray(value)) {
-    return value.map(unwrapRedacted) as T;
+    return value.map(unwrapRedacted) as UnwrapRedacted<T>;
   }
-  if (!isPlainObject(value)) return value;
-  return EffectRecord.map(value, unwrapRedacted) as T;
+  if (!isPlainObject(value)) return value as UnwrapRedacted<T>;
+  return EffectRecord.map(value, unwrapRedacted) as UnwrapRedacted<T>;
 };

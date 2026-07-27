@@ -1,0 +1,114 @@
+---
+title: Workers Cache
+description: Serve responses from Cloudflare's edge cache before your Worker even runs — enable it with one yield, control it with standard headers, purge it by tag from inside a handler.
+sidebar:
+  order: 13
+---
+
+Workers Cache sits in front of a Worker: when it's enabled, Cloudflare
+checks the cache before invoking the Worker at all, and a hit is
+served straight from the edge. What gets cached is controlled by
+standard response headers — `Cache-Control` (including
+`stale-while-revalidate`), `Cache-Tag` for tag-based purging, and
+`Vary` for content negotiation.
+
+## Enable the cache on a Worker
+
+`yield*` `Cloudflare.cache()` in the Worker's init phase. It turns
+Workers Cache on at deploy time and returns the runtime client — no
+layer to provide:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "CachedWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const { purge } = yield* Cloudflare.cache();
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+
+        if (request.url.startsWith("/invalidate")) {
+          yield* purge({ tags: ["products"] }).pipe(Effect.orDie);
+          return HttpServerResponse.text("purged");
+        }
+
+        return HttpServerResponse.text("hello", {
+          headers: {
+            "Cache-Control": "public, max-age=300",
+            "Cache-Tag": "products",
+          },
+        });
+      }),
+    };
+  }),
+);
+```
+
+Responses that carry a cacheable `Cache-Control` header are stored at
+the edge; for the next five minutes, repeat requests to the same URL
+never reach the handler.
+
+## Purge by tag
+
+The `purge` client drives the runtime `ctx.cache` API from inside a
+handler. Purge cached responses by the `Cache-Tag` values they were
+served with, by path prefix, or wholesale:
+
+```typescript
+yield* purge({ tags: ["products"] });
+```
+
+Failures surface as a typed `CachePurgeError`:
+
+```typescript
+const result = yield* purge({ tags: ["products"] }).pipe(
+  Effect.catchTag("CachePurgeError", (error) =>
+    Effect.succeed({ success: false, errors: [error.message] }),
+  ),
+);
+```
+
+## Share the cache across deploys
+
+By default the cache is scoped to a single Worker version, so every
+deploy starts cold. Opt into sharing cached responses across versions
+when your responses don't depend on the code that produced them:
+
+```typescript
+const { purge } = yield* Cloudflare.cache({ crossVersionCache: true });
+```
+
+`enabled: false` keeps the binding's purge client available while
+turning the read-through cache off — useful for toggling cache
+behavior per stage.
+
+## Enable the cache with the `cache` prop
+
+Workers whose `main` module exports a plain async `fetch` handler
+enable the cache with the `cache` prop instead:
+
+```typescript
+// alchemy.run.ts
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  cache: { enabled: true, crossVersionCache: true },
+});
+```
+
+The handler shapes cache behavior the same way — through
+`Cache-Control`, `Cache-Tag`, and `Vary` headers on its responses.
+
+## Where next
+
+- [Workers](/cloudflare/compute/workers) — the two-phase Worker model
+  the cache fronts.
+- [cache API reference](/providers/cloudflare/workers/cache) — options
+  and purge types.

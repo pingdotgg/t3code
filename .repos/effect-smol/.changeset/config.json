@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@1.6.4/schema.json",
-  "changelog": ["@changesets/changelog-github", { "repo": "Effect-TS/effect-smol" }],
+  "changelog": ["@changesets/changelog-github", { "repo": "Effect-TS/effect" }],
   "commit": false,
   "linked": [],
   "access": "restricted",

@@ -5,6 +5,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false # Prevent newer push from interrupting active release
 
 permissions: {}
 
@@ -18,7 +19,6 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
-      packages: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -30,7 +30,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/setup
       - name: Upgrade npm for OIDC support
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
       - name: Set strip internals config
         run: |
           sed -i 's/"stripInternal": false/"stripInternal": true/' tsconfig.base.json
@@ -44,4 +44,3 @@ jobs:
           # automatically to ensure workflows get triggered on the changesets
           # release branch.
           GITHUB_TOKEN: ${{ secrets.CHANGESET_GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

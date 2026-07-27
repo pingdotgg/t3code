@@ -3,7 +3,7 @@ import { WebSocketServer, type Server } from "ws";
 import * as RpcServer from "./RpcServer.ts";
 
 export const RpcServerNode = RpcServer.layerServer(
-  Effect.fnUntraced(function* ({
+  Effect.fn(function* ({
     parentConnected,
     parentDisconnected,
     createRpcSession,

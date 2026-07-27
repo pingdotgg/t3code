@@ -4,5 +4,8 @@
   "include": ["src"],
   "references": [
     { "path": "../../effect" }
-  ]
+  ],
+  "compilerOptions": {
+    "types": ["node"]
+  }
 }
