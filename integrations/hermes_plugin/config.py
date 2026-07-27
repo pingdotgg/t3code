@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pwd
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +58,14 @@ class PluginConfig:
     def scan_dir(self) -> Path:
         return self.service_dir.parent
 
+    @property
+    def service_state_path(self) -> Path:
+        return self.runtime_root / "service-state.json"
+
+    @property
+    def lifecycle_lock_path(self) -> Path:
+        return self.runtime_root / "service-lifecycle.lock"
+
 
 def load_config(*, plugin_root: Path | None = None) -> PluginConfig:
     root = (
@@ -85,13 +94,16 @@ def load_config(*, plugin_root: Path | None = None) -> PluginConfig:
         "T3CODE_HERMES_SERVICE_GROUP", ""
     ).strip()
     current_user_id = os.geteuid()
-    service_user = (
-        configured_service_user
-        or (str(current_user_id) if current_user_id > 0 else "hermes")
-    )
-    service_group = configured_service_group or (
-        str(os.getegid()) if current_user_id > 0 else None
-    )
+    if configured_service_user:
+        service_user = configured_service_user
+    elif current_user_id == 0:
+        service_user = "hermes"
+    else:
+        try:
+            service_user = pwd.getpwuid(current_user_id).pw_name
+        except KeyError:
+            service_user = str(current_user_id)
+    service_group = configured_service_group or None
 
     repository = os.environ.get(
         "T3CODE_HERMES_REPOSITORY", DEFAULT_REPOSITORY

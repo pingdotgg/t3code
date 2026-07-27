@@ -3,16 +3,93 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
+import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 
-def _run(command: list[str], *, timeout: float = 15) -> None:
+@contextmanager
+def lifecycle_lock(lock_path: Path):
+    descriptor: int | None = None
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(
+        descriptor = os.open(
+            lock_path,
+            os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+        if os.geteuid() == 0:
+            owner = lock_path.parent.stat()
+            os.fchown(descriptor, owner.st_uid, owner.st_gid)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+    except OSError:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+    try:
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def persist_uninstalled_state(service_state_path: Path) -> bool:
+    """Record plugin-removal intent before deleting the orphaned slots."""
+
+    state = {
+        "version": 1,
+        "desired_state": "uninstalled",
+        "updated_at": int(time.time()),
+    }
+    temporary: Path | None = None
+    try:
+        service_state_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=service_state_path.parent,
+            prefix=f".{service_state_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            output.write(json.dumps(state, indent=2, sort_keys=True) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+            if os.geteuid() == 0:
+                owner = service_state_path.parent.stat()
+                os.fchown(output.fileno(), owner.st_uid, owner.st_gid)
+                os.fsync(output.fileno())
+        os.replace(temporary, service_state_path)
+        directory = os.open(service_state_path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return True
+    except OSError as error:
+        try:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        print(
+            f"T3 watchdog could not persist uninstalled state at "
+            f"{service_state_path}: {error}; cleanup will retry",
+            file=sys.stderr,
+        )
+        return False
+
+
+def _run(command: list[str], *, timeout: float = 15) -> bool:
+    try:
+        result = subprocess.run(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -20,30 +97,61 @@ def _run(command: list[str], *, timeout: float = 15) -> None:
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        pass
+        return False
+    return result.returncode == 0
 
 
-def remove_service(service_dir: Path, *, scan_dir: Path) -> None:
+def remove_service(service_dir: Path, *, scan_dir: Path) -> bool:
     if not service_dir.exists():
-        return
-    _run(["s6-svc", "-d", str(service_dir)], timeout=5)
-    _run(["s6-svwait", "-D", "-t", "10000", str(service_dir)])
-    _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5)
+        return True
+    if not (service_dir / "run").is_file():
+        if not _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5):
+            return False
+        time.sleep(0.2)
+        shutil.rmtree(service_dir, ignore_errors=True)
+        return not service_dir.exists()
+    if not _run(["s6-svc", "-d", str(service_dir)], timeout=5):
+        return False
+    if not _run(["s6-svwait", "-D", "-t", "10000", str(service_dir)]):
+        return False
+    if not _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5):
+        return False
     time.sleep(0.2)
     shutil.rmtree(service_dir, ignore_errors=True)
+    return not service_dir.exists()
 
 
 def cleanup_orphaned_services(
     *,
+    plugin_root: Path,
     scan_dir: Path,
     t3_service_dir: Path,
     watchdog_service_dir: Path,
-) -> None:
-    remove_service(t3_service_dir, scan_dir=scan_dir)
-    # Removing our own directory is safe: the running interpreter has already
-    # loaded this module, and s6-svscan is notified immediately afterwards.
-    shutil.rmtree(watchdog_service_dir, ignore_errors=True)
-    _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5)
+    service_state_path: Path,
+    lifecycle_lock_path: Path,
+) -> bool:
+    try:
+        with lifecycle_lock(lifecycle_lock_path):
+            if (plugin_root / "plugin.yaml").is_file():
+                return False
+            if not persist_uninstalled_state(service_state_path):
+                return False
+            if not remove_service(t3_service_dir, scan_dir=scan_dir):
+                return False
+            # Removing our own directory is safe: the running interpreter has
+            # already loaded this module, and s6-svscan is notified immediately.
+            shutil.rmtree(watchdog_service_dir, ignore_errors=True)
+            return (
+                not watchdog_service_dir.exists()
+                and _run(["s6-svscanctl", "-an", str(scan_dir)], timeout=5)
+            )
+    except OSError as error:
+        print(
+            f"T3 watchdog could not acquire lifecycle lock at "
+            f"{lifecycle_lock_path}: {error}; cleanup will retry",
+            file=sys.stderr,
+        )
+        return False
 
 
 def monitor(
@@ -52,6 +160,8 @@ def monitor(
     scan_dir: Path,
     t3_service_dir: Path,
     watchdog_service_dir: Path,
+    service_state_path: Path,
+    lifecycle_lock_path: Path,
     interval_seconds: int,
     misses_required: int,
 ) -> None:
@@ -65,12 +175,16 @@ def monitor(
         misses += 1
         if misses < misses_required:
             continue
-        cleanup_orphaned_services(
+        cleaned_up = cleanup_orphaned_services(
+            plugin_root=plugin_root,
             scan_dir=scan_dir,
             t3_service_dir=t3_service_dir,
             watchdog_service_dir=watchdog_service_dir,
+            service_state_path=service_state_path,
+            lifecycle_lock_path=lifecycle_lock_path,
         )
-        return
+        if cleaned_up:
+            return
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scan-dir", type=Path, required=True)
     parser.add_argument("--t3-service-dir", type=Path, required=True)
     parser.add_argument("--watchdog-service-dir", type=Path, required=True)
+    parser.add_argument("--service-state-path", type=Path, required=True)
+    parser.add_argument("--lifecycle-lock-path", type=Path, required=True)
     parser.add_argument("--interval-seconds", type=int, required=True)
     parser.add_argument("--misses-required", type=int, required=True)
     args = parser.parse_args(argv)
@@ -89,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         scan_dir=args.scan_dir,
         t3_service_dir=args.t3_service_dir,
         watchdog_service_dir=args.watchdog_service_dir,
+        service_state_path=args.service_state_path,
+        lifecycle_lock_path=args.lifecycle_lock_path,
         interval_seconds=args.interval_seconds,
         misses_required=args.misses_required,
     )

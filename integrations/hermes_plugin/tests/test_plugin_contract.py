@@ -93,9 +93,13 @@ class HermesPluginContractTest(unittest.TestCase):
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
         module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {"fastapi": fake_fastapi}):
+        with (
+            patch.dict(sys.modules, {"fastapi": fake_fastapi}),
+            patch("threading.Thread.start") as thread_start,
+        ):
             spec.loader.exec_module(module)
 
+        thread_start.assert_called_once_with()
         self.assertEqual(
             module.router.routes,
             [
@@ -118,7 +122,7 @@ class HermesPluginContractTest(unittest.TestCase):
             time.sleep(0.02)
             with state_lock:
                 active -= 1
-            return {}
+            return {"action": "installed"}
 
         async def invoke_concurrently() -> None:
             await asyncio.gather(
@@ -134,3 +138,67 @@ class HermesPluginContractTest(unittest.TestCase):
             asyncio.run(invoke_concurrently())
 
         self.assertEqual(peak, 1)
+
+        def reconcile(_config):
+            return install(_config)
+
+        async def invoke_boot_and_action() -> None:
+            await asyncio.gather(
+                asyncio.to_thread(module._run_boot_reconciliation),
+                module._run_action("install", FakeRequest()),
+            )
+
+        with (
+            patch.object(module.service, "install", side_effect=install),
+            patch.object(module.service, "reconcile", side_effect=reconcile),
+            patch.object(module, "_response", return_value={}),
+        ):
+            asyncio.run(invoke_boot_and_action())
+
+        self.assertEqual(peak, 1)
+
+    def test_boot_reconciliation_failure_is_isolated_and_logged(self) -> None:
+        dashboard = REPOSITORY_ROOT / "dashboard"
+        fake_fastapi = types.ModuleType("fastapi")
+        fake_fastapi.APIRouter = FakeRouter
+        fake_fastapi.HTTPException = FakeHttpException
+        fake_fastapi.Request = FakeRequest
+        spec = importlib.util.spec_from_file_location(
+            "hermes_dashboard_plugin_t3code_failure_test",
+            dashboard / "plugin_api.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        with (
+            patch.dict(sys.modules, {"fastapi": fake_fastapi}),
+            patch("threading.Thread.start"),
+        ):
+            spec.loader.exec_module(module)
+
+        config = object()
+        with (
+            patch.object(module, "load_config", return_value=config),
+            patch.object(
+                module.service,
+                "reconcile",
+                side_effect=RuntimeError("s6 scan directory unavailable"),
+            ),
+            patch.object(
+                module.service, "record_reconciliation_failure"
+            ) as record_failure,
+            self.assertLogs(module._LOG.name, level="WARNING") as logs,
+        ):
+            module._run_boot_reconciliation()
+
+        record_failure.assert_not_called()
+        self.assertIn("s6 scan directory unavailable", "\n".join(logs.output))
+        self.assertEqual(
+            module.router.routes,
+            [
+                ("GET", "/status"),
+                ("POST", "/install"),
+                ("POST", "/update"),
+                ("POST", "/uninstall"),
+            ],
+        )
