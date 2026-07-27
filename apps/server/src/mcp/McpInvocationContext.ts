@@ -16,7 +16,6 @@ export interface McpInvocationScope {
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
-  readonly expiresAt: number;
 }
 
 export class McpInvocationContext extends Context.Service<
