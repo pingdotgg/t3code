@@ -68,6 +68,35 @@ remove the T3 Code and watchdog s6 slots. This covers direct plugin-directory re
 uninstallation immediate. T3 Code data and the downloaded binary remain under
 `$HERMES_HOME/t3code`; the dashboard's **Remove service** action likewise removes only supervision.
 
+### Reboot recovery and desired state
+
+The plugin records explicit service intent in
+`$HERMES_HOME/t3code/service-state.json`. A successful **Install and start** or **Update** records
+`installed` together with the installed binary's version and SHA-256 digest. **Remove service**
+records `uninstalled` before it starts tearing down supervision; if that state cannot be persisted,
+the removal is rejected without touching the s6 slots. The orphan-cleanup watchdog also records
+`uninstalled` when it removes services after the plugin directory disappears.
+
+Hermes imports enabled dashboard backends when the dashboard starts. At that point the T3 Code
+backend starts a failure-isolated background reconciliation. If intent is `installed` but the
+ephemeral `/run/service/t3code` or `/run/service/t3code-plugin-watchdog` slot is missing, it recreates
+only the missing slot using the configured host, port, service user/group, `HERMES_HOME`, data
+directory, and the existing service hardening. Reconciliation shares the lifecycle lock used by the
+dashboard actions and the watchdog, leaves running slots alone, starts complete stopped slots without
+rewriting them, and will not rewrite a partial or live supervise tree.
+
+Boot recovery never checks GitHub or downloads a release. It re-hashes the already installed binary
+against the digest recorded at install time before executing it. A missing, non-executable, changed, or
+architecture-incompatible binary leaves the Hermes dashboard running; the plugin status reports
+`reconciliation_status=failed` and an actionable `reconciliation_error`. Use **Install and start**
+to download and verify a replacement.
+
+Plugin versions predating this state file retained only the binary and application data, so a legacy
+install is indistinguishable from one the operator intentionally removed. The plugin therefore never
+infers intent from an old binary or executes it during migration. After upgrading an existing plugin,
+click **Install and start** once to verify the retained or replacement release and establish explicit
+durable intent. From then on, boot recovery is automatic and **Remove service** remains authoritative.
+
 ## Projects and execution
 
 Hermes is not a T3 remote environment. T3 Code launches one ACP subprocess for the selected project,

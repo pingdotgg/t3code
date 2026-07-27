@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -18,6 +19,7 @@ from integrations.hermes_plugin import service
 
 router = APIRouter()
 _ACTION_LOCK = threading.Lock()
+_LOG = logging.getLogger(__name__)
 
 
 async def _acquire_action_lock() -> None:
@@ -87,3 +89,32 @@ async def update(request: Request) -> dict[str, object]:
 @router.post("/uninstall")
 async def uninstall(request: Request) -> dict[str, object]:
     return await _run_action("uninstall", request)
+
+
+def _run_boot_reconciliation() -> None:
+    config = None
+    try:
+        config = load_config(plugin_root=PLUGIN_ROOT)
+        with _ACTION_LOCK:
+            result = service.reconcile(config)
+        _LOG.info("T3 companion boot reconciliation: %s", result["action"])
+    except Exception as error:
+        _LOG.warning(
+            "T3 companion boot reconciliation failed: %s",
+            error,
+            exc_info=True,
+        )
+
+
+# Hermes imports this module while mounting enabled plugin backends. Recovery
+# can touch s6 and execute the T3 binary, so keep it off the dashboard startup
+# path while sharing the same lifecycle lock as manual actions.
+_BOOT_RECONCILIATION_THREAD = threading.Thread(
+    target=_run_boot_reconciliation,
+    name="t3code-plugin-reconcile",
+    daemon=True,
+)
+try:
+    _BOOT_RECONCILIATION_THREAD.start()
+except Exception as error:
+    _LOG.warning("Could not start T3 companion boot reconciliation: %s", error)

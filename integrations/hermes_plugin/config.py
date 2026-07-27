@@ -57,6 +57,14 @@ class PluginConfig:
     def scan_dir(self) -> Path:
         return self.service_dir.parent
 
+    @property
+    def service_state_path(self) -> Path:
+        return self.runtime_root / "service-state.json"
+
+    @property
+    def lifecycle_lock_path(self) -> Path:
+        return self.runtime_root / "service-lifecycle.lock"
+
 
 def load_config(*, plugin_root: Path | None = None) -> PluginConfig:
     root = (

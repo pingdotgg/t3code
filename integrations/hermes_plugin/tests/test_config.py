@@ -28,6 +28,14 @@ class PluginConfigTest(unittest.TestCase):
 
         self.assertEqual(config.binary_path, root / "hermes" / "t3code" / "bin" / "t3")
         self.assertEqual(config.data_dir, root / "hermes" / "t3code" / "data")
+        self.assertEqual(
+            config.service_state_path,
+            root / "hermes" / "t3code" / "service-state.json",
+        )
+        self.assertEqual(
+            config.lifecycle_lock_path,
+            root / "hermes" / "t3code" / "service-lifecycle.lock",
+        )
         self.assertEqual(config.port, 4773)
         self.assertEqual(
             config.watchdog_service_dir, root / "service" / "t3code-plugin-watchdog"
