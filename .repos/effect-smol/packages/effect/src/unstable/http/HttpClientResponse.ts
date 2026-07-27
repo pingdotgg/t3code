@@ -1,39 +1,11 @@
 /**
- * HTTP client response values, status helpers, and body decoders.
+ * Represents responses returned by the Effect HTTP client.
  *
- * This module represents responses produced by the Effect HTTP client. An
- * {@link HttpClientResponse} keeps the original request together with the
- * response status, headers, cookies, and effectful body accessors inherited from
- * the shared incoming-message model.
- *
- * **Mental model**
- *
- * A response is a successful client result unless a status filter turns it into
- * a failure. {@link fromWeb} adapts a platform `Response`, body readers decode
- * the underlying Web response, and schema helpers combine status, headers, and
- * decoded body data when validating API-specific responses.
- *
- * **Common tasks**
- *
- * - Branch on exact or status-class handlers with {@link matchStatus}.
- * - Fail non-accepted statuses with {@link filterStatus} or
- *   {@link filterStatusOk}.
- * - Decode JSON response envelopes with {@link schemaJson}.
- * - Decode status and headers without reading a body with {@link schemaNoBody}.
- * - Stream response bytes from an effect with {@link stream}.
- *
- * **Gotchas**
- *
- * HTTP status codes are data, not errors, until a filter is applied. `json`
- * parses an empty text body as `null`. Body readers fail with `HttpClientError`
- * when decoding fails, and the raw stream fails when no body is present.
- * Headers use the HTTP `Headers` module's lowercase, single-value map, while
- * response cookies are parsed separately from `Set-Cookie` headers.
- *
- * **See also**
- *
- * {@link HttpClientResponse}, {@link fromWeb}, {@link matchStatus},
- * {@link schemaJson}, {@link filterStatus}.
+ * An `HttpClientResponse` keeps the original request together with the response
+ * status, headers, cookies, and body accessors from the shared incoming-message
+ * model. This module includes constructors, schema-based decoders, helpers for
+ * streaming response bodies, and utilities for matching or filtering by HTTP
+ * status.
  *
  * @since 4.0.0
  */
@@ -121,10 +93,9 @@ export const schemaJson = <
     readonly headers?: Readonly<Record<string, string | undefined>> | undefined
     readonly body?: unknown
   },
-  RD,
-  RE
+  RD
 >(
-  schema: Schema.Codec<A, I, RD, RE>,
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ) => {
   const decode = Schema.decodeEffect(Schema.toCodecJson(schema).annotate({ options }))

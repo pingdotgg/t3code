@@ -1,24 +1,11 @@
 /**
- * The `CliOutput` module provides the formatting service used by Effect CLI
- * applications to turn parsed CLI metadata and failures into terminal text.
- * It renders help documents, parser errors, grouped errors, and version output,
- * while allowing applications and tests to replace the formatter through a
- * `Context` service or `Layer`.
+ * Formats CLI help and errors as text.
  *
- * **Common tasks**
- *
- * - Render generated {@link HelpDoc} values for `--help` output
- * - Display parser failures and validation errors from CLI programs
- * - Customize output for plain text, colored terminals, tests, or alternate
- *   formats
- * - Format version strings consistently with the rest of CLI output
- *
- * **Gotchas**
- *
- * - Color output is auto-detected from `process.stdout.isTTY` and `NO_COLOR`,
- *   but can be forced with {@link defaultFormatter}
- * - Help tables measure visible width after stripping ANSI escape codes, so
- *   colored output stays aligned with plain output
+ * This module turns help documents, CLI errors, grouped errors, and version
+ * information into strings. It does not write those strings to the terminal
+ * itself. It includes the `Formatter` interface, the formatter service, a layer
+ * for custom formatters, and the default formatter with configurable color
+ * support.
  *
  * @since 4.0.0
  */

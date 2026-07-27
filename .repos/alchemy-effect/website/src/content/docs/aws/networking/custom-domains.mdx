@@ -1,0 +1,194 @@
+---
+title: Custom domains with Route53 + ACM
+description: Serve your site or API from your own domain — DNS-validated ACM certificates, Route 53 alias records, and the domain prop on Website resources.
+sidebar:
+  order: 6
+---
+
+A custom domain on AWS is three moving parts: a TLS certificate (ACM), DNS
+records (Route 53), and wiring both into whatever serves traffic (CloudFront
+or API Gateway). For websites, Alchemy collapses all three into a single
+`domain` prop; for APIs and anything bespoke, the same primitives —
+`AWS.ACM.Certificate` and `AWS.Route53.Record` — are available directly.
+
+## The one-prop path: `domain` on Website resources
+
+`AWS.Website.Router`, `AWS.Website.SsrSite`, and a standalone
+`AWS.Website.StaticSite` all accept the same `domain` shape:
+
+```typescript
+const router = yield* AWS.Website.Router("WebsiteRouter", {
+  domain: {
+    name: "app.example.com",
+    hostedZoneId: "Z1234567890",
+    aliases: ["www.app.example.com"],
+  },
+  routes: {
+    "/*": site.routeTarget,
+  },
+});
+```
+
+With `hostedZoneId` set, Alchemy requests a DNS-validated ACM certificate
+covering `name` plus every alias, upserts the validation records into your
+zone, waits for issuance, attaches the certificate to the CloudFront
+distribution, and creates an `A` alias record for each hostname. The
+resource's `url` output becomes `https://app.example.com`. When a site is
+attached to a `Router`, put `domain` on the Router — passing it to the
+attached `StaticSite` as well is an error.
+
+## Bring your own certificate
+
+If you already have an ACM certificate, pass its ARN as `cert` and Alchemy
+skips certificate creation:
+
+```typescript
+domain: {
+  name: "app.example.com",
+  hostedZoneId: "Z1234567890",
+  cert: existingCertificateArn,
+},
+```
+
+DNS records are still managed for you — only the certificate step is
+replaced. The certificate must cover the domain name and every alias you
+list.
+
+## Manage DNS elsewhere
+
+Set `dns: false` to skip Route 53 entirely:
+
+```typescript
+domain: {
+  name: "app.example.com",
+  cert: existingCertificateArn,
+  dns: false,
+},
+```
+
+No records are created, so you point your DNS provider at the distribution's
+domain name yourself. `dns: false` requires `cert` — without Route 53 access
+Alchemy can't complete DNS validation for a new certificate, so you must
+bring one.
+
+## Create or reference a hosted zone
+
+The `domain` prop and the primitives below both key off a hosted zone ID. If
+the zone lives outside your stack, pass its ID as a plain string; to manage
+it in the stack, use `AWS.Route53.HostedZone`:
+
+```typescript
+const zone = yield* AWS.Route53.HostedZone("Zone", {
+  name: "example.com",
+});
+```
+
+`zone.id` is the hosted zone ID (without the `/hostedzone/` prefix) and
+`zone.nameServers` lists the authoritative name servers — set these as `NS`
+records at your registrar (or parent zone) to delegate the domain. Set
+`forceDestroy: true` if you want `destroy` to delete any remaining records
+before deleting the zone.
+
+## Request a DNS-validated certificate
+
+`AWS.ACM.Certificate` requests a certificate and, when you give it a
+`hostedZoneId`, handles validation end to end:
+
+```typescript
+const cert = yield* AWS.ACM.Certificate("WebsiteCertificate", {
+  domainName: "app.example.com",
+  subjectAlternativeNames: ["www.app.example.com"],
+  hostedZoneId: zone.id,
+});
+```
+
+The provider upserts the DNS validation records ACM asks for into the zone,
+waits for Route 53 to propagate them, and blocks until the certificate
+reaches `ISSUED` — so `cert.certificateArn` is ready to attach the moment
+the effect resolves. Certificates are requested in `us-east-1`, the region
+CloudFront requires for viewer certificates. ACM certificates are immutable:
+changing the domain name, SANs, or validation settings replaces the
+certificate with a new one.
+
+## Alias a record to CloudFront
+
+`AWS.Route53.Record` manages a single record set; an `A` record with
+`aliasTarget` points a hostname at a CloudFront distribution:
+
+```typescript
+yield* AWS.Route53.Record("WebsiteAlias", {
+  hostedZoneId: zone.id,
+  name: "app.example.com",
+  type: "A",
+  aliasTarget: {
+    hostedZoneId: distribution.hostedZoneId,
+    dnsName: distribution.domainName,
+  },
+});
+```
+
+Note that `aliasTarget.hostedZoneId` is the *distribution's* hosted zone ID
+(an attribute CloudFront exposes), not your own zone's. Records are written
+with `UPSERT` — create and update are the same operation — and the provider
+waits for the Route 53 change to reach `INSYNC` before returning, so the
+record is live when the deploy finishes.
+
+## Custom domain for API Gateway
+
+For a REST API, create an `AWS.ApiGateway.DomainName` with a certificate and
+map your API's stage onto it with a `BasePathMapping`:
+
+```typescript
+const domain = yield* AWS.ApiGateway.DomainName("ApiDomain", {
+  domainName: "api.example.com",
+  regionalCertificateArn: cert.certificateArn,
+  endpointConfiguration: { types: ["REGIONAL"] },
+  securityPolicy: "TLS_1_2",
+});
+
+yield* AWS.ApiGateway.BasePathMapping("Root", {
+  domainName: domain.domainName,
+  restApiId: api.restApiId,
+  stage: "prod",
+});
+```
+
+One region caveat: a `REGIONAL` domain needs its certificate in the API's own
+region, while `AWS.ACM.Certificate` always issues in `us-east-1`. Deploying
+to `us-east-1` works as written; in any other region, pass the ARN of a
+certificate that already exists there as `regionalCertificateArn`.
+
+## Point DNS at the API
+
+The `DomainName` resource exposes the regional endpoint to alias to:
+
+```typescript
+yield* AWS.Route53.Record("ApiAlias", {
+  hostedZoneId: zone.id,
+  name: "api.example.com",
+  type: "A",
+  aliasTarget: {
+    hostedZoneId: domain.regionalHostedZoneId.as<string>(),
+    dnsName: domain.regionalDomainName.as<string>(),
+  },
+});
+```
+
+`regionalDomainName` / `regionalHostedZoneId` are the alias target for
+regional endpoints (edge-optimized domains expose
+`distributionDomainName` / `distributionHostedZoneId` instead). The `.as<string>()`
+narrows the attribute's type — API Gateway only populates the regional fields
+for regional endpoint configurations.
+
+## Where next
+
+- [Websites on AWS](/aws/frontend/websites) — the `domain` prop in the context of the
+  full websites surface
+- [Deploy a static site](/aws/frontend/static-site) — Router composition and
+  cache invalidation
+- [REST API (API Gateway v1)](/aws/apis/api-gateway) — the API this
+  domain fronts
+- Reference: [Certificate](/providers/aws/acm/certificate),
+  [Record](/providers/aws/route53/record),
+  [HostedZone](/providers/aws/route53/hostedzone),
+  [DomainName](/providers/aws/apigateway/domainname)

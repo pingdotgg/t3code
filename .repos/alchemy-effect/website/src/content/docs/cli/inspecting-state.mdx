@@ -1,0 +1,122 @@
+---
+title: Inspecting State
+description: See what alchemy thinks is deployed, debug a bad diff, and recover from bad state.
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+## What does alchemy think is deployed?
+
+```sh
+bun alchemy state tree
+```
+
+<Terminal content={`AlchemyEffectWebsite
+├─ dev_sam
+│  ├─ Bucket
+│  └─ Worker
+└─ prod
+   ├─ Bucket
+   └─ Worker`} />
+
+This is the record the next plan diffs against — not the live cloud
+(see [State Store](/state-store)). Full flag reference:
+[state](/cli/state).
+
+Drill down one level at a time:
+
+```sh
+bun alchemy state stacks
+```
+
+Lists every stack in the store.
+
+```sh
+bun alchemy state stages --stack myapp
+```
+
+Lists every stage recorded under `myapp`.
+
+```sh
+bun alchemy state resources --stack myapp --stage dev_sam
+```
+
+Prints the FQNs tracked under that stack/stage — the addresses
+`state get` takes.
+
+## Debugging a bad diff
+
+```sh
+bun alchemy state get --stack myapp --stage dev_sam --fqn Bucket
+```
+
+This is the persisted props/attrs the planner diffs against — see
+[state](/cli/state) for the output encoding. Compare it with what
+`alchemy plan` says it wants to change. Three usual causes:
+
+**Wrong stage.** `--stage` defaults to `dev_$USER` (e.g. `dev_sam`),
+so a plan that "wants to create everything" often just means you're
+looking at a stage you never deployed. Run
+`state stages --stack myapp` and confirm which stage actually has
+state.
+
+**Drift.** The cloud changed out-of-band — someone edited the
+resource in a console or another tool. `state get` shows what alchemy
+last persisted; the reconciler converges observed cloud state to the
+desired state on the next deploy (see
+[Resource Lifecycle](/infrastructure-as-code/resource-lifecycle)).
+
+**Stale state from a partially-failed deploy.** If a deploy crashed
+after mutating the cloud but before persisting, the record lags
+reality. Check the persisted attributes against what actually exists
+before reaching for `clear`.
+
+## Recover from bad state
+
+When the record is beyond repair, clear it and redeploy. `clear` is
+destructive but **local-only** — it deletes alchemy's record, never
+the cloud resources themselves:
+
+```sh
+# one stage
+bun alchemy state clear --stack myapp --stage pr-42 --yes
+
+# a whole stack
+bun alchemy state clear --stack myapp --yes
+```
+
+Then deploy — resources alchemy owns are re-imported automatically:
+
+```sh
+bun alchemy deploy
+```
+
+If the deploy fails with `OwnedBySomeoneElse`, escalate:
+
+```sh
+bun alchemy deploy --adopt
+```
+
+See [Adopting Resources](/cli/adopting-resources) for why the flag is
+usually unnecessary.
+
+## Orphaned local state
+
+Pass `--local` to any `state` subcommand to read the on-disk
+`.alchemy/state` directory instead of the stack's configured store.
+The canonical use: a Cloudflare state-store bootstrap was interrupted
+and left resources recorded only locally.
+
+```sh
+# wipe local state after a botched bootstrap
+bun alchemy state clear --local
+```
+
+See [cloudflare](/cli/cloudflare) for bootstrap repair.
+
+## Where next
+
+- [state](/cli/state) — full subcommand and flag reference
+- [Adopting Resources](/cli/adopting-resources) — ownership and `--adopt`
+- [cloudflare](/cli/cloudflare) — state-store bootstrap
+- [State Store](/state-store) — where resource state lives

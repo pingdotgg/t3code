@@ -1,0 +1,74 @@
+---
+title: Testing Providers
+description: Exercise a provider's create, update, replace, and delete paths with test.provider and a scratch in-memory stack.
+---
+
+You built a provider — now prove its lifecycle. `test.provider` gives each test a private scratch stack, so create / update / replace / delete runs never touch `.alchemy/` or a shared stage.
+
+Building the provider itself? Start at [Build a custom provider](/infrastructure-as-code/custom-provider).
+
+## Scratch stacks with test.provider
+
+`test.provider(name, (stack) => effect)` builds a **scratch stack** with a private in-memory state store, isolated from `.alchemy/` and from sibling tests. Use it to exercise the create / update / replace / delete paths of a provider:
+
+```typescript
+const { test } = Test.make({ providers: MyProvider.providers() });
+
+test.provider(
+  "create, update, delete",
+  (stack) => Effect.gen(function* () {
+    // create
+    const v1 = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* MyResource("Test", { name: "v1" });
+      }),
+    );
+
+    // update — same logical ID, new inputs
+    const v2 = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* MyResource("Test", { name: "v2" });
+      }),
+    );
+    expect(v2.id).toBe(v1.id);
+
+    // destroy
+    yield* stack.destroy();
+  }),
+);
+```
+
+For a full walkthrough with a real custom provider, see [Build a custom provider → Test the lifecycle](/infrastructure-as-code/custom-provider#test-the-lifecycle).
+
+## Assert against the real cloud
+
+Inside the test body the configured `providers` Layer is already in scope, so out-of-band SDK calls (`DynamoDB.describeTable`, `stripe.products.retrieve`, …) work without extra setup — assert the cloud actually matches the resource's reported outputs, as in the [Stripe walkthrough](/infrastructure-as-code/custom-provider#test-the-lifecycle).
+
+## Verify replacement
+
+Change a `stables` field (or whatever your `diff` flags as `replace`) between two `stack.deploy` calls with the same logical ID:
+
+```typescript
+expect(v2.id).not.toBe(v1.id);
+```
+
+## Scratch state vs persistent state
+
+| | `test` + `deploy(Stack)` | `test.provider` |
+|---|---|---|
+| State store | `state` option (default `localState()`) | private in-memory, per test |
+| Survives runs | yes (the point) | no |
+| Use case | end-to-end against a real stack | provider unit tests |
+
+For end-to-end tests against a real deployed Stack, see [Testing a Stack](/testing/testing-a-stack).
+
+## Seed pre-existing resources
+
+`test.provider`'s in-memory state is exposed as the `state` field on `ScratchStack` for advanced cases. For simpler seeds, just call `stack.deploy(...)` once with the seed, then again with the actual test inputs — the second call sees the first call's output as existing state.
+
+## Where next
+
+- [Build a custom provider](/infrastructure-as-code/custom-provider) — the provider this page tests, end to end.
+- [Providers](/infrastructure-as-code/provider) — the operation contract under test.
+- [Test harness](/testing/test-harness) — everything `Test.make` returns.
+- [Testing](/testing) — the full harness reference.

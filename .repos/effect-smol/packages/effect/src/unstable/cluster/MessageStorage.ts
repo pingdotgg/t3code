@@ -1,41 +1,12 @@
 /**
- * Persistence and reply delivery for Effect Cluster mailboxes.
+ * Stores Effect Cluster messages and replies behind a pluggable backend.
  *
- * `MessageStorage` is the boundary between cluster message delivery and the
- * storage backend that keeps mailbox state recoverable. Implementations persist
- * outgoing requests, control envelopes, stream replies, completion replies, and
- * the indexes needed to find duplicate requests and unprocessed messages for a
- * runner's assigned shards.
- *
- * **Mental model**
- *
- * Mailbox delivery has two kinds of state. Durable state lives in the storage
- * implementation and is used to resume work after restarts or reassignment.
- * Local state lives in the current process and connects persisted replies to
- * registered reply handlers. The service combines both: storage methods record
- * and query durable messages, while handler methods connect replies to the
- * fibers waiting for them in the current runner.
- *
- * **Common tasks**
- *
- * - Provide the in-memory storage with {@link layerMemory} for local tests and
- *   development
- * - Provide {@link layerNoop} when persistence should be disabled
- * - Build custom storage from decoded operations with {@link make}
- * - Build custom storage from encoded operations with {@link makeEncoded}
- * - Check {@link SaveResult} after saving a request to distinguish new work from
- *   duplicate request ids
- *
- * **Gotchas**
- *
- * - Reply handlers are process-local; persisted replies may need to be loaded
- *   again after a runner restart or shard reassignment.
- * - Duplicate detection depends on stable request primary keys and persisted
- *   request ids.
- * - Storage backends should make save and reply writes transactional when
- *   possible so recovery never observes partial mailbox state.
- * - Runners should only process unprocessed messages for shards they currently
- *   own.
+ * `MessageStorage` is the boundary between cluster runner logic and the storage
+ * system that keeps mailbox state recoverable. It saves requests, control
+ * envelopes, and replies; finds unprocessed messages for assigned shards;
+ * tracks duplicate requests; and manages reply handlers waiting for responses.
+ * This module also includes the encoded storage-driver contract and no-op or
+ * in-memory implementations for local use and tests.
  *
  * @since 4.0.0
  */
@@ -1090,7 +1061,7 @@ export const layerMemory: Layer.Layer<
 
 const EnvelopeWithReply: Schema.Struct<
   {
-    readonly envelope: Schema.Decoder<Envelope.PartialRequest | Envelope.AckChunk | Envelope.Interrupt>
+    readonly envelope: Schema.ConstraintDecoder<Envelope.PartialRequest | Envelope.AckChunk | Envelope.Interrupt>
     readonly lastSentReply: Schema.Option<Schema.Codec<Reply.Encoded>>
   }
 > = Schema.Struct({
