@@ -137,6 +137,7 @@ function testLayer(input?: {
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           deprovision: input?.deprovision ?? (() => Effect.void),
+          release: () => Effect.succeed(true),
           provision: () =>
             Effect.succeed({
               endpoint: {
