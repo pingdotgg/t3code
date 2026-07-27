@@ -1,6 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessWorkingDirectory,
+} from "@t3tools/shared/hostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -628,6 +636,114 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.notProperty(error, "args");
         assert.notInclude(error.message, "secret-token-value");
       });
+    });
+
+    describe("t3 home precedence", () => {
+      const makeWorktree = Effect.acquireRelease(
+        Effect.sync(() => {
+          const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-devrunner-"));
+          NodeFS.writeFileSync(
+            NodePath.join(root, ".git"),
+            "gitdir: /elsewhere/.git/worktrees/x\n",
+          );
+          return root;
+        }),
+        (root) => Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+      );
+
+      const spawnedHome = (input: {
+        readonly t3Home: string | undefined;
+        readonly cwd: string;
+        readonly ambientHome: string | undefined;
+      }) =>
+        Effect.gen(function* () {
+          let captured: Record<string, string | undefined> | undefined;
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              captured = (
+                command as {
+                  readonly options?: { readonly env?: Record<string, string | undefined> };
+                }
+              ).options?.env;
+              return Effect.succeed(mockProcess(0));
+            }),
+          );
+
+          yield* runDevRunnerWithInput({ ...devServerInput, t3Home: input.t3Home }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(HostProcessWorkingDirectory, input.cwd),
+            Effect.provideService(
+              HostProcessEnvironment,
+              input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
+            ),
+          );
+
+          return captured?.T3CODE_HOME;
+        });
+
+      it.effect("prefers an explicit --home-dir over the worktree default", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = yield* spawnedHome({
+            t3Home: "/tmp/explicit-home",
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.resolve("/tmp/explicit-home"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("treats a blank --home-dir as unset rather than as a selection", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = yield* spawnedHome({
+            t3Home: "   ",
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.join(path.resolve(root), ".t3"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("prefers the worktree .t3 over an ambient T3CODE_HOME", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: root,
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.join(path.resolve(root), ".t3"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("falls back to an ambient T3CODE_HOME outside a worktree", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.resolve("/home/user/.t3"));
+        }),
+      );
+
+      it.effect("leaves the home implicit with no worktree and no ambient value", () =>
+        Effect.gen(function* () {
+          const home = yield* spawnedHome({
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: undefined,
+          });
+          assert.equal(home, undefined);
+        }),
+      );
     });
   });
 });
