@@ -502,13 +502,19 @@ def _find_stale_service_processes(
         if (
             parent_status is None
             or parent_status[0] != 0
+            or parent_status[1] != 1
             or parent_command is None
             or len(parent_command) != 2
             or Path(parent_command[0]).name != "s6-supervise"
             or parent_command[1] != config.service_dir.name
-            or parent_executable is None
-            or Path(parent_executable[0]).name != "s6-supervise"
-            or parent_working_dir != (str(config.service_dir), True)
+            or (
+                parent_executable is not None
+                and Path(parent_executable[0]).name != "s6-supervise"
+            )
+            or (
+                parent_working_dir is not None
+                and parent_working_dir != (str(config.service_dir), True)
+            )
         ):
             continue
         matches.append(

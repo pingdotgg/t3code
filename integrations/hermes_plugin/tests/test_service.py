@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import tempfile
 import threading
 import time
@@ -10,7 +11,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from subprocess import CompletedProcess
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from integrations.hermes_plugin import service as service_module
 from integrations.hermes_plugin.config import load_config
@@ -731,6 +732,76 @@ class ServiceDefinitionTest(unittest.TestCase):
 
         pidfd_open.assert_not_called()
 
+    def test_split_brain_cleanup_refuses_pid_identity_change_without_signaling(
+        self,
+    ) -> None:
+        stale = service_module._StaleServiceProcess(
+            child_pid=3047,
+            supervisor_pid=3008,
+        )
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._find_stale_service_processes",
+                side_effect=[[stale], []],
+            ),
+            patch(
+                "integrations.hermes_plugin.service.os.pidfd_open",
+                return_value=17,
+            ),
+            patch(
+                "integrations.hermes_plugin.service.signal.pidfd_send_signal"
+            ) as send_signal,
+            patch("integrations.hermes_plugin.service.os.close") as close,
+            self.assertRaisesRegex(ServiceError, "process identity changed"),
+        ):
+            service_module._terminate_exact_stale_service(self.config)
+
+        send_signal.assert_not_called()
+        close.assert_called_once_with(17)
+
+    def test_split_brain_cleanup_signals_only_the_pinned_child(self) -> None:
+        stale = service_module._StaleServiceProcess(
+            child_pid=3047,
+            supervisor_pid=3008,
+        )
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._find_stale_service_processes",
+                return_value=[stale],
+            ),
+            patch(
+                "integrations.hermes_plugin.service.os.pidfd_open",
+                return_value=17,
+            ) as pidfd_open,
+            patch(
+                "integrations.hermes_plugin.service.signal.pidfd_send_signal"
+            ) as send_signal,
+            patch("integrations.hermes_plugin.service.os.close") as close,
+            patch(
+                "integrations.hermes_plugin.service._wait_for_process_exit"
+            ) as wait_for_exit,
+        ):
+            service_module._terminate_exact_stale_service(self.config)
+
+        pidfd_open.assert_called_once_with(stale.child_pid)
+        send_signal.assert_called_once_with(17, signal.SIGTERM)
+        close.assert_called_once_with(17)
+        self.assertEqual(
+            wait_for_exit.call_args_list,
+            [
+                call(
+                    stale.child_pid,
+                    timeout=service_module._PROCESS_EXIT_TIMEOUT_SECONDS,
+                ),
+                call(
+                    stale.supervisor_pid,
+                    timeout=service_module._PROCESS_EXIT_TIMEOUT_SECONDS,
+                ),
+            ],
+        )
+
     def test_finds_only_exact_deleted_slot_process_that_owns_configured_port(
         self,
     ) -> None:
@@ -784,6 +855,219 @@ class ServiceDefinitionTest(unittest.TestCase):
                 service_module._StaleServiceProcess(
                     child_pid=2882,
                     supervisor_pid=2850,
+                )
+            ],
+        )
+
+    def test_rejects_readable_contradictory_supervisor_links(self) -> None:
+        proc_root = Path(self.temporary.name) / "proc-contradictory-links"
+        child = proc_root / "3047"
+        supervisor = proc_root / "3008"
+        child.mkdir(parents=True)
+        supervisor.mkdir()
+        config = replace(
+            self.config,
+            binary_path=Path("/opt/data/t3code/bin/t3"),
+            service_dir=Path("/run/service/t3code"),
+            service_user="10000",
+            port=3773,
+        )
+
+        contradictory_links = [
+            (
+                "executable identity",
+                ("/usr/bin/not-s6-supervise", False),
+                (str(config.service_dir), True),
+            ),
+            (
+                "live working directory",
+                ("/command/s6-supervise", False),
+                (str(config.service_dir), False),
+            ),
+            (
+                "different deleted slot",
+                ("/command/s6-supervise", False),
+                ("/run/service/other", True),
+            ),
+        ]
+        for label, parent_executable, parent_working_dir in contradictory_links:
+            with (
+                self.subTest(link=label),
+                patch(
+                    "integrations.hermes_plugin.service._listening_socket_inodes",
+                    return_value={"555"},
+                ),
+                patch(
+                    "integrations.hermes_plugin.service._proc_status",
+                    side_effect=lambda directory: (
+                        (10000, 3008)
+                        if directory == child
+                        else (0, 1)
+                        if directory == supervisor
+                        else None
+                    ),
+                ),
+                patch(
+                    "integrations.hermes_plugin.service._proc_command",
+                    side_effect=lambda directory: (
+                        [str(config.binary_path), "serve"]
+                        if directory == child
+                        else ["s6-supervise", config.service_dir.name]
+                        if directory == supervisor
+                        else None
+                    ),
+                ),
+                patch(
+                    "integrations.hermes_plugin.service._proc_link",
+                    side_effect=lambda directory, name: (
+                        (str(config.binary_path), True)
+                        if directory == child and name == "exe"
+                        else (str(config.service_dir), True)
+                        if directory == child and name == "cwd"
+                        else parent_executable
+                        if directory == supervisor and name == "exe"
+                        else parent_working_dir
+                        if directory == supervisor and name == "cwd"
+                        else None
+                    ),
+                ),
+                patch(
+                    "integrations.hermes_plugin.service._process_owns_socket",
+                    return_value=True,
+                ),
+            ):
+                matches = service_module._find_stale_service_processes(
+                    config,
+                    proc_root=proc_root,
+                )
+
+            self.assertEqual(matches, [])
+
+    def test_rejects_supervisor_not_parented_by_init(self) -> None:
+        proc_root = Path(self.temporary.name) / "proc-parent"
+        child = proc_root / "3047"
+        supervisor = proc_root / "3008"
+        child.mkdir(parents=True)
+        supervisor.mkdir()
+        config = replace(
+            self.config,
+            binary_path=Path("/opt/data/t3code/bin/t3"),
+            service_dir=Path("/run/service/t3code"),
+            service_user="10000",
+            port=3773,
+        )
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._listening_socket_inodes",
+                return_value={"555"},
+            ),
+            patch(
+                "integrations.hermes_plugin.service._proc_status",
+                side_effect=lambda directory: (
+                    (10000, 3008)
+                    if directory == child
+                    else (0, 2999)
+                    if directory == supervisor
+                    else None
+                ),
+            ),
+            patch(
+                "integrations.hermes_plugin.service._proc_command",
+                side_effect=lambda directory: (
+                    [str(config.binary_path), "serve"]
+                    if directory == child
+                    else ["s6-supervise", config.service_dir.name]
+                    if directory == supervisor
+                    else None
+                ),
+            ),
+            patch(
+                "integrations.hermes_plugin.service._proc_link",
+                side_effect=lambda directory, name: (
+                    (str(config.binary_path), True)
+                    if directory == child and name == "exe"
+                    else (str(config.service_dir), True)
+                    if directory == child and name == "cwd"
+                    else None
+                ),
+            ),
+            patch(
+                "integrations.hermes_plugin.service._process_owns_socket",
+                return_value=True,
+            ),
+        ):
+            matches = service_module._find_stale_service_processes(
+                config,
+                proc_root=proc_root,
+            )
+
+        self.assertEqual(matches, [])
+
+    def test_finds_exact_stale_child_when_root_supervisor_links_are_unavailable(
+        self,
+    ) -> None:
+        proc_root = Path(self.temporary.name) / "proc"
+        (proc_root / "net").mkdir(parents=True)
+        (proc_root / "net" / "tcp").write_text(
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when "
+            "retrnsmt   uid  timeout inode\n"
+            "   0: 00000000:0EBD 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000 10000 0 555\n",
+            encoding="ascii",
+        )
+        config = replace(
+            self.config,
+            binary_path=Path("/opt/data/t3code/bin/t3"),
+            service_dir=Path("/run/service/t3code"),
+            watchdog_service_dir=Path("/run/service/t3code-plugin-watchdog"),
+            service_user="10000",
+            port=3773,
+        )
+
+        child = proc_root / "3047"
+        (child / "fd").mkdir(parents=True)
+        (child / "status").write_text(
+            "Name:\tt3\nPPid:\t3008\nUid:\t10000\t10000\t10000\t10000\n",
+            encoding="utf-8",
+        )
+        (child / "cmdline").write_bytes(b"/opt/data/t3code/bin/t3\0serve\0")
+        os.symlink("/opt/data/t3code/bin/t3 (deleted)", child / "exe")
+        os.symlink("/run/service/t3code (deleted)", child / "cwd")
+        os.symlink("socket:[555]", child / "fd" / "3")
+
+        supervisor = proc_root / "3008"
+        supervisor.mkdir()
+        (supervisor / "status").write_text(
+            "Name:\ts6-supervise\nPPid:\t1\nUid:\t0\t0\t0\t0\n",
+            encoding="utf-8",
+        )
+        (supervisor / "cmdline").write_bytes(b"s6-supervise\0t3code\0")
+        os.symlink("/command/s6-supervise", supervisor / "exe")
+        os.symlink("/run/service/t3code (deleted)", supervisor / "cwd")
+
+        real_readlink = os.readlink
+
+        def readlink(path: os.PathLike[str]) -> str:
+            if Path(path) in {supervisor / "exe", supervisor / "cwd"}:
+                raise PermissionError(13, "Permission denied", path)
+            return real_readlink(path)
+
+        with patch(
+            "integrations.hermes_plugin.service.os.readlink",
+            side_effect=readlink,
+        ):
+            matches = service_module._find_stale_service_processes(
+                config,
+                proc_root=proc_root,
+            )
+
+        self.assertEqual(
+            matches,
+            [
+                service_module._StaleServiceProcess(
+                    child_pid=3047,
+                    supervisor_pid=3008,
                 )
             ],
         )
