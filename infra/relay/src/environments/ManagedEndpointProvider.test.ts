@@ -9,6 +9,7 @@ import * as Redacted from "effect/Redacted";
 import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
@@ -200,10 +201,24 @@ function makeAllocations(calls: AllocationCall[] = []) {
   });
 }
 
+function makeTunnelLimits(
+  calls: Array<{ readonly userId: string; readonly environmentId: string }> = [],
+  result: ManagedTunnelLimits.ManagedTunnelLimitExceeded | null = null,
+) {
+  return ManagedTunnelLimits.ManagedTunnelLimits.of({
+    ensureCapacity: (input) =>
+      Effect.suspend(() => {
+        calls.push(input);
+        return result === null ? Effect.void : Effect.fail(result);
+      }),
+  });
+}
+
 function providerLayer(
   tunnelClient = makeTunnelClient(),
   dnsClient = makeDnsClient(),
   allocations = makeAllocations(),
+  tunnelLimits = makeTunnelLimits(),
 ) {
   return ManagedEndpointProvider.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -213,6 +228,7 @@ function providerLayer(
     Layer.provide(
       Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, allocations),
     ),
+    Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, tunnelLimits)),
   );
 }
 
@@ -306,6 +322,67 @@ describe("ManagedEndpointProvider", () => {
           makeTunnelClient(tunnelCalls),
           makeDnsClient(dnsCalls),
           makeAllocations(allocationCalls),
+        ),
+      ),
+    );
+  });
+
+  it.effect("checks the managed tunnel limit before reserving an allocation", () => {
+    const limitCalls: Array<{ readonly userId: string; readonly environmentId: string }> = [];
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      yield* provider.provision({
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      expect(limitCalls).toEqual([{ userId: "user_ABC", environmentId: "env_ABC" }]);
+    }).pipe(
+      Effect.provide(
+        providerLayer(
+          makeTunnelClient(),
+          makeDnsClient(),
+          makeAllocations(),
+          makeTunnelLimits(limitCalls),
+        ),
+      ),
+    );
+  });
+
+  it.effect("refuses to provision past the managed tunnel limit without side effects", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const dnsCalls: DnsCall[] = [];
+    const allocationCalls: AllocationCall[] = [];
+    const exceeded = new ManagedTunnelLimits.ManagedTunnelLimitExceeded({
+      userId: "user_ABC",
+      environmentId: "env_ABC",
+      maxTunnels: 10,
+      activeTunnels: 10,
+    });
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+
+      expect(error).toBe(exceeded);
+      expect(tunnelCalls).toEqual([]);
+      expect(dnsCalls).toEqual([]);
+      expect(allocationCalls).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        providerLayer(
+          makeTunnelClient(tunnelCalls),
+          makeDnsClient(dnsCalls),
+          makeAllocations(allocationCalls),
+          makeTunnelLimits([], exceeded),
         ),
       ),
     );
