@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
+import type { PendingBackgroundWorkTask } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -55,10 +56,16 @@ import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
+  cancelAnimation,
   FadeIn,
   FadeInUp,
   LinearTransition,
   type SharedValue,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withTiming,
 } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -146,6 +153,7 @@ export interface ThreadFeedProps {
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
+  readonly pendingBackgroundTasks: ReadonlyArray<PendingBackgroundWorkTask>;
   readonly listRef: RefObject<LegendListRef | null>;
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
@@ -924,6 +932,10 @@ function renderFeedEntry(
     return <WorkingTimelineRow startedAt={entry.createdAt} />;
   }
 
+  if (entry.type === "waiting-background") {
+    return <WaitingBackgroundTimelineRow label={entry.label} />;
+  }
+
   if (entry.type === "run-fold") {
     return (
       <Pressable
@@ -1142,6 +1154,44 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
     </View>
   );
 });
+
+// Unlike the working row there is no elapsed timer to carry liveness, so the
+// dots pulse instead. Web animates both rows the same way.
+const WaitingBackgroundTimelineRow = memo(function WaitingBackgroundTimelineRow(props: {
+  readonly label: string;
+}) {
+  return (
+    <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
+      <View className="flex-row items-center gap-1">
+        <WaitingBackgroundDot delayMs={0} className="bg-neutral-400 dark:bg-neutral-500" />
+        <WaitingBackgroundDot delayMs={200} className="bg-neutral-400/80 dark:bg-neutral-500/80" />
+        <WaitingBackgroundDot delayMs={400} className="bg-neutral-400/60 dark:bg-neutral-500/60" />
+      </View>
+      <Text
+        numberOfLines={2}
+        className="flex-1 font-t3-medium text-xs text-neutral-600 dark:text-neutral-400"
+      >
+        {props.label}
+      </Text>
+    </View>
+  );
+});
+
+function WaitingBackgroundDot(props: { readonly className: string; readonly delayMs: number }) {
+  const opacity = useSharedValue(1);
+  useEffect(() => {
+    opacity.value = withDelay(
+      props.delayMs,
+      withRepeat(withTiming(0.3, { duration: 600 }), -1, true),
+    );
+    return () => cancelAnimation(opacity);
+  }, [opacity, props.delayMs]);
+
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Animated.View className={`h-1 w-1 rounded-full ${props.className}`} style={animatedStyle} />
+  );
+}
 
 function UserMessageContent(props: {
   readonly text: string;
@@ -1563,8 +1613,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             .map(([groupId]) => groupId),
         ),
         props.activeWorkStartedAt,
+        props.pendingBackgroundTasks,
       ),
-    [expandedTurnIds, expandedWorkGroups, props.activeWorkStartedAt, props.feed, props.latestRun],
+    [
+      expandedTurnIds,
+      expandedWorkGroups,
+      props.activeWorkStartedAt,
+      props.feed,
+      props.latestRun,
+      props.pendingBackgroundTasks,
+    ],
   );
 
   // The empty↔filled key below remounts the list, which resets its imperative
@@ -1922,6 +1980,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         </View>
         {props.feed.length === 0 &&
         props.activeWorkStartedAt === null &&
+        props.pendingBackgroundTasks.length === 0 &&
         props.contentPresentation.kind === "ready" ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ThreadFeedPlaceholder

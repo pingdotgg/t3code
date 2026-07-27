@@ -15,6 +15,7 @@ export type ThreadStatusKind =
   | "working"
   | "connecting"
   | "error"
+  | "waiting"
   | "plan-ready";
 
 export interface ThreadStatusPresentation extends StatusTone {
@@ -42,7 +43,12 @@ function isLatestRunSettled(thread: EnvironmentThreadShell): boolean {
 /**
  * Resolves the user-facing status of a thread, in priority order. Returns
  * `null` for quiescent threads so rows stay free of "Idle"-style noise.
- * Mirrors `resolveThreadStatusPill` in apps/web/src/components/Sidebar.logic.ts.
+ *
+ * Follows `resolveThreadStatusPill` in apps/web/src/components/Sidebar.logic.ts
+ * for the shared pills, but is not a mirror of it: mobile additionally ranks
+ * Error above Waiting, and the web classic sidebar has no Error pill at all. So
+ * a failed run holding a nonempty background roster reads Error here and
+ * Waiting on desktop.
  */
 export function resolveThreadStatus(
   thread: EnvironmentThreadShell,
@@ -105,6 +111,19 @@ export function resolveThreadStatus(
       textClassName: "text-rose-700 dark:text-rose-300",
       iconColor: "#ff453a",
       iconBackground: "rgba(255,69,58,0.22)",
+      pulse: false,
+    };
+  }
+
+  // Settled root turn with finite provider work still pending. Static and
+  // muted: in motion, but nothing to act on. Mirrors the web sidebar pill.
+  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) {
+    return {
+      kind: "waiting",
+      label: "Waiting",
+      pillClassName: "bg-neutral-500/12 dark:bg-neutral-500/16",
+      textClassName: "text-neutral-600 dark:text-neutral-400",
+      ...THREAD_STATUS_NEUTRAL_ICON,
       pulse: false,
     };
   }

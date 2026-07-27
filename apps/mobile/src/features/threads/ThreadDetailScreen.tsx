@@ -1,6 +1,7 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import type { PendingBackgroundWorkTask } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import type {
@@ -52,6 +53,7 @@ export interface ThreadDetailScreenProps {
   readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
+  readonly pendingBackgroundTasks: ReadonlyArray<PendingBackgroundWorkTask>;
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: RuntimeRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
@@ -363,6 +365,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             threadTitle={props.selectedThread.title}
             latestRun={props.selectedThread.latestRun}
             activeWorkStartedAt={props.activeWorkStartedAt}
+            pendingBackgroundTasks={props.pendingBackgroundTasks}
             listRef={listRef}
             freeze={freeze}
             anchorMessageId={anchorMessageId}

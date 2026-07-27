@@ -1,3 +1,4 @@
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -8,6 +9,11 @@ import {
   type T3McpToolLogo,
   type T3McpToolPresentation,
 } from "@t3tools/shared/t3McpToolPresentation";
+import {
+  derivePendingBackgroundWork,
+  formatPendingBackgroundWorkLabel,
+  type PendingBackgroundWorkTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type {
   ChatAttachment,
   MessageId,
@@ -101,6 +107,12 @@ export type ThreadFeedEntry =
       readonly createdAt: string;
     }
   | {
+      readonly type: "waiting-background";
+      readonly id: string;
+      readonly createdAt: null;
+      readonly label: string;
+    }
+  | {
       readonly type: "activity-group";
       readonly id: string;
       readonly createdAt: string;
@@ -125,6 +137,11 @@ export type ThreadFeedEntry =
       readonly label: string;
       readonly expanded: boolean;
     };
+
+type SourceThreadFeedEntry = Exclude<
+  ThreadFeedEntry,
+  { readonly type: "run-fold" | "work-toggle" | "working" | "waiting-background" }
+>;
 
 export interface ThreadFeedLatestRun {
   readonly runId: RunId;
@@ -427,7 +444,7 @@ interface ThreadFeedRunFold {
 }
 
 function deriveThreadFeedRunFolds(
-  feed: ReadonlyArray<ThreadFeedEntry>,
+  feed: ReadonlyArray<SourceThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
@@ -439,7 +456,7 @@ function deriveThreadFeedRunFolds(
 
   const groupsByRunId = new Map<
     RunId,
-    { entries: ThreadFeedEntry[]; startBoundary: string | null }
+    { entries: SourceThreadFeedEntry[]; startBoundary: string | null }
   >();
   let pendingUserBoundary: string | null = null;
   for (const entry of feed) {
@@ -523,16 +540,67 @@ function deriveThreadFeedRunFolds(
   return foldsByAnchorId;
 }
 
+type PendingBackgroundWorkInput = Parameters<typeof derivePendingBackgroundWork>[0];
+
+type PendingBackgroundWorkProjection = {
+  readonly providerThreads: PendingBackgroundWorkInput["providerThreads"];
+  readonly runs: NonNullable<PendingBackgroundWorkInput["runs"]>;
+  readonly turnItems: PendingBackgroundWorkInput["turnItems"];
+  readonly thread: {
+    readonly activeProviderThreadId: PendingBackgroundWorkInput["activeProviderThreadId"];
+  };
+};
+
+/**
+ * Post-settlement background roster for the mobile thread feed.
+ *
+ * Only a live projection may claim background work: a cached one is replayed
+ * from disk and can outlive the task it describes, which web cannot hit.
+ * `synchronizing` is refused for the same reason, because it is also the state
+ * a subscription passes through before any fresh projection arrives, so its
+ * data can still be the cached one. A brief gap on reconnect is preferable to
+ * asserting work that already finished.
+ *
+ * Otherwise this matches the web derivation in `ChatView` argument for
+ * argument, `runs` included, so a rolled-back run's turn items are abandoned
+ * on both surfaces rather than only on desktop.
+ */
+export function deriveThreadPendingBackgroundWork(
+  projection: PendingBackgroundWorkProjection | null | undefined,
+  detailStatus: EnvironmentThreadStatus,
+): ReadonlyArray<PendingBackgroundWorkTask> {
+  if (!projection || detailStatus !== "live") {
+    return [];
+  }
+  const latestRun =
+    projection.runs.length === 0
+      ? null
+      : projection.runs.reduce((latest, candidate) =>
+          candidate.ordinal > latest.ordinal ? candidate : latest,
+        );
+  return derivePendingBackgroundWork({
+    latestRun,
+    providerThreads: projection.providerThreads,
+    turnItems: projection.turnItems,
+    activeProviderThreadId: projection.thread.activeProviderThreadId,
+    runs: projection.runs,
+  });
+}
+
 export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
   expandedRunIds: ReadonlySet<RunId>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
+  pendingBackgroundTasks: ReadonlyArray<PendingBackgroundWorkTask> = [],
 ): ThreadFeedEntry[] {
   const sourceFeed = feed.filter(
-    (entry) =>
-      entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "working",
+    (entry): entry is SourceThreadFeedEntry =>
+      entry.type !== "run-fold" &&
+      entry.type !== "work-toggle" &&
+      entry.type !== "working" &&
+      entry.type !== "waiting-background",
   );
   const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun);
   const collapsedEntryIds = new Set<string>();
@@ -564,13 +632,21 @@ export function deriveThreadFeedPresentation(
       id: "working-indicator-row",
       createdAt: activeWorkStartedAt,
     });
+  } else if (pendingBackgroundTasks.length > 0) {
+    result.push({
+      type: "waiting-background",
+      id: "waiting-background-row",
+      createdAt: null,
+      label:
+        formatPendingBackgroundWorkLabel(pendingBackgroundTasks) ?? "Waiting on a background task",
+    });
   }
   return result;
 }
 
 function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
-  entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "working" }>,
+  entry: SourceThreadFeedEntry,
   expandedWorkGroupIds: ReadonlySet<string>,
 ): void {
   if (entry.type !== "activity-group") {

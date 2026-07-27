@@ -26,7 +26,7 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildThreadFeed } from "../lib/threadActivity";
+import { buildThreadFeed, deriveThreadPendingBackgroundWork } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
 import {
   appendComposerDraftAttachments,
@@ -42,6 +42,7 @@ import {
 } from "./use-composer-drafts";
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import {
+  useSelectedThreadDetailState,
   useSelectedThreadProjection,
   useSelectedThreadVisibleTurnItems,
 } from "../state/use-thread-detail";
@@ -83,6 +84,7 @@ export function useThreadDraftForThread(input: {
 export function useThreadComposerState() {
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThreadProjection = useSelectedThreadProjection();
+  const selectedThreadDetailStatus = useSelectedThreadDetailState().status;
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
@@ -143,6 +145,16 @@ export function useThreadComposerState() {
     }
     return deriveActiveWorkStartedAt(selectedThreadLatestRun, selectedThreadSessionActivity, null);
   }, [selectedThreadLatestRun, selectedThreadSessionActivity, selectedThreadShell]);
+
+  const pendingBackgroundTasks = useMemo(
+    () => [
+      ...deriveThreadPendingBackgroundWork(
+        selectedThreadProjection?.projection,
+        selectedThreadDetailStatus,
+      ),
+    ],
+    [selectedThreadDetailStatus, selectedThreadProjection?.projection],
+  );
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
 
@@ -307,6 +319,7 @@ export function useThreadComposerState() {
     selectedThreadFeed,
     selectedThreadQueueCount,
     activeWorkStartedAt,
+    pendingBackgroundTasks,
     draftMessage,
     draftAttachments,
     modelSelection,
