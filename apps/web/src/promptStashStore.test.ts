@@ -1,18 +1,23 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+
+import { removeLocalStorageItem } from "./hooks/useLocalStorage";
 
 import {
   MAX_STASH_ENTRIES_PER_QUEUE,
+  PROMPT_STASH_STORAGE_KEY,
   MAX_STASH_ENTRY_ATTACHMENT_CHARS,
   PROMPT_STASH_UNSCOPED_KEY,
   partitionStashAttachments,
   promptStashScopeKey,
   usePromptStashStore,
+  writePromptStashStorageForTest,
   type PromptStashEntry,
 } from "./promptStashStore";
 
 const CLAUDE_AGENT_INSTANCE = ProviderInstanceId.make("claudeAgent");
 const CODEX_INSTANCE = ProviderInstanceId.make("codex");
+const OLDER_TIMESTAMP = "2026-07-24T11:00:00.000Z";
 
 function makeEntry(input: {
   id: string;
@@ -45,6 +50,8 @@ function makeEntry(input: {
 
 function resetPromptStashStore() {
   usePromptStashStore.setState({ queuesByScopeKey: {} });
+  writePromptStashStorageForTest("");
+  removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
 }
 
 describe("promptStashScopeKey", () => {
@@ -107,6 +114,10 @@ describe("partitionStashAttachments", () => {
 
 describe("promptStashStore", () => {
   beforeEach(() => {
+    resetPromptStashStore();
+  });
+
+  afterEach(() => {
     resetPromptStashStore();
   });
 
@@ -235,6 +246,31 @@ describe("promptStashStore", () => {
     expect(queue.map((entry) => entry.id)).toEqual(snapshot.map((entry) => entry.id));
     expect(queue.some((entry) => entry.id === "entry-0")).toBe(true);
     expect(queue.some((entry) => entry.id === "overflow")).toBe(false);
+  });
+
+  it("merges another tab's entries instead of overwriting them", () => {
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
+    // Simulate a second tab having written an entry after this tab hydrated,
+    // through the same storage the module reads (the node test project has no
+    // localStorage global, so it resolves to the in-memory fallback).
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 1,
+        state: {
+          queuesByScopeKey: {
+            [scopeKey]: [{ ...makeEntry({ id: "from-other-tab" }), createdAt: OLDER_TIMESTAMP }],
+          },
+        },
+      }),
+    );
+
+    usePromptStashStore.getState().stashEntry(makeEntry({ id: "from-this-tab" }));
+
+    const ids = (usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? []).map(
+      (entry) => entry.id,
+    );
+    expect(ids).toContain("from-other-tab");
+    expect(ids).toContain("from-this-tab");
   });
 
   it("drops the scope key entirely when its queue empties", () => {

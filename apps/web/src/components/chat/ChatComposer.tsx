@@ -1008,8 +1008,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const dragDepthRef = useRef(0);
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
-  /** Guards against a second ⌘S landing while image encoding is in flight. */
-  const stashInFlightRef = useRef(false);
+  /**
+   * Snapshots currently being encoded, keyed by target+prompt+image ids.
+   * Keyed rather than boolean so a genuinely different prompt (or a different
+   * thread) can still be stashed while an earlier encode is running.
+   */
+  const stashInFlightRef = useRef<Set<string>>(new Set());
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1944,23 +1948,45 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setIsStashMenuOpen(false);
 
       const currentPrompt = promptRef.current;
-      const nextPrompt = currentPrompt.trim().length
-        ? `${currentPrompt.replace(/\s+$/, "")}\n\n${entry.prompt}`
-        : entry.prompt;
-      promptRef.current = nextPrompt;
-      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-      const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
-      setComposerCursor(nextCursor);
-      setComposerTrigger(null);
+      // An image-only stash must not append blank lines to whatever is
+      // already in the composer.
+      const nextPrompt =
+        entry.prompt.length === 0
+          ? currentPrompt
+          : currentPrompt.trim().length
+            ? `${currentPrompt.replace(/\s+$/, "")}\n\n${entry.prompt}`
+            : entry.prompt;
+      const promptChanged = nextPrompt !== currentPrompt;
+      if (promptChanged) {
+        promptRef.current = nextPrompt;
+        setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+        setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+        setComposerTrigger(null);
+      }
 
       let unrestoredImageNames: string[] = [];
       if (entry.attachments.length > 0) {
         const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
+        // The draft store also dedupes by mimeType+sizeBytes+name, so filter
+        // on the same key here. Counting a duplicate against capacity would
+        // burn a slot the store then refuses to fill, pushing a genuinely
+        // unique image into the overflow list for nothing.
+        const existingDedupKeys = new Set(
+          composerImagesRef.current.map(
+            (image) => `${image.mimeType} ${image.sizeBytes} ${image.name}`,
+          ),
+        );
         const capacity = Math.max(
           0,
           PROVIDER_SEND_TURN_MAX_ATTACHMENTS - composerImagesRef.current.length,
         );
-        const pending = entry.attachments.filter((attachment) => !existingIds.has(attachment.id));
+        const pending = entry.attachments.filter(
+          (attachment) =>
+            !existingIds.has(attachment.id) &&
+            !existingDedupKeys.has(
+              `${attachment.mimeType} ${attachment.sizeBytes} ${attachment.name}`,
+            ),
+        );
         // Anything past the attachment limit cannot be restored. The entry is
         // already out of the queue, so report the overflow by name instead of
         // discarding it silently.
@@ -2014,9 +2040,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
 
-      window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAtEnd();
-      });
+      // Only yank the caret to the end when text was actually inserted;
+      // restoring images alone should leave the user where they were typing.
+      if (promptChanged) {
+        window.requestAnimationFrame(() => {
+          composerEditorRef.current?.focusAtEnd();
+        });
+      }
     },
     [
       addComposerDraftImages,
@@ -2047,11 +2077,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setIsStashMenuOpen((open) => !open);
       return;
     }
-    // A repeat ⌘S while encoding is still running would stash the same
-    // snapshot twice. The composer is already cleared by then, so the second
-    // press has nothing new to save.
-    if (stashInFlightRef.current) return;
-    stashInFlightRef.current = true;
+    // A repeat ⌘S on the *same* still-unencoded snapshot would stash it
+    // twice. Guard on the snapshot itself rather than a bare boolean: once
+    // the composer has been cleared the user can type something genuinely
+    // new (or switch threads) while encoding continues, and that deserves its
+    // own entry.
+    const snapshotKey = `${String(composerDraftTarget)} ${prompt} ${images
+      .map((image) => image.id)
+      .join(",")}`;
+    if (stashInFlightRef.current.has(snapshotKey)) return;
+    stashInFlightRef.current.add(snapshotKey);
 
     const stashTarget = composerDraftTarget;
     const entryId = randomUUID();
@@ -2145,7 +2180,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         unreadableImageNames,
       });
       if (finalized) {
-        flushPromptStashStorage();
+        // The second phase can be rejected on its own: the text-only entry
+        // fit, but adding image payloads pushed past the quota. Disk would
+        // then still hold the phase-one entry with pendingImageCount set,
+        // which reads as an orphan after reload — so say so now.
+        if (!flushPromptStashStorage() && images.length > 0) {
+          toastManager.add({
+            type: "warning",
+            title: "Stashed images were not saved",
+            description:
+              "The prompt was stashed, but browser storage rejected its images. They will be missing if you reload.",
+            data: { hideCopyButton: true },
+          });
+        }
       } else if (kept.length > 0) {
         // The entry was restored or deleted before its images finished
         // encoding, so they have nowhere to land. Say so rather than letting
@@ -2158,9 +2205,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
     } finally {
-      // Must clear on every path: a throw that left this set would wedge ⌘S
-      // until the composer remounts.
-      stashInFlightRef.current = false;
+      // Must clear on every path: a throw that left this set would wedge this
+      // snapshot's ⌘S until the composer remounts.
+      stashInFlightRef.current.delete(snapshotKey);
     }
   }, [
     clearComposerDraftPromptAndImages,
