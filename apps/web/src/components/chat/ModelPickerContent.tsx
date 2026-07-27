@@ -525,7 +525,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="dropdown-glass model-picker-surface relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
+        className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -575,12 +575,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           <div
             className={cn(
               "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
-              showSidebar && "border-l",
+              showSidebar && "border-l border-border/70",
             )}
           >
             {/* Search bar */}
-            <div className="px-4 pt-2.5">
-              <div className="-translate-y-px border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
+            <div className="px-2 pt-2">
+              <div className="border-b border-border/70 pb-2.5 transition-colors focus-within:border-ring">
                 <ComboboxInput
                   ref={searchInputRef}
                   className="[&_input]:h-6.5 [&_input]:font-sans [&_input]:leading-6.5"
@@ -588,7 +588,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   placeholder="Search models..."
                   showTrigger={false}
                   startAddon={
-                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground/55" />
+                    <SearchIcon className="-translate-x-0.5 size-4 shrink-0 text-muted-foreground opacity-70" />
                   }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -665,9 +665,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   onLayout={updateModelListScrollFades}
                   onScroll={updateModelListScrollFades}
                   className={cn(
-                    "h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
-                    showTopScrollFade && "mask-t-from-[calc(100%-var(--fade-size))]",
-                    showBottomScrollFade && "mask-b-from-[calc(100%-var(--fade-size))]",
+                    "model-picker-list h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
+                    showTopScrollFade && "model-picker-list-scroll-fade-top",
+                    showBottomScrollFade && "model-picker-list-scroll-fade-bottom",
                   )}
                 />
               </ComboboxListVirtualized>

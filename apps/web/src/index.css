@@ -1049,6 +1049,48 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
+.model-picker-list::-webkit-scrollbar-track {
+  margin-block: 0.5rem;
+}
+
+.model-picker-list-scroll-fade-top,
+.model-picker-list-scroll-fade-bottom {
+  -webkit-mask-image: var(--model-picker-list-scroll-mask), linear-gradient(black, black);
+  -webkit-mask-position: left, right;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size:
+    calc(100% - var(--app-scrollbar-width)) 100%,
+    var(--app-scrollbar-width) 100%;
+  mask-image: var(--model-picker-list-scroll-mask), linear-gradient(black, black);
+  mask-position: left, right;
+  mask-repeat: no-repeat;
+  mask-size:
+    calc(100% - var(--app-scrollbar-width)) 100%,
+    var(--app-scrollbar-width) 100%;
+}
+
+.model-picker-list-scroll-fade-top {
+  --model-picker-list-scroll-mask: linear-gradient(to bottom, transparent, black var(--fade-size));
+}
+
+.model-picker-list-scroll-fade-bottom {
+  --model-picker-list-scroll-mask: linear-gradient(
+    to bottom,
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
+}
+
+.model-picker-list-scroll-fade-top.model-picker-list-scroll-fade-bottom {
+  --model-picker-list-scroll-mask: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--fade-size),
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
+}
+
 .turn-chip-strip {
   scrollbar-width: none;
   -ms-overflow-style: none;
