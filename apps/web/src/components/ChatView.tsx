@@ -306,6 +306,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+const EMPTY_REQUEST_ID_SET: ReadonlySet<string> = new Set<string>();
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -1940,6 +1941,20 @@ function ChatViewContent(props: ChatViewProps) {
     [threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
+  // Drop a request's persisted draft only once the request itself is gone
+  // (resolved, cancelled, or failed as stale). Clearing on submit success would
+  // blank the panel during the window before the `user-input.resolved` activity
+  // lands, since the request is still listed as pending until then.
+  const seenPendingUserInputRequestIdsRef = useRef<ReadonlySet<string>>(EMPTY_REQUEST_ID_SET);
+  useEffect(() => {
+    const currentRequestIds = new Set(pendingUserInputs.map((entry) => String(entry.requestId)));
+    for (const requestId of seenPendingUserInputRequestIdsRef.current) {
+      if (!currentRequestIds.has(requestId)) {
+        clearPendingUserInputDraft(requestId);
+      }
+    }
+    seenPendingUserInputRequestIdsRef.current = currentRequestIds;
+  }, [pendingUserInputs]);
   const activePendingDraftAnswers = usePendingUserInputDraftAnswers(
     activePendingUserInput?.requestId ?? null,
   );
@@ -4891,10 +4906,6 @@ function ChatViewContent(props: ChatViewProps) {
           activeThreadId,
           error instanceof Error ? error.message : "Failed to submit user input.",
         );
-      } else if (result._tag !== "Failure") {
-        // The answer is on its way to the provider; the persisted draft has
-        // served its purpose. Failures keep it so the user can retry.
-        clearPendingUserInputDraft(requestId);
       }
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
