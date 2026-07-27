@@ -2057,11 +2057,17 @@
             print("UIProbe: toggled section '\(key)'")
         }
 
-        /// Sends a real key-down to the key window. SwiftUI's `onKeyPress`
-        /// handlers sit on the responder chain, so a synthesized `NSEvent` is
-        /// the only way to prove a chord actually reaches them in-process —
+        /// Posts a key-down into the application event queue. SwiftUI's
+        /// `onKeyPress` handlers sit on the responder chain, so a synthesized
+        /// `NSEvent` is the only way to prove a chord reaches them in-process —
         /// asserting the handler's predicate in a unit test cannot show that
         /// the event arrives at all.
+        ///
+        /// Posted rather than handed straight to the window: the run loop then
+        /// dequeues it into `NSApplication.sendEvent`, which is where main-menu
+        /// key equivalents are resolved. A chord the menu bar claims first
+        /// never reaches the view, and `window.sendEvent` would hide exactly
+        /// that failure by starting past the point where it happens.
         @discardableResult
         private static func sendKey(
             _ character: String,
@@ -2094,7 +2100,7 @@
                 print("UIProbe: FAIL sendKey could not build event")
                 return false
             }
-            window.sendEvent(event)
+            NSApp.postEvent(event, atStart: false)
             return true
         }
 
