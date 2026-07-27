@@ -156,6 +156,33 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+export function resolveBranchTriggerLabel(input: {
+  activeWorktreePath: string | null;
+  effectiveEnvMode: EnvMode;
+  resolvedActiveBranch: string | null;
+  resolvedActiveBranchIsRemote: boolean | null;
+  startFromOrigin: boolean;
+}): string {
+  const {
+    activeWorktreePath,
+    effectiveEnvMode,
+    resolvedActiveBranch,
+    resolvedActiveBranchIsRemote,
+    startFromOrigin,
+  } = input;
+  if (!resolvedActiveBranch) {
+    return "Select ref";
+  }
+  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
+    const baseRef =
+      startFromOrigin && resolvedActiveBranchIsRemote === false
+        ? `origin/${resolvedActiveBranch}`
+        : resolvedActiveBranch;
+    return `From ${baseRef}`;
+  }
+  return resolvedActiveBranch;
+}
+
 export function resolveBranchToolbarPrBranch(input: {
   activeThreadBranch: string | null;
   resolvedActiveBranch: string | null;
