@@ -242,8 +242,16 @@ enum ModelPickerCatalog {
         if field.hasPrefix(query) { return 700 }
         if let range = field.range(of: query) {
             let offset = field.distance(from: field.startIndex, to: range.lowerBound)
-            let previous = field[field.index(before: range.lowerBound)]
-            let startsWord = !previous.isLetter && !previous.isNumber
+            // The leading edge is a word boundary, and stating that here keeps
+            // the backward index in bounds without depending on the `hasPrefix`
+            // return above to have already claimed every match at index 0.
+            let startsWord: Bool
+            if range.lowerBound == field.startIndex {
+                startsWord = true
+            } else {
+                let previous = field[field.index(before: range.lowerBound)]
+                startsWord = !previous.isLetter && !previous.isNumber
+            }
             guard startsWord else {
                 // Later mid-word hits read as weaker matches, but never below
                 // the best subsequence score.

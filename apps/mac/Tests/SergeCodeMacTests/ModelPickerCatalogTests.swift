@@ -252,6 +252,30 @@ struct ModelPickerCatalogTests {
         #expect(ModelPickerCatalog.filteredItems(items, scope: .all, query: "zzz").isEmpty)
     }
 
+    @Test("a match at the leading edge scores as a prefix and never indexes past the start")
+    func leadingEdgeMatchesAreSafe() {
+        let item = ModelPickerCatalog.items(
+            from: [
+                option(instance: "codex", modelID: "gpt-5", name: "GPT-5 Codex", provider: .codex)
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        ).first!
+
+        // Every one of these hits the very first character of some field.
+        let single = ModelPickerCatalog.matchScore(item, query: "g")
+        let whole = ModelPickerCatalog.matchScore(item, query: "gpt-5 codex")
+        let prefix = ModelPickerCatalog.matchScore(item, query: "gpt")
+        let midWord = ModelPickerCatalog.matchScore(item, query: "odex")
+
+        #expect(single != nil)
+        #expect(whole != nil)
+        #expect(prefix != nil)
+        // An exact field match outranks a prefix, which outranks a mid-word hit.
+        #expect(whole! > prefix!)
+        #expect(prefix! > midWord!)
+    }
+
     @Test("equally good matches fall back to catalog order, not input order")
     func rankingTiesKeepCatalogOrder() {
         let items = ModelPickerCatalog.items(
