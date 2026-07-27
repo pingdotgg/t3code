@@ -282,6 +282,40 @@
                 let after = model.threads.first { $0.id == codexThread.id }?.serviceTier
                 print("UIProbe: serviceTier after set=\(after ?? "nil")")
                 snapshot("4b-service-tier", dir: dir)
+
+                // Run profile: the reasoning-effort ramp is a slider whose
+                // arrow-key adjustment lives on the responder chain inside the
+                // popover — the one place a unit test cannot reach. The codex
+                // thread is the seeded one with a full four-level ramp.
+                let effortCount = option?.effortChoices.count ?? 0
+                print("UIProbe: run profile effort choices=\(effortCount)")
+                if effortCount > 1 {
+                    toggleSection("run-profile")
+                    try? await Task.sleep(for: .seconds(1))
+                    snapshotAllWindows("4c-run-profile", dir: dir)
+
+                    let effortBefore = model.threads.first { $0.id == codexThread.id }?
+                        .reasoningEffort
+                    // `NSRightArrowFunctionKey`: AppKit routes arrows by their
+                    // function-key character, not by key code alone.
+                    sendKey("\u{F703}", keyCode: 124)
+                    try? await Task.sleep(for: .seconds(1))
+                    let effortAfter = model.threads.first { $0.id == codexThread.id }?
+                        .reasoningEffort
+                    print(
+                        "UIProbe: effort slider arrow before=\(effortBefore ?? "default") "
+                            + "after=\(effortAfter ?? "default")")
+                    // The slider claims focus when the popover opens; if it
+                    // stops doing so the arrow lands nowhere and the level
+                    // never moves.
+                    if effortBefore == effortAfter {
+                        probeFailures.append("effort-slider-arrow-step")
+                    }
+                    snapshotAllWindows("4d-run-profile-stepped", dir: dir)
+                    toggleSection("run-profile")
+                    try? await Task.sleep(for: .seconds(1))
+                }
+
                 if let previousThreadID {
                     multi.select(threadID: previousThreadID, on: model.deviceID)
                 } else {
