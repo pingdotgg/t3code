@@ -22,8 +22,25 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
  * Past four workers the win is gone and the losses start: the files starve each
  * other badly enough that real HTTP round-trips in `server.test.ts` come back
  * 401/400. Four is the knee of that curve, so that is the cap.
+ *
+ * The floor is one, not two. A single-core CI runner has to be able to fall
+ * back to serial execution: forcing a second worker onto a host with one usable
+ * CPU reproduces exactly the starvation this cap exists to avoid.
+ *
+ * `T3_SERVER_TEST_WORKERS` overrides both ends for hosts this heuristic reads
+ * wrong — a container with a low CPU quota but a high `availableParallelism()`,
+ * or a big idle machine where a wider pool is worth measuring. A value that is
+ * not a positive integer is ignored rather than silently treated as one worker.
  */
-const serverTestWorkers = Math.max(2, Math.min(4, NodeOS.availableParallelism() - 1));
+function resolveServerTestWorkers(): number {
+  const override = Number(process.env.T3_SERVER_TEST_WORKERS);
+  if (Number.isInteger(override) && override > 0) {
+    return override;
+  }
+  return Math.max(1, Math.min(4, NodeOS.availableParallelism() - 1));
+}
+
+const serverTestWorkers = resolveServerTestWorkers();
 
 const bundledPackagePrefixes = [
   "@pierre/diffs",

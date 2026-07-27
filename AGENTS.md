@@ -181,7 +181,10 @@ a 139s suite and a ~40s one. The pool is capped at four rather than one-per-core
 on purpose, and the config records the measurements: the suite spawns real `git`
 and mock-agent processes, several agent worktrees compile and test on the same
 machine at once, and past four workers the files starve each other into 401s and
-timeouts. Raise the cap only with numbers from repeated runs.
+timeouts. The pool scales down to a single worker on hosts with one usable CPU,
+and `T3_SERVER_TEST_WORKERS=<n>` overrides the heuristic when it reads a host
+wrong (a CPU-quota-limited container, say). Raise the cap only with numbers from
+repeated runs.
 
 That makes wall-clock delays a shared resource. When a test needs to wait for
 something a child process does, wait for the observable event — the ACP mock
