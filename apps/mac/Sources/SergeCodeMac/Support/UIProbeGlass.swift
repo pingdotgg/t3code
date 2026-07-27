@@ -33,6 +33,9 @@
             {
                 multi.select(threadID: threadID, on: model.deviceID)
             }
+            // The inspector column is one of the sampled regions and it starts
+            // closed, so ask for it rather than measuring the chat twice.
+            UIProbe.setSection("inspector", visible: true)
             // Let the wallpaper decode and the timeline lay out.
             try? await Task.sleep(for: .seconds(3))
 
