@@ -495,6 +495,13 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => void;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Clears only the prompt text and image attachments, preserving terminal /
+   * element contexts, preview annotations, and review comments. Used by the
+   * prompt stash, which can only round-trip text + images: clearing the
+   * session-bound contexts would destroy state nothing can restore.
+   */
+  clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
 }
 
 export interface EffectiveComposerModelState {
@@ -2091,7 +2098,7 @@ function hydratePersistedComposerImageAttachment(
   }
 }
 
-function hydrateImagesFromPersisted(
+export function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
   return attachments.flatMap((attachment) => {
@@ -3337,6 +3344,35 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               elementContexts: [],
               previewAnnotations: [],
               reviewComments: [],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        clearComposerPromptAndImages: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) {
+              return state;
+            }
+            for (const image of current.images) {
+              revokeObjectPreviewUrl(image.previewUrl);
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              prompt: ensureInlineTerminalContextPlaceholders("", current.terminalContexts.length),
+              images: [],
+              nonPersistedImageIds: [],
+              persistedAttachments: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

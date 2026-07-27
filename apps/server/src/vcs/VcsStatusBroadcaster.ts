@@ -434,7 +434,7 @@ export const make = Effect.gen(function* () {
       return yield* refreshRemoteStatusIfEnabled.pipe(
         Effect.repeat(
           Schedule.identity<Duration.Duration>().pipe(
-            Schedule.addDelay((delay) => Effect.succeed(delay)),
+            Schedule.addDelay(({ output: delay }) => Effect.succeed(delay)),
           ),
         ),
         Effect.asVoid,

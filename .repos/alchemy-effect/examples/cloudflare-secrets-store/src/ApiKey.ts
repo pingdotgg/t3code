@@ -13,7 +13,7 @@ export const ApiKey = Effect.gen(function* () {
   const store = yield* Store;
   const secret = yield* Random("ApiKeyValue");
 
-  return yield* Cloudflare.Secret("ApiKey", {
+  return yield* Cloudflare.SecretsStore.Secret("ApiKey", {
     store,
     value: secret.text,
   });

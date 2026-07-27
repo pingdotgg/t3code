@@ -76,6 +76,7 @@ export class ManagedEndpointProvisioningFailed extends Schema.TaggedErrorClass<M
 
 const ManagedEndpointDeprovisioningStage = Schema.Literals([
   "load-allocation",
+  "claim-release",
   "delete-dns-record",
   "delete-tunnel",
   "remove-allocation",
@@ -134,6 +135,22 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<void, ManagedEndpointDeprovisioningFailed>;
+    /**
+     * Deletes the provisioned Cloudflare tunnel while keeping the allocation
+     * (hostname + tunnel name reservation) and DNS record. Cloudflare bills per
+     * provisioned tunnel, so environments release the tunnel when they shut
+     * down; the next `provision` recreates it under the same name and repoints
+     * the CNAME, preserving the endpoint URL.
+     *
+     * Resolves to whether the caller's connector token is now dead: true when
+     * the tunnel was deleted (or none was recorded to begin with), false when
+     * a concurrent provision outbid the release claim and the recorded tunnel
+     * — and any token issued for it — stays live.
+     */
+    readonly release: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+    }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
   }
 >()("t3code-relay/environments/ManagedEndpointProvider") {}
 
@@ -467,6 +484,72 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+    release: Effect.fn("relay.managed_endpoint_provider.release")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.user_id": input.userId,
+        "relay.environment_id": input.environmentId,
+      });
+      const allocation = yield* allocations.get(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ManagedEndpointDeprovisioningFailed({
+              ...input,
+              stage: "load-allocation",
+              cause,
+            }),
+        ),
+      );
+      const tunnelId = allocation?.tunnelId ?? null;
+      if (allocation === null || tunnelId === null) {
+        return true;
+      }
+      // Claim the release against the allocation's current generation before
+      // touching Cloudflare. A provision racing this release (fast environment
+      // restart) rewrites updatedAt when it records its tunnel, so a stale
+      // claim means the recorded tunnel may already back a fresh connector and
+      // must be left alive. A provision that starts after the claim instead
+      // fails loudly on the deleted tunnel and the client-side retry
+      // provisions a replacement.
+      const claimed = yield* allocations
+        .claimRelease({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          tunnelId,
+          updatedAt: allocation.updatedAt,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointDeprovisioningFailed({
+                ...input,
+                stage: "claim-release",
+                tunnelId,
+                cause,
+              }),
+          ),
+        );
+      if (!claimed) {
+        return false;
+      }
+      yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ManagedEndpointDeprovisioningFailed({
+              ...input,
+              stage: "delete-tunnel",
+              tunnelId,
+              cause,
+            }),
+        ),
+      );
+      // The recorded tunnelId is now stale, but the allocation row is left
+      // untouched deliberately: connect/status authorization requires a fully
+      // recorded allocation, and an offline environment must keep reporting
+      // "offline" (health probe fails) rather than "not authorized". The next
+      // provision lists tunnels by name, finds none, creates a replacement and
+      // re-records the fresh id.
+      return true;
+    }),
     provision: Effect.fn("relay.managed_endpoint_provider.provision")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.user_id": input.userId,
@@ -726,8 +809,8 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(ManagedEndpointProvider, make);
 
 export const layerCloudflareBindings = (
-  tunnelClient: Cloudflare.TunnelReadWriteClient,
-  dnsClient: Cloudflare.DnsReadWriteClient,
+  tunnelClient: Cloudflare.Tunnel.ReadWriteTunnelClient,
+  dnsClient: Cloudflare.DNS.ReadWriteDnsClient,
   alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
 ) =>
   layer.pipe(

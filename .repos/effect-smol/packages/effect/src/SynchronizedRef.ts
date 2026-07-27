@@ -1,25 +1,12 @@
 /**
- * The `SynchronizedRef` module provides mutable references whose updates are
- * serialized, including updates that run effects before deciding the next
- * value. A `SynchronizedRef<A>` behaves like a `Ref<A>` for reading and basic
- * updates, but uses an internal semaphore so concurrent modifications observe a
- * consistent current value and apply one at a time.
+ * Stores mutable state whose updates run one at a time.
  *
- * **When to use**
- *
- * Use to coordinate shared state that may be updated by many fibers
- * - Running effectful state transitions that must not overlap
- * - Computing both a return value and a new stored value atomically
- * - Applying partial updates with `Option`, where `None` leaves the value
- *   unchanged
- *
- * **Gotchas**
- *
- * - Effectful update functions run while the semaphore is held, so long-running
- *   effects delay other updates to the same ref
- * - Failed effectful updates do not replace the stored value
- * - `getUnsafe` and `makeUnsafe` bypass the `Effect` API and should be reserved
- *   for low-level or carefully controlled code
+ * A `SynchronizedRef<A>` behaves like a `Ref<A>` for reading and simple state
+ * storage, but update and modify operations are serialized so each change sees
+ * a consistent current value. This is especially useful when the next value is
+ * computed by an effect, because the effectful transition is still protected
+ * from concurrent updates. This module includes constructors, reads, writes,
+ * updates, partial updates, and effectful update helpers.
  *
  * @since 2.0.0
  */
@@ -69,7 +56,8 @@ const Proto = {
  *
  * **When to use**
  *
- * Use when synchronous construction is required outside an Effect workflow.
+ * Use when you need synchronous `SynchronizedRef` construction outside an
+ * Effect workflow.
  *
  * @category constructors
  * @since 4.0.0
@@ -86,8 +74,8 @@ export const makeUnsafe = <A>(value: A): SynchronizedRef<A> => {
  *
  * **When to use**
  *
- * Use to create a synchronized reference inside an Effect program when later
- * updates may run effects and must be serialized.
+ * Use to create a `SynchronizedRef` inside an Effect program when later updates
+ * may run effects and must be serialized.
  *
  * **Details**
  *
@@ -146,7 +134,7 @@ export const get = <A>(self: SynchronizedRef<A>): Effect.Effect<A> => Effect.syn
  * @see {@link setAndGet} for setting a value and returning the new value
  * @see {@link getAndUpdate} for deriving the new value from the current value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndSet: {
@@ -164,13 +152,14 @@ export const getAndSet: {
  *
  * **When to use**
  *
- * Use to run a pure state update when the previous stored value is also needed.
+ * Use to run a pure `SynchronizedRef` state update when the previous stored
+ * value is also needed.
  *
  * @see {@link update} for updating without returning a value
  * @see {@link updateAndGet} for updating and returning the new value
  * @see {@link getAndUpdateEffect} for effectful updates that return the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndUpdate: {
@@ -188,7 +177,8 @@ export const getAndUpdate: {
  *
  * **When to use**
  *
- * Use when an effectful state transition must return the previous stored value.
+ * Use when you need an effectful `SynchronizedRef` state transition to return
+ * the previous stored value.
  *
  * @see {@link getAndUpdate} for pure updates that return the previous value
  * @see {@link updateEffect} for effectful updates without returning a value
@@ -196,7 +186,7 @@ export const getAndUpdate: {
  * @see {@link modifyEffect} for effectful updates with a custom return value
  * @see {@link getAndUpdateSomeEffect} for conditional effectful updates that return the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndUpdateEffect: {
@@ -221,12 +211,13 @@ export const getAndUpdateEffect: {
  *
  * **When to use**
  *
- * Use to return the previous value while applying a pure conditional update.
+ * Use to return the previous `SynchronizedRef` value while applying a pure
+ * conditional update.
  *
  * @see {@link getAndUpdate} for always applying a pure update
  * @see {@link updateSome} for applying a pure conditional update without returning the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndUpdateSome: {
@@ -245,13 +236,13 @@ export const getAndUpdateSome: {
  *
  * **When to use**
  *
- * Use to return the previous value while running an effectful conditional
- * update.
+ * Use to return the previous `SynchronizedRef` value while running an effectful
+ * conditional update.
  *
  * @see {@link getAndUpdateSome} for the pure conditional variant
  * @see {@link updateSomeEffect} for effectful conditional updates without returning the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const getAndUpdateSomeEffect: {
@@ -278,14 +269,14 @@ export const getAndUpdateSomeEffect: {
  *
  * **When to use**
  *
- * Use to derive a separate result and the next stored value from the same
- * current value in one serialized pure update.
+ * Use to derive a separate result and the next stored `SynchronizedRef` value
+ * from the same current value in one serialized pure update.
  *
  * @see {@link modifyEffect} for effectfully deriving both the result and next stored value
  * @see {@link modifySome} for deriving a result and optionally updating the stored value
  * @see {@link updateAndGet} for returning the new stored value instead of a separate result
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const modify: {
@@ -304,12 +295,12 @@ export const modify: {
  * **When to use**
  *
  * Use to effectfully compute both a separate return value and the next stored
- * value in one serialized update.
+ * `SynchronizedRef` value in one serialized update.
  *
  * @see {@link modify} for the pure variant
  * @see {@link updateEffect} for effectfully storing a new value without a separate result
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const modifyEffect: {
@@ -333,12 +324,13 @@ export const modifyEffect: {
  *
  * **When to use**
  *
- * Use to compute a return value while optionally updating the stored value.
+ * Use to compute a return value while optionally updating a `SynchronizedRef`
+ * under its semaphore.
  *
  * @see {@link modify} for always storing a new value
  * @see {@link updateSome} for optional updates without a separate return value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const modifySome: {
@@ -365,12 +357,12 @@ export const modifySome: {
  * **When to use**
  *
  * Use to effectfully compute a return value while optionally updating the
- * stored value.
+ * stored `SynchronizedRef` value.
  *
  * @see {@link modifySome} for the pure variant
  * @see {@link updateSomeEffect} for effectful optional updates without a separate return value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const modifySomeEffect: {
@@ -412,7 +404,7 @@ export const modifySomeEffect: {
  * @see {@link setAndGet} for replacing the value when the new value should be returned
  * @see {@link update} for deriving the next value from the current value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const set: {
@@ -429,13 +421,13 @@ export const set: {
  *
  * **When to use**
  *
- * Use to replace the current value with a known value and return that new
- * value.
+ * Use to replace the current `SynchronizedRef` value with a known value and
+ * return that new value.
  *
  * @see {@link set} for setting without returning a value
  * @see {@link getAndSet} for setting while returning the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const setAndGet: {
@@ -460,7 +452,7 @@ export const setAndGet: {
  * @see {@link updateAndGet} for returning the new stored value
  * @see {@link getAndUpdate} for returning the previous stored value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const update: {
@@ -487,7 +479,7 @@ export const update: {
  * @see {@link modifyEffect} for returning a separate result while storing a new value
  * @see {@link updateSomeEffect} for effectfully applying only some state transitions
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateEffect: {
@@ -510,12 +502,13 @@ export const updateEffect: {
  *
  * **When to use**
  *
- * Use to apply a pure state transition and return the new stored value.
+ * Use to apply a pure `SynchronizedRef` state transition and return the new
+ * stored value.
  *
  * @see {@link update} for updating without returning the new value
  * @see {@link getAndUpdate} for updating while returning the previous value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateAndGet: {
@@ -533,12 +526,13 @@ export const updateAndGet: {
  *
  * **When to use**
  *
- * Use to run an effectful state transition and return the new stored value.
+ * Use to run an effectful `SynchronizedRef` state transition and return the new
+ * stored value.
  *
  * @see {@link updateEffect} for effectful updates without returning the new value
  * @see {@link updateAndGet} for the pure variant
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateAndGetEffect: {
@@ -562,12 +556,13 @@ export const updateAndGetEffect: {
  *
  * **When to use**
  *
- * Use to apply a pure conditional update without returning a value.
+ * Use to apply a pure conditional `SynchronizedRef` update without returning a
+ * value.
  *
  * @see {@link update} for always applying a pure update
  * @see {@link updateSomeAndGet} for returning the resulting current value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateSome: {
@@ -585,12 +580,13 @@ export const updateSome: {
  *
  * **When to use**
  *
- * Use to run an effectful conditional update without returning a value.
+ * Use to run an effectful conditional `SynchronizedRef` update without
+ * returning a value.
  *
  * @see {@link updateSome} for the pure conditional variant
  * @see {@link updateEffect} for effectful updates that always store a new value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateSomeEffect: {
@@ -619,13 +615,13 @@ export const updateSomeEffect: {
  *
  * **When to use**
  *
- * Use to apply a pure conditional update and return the resulting current
- * value.
+ * Use to apply a pure conditional `SynchronizedRef` update and return the
+ * resulting current value.
  *
  * @see {@link updateSome} for conditional updates without returning a value
  * @see {@link updateAndGet} for always applying a pure update and returning the new value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateSomeAndGet: {
@@ -644,13 +640,13 @@ export const updateSomeAndGet: {
  *
  * **When to use**
  *
- * Use to run an effectful conditional update and return the resulting current
- * value.
+ * Use to run an effectful conditional `SynchronizedRef` update and return the
+ * resulting current value.
  *
  * @see {@link updateSomeEffect} for effectful conditional updates without returning a value
  * @see {@link updateAndGetEffect} for effectful updates that always store and return a new value
  *
- * @category utils
+ * @category mutations
  * @since 2.0.0
  */
 export const updateSomeAndGetEffect: {

@@ -4,38 +4,6 @@
  * shared HTTP client, points requests at the in-cluster API endpoint, and uses
  * the mounted service-account token when one is available.
  *
- * **Mental model**
- *
- * - {@link layer} adapts an existing `HttpClient` so relative requests target
- *   `https://kubernetes.default.svc/api`.
- * - {@link K8sHttpClient} is the service tag consumed by the cluster helpers in
- *   this module.
- * - {@link makeGetPods} returns a cached effect that lists running pods and
- *   indexes them by pod IP address.
- * - {@link makeCreatePod} returns a scoped creator that creates a pod when it
- *   is missing, waits for readiness, and deletes it when the scope closes.
- * - {@link Pod} and {@link PodStatus} model only the status fields needed by
- *   these helpers.
- *
- * **Common tasks**
- *
- * - Discover running pods in a namespace or behind a label selector.
- * - Create short-lived pods for cluster workflows and let scope finalization
- *   clean them up.
- * - Reuse the configured `K8sHttpClient` for Kubernetes API calls that share
- *   the same in-cluster endpoint, token, status filtering, and retry policy.
- *
- * **Gotchas**
- *
- * - The default layer assumes Kubernetes DNS and the standard service-account
- *   mount path used by in-cluster workloads.
- * - Pod discovery filters to `status.phase=Running`; pods without the expected
- *   status shape fail schema decoding.
- * - Pod maps are keyed by pod IP address, so selectors should match the service
- *   topology the caller actually wants to route to.
- * - RBAC, network policies, and missing service-account tokens can still block
- *   requests even when the layer is present.
- *
  * @since 4.0.0
  */
 import type * as v1 from "kubernetes-types/core/v1.d.ts"
@@ -56,7 +24,7 @@ import * as HttpClientResponse from "../http/HttpClientResponse.ts"
 /**
  * Service tag for the HTTP client used to call the Kubernetes API.
  *
- * @category Tags
+ * @category services
  * @since 4.0.0
  */
 export class K8sHttpClient extends Context.Service<

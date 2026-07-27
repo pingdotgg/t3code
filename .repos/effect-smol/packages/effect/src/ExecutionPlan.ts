@@ -1,84 +1,11 @@
 /**
- * Defines finite fallback plans for effects and streams that should retry the
- * same work with different services. An `ExecutionPlan` is a non-empty
- * sequence of steps. Each step provides a `Context` or `Layer`, and can limit
- * or shape retries with `attempts`, `schedule`, and `while`.
+ * Describes ordered fallback steps for running effects or streams.
  *
- * Use a plan with `Effect.withExecutionPlan` or `Stream.withExecutionPlan`.
- * Those APIs run the wrapped work with the first step, retry within that step
- * as directed, then move to later steps until the work succeeds or the plan is
- * exhausted.
- *
- * **Mental model**
- *
- * - A step is a resource profile for one part of a fallback strategy
- * - The active step supplies the services visible to the wrapped effect or
- *   stream
- * - `attempts` caps the number of tries for a step
- * - `schedule` controls retry timing and receives the wrapped work's failure
- *   value
- * - `while` can stop the current step early by inspecting the same failure
- *   value
- * - `CurrentMetadata` exposes the 1-based attempt number and 0-based step
- *   index to code running under the active step
- *
- * **Common tasks**
- *
- * - Build a plan with {@link make}
- * - Append fallback plans with {@link merge}
- * - Apply a plan with `Effect.withExecutionPlan` or `Stream.withExecutionPlan`
- * - Read active step and attempt information with {@link CurrentMetadata}
- * - Carry the current environment into a plan with `captureRequirements`
- *
- * **Quickstart**
- *
- * **Example** (Retry with one layer, then fall back)
- *
- * ```ts
- * import { Context, Effect, ExecutionPlan, Layer, Schedule } from "effect"
- *
- * class Endpoint extends Context.Service<Endpoint>()("Endpoint", {
- *   make: Effect.succeed({ url: "primary" })
- * }) {}
- *
- * const primary = Layer.succeed(Endpoint, Endpoint.of({ url: "primary" }))
- * const fallback = Layer.succeed(Endpoint, Endpoint.of({ url: "fallback" }))
- *
- * const plan = ExecutionPlan.make(
- *   {
- *     provide: primary,
- *     attempts: 2,
- *     schedule: Schedule.recurs(1)
- *   },
- *   {
- *     provide: fallback
- *   }
- * )
- *
- * const program = Effect.gen(function*() {
- *   const endpoint = yield* Endpoint
- *   if (endpoint.url === "primary") {
- *     return yield* Effect.fail("unavailable")
- *   }
- *   return endpoint.url
- * }).pipe(Effect.withExecutionPlan(plan))
- * ```
- *
- * **Gotchas**
- *
- * - Plans must contain at least one step
- * - `attempts` must be greater than zero when provided
- * - Without `attempts` or `schedule`, a step is tried once
- * - A `schedule` can keep a step active until bounded by `attempts` or
- *   stopped by `while`
- * - Layer, schedule, and predicate requirements stay in the plan type until
- *   they are provided or captured
- *
- * **See also**
- *
- * - {@link make} for constructing plans
- * - {@link merge} for combining plans in order
- * - {@link CurrentMetadata} for inspecting the active attempt
+ * An `ExecutionPlan` contains one or more steps. Each step provides a `Context`
+ * or `Layer`, and may also define attempt limits, retry schedules, or
+ * predicates that decide whether to keep trying. The runtime tries steps in
+ * order until the workflow succeeds or the plan is exhausted. This module also
+ * supports merging plans and reading metadata for the active step and attempt.
  *
  * @since 3.16.0
  */
@@ -441,7 +368,7 @@ const makeProto = <Provides, In, PlanE, PlanR>(
  *
  * @see {@link make} for building a plan from individual steps instead of combining existing plans
  *
- * @category Combining
+ * @category combining
  * @since 3.16.0
  */
 export const merge = <const Plans extends NonEmptyReadonlyArray<ExecutionPlan<any>>>(
@@ -461,7 +388,7 @@ export const merge = <const Plans extends NonEmptyReadonlyArray<ExecutionPlan<an
  * `attempt` is the current 1-based attempt number, and `stepIndex` is the
  * 0-based index of the plan step currently being evaluated.
  *
- * @category Metadata
+ * @category metadata
  * @since 4.0.0
  */
 export interface Metadata {

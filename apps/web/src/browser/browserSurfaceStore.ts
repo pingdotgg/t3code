@@ -52,19 +52,7 @@ export function resolveBrowserSurfacePanelRect(
   tabId: string,
 ): BrowserSurfaceRect | null {
   const current = byTabId[tabId];
-  if (current?.visible && current.rect) return current.rect;
-
-  let latestVisible: BrowserSurfacePresentation | undefined;
-  for (const presentation of Object.values(byTabId)) {
-    if (
-      presentation.visible &&
-      presentation.rect &&
-      (!latestVisible || presentation.updatedAt > latestVisible.updatedAt)
-    ) {
-      latestVisible = presentation;
-    }
-  }
-  return latestVisible?.rect ?? current?.rect ?? null;
+  return current?.rect ?? null;
 }
 
 const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect): boolean =>

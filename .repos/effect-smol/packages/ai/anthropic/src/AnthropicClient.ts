@@ -1,34 +1,8 @@
 /**
- * The `AnthropicClient` module defines the low-level Effect service used to
- * call Anthropic's API. It wraps the generated Anthropic HTTP client with
- * Effect layers, request defaults, authentication headers, API versioning,
- * response decoding, and error mapping for Messages API calls.
- *
- * **Mental model**
- *
- * `HttpClient.HttpClient` provides the transport. {@link make} turns explicit
- * {@link Options} into an {@link AnthropicClient} service, while {@link layer}
- * and {@link layerConfig} provide that service as a layer. The service exposes
- * the generated client for direct endpoint access plus handwritten helpers for
- * regular and streaming message creation.
- *
- * **Common tasks**
- *
- * - Provide an authenticated Anthropic client from an API key and optional base
- *   URL
- * - Load client settings from Effect `Config` with {@link layerConfig}
- * - Apply HTTP client transformations for proxying, retries, instrumentation,
- *   or tests
- * - Decode Anthropic server-sent event streams into typed message events
- *
- * **Gotchas**
- *
- * - `apiKey` is optional so proxied and test clients can provide
- *   authentication elsewhere.
- * - `createMessageStream` filters Anthropic ping events and terminates the
- *   stream when a `message_stop` event is received.
- * - The message helpers map transport, schema, and provider failures to the
- *   unified Effect AI error type.
+ * The `AnthropicClient` module defines the low-level Effect service for
+ * Anthropic's Messages API. It builds a generated Anthropic HTTP client with
+ * authentication headers, API version headers, response decoding, and error
+ * mapping, then exposes helpers for regular and streaming message requests.
  *
  * @since 4.0.0
  */
@@ -74,19 +48,12 @@ export interface Service {
   /**
    * Executes a low-level streaming HTTP request and decodes the Server-Sent Events response using the provided schema.
    */
-  readonly streamRequest: <
-    Type extends {
-      readonly id?: string | undefined
-      readonly event: string
-      readonly data: string
-    },
-    DecodingServices
-  >(
-    schema: Schema.Decoder<Type, DecodingServices>
+  readonly streamRequest: <S extends Sse.EventCodec>(
+    schema: S
   ) => (request: HttpClientRequest.HttpClientRequest) => Stream.Stream<
-    Type,
+    S["Type"],
     HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry,
-    DecodingServices
+    S["DecodingServices"]
   >
 
   /**
@@ -188,7 +155,7 @@ export class AnthropicClient extends Context.Service<AnthropicClient, Service>()
  * @see {@link layer} for providing an Anthropic client from explicit options
  * @see {@link layerConfig} for loading Anthropic client settings from `Config`
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export type Options = {
@@ -226,6 +193,11 @@ export type Options = {
 const RedactedAnthropicHeaders = {
   AnthropicApiKey: "x-api-key"
 }
+
+const withRedactedHeaders = Effect.updateService(
+  Headers.CurrentRedactedNames,
+  Array.appendAll(Object.values(RedactedAnthropicHeaders))
+)
 
 /**
  * Creates an Anthropic client service with the given options.
@@ -283,25 +255,19 @@ export const make = Effect.fnUntraced(
 
     const httpClientOk = HttpClient.filterStatusOk(httpClient)
 
-    const streamRequest = <
-      Type extends {
-        readonly id?: string | undefined
-        readonly event: string
-        readonly data: string
-      },
-      DecodingServices
-    >(schema: Schema.Decoder<Type, DecodingServices>) =>
-    (request: HttpClientRequest.HttpClientRequest): Stream.Stream<
-      Type,
-      HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry,
-      DecodingServices
-    > =>
-      httpClientOk.execute(request).pipe(
-        Effect.map((response) => response.stream),
-        Stream.unwrap,
-        Stream.decodeText,
-        Stream.pipeThroughChannel(Sse.decodeSchema(schema))
-      )
+    const streamRequest =
+      <S extends Sse.EventCodec>(schema: S) =>
+      (request: HttpClientRequest.HttpClientRequest): Stream.Stream<
+        S["Type"],
+        HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry,
+        S["DecodingServices"]
+      > =>
+        httpClientOk.execute(request).pipe(
+          Effect.map((response) => response.stream),
+          Stream.unwrap,
+          Stream.decodeText,
+          Stream.pipeThroughChannel(Sse.decodeSchema(schema))
+        )
 
     const createMessage = (options: {
       readonly payload: typeof Generated.BetaCreateMessageParams.Encoded
@@ -315,7 +281,8 @@ export const make = Effect.fnUntraced(
           BetaMessagesPost4XX: (error) => Effect.fail(Errors.mapClientError(error, "createMessage")),
           HttpClientError: (error) => Errors.mapHttpClientError(error, "createMessage"),
           SchemaError: (error) => Effect.fail(Errors.mapSchemaError(error, "createMessage"))
-        })
+        }),
+        withRedactedHeaders
       )
 
     const PingEvent = Schema.Struct({
@@ -368,7 +335,8 @@ export const make = Effect.fnUntraced(
         Effect.catchTag(
           "HttpClientError",
           (error) => Errors.mapHttpClientError(error, "createMessageStream")
-        )
+        ),
+        withRedactedHeaders
       )
     }
 
@@ -379,10 +347,7 @@ export const make = Effect.fnUntraced(
       createMessageStream
     })
   },
-  Effect.updateService(
-    Headers.CurrentRedactedNames,
-    Array.appendAll(Object.values(RedactedAnthropicHeaders))
-  )
+  withRedactedHeaders
 )
 
 // =============================================================================

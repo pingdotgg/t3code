@@ -1,0 +1,8 @@
+# Crash-loop control: the entrypoint exits non-zero immediately on every start,
+# matching the Alchemy crash-loop fixture. Used to measure how fast native
+# `@cloudflare/containers` surfaces a fatal crash, as the baseline Alchemy is
+# compared against.
+FROM oven/bun:latest
+
+EXPOSE 8080
+CMD ["bun", "-e", "process.exit(1)"]

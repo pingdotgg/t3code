@@ -1,17 +1,36 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface DescribeAlarmsForMetricRequest
   extends cloudwatch.DescribeAlarmsForMetricInput {}
 
 /**
- * Runtime binding for `cloudwatch:DescribeAlarmsForMetric`.
+ * Runtime binding for `cloudwatch:DescribeAlarmsForMetric` — find the
+ * alarms watching a specific metric.
+ *
+ * Provide `CloudWatch.DescribeAlarmsForMetricHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Reading Alarm State
+ * @example Find Alarms Watching a Metric
+ * ```typescript
+ * // init — grants cloudwatch:DescribeAlarmsForMetric
+ * const describeAlarmsForMetric = yield* AWS.CloudWatch.DescribeAlarmsForMetric();
+ *
+ * // runtime
+ * const result = yield* describeAlarmsForMetric({
+ *   Namespace: "MyApp/Payments",
+ *   MetricName: "PaymentProcessed",
+ *   Statistic: "Sum",
+ *   Period: 60,
+ * });
+ * const alarmNames = (result.MetricAlarms ?? []).map((a) => a.AlarmName);
+ * ```
  */
-export class DescribeAlarmsForMetric extends Binding.Service<
+export interface DescribeAlarmsForMetric extends Binding.Service<
   DescribeAlarmsForMetric,
+  "AWS.CloudWatch.DescribeAlarmsForMetric",
   () => Effect.Effect<
     (
       request: DescribeAlarmsForMetricRequest,
@@ -20,47 +39,8 @@ export class DescribeAlarmsForMetric extends Binding.Service<
       cloudwatch.DescribeAlarmsForMetricError
     >
   >
->()("AWS.CloudWatch.DescribeAlarmsForMetric") {}
+> {}
 
-export const DescribeAlarmsForMetricLive = Layer.effect(
-  DescribeAlarmsForMetric,
-  Effect.gen(function* () {
-    const Policy = yield* DescribeAlarmsForMetricPolicy;
-    const describeAlarmsForMetric = yield* cloudwatch.describeAlarmsForMetric;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (request: DescribeAlarmsForMetricRequest) {
-        return yield* describeAlarmsForMetric(request);
-      });
-    });
-  }),
+export const DescribeAlarmsForMetric = Binding.Service<DescribeAlarmsForMetric>(
+  "AWS.CloudWatch.DescribeAlarmsForMetric",
 );
-
-export class DescribeAlarmsForMetricPolicy extends Binding.Policy<
-  DescribeAlarmsForMetricPolicy,
-  () => Effect.Effect<void>
->()("AWS.CloudWatch.DescribeAlarmsForMetric") {}
-
-export const DescribeAlarmsForMetricPolicyLive =
-  DescribeAlarmsForMetricPolicy.layer.succeed(
-    Effect.fn(function* (host) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.DescribeAlarmsForMetric())`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:DescribeAlarmsForMetric"],
-                Resource: ["*"],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `DescribeAlarmsForMetricPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

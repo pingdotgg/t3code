@@ -1,0 +1,126 @@
+---
+title: Build & push images
+description: Build a container image from a Dockerfile, push it to a registry, and hand the resulting image reference to Cloudflare Containers or AWS ECS.
+---
+
+This page is the canonical home for producing a **registry image
+reference** — the artifact that cloud container platforms consume.
+`Docker.Image` builds and pushes through your active Docker context;
+what comes out the other end is an `imageRef` (and, after a push, a
+`repoDigest`) that you pass to
+[Cloudflare Containers](/cloudflare/compute/containers) or an
+[AWS ECS task definition](/aws/compute/ecs).
+
+All you need is a Docker daemon reachable from the CLI — see
+[Setup](/docker/setup) if you haven't wired one up yet.
+
+## Build from a Dockerfile
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Docker from "alchemy/Docker";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyImages",
+  {
+    providers: Docker.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const image = yield* Docker.Image("app", {
+      name: "my-app",
+      tag: "latest",
+      build: {
+        context: "./app",
+        dockerfile: "Dockerfile",
+        args: { NODE_ENV: "production" },
+      },
+    });
+
+    return { ref: image.imageRef, id: image.imageId };
+  }),
+);
+```
+
+The `build` block maps onto `docker build`: `context` (default: the
+current working directory), `dockerfile` (default `"Dockerfile"`),
+`args`, a multi-stage `target`, and a `platform` such as
+`"linux/amd64"`, plus `cacheFrom`/`cacheTo` for build caching. Omit
+`name` and alchemy generates one from the stack, stage, and logical
+ID.
+
+## When it rebuilds
+
+There is no source-hashing heuristic — `diff` literally runs
+`docker build` and compares the resulting `imageId` against the last
+deploy's output. If the build produces the same image, nothing
+changed; if it produces a new one, the resource updates. The build
+result is memoized per run (`Artifacts.cached`), so a plan followed
+by a deploy builds once, not twice. Destroying the stack only
+removes the local tag — nothing is deleted from any registry.
+
+## Push to a registry
+
+```typescript
+const image = yield* Docker.Image("app", {
+  name: "my-app",
+  build: { context: "./app" },
+  registry: {
+    server: "ghcr.io",
+    username: "octocat",
+    password: Config.redacted("GITHUB_TOKEN"),
+  },
+});
+```
+
+Set `registry` with the server (e.g. `ghcr.io`), a username, and a
+`Redacted` password, and the image is pushed after every build —
+`skipPush: true` keeps the build local while leaving the credentials
+declared. The push never runs `docker login` and never touches your
+global Docker config; credentials stay out of `argv` and your
+keychain. On success the resource's `imageRef` includes the registry
+host and `repoDigest` carries the immutable content digest.
+
+## Mirror and pin remote images
+
+```typescript
+const mirrored = yield* Docker.RemoteImage("nginx-mirror", {
+  name: "nginx",
+  tag: "alpine",
+  targetName: "acme/nginx",
+  targetTag: "alpine",
+  registry: {
+    server: "ghcr.io",
+    username: "octocat",
+    password: Config.redacted("GITHUB_TOKEN"),
+  },
+});
+```
+
+`Docker.RemoteImage` pulls an existing image instead of building
+one, and `targetName`/`targetTag` re-tag it before pushing — the
+standard shape for mirroring a public image into your own registry,
+with the same `repoDigest` output as a built image. Set
+`alwaysPull: false` to pin whatever tag is already in the daemon
+rather than re-pulling on every deploy. Destroying the stack is a
+deliberate no-op for remote images: the pulled tag may be shared by
+unrelated stacks or developer workflows.
+
+## Hand the ref to your cloud
+
+Pass `image.imageRef` (or `repoDigest`, for an immutable pin) to
+whatever runs the container:
+[Cloudflare Containers](/cloudflare/compute/containers) accept it as
+a bring-your-own image, and an [ECS task definition](/aws/compute/ecs)
+takes it as the container image. The registry reference is the
+boundary — Cloudflare and AWS pull from the registry; no further
+Docker wiring is involved.
+
+## Where next
+
+Reference:
+
+- [Image API reference](/providers/docker/image)
+- [RemoteImage API reference](/providers/docker/remoteimage)

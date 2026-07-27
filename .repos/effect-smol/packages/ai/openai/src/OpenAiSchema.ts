@@ -4,36 +4,6 @@
  * the transport boundary for JSON sent to and decoded from the Responses and
  * embeddings endpoints.
  *
- * **Mental model**
- *
- * - Request schemas such as {@link CreateResponse} and
- *   {@link CreateEmbeddingRequest} describe the encoded payloads sent to OpenAI.
- * - Response schemas such as {@link Response}, {@link ResponseStreamEvent}, and
- *   {@link CreateEmbeddingResponse} describe provider data after schema
- *   decoding.
- * - Shared schemas such as {@link InputItem}, {@link Tool}, and
- *   {@link TextResponseFormatConfiguration} cover the message, tool, and output
- *   format fragments reused across request and response shapes.
- *
- * **Common tasks**
- *
- * - Use {@link CreateResponse} with {@link Response} for non-streaming
- *   Responses API calls.
- * - Use {@link ResponseStreamEvent} for server-sent events emitted by streaming
- *   Responses API calls.
- * - Use {@link CreateEmbeddingRequest} and {@link CreateEmbeddingResponse} for
- *   embeddings endpoint payloads.
- * - Use smaller schemas like {@link IncludeEnum}, {@link InputContent}, and
- *   {@link ToolChoice} when validating request fragments.
- *
- * **Gotchas**
- *
- * - The module models the subset of OpenAI shapes supported by this client
- *   path; it is not a complete mirror of every OpenAI REST API field.
- * - Unknown future stream event types decode through
- *   {@link UnknownResponseStreamEvent}, while malformed known event types still
- *   fail schema decoding.
- *
  * @since 4.0.0
  */
 import * as Effect from "effect/Effect"
@@ -203,15 +173,15 @@ const ComputerScreenshotContent = Schema.Struct({
 const FileCitationAnnotation = Schema.Struct({
   type: Schema.Literal("file_citation"),
   file_id: Schema.String,
-  index: Schema.Number,
+  index: Schema.Int,
   filename: Schema.String
 })
 
 const UrlCitationAnnotation = Schema.Struct({
   type: Schema.Literal("url_citation"),
   url: Schema.String,
-  start_index: Schema.Number,
-  end_index: Schema.Number,
+  start_index: Schema.Int,
+  end_index: Schema.Int,
   title: Schema.String
 })
 
@@ -219,15 +189,15 @@ const ContainerFileCitationAnnotation = Schema.Struct({
   type: Schema.Literal("container_file_citation"),
   container_id: Schema.String,
   file_id: Schema.String,
-  start_index: Schema.Number,
-  end_index: Schema.Number,
+  start_index: Schema.Int,
+  end_index: Schema.Int,
   filename: Schema.String
 })
 
 const FilePathAnnotation = Schema.Struct({
   type: Schema.Literal("file_path"),
   file_id: Schema.String,
-  index: Schema.Number
+  index: Schema.Int
 })
 
 /**
@@ -512,6 +482,11 @@ const ProviderDefinedTool = Schema.StructWithRest(
 /**
  * Schema for tool definitions that can be supplied to an OpenAI Responses request.
  *
+ * **When to use**
+ *
+ * Use when validating or encoding the `tools` array for a Responses request,
+ * including provider-defined tool records with provider-specific fields.
+ *
  * **Details**
  *
  * Accepted variants are function tools, custom tools, and provider-defined
@@ -547,6 +522,11 @@ export type Tool = typeof Tool.Type
 
 /**
  * Schema for selecting whether and which tools the model may call in a Responses request.
+ *
+ * **When to use**
+ *
+ * Use when validating or encoding the `tool_choice` field that constrains model
+ * tool use separately from the tool definitions themselves.
  *
  * **Details**
  *
@@ -607,6 +587,11 @@ export type ToolChoice = typeof ToolChoice.Type
 
 /**
  * Schema for text output format configuration, including plain text, JSON object, and JSON Schema responses.
+ *
+ * **When to use**
+ *
+ * Use when validating or encoding the `text.format` setting for a Responses
+ * request, especially when choosing structured JSON Schema output.
  *
  * **Details**
  *
@@ -669,9 +654,9 @@ export type TextResponseFormatConfiguration = typeof TextResponseFormatConfigura
  */
 export const CreateResponse = Schema.Struct({
   metadata: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  top_logprobs: Schema.optional(Schema.Number),
-  temperature: Schema.optional(Schema.Number),
-  top_p: Schema.optional(Schema.Number),
+  top_logprobs: Schema.optional(Schema.Int),
+  temperature: Schema.optional(Schema.Finite),
+  top_p: Schema.optional(Schema.Finite),
   user: Schema.optional(Schema.String),
   service_tier: Schema.optional(Schema.String),
   previous_response_id: Schema.optional(Schema.String),
@@ -683,8 +668,8 @@ export const CreateResponse = Schema.Struct({
     generate_summary: Schema.optional(Schema.Literals(["auto", "concise", "detailed"]))
   })),
   background: Schema.optional(Schema.Boolean),
-  max_output_tokens: Schema.optional(Schema.Number),
-  max_tool_calls: Schema.optional(Schema.Number),
+  max_output_tokens: Schema.optional(Schema.Int),
+  max_tool_calls: Schema.optional(Schema.Int),
   text: Schema.optional(
     Schema.Struct({
       format: Schema.optional(TextResponseFormatConfiguration),
@@ -706,13 +691,13 @@ export const CreateResponse = Schema.Struct({
   stream: Schema.optional(Schema.Boolean),
   conversation: Schema.optional(Schema.String),
   modalities: Schema.optional(Schema.Array(Schema.Literals(["text", "audio"]))),
-  seed: Schema.optional(Schema.Number)
+  seed: Schema.optional(Schema.Int)
 })
 
 /**
  * Request options used to create an OpenAI Responses API response.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export type CreateResponse = typeof CreateResponse.Type
@@ -731,9 +716,9 @@ export type CreateResponse = typeof CreateResponse.Type
  */
 export const ResponseUsage = Schema.StructWithRest(
   Schema.Struct({
-    input_tokens: Schema.Number,
-    output_tokens: Schema.Number,
-    total_tokens: Schema.Number,
+    input_tokens: Schema.Int,
+    output_tokens: Schema.Int,
+    total_tokens: Schema.Int,
     input_tokens_details: Schema.optionalKey(Schema.Unknown),
     output_tokens_details: Schema.optionalKey(Schema.Unknown)
   }),
@@ -868,7 +853,7 @@ export const Response = Schema.Struct({
   id: Schema.String,
   object: Schema.optionalKey(Schema.Literal("response")),
   model: Schema.String,
-  created_at: Schema.Number,
+  created_at: Schema.Int,
   output: Schema.Array(OutputItem).pipe(
     Schema.withDecodingDefault(Effect.succeed([]))
   ),
@@ -903,141 +888,141 @@ export type Response = typeof Response.Type
 const ResponseCreatedEvent = Schema.Struct({
   type: Schema.Literal("response.created"),
   response: Response,
-  sequence_number: Schema.Number
+  sequence_number: Schema.Int
 })
 
 const ResponseCompletedEvent = Schema.Struct({
   type: Schema.Literal("response.completed"),
   response: Response,
-  sequence_number: Schema.Number
+  sequence_number: Schema.Int
 })
 
 const ResponseIncompleteEvent = Schema.Struct({
   type: Schema.Literal("response.incomplete"),
   response: Response,
-  sequence_number: Schema.Number
+  sequence_number: Schema.Int
 })
 
 const ResponseFailedEvent = Schema.Struct({
   type: Schema.Literal("response.failed"),
   response: Response,
-  sequence_number: Schema.Number
+  sequence_number: Schema.Int
 })
 
 const ResponseOutputItemAddedEvent = Schema.Struct({
   type: Schema.Literal("response.output_item.added"),
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   item: OutputItem
 })
 
 const ResponseOutputItemDoneEvent = Schema.Struct({
   type: Schema.Literal("response.output_item.done"),
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   item: OutputItem
 })
 
 const ResponseOutputTextDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.output_text.delta"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  content_index: Schema.Number,
+  output_index: Schema.Int,
+  content_index: Schema.Int,
   delta: Schema.String,
-  sequence_number: Schema.Number,
+  sequence_number: Schema.Int,
   logprobs: Schema.optionalKey(Schema.Array(Schema.Unknown))
 })
 
 const ResponseOutputTextAnnotationAddedEvent = Schema.Struct({
   type: Schema.Literal("response.output_text.annotation.added"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  content_index: Schema.Number,
-  annotation_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  content_index: Schema.Int,
+  annotation_index: Schema.Int,
+  sequence_number: Schema.Int,
   annotation: Annotation
 })
 
 const ResponseReasoningSummaryPartAddedEvent = Schema.Struct({
   type: Schema.Literal("response.reasoning_summary_part.added"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  summary_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  summary_index: Schema.Int,
+  sequence_number: Schema.Int,
   part: SummaryTextContent
 })
 
 const ResponseReasoningSummaryPartDoneEvent = Schema.Struct({
   type: Schema.Literal("response.reasoning_summary_part.done"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  summary_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  summary_index: Schema.Int,
+  sequence_number: Schema.Int,
   part: SummaryTextContent
 })
 
 const ResponseReasoningSummaryTextDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.reasoning_summary_text.delta"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  summary_index: Schema.Number,
+  output_index: Schema.Int,
+  summary_index: Schema.Int,
   delta: Schema.String,
-  sequence_number: Schema.Number
+  sequence_number: Schema.Int
 })
 
 const ResponseFunctionCallArgumentsDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.function_call_arguments.delta"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   delta: Schema.String
 })
 
 const ResponseFunctionCallArgumentsDoneEvent = Schema.Struct({
   type: Schema.Literal("response.function_call_arguments.done"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   arguments: Schema.String
 })
 
 const ResponseCodeInterpreterCallCodeDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.code_interpreter_call_code.delta"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   delta: Schema.String
 })
 
 const ResponseCodeInterpreterCallCodeDoneEvent = Schema.Struct({
   type: Schema.Literal("response.code_interpreter_call_code.done"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   code: Schema.String
 })
 
 const ResponseApplyPatchCallOperationDiffDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.apply_patch_call_operation_diff.delta"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   delta: Schema.String
 })
 
 const ResponseApplyPatchCallOperationDiffDoneEvent = Schema.Struct({
   type: Schema.Literal("response.apply_patch_call_operation_diff.done"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   delta: Schema.optionalKey(Schema.String)
 })
 
 const ResponseImageGenerationCallPartialImageEvent = Schema.Struct({
   type: Schema.Literal("response.image_generation_call.partial_image"),
   item_id: Schema.String,
-  output_index: Schema.Number,
-  sequence_number: Schema.Number,
+  output_index: Schema.Int,
+  sequence_number: Schema.Int,
   partial_image_b64: Schema.String
 })
 
@@ -1046,8 +1031,8 @@ const ResponseErrorEvent = Schema.Struct({
   code: Schema.NullOr(Schema.String),
   message: Schema.String,
   param: Schema.NullOr(Schema.String),
-  sequence_number: Schema.Number,
-  status: Schema.optionalKey(Schema.Number)
+  sequence_number: Schema.Int,
+  status: Schema.optionalKey(Schema.Int)
 })
 
 const knownResponseStreamEventTypes = new Set([
@@ -1161,6 +1146,11 @@ export type ResponseStreamEvent = typeof ResponseStreamEvent.Type
 /**
  * Schema for one embedding item returned by the OpenAI embeddings API.
  *
+ * **When to use**
+ *
+ * Use when validating individual embedding entries at the OpenAI client boundary
+ * before assuming the embedding payload is a numeric vector.
+ *
  * **Details**
  *
  * An embedding item contains its `index`, optional `object` marker, and an
@@ -1176,10 +1166,10 @@ export type ResponseStreamEvent = typeof ResponseStreamEvent.Type
  */
 export const Embedding = Schema.Struct({
   embedding: Schema.Union([
-    Schema.Array(Schema.Number),
+    Schema.Array(Schema.Finite),
     Schema.String
   ]),
-  index: Schema.Number,
+  index: Schema.Int,
   object: Schema.optionalKey(Schema.String)
 })
 
@@ -1198,6 +1188,11 @@ export type Embedding = typeof Embedding.Type
 
 /**
  * Schema for the request payload sent to the OpenAI embeddings endpoint.
+ *
+ * **When to use**
+ *
+ * Use when validating or encoding embeddings requests before sending them to
+ * OpenAI, while leaving model-specific limits to the provider.
  *
  * **Details**
  *
@@ -1218,12 +1213,12 @@ export const CreateEmbeddingRequest = Schema.Struct({
   input: Schema.Union([
     Schema.String,
     Schema.Array(Schema.String),
-    Schema.Array(Schema.Number),
-    Schema.Array(Schema.Array(Schema.Number))
+    Schema.Array(Schema.Int),
+    Schema.Array(Schema.Array(Schema.Int))
   ]),
   model: Schema.String,
   encoding_format: Schema.optionalKey(Schema.Literals(["float", "base64"])),
-  dimensions: Schema.optionalKey(Schema.Number),
+  dimensions: Schema.optionalKey(Schema.Int),
   user: Schema.optionalKey(Schema.String)
 })
 
@@ -1240,7 +1235,9 @@ export type CreateEmbeddingRequest = typeof CreateEmbeddingRequest.Type
  *
  * **When to use**
  *
- * Use to decode successful OpenAI embeddings responses.
+ * Use when you need to validate embeddings responses at an OpenAI client
+ * boundary before trusting item shapes, especially when numeric and string
+ * embeddings are both allowed.
  *
  * **Details**
  *
@@ -1265,8 +1262,8 @@ export const CreateEmbeddingResponse = Schema.Struct({
   object: Schema.optionalKey(Schema.Literal("list")),
   usage: Schema.optionalKey(
     Schema.Struct({
-      prompt_tokens: Schema.Number,
-      total_tokens: Schema.Number
+      prompt_tokens: Schema.Int,
+      total_tokens: Schema.Int
     })
   )
 })

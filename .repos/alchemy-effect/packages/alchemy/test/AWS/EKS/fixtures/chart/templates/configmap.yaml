@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  message: {{ .Values.message | quote }}
+  release: {{ .Release.Name | quote }}
+  namespace: {{ .Release.Namespace | quote }}
