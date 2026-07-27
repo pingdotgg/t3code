@@ -8,17 +8,12 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
-import { CommandPalette } from "../components/CommandPalette";
-import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
-import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
-import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
-import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
-import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
+import { CommandPaletteShell } from "../components/CommandPaletteShell";
 import { Button } from "../components/ui/button";
 import {
   AnchoredToastProvider,
@@ -36,6 +31,7 @@ import {
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
+import { markStartupMilestone } from "../startupPerformance";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { shellEnvironment } from "../state/shell";
@@ -47,34 +43,35 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useAllEnvironmentShellsBootstrapped,
+} from "../state/entities";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
 
+const AppOverlays = lazy(() => import("../components/AppOverlays"));
+const ProviderUpdateLaunchNotification = lazy(() =>
+  import("../components/ProviderUpdateLaunchNotification").then((module) => ({
+    default: module.ProviderUpdateLaunchNotification,
+  })),
+);
+
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
-    if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
-      return {
-        authGateState: {
-          status: "hosted-pairing",
-        } as const,
-      };
-    }
-
-    if (isHostedStaticApp(new URL(window.location.href))) {
-      return {
-        authGateState: {
-          status: "hosted-static",
-        } as const,
-      };
-    }
-
-    const authGateState = await resolveInitialServerAuthGateState();
-    return {
-      authGateState,
-    };
+    const url = new URL(window.location.href);
+    const authGateState =
+      location.pathname === "/pair" && hasHostedPairingRequest(url)
+        ? ({ status: "hosted-pairing" } as const)
+        : isHostedStaticApp(url)
+          ? ({ status: "hosted-static" } as const)
+          : await resolveInitialServerAuthGateState();
+    markStartupMilestone("auth.gate.resolved");
+    return { authGateState };
   },
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
@@ -87,6 +84,10 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+
+  useEffect(() => {
+    markStartupMilestone("react.usable");
+  }, []);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -116,11 +117,11 @@ function RootRouteView() {
   }
 
   const appShell = (
-    <CommandPalette>
+    <CommandPaletteShell>
       <AppSidebarLayout>
         <Outlet />
       </AppSidebarLayout>
-    </CommandPalette>
+    </CommandPaletteShell>
   );
 
   return (
@@ -129,13 +130,13 @@ function RootRouteView() {
         <DocumentTitleSync />
         <GlassAppearanceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-        <RelayClientInstallDialog />
-        <ConnectOnboardingDialog />
-        <SshPasswordPromptDialog />
-        <SlowRpcRequestToastCoordinator />
+        {primaryEnvironmentAuthenticated ? <StartupConnectionMilestones /> : null}
+        <Suspense fallback={null}>
+          <AppOverlays />
+          {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+        </Suspense>
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
-        {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
       </AnchoredToastProvider>
     </ToastProvider>
@@ -165,6 +166,30 @@ function DocumentTitleSync() {
   useEffect(() => {
     document.title = title;
   }, [title]);
+  useEffect(() => {
+    if (primaryServerVersion !== null) {
+      markStartupMilestone("config.received");
+    }
+  }, [primaryServerVersion]);
+
+  return null;
+}
+
+function StartupConnectionMilestones() {
+  const primaryEnvironment = usePrimaryEnvironment();
+  const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
+
+  useEffect(() => {
+    if (primaryEnvironment?.connection.phase === "connected") {
+      markStartupMilestone("ws.open");
+    }
+  }, [primaryEnvironment?.connection.phase]);
+
+  useEffect(() => {
+    if (shellsBootstrapped) {
+      markStartupMilestone("shell.live");
+    }
+  }, [shellsBootstrapped]);
 
   return null;
 }

@@ -16,7 +16,7 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowDownIcon,
@@ -33,11 +33,8 @@ import {
 import {
   useCallback,
   useDeferredValue,
-  useEffect,
   useLayoutEffect,
   useMemo,
-  useReducer,
-  useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
@@ -74,12 +71,9 @@ import {
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
-import { onOpenCommandPalette } from "../commandPaletteBus";
-import { isTerminalFocused } from "../lib/terminalFocus";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import { buildThreadRouteParams } from "../threadRoutes";
 import {
   applyWslEnvironmentConfiguration,
   parseWslUncPath,
@@ -114,7 +108,6 @@ import { resolveDefaultProviderModelSelection } from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import {
   Command,
-  CommandDialog,
   CommandDialogPopup,
   CommandFooter,
   CommandInput,
@@ -124,8 +117,7 @@ import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
-import type { ChatComposerHandle } from "./chat/ChatComposer";
+import { useComposerHandleContext } from "../composerHandleContext";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import {
@@ -343,131 +335,7 @@ interface CommandPaletteOpenIntent {
   readonly kind: "add-project" | "new-thread-in";
 }
 
-interface CommandPaletteUiState {
-  readonly open: boolean;
-  readonly openIntent: CommandPaletteOpenIntent | null;
-}
-
-type CommandPaletteUiAction =
-  | { readonly _tag: "SetOpen"; readonly open: boolean }
-  | { readonly _tag: "Toggle" }
-  | { readonly _tag: "OpenAddProject" }
-  | { readonly _tag: "OpenNewThreadIn" }
-  | { readonly _tag: "ClearOpenIntent" };
-
-function reduceCommandPaletteUiState(
-  state: CommandPaletteUiState,
-  action: CommandPaletteUiAction,
-): CommandPaletteUiState {
-  switch (action._tag) {
-    case "SetOpen":
-      return {
-        open: action.open,
-        openIntent: action.open ? state.openIntent : null,
-      };
-    case "Toggle":
-      return { open: !state.open, openIntent: null };
-    case "OpenAddProject":
-      return { open: true, openIntent: { kind: "add-project" } };
-    case "OpenNewThreadIn":
-      return { open: true, openIntent: { kind: "new-thread-in" } };
-    case "ClearOpenIntent":
-      return state.openIntent ? { ...state, openIntent: null } : state;
-  }
-}
-
-export function CommandPalette({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
-    open: false,
-    openIntent: null,
-  });
-  const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
-  const toggleOpen = useCallback(() => dispatch({ _tag: "Toggle" }), []);
-  const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
-  const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
-  const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const composerHandleRef = useRef<ChatComposerHandle | null>(null);
-  const routeTarget = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteTarget(params),
-  });
-  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
-  const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
-      : false,
-  );
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen,
-        },
-      });
-      if (command !== "commandPalette.toggle") {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      toggleOpen();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
-
-  useEffect(
-    () =>
-      onOpenCommandPalette((detail) => {
-        if (detail.open === "new-thread-in") {
-          openNewThreadIn();
-        } else if (detail.open === "add-project") {
-          openAddProject();
-        } else {
-          setOpen(true);
-        }
-      }),
-    [openAddProject, openNewThreadIn, setOpen],
-  );
-
-  return (
-    <ComposerHandleContext value={composerHandleRef}>
-      <CommandDialog open={state.open} onOpenChange={setOpen}>
-        {children}
-        <CommandPaletteDialog
-          open={state.open}
-          openIntent={state.openIntent}
-          setOpen={setOpen}
-          clearOpenIntent={clearOpenIntent}
-        />
-      </CommandDialog>
-    </ComposerHandleContext>
-  );
-}
-
-function CommandPaletteDialog(props: {
-  readonly open: boolean;
-  readonly openIntent: CommandPaletteOpenIntent | null;
-  readonly setOpen: (open: boolean) => void;
-  readonly clearOpenIntent: () => void;
-}) {
-  if (!props.open) {
-    return null;
-  }
-
-  return (
-    <OpenCommandPaletteDialog
-      openIntent={props.openIntent}
-      setOpen={props.setOpen}
-      clearOpenIntent={props.clearOpenIntent}
-    />
-  );
-}
-
-function OpenCommandPaletteDialog(props: {
+export function CommandPaletteDialog(props: {
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
   readonly clearOpenIntent: () => void;

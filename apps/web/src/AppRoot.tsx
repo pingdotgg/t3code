@@ -1,9 +1,20 @@
+import { lazy, Suspense } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 
-import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
-import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHosts";
+import { isElectron } from "./env";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
+
+const PreviewAutomationHosts = lazy(() =>
+  import("./components/preview/PreviewAutomationHosts").then((module) => ({
+    default: module.PreviewAutomationHosts,
+  })),
+);
+const ElectronBrowserHost = lazy(() =>
+  import("./browser/ElectronBrowserHost").then((module) => ({
+    default: module.ElectronBrowserHost,
+  })),
+);
 
 /**
  * Owns renderer-wide providers. The Electron browser host intentionally sits
@@ -14,8 +25,10 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
       <RouterProvider router={router} />
-      <PreviewAutomationHosts />
-      <ElectronBrowserHost />
+      <Suspense fallback={null}>
+        <PreviewAutomationHosts />
+        {isElectron ? <ElectronBrowserHost /> : null}
+      </Suspense>
     </AppAtomRegistryProvider>
   );
 }

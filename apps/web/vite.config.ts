@@ -52,9 +52,9 @@ const configuredHostedAppUrl = (() => {
 })();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
-// Vite 8.1's experimental bundled dev mode: serves rolldown-bundled chunks in
-// dev for much faster startup/reload on large module graphs, with HMR served
-// as hot patches. Opt-in while experimental: T3CODE_BUNDLED_DEV=1 pnpm dev:web
+// Vite 8.1's experimental bundled dev mode. Keep this opt-in until its cold
+// build is reliably faster than the regular dev server:
+// T3CODE_BUNDLED_DEV=1 vp run dev
 const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
 
@@ -127,7 +127,7 @@ const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 export default defineConfig(() => {
   return {
     plugins: [
-      tanstackRouter(),
+      tanstackRouter({ autoCodeSplitting: !bundledDev }),
       react(),
       babel({
         // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
@@ -141,7 +141,6 @@ export default defineConfig(() => {
     ],
     optimizeDeps: {
       include: [
-        "@clerk/clerk-js",
         "@clerk/react/internal",
         "@pierre/diffs",
         "@pierre/diffs/editor",

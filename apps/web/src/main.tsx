@@ -20,8 +20,11 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { markStartupMilestone } from "./startupPerformance";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
+markStartupMilestone("entry.loaded");
+
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);

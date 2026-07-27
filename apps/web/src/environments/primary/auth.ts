@@ -21,6 +21,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { markStartupMilestone } from "../../startupPerformance";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -333,6 +334,7 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
 
   try {
     await exchangeBootstrapCredential(bootstrapCredential);
+    markStartupMilestone("pairing.exchanged");
     await waitForAuthenticatedSessionAfterBootstrap();
     return { status: "authenticated" };
   } catch (error) {
@@ -354,6 +356,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 
   resolvedAuthenticatedGateState = null;
   await exchangeBootstrapCredential(trimmedCredential);
+  markStartupMilestone("pairing.exchanged");
   bootstrapPromise = null;
   stripPairingTokenFromUrl();
 }
