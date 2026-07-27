@@ -494,7 +494,7 @@ function toDerivedWorkLogEntry(
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
   }
-  const collapseKey = deriveToolLifecycleCollapseKey(entry);
+  const collapseKey = deriveToolLifecycleCollapseKey(entry, payload);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
   }
@@ -665,9 +665,20 @@ function mergeChangedFiles(
   return [...new Set(merged)];
 }
 
-function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
+function deriveToolLifecycleCollapseKey(
+  entry: DerivedWorkLogEntry,
+  payload: Record<string, unknown> | null,
+): string | undefined {
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
+  }
+  // The server stamps one correlation id on every lifecycle event of a call.
+  // Title and detail both change between "running" and "settled" (the row is
+  // renamed, the result is attached), so keying on them splits one call into
+  // a stuck-running row plus a completed duplicate.
+  const toolCallId = asRecord(payload?.data)?.toolCallId;
+  if (typeof toolCallId === "string" && toolCallId.trim().length > 0) {
+    return `toolCall${toolCallId.trim()}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";

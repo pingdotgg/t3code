@@ -305,12 +305,39 @@ function withToolIdentity(data: unknown): Record<string, unknown> | undefined {
   return { ...record, tool: identity };
 }
 
-function toolActivityData(data: unknown): { data: unknown } | Record<string, never> {
-  const enriched = withToolIdentity(data);
-  if (enriched) {
-    return { data: enriched };
+/**
+ * Stamp the runtime item id onto a tool activity's `data` as `toolCallId` so
+ * every lifecycle event of one invocation carries the same correlation key.
+ * Clients upsert their tool row by it; without one they fall back to the
+ * per-event activity id and the started/updated row is never replaced by the
+ * completion — the call renders twice, and the first row stays "running" with
+ * a live timer forever. ACP adapters already put their own `toolCallId` in
+ * `data`; theirs wins so the wire value stays the agent's own id.
+ */
+function withToolCallId(data: unknown, itemId: RuntimeItemId | undefined): unknown {
+  if (itemId === undefined) {
+    return data;
   }
-  return data !== undefined ? { data } : {};
+  if (data === undefined || data === null) {
+    return { toolCallId: itemId };
+  }
+  if (typeof data !== "object" || Array.isArray(data)) {
+    return data;
+  }
+  const record = data as Record<string, unknown>;
+  const existing = record["toolCallId"];
+  if (typeof existing === "string" && existing.trim().length > 0) {
+    return record;
+  }
+  return { ...record, toolCallId: itemId };
+}
+
+function toolActivityData(
+  data: unknown,
+  itemId: RuntimeItemId | undefined,
+): { data: unknown } | Record<string, never> {
+  const stamped = withToolCallId(withToolIdentity(data) ?? data, itemId);
+  return stamped !== undefined ? { data: stamped } : {};
 }
 
 /**
@@ -1019,7 +1046,7 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...toolActivityData(event.payload.data),
+            ...toolActivityData(event.payload.data, event.itemId),
             presentation: toolPresentationOf(
               event.payload.itemType,
               event.payload,
@@ -1047,7 +1074,7 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...toolActivityData(event.payload.data),
+            ...toolActivityData(event.payload.data, event.itemId),
             presentation: toolPresentationOf(
               event.payload.itemType,
               event.payload,
@@ -1076,8 +1103,13 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            // Identity only: the started row needs the icon/name, not the input.
-            ...(startedToolIdentity ? { data: { tool: startedToolIdentity } } : {}),
+            // Identity only: the started row needs the icon/name, not the
+            // input — but it still carries the correlation id so a client
+            // that renders started rows folds the completion into this one.
+            ...toolActivityData(
+              startedToolIdentity ? { tool: startedToolIdentity } : undefined,
+              event.itemId,
+            ),
             presentation: toolPresentationOf(
               event.payload.itemType,
               event.payload,

@@ -182,6 +182,60 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("collapses a renamed tool lifecycle through its toolCallId", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-tool-call-id"),
+      projectId: ProjectId.make("project-1"),
+      title: "Renamed lifecycle",
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-running"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Running command",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Running command",
+            itemType: "command_execution",
+            status: "inProgress",
+            detail: "Bash: ls",
+            data: { toolCallId: "toolu_1", toolName: "Bash", input: { command: "ls" } },
+          },
+        }),
+        // The server renames the row once the call settles and attaches the
+        // result, so title and detail both differ from the running row.
+        makeActivity({
+          id: EventId.make("tool-ran"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            title: "Ran command",
+            itemType: "command_execution",
+            detail: "Bash: ls <exited with exit code 0>",
+            data: {
+              toolCallId: "toolu_1",
+              toolName: "Bash",
+              input: { command: "ls" },
+              result: { content: "README.md" },
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(group.activities.map((activity) => activity.id)).toEqual(["tool-ran"]);
+    expect(group.activities[0]?.status).toBe("success");
+  });
+
   it("renders skills, MCP and computer-use calls under their own name and icon", () => {
     const turnId = TurnId.make("turn-native-tools");
     const thread = makeThread({

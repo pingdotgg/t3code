@@ -98,6 +98,52 @@ struct TimelineUpsertIndexTests {
         #expect(!indexByID.keys.contains("tool:3"))
     }
 
+    @Test("an uncorrelated completion folds through the running→settled rename")
+    func lifecycleRenameFolds() {
+        // Threads recorded before the server stamped `toolCallId` reach the
+        // client with a per-event row id and a renamed title ("Running
+        // command" -> "Ran command"): the completion must still replace the
+        // running row instead of stacking a duplicate that ticks forever.
+        let running = TimelineItem.toolEvent(
+            id: "activity-1", name: "Running command", detail: "Bash: ls", kind: .command,
+            status: .running, at: date(2), output: nil, outputIsError: false)
+        let completed = TimelineItem.toolEvent(
+            id: "activity-2", name: "Ran command", detail: "Bash: ls", kind: .command,
+            status: .succeeded, at: date(3), output: "README.md", outputIsError: false)
+
+        var reference: [TimelineItem] = [
+            .userMessage(id: "user-1", text: "list files", attachments: [], at: date(1))
+        ]
+        var indexed = reference
+        var indexByID: [String: Int] = ["user-1": 0]
+
+        for item in [running, completed] {
+            reference.upsertTimelineItem(item)
+            indexed.upsertTimelineItem(item, indexByID: &indexByID)
+        }
+
+        #expect(signatures(indexed) == signatures(reference))
+        #expect(indexed.count == 2)
+        guard case .toolEvent(_, let name, _, _, let status, _, _, _) = indexed[1] else {
+            Issue.record("expected the tool row to survive the completion upsert")
+            return
+        }
+        #expect(name == "Ran command")
+        #expect(status == .succeeded)
+        assertIndexMatchesArray(indexed, indexByID: indexByID)
+
+        // Different invocations of the same surface still get their own rows.
+        let otherRunning = TimelineItem.toolEvent(
+            id: "activity-3", name: "Running command", detail: "Bash: git status",
+            kind: .command, status: .running, at: date(4), output: nil, outputIsError: false)
+        let otherCompleted = TimelineItem.toolEvent(
+            id: "activity-4", name: "Ran command", detail: "Bash: pwd", kind: .command,
+            status: .succeeded, at: date(5), output: "/tmp", outputIsError: false)
+        indexed.upsertTimelineItem(otherRunning, indexByID: &indexByID)
+        indexed.upsertTimelineItem(otherCompleted, indexByID: &indexByID)
+        #expect(indexed.count == 4)
+    }
+
     @Test("a stale index slot self-repairs before replacing an id hit")
     func staleIndexRepairs() {
         let user = TimelineItem.userMessage(id: "user-1", text: "first", attachments: [], at: date(1))

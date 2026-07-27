@@ -634,6 +634,39 @@ public enum TimelineItem: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Tool row titles are lifecycle-dependent: the server names a call for what
+/// it is doing while it runs and for what it did once it settles ("Running
+/// command" -> "Ran command", "Reading file" -> "Read file"; see `titleFor`
+/// in `@t3tools/shared/toolPresentation`). Rows that reach the client without
+/// a `toolCallId` correlate by name, so the two halves of one invocation must
+/// compare equal — otherwise the completion appends a second row and the
+/// original keeps ticking as "running" forever.
+public enum ToolLifecycleTitle {
+    private static let lifecycleSurfaces: [String: String] = [
+        "running command": "command", "ran command": "command",
+        "reading file": "file_read", "read file": "file_read",
+        "changing files": "file_change", "changed files": "file_change",
+        "searching files": "file_search", "searched files": "file_search",
+        "searching the web": "web_search", "web search": "web_search",
+        "fetching page": "web_fetch", "fetched page": "web_fetch",
+        "viewing image": "image", "viewed image": "image",
+        "updating plan": "todo", "updated plan": "todo",
+    ]
+
+    /// Identity of a tool title across the running -> settled rename. Titles
+    /// the server does not rewrite (skills, MCP calls, raw tool names) are
+    /// their own identity.
+    public static func canonical(_ name: String) -> String {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lifecycleSurfaces[normalized] ?? normalized
+    }
+
+    /// Whether two tool row titles can name the same invocation.
+    public static func namesMatch(_ lhs: String, _ rhs: String) -> Bool {
+        lhs == rhs || canonical(lhs) == canonical(rhs)
+    }
+}
+
 extension Array where Element == TimelineItem {
     /// True once the agent has finished at least one answer here. A chat that
     /// has never answered is not a chat with work to follow up on, so the
@@ -674,7 +707,7 @@ extension Array where Element == TimelineItem {
                     break search
                 case .toolEvent(
                     let existingID, let existingName, let existingDetail, _, .running, _, _, _)
-                where existingName == name
+                where ToolLifecycleTitle.namesMatch(existingName, name)
                     && (existingDetail == detail
                         || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
                     let existing = self[index]
@@ -726,7 +759,7 @@ extension Array where Element == TimelineItem {
                     break search
                 case .toolEvent(
                     let existingID, let existingName, let existingDetail, _, .running, _, _, _)
-                where existingName == name
+                where ToolLifecycleTitle.namesMatch(existingName, name)
                     && (existingDetail == detail
                         || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
                     let existing = self[index]
