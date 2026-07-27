@@ -16,6 +16,17 @@ export type HttpEffect<Req = never> = Effect.Effect<
   HttpServerRequest | Scope | Req
 >;
 
+/**
+ * `effect`'s HttpEffect brands a request scope as "ejected" when ownership
+ * is transferred to a consumer that outlives the handler's return — a
+ * streaming response body, a WebSocket upgrade, an RPC stream. Bridges check
+ * this before their close-on-return path: an ejected scope is closed by its
+ * new owner when it finishes, not by the bridge.
+ */
+const scopeEjected = Symbol.for("effect/http/HttpEffect/scopeEjected");
+
+export const isScopeEjected = (scope: Scope) => scopeEjected in scope;
+
 export const serve = <Req = never>(
   handler: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
@@ -25,7 +36,18 @@ export const serve = <Req = never>(
 ) =>
   Effect.serviceOption(HttpServer).pipe(
     Effect.map(Option.getOrUndefined),
-    Effect.flatMap((http) => (http ? http.serve(handler) : Effect.void)),
+    Effect.flatMap((http) =>
+      http
+        ? // `HttpServer.serve` registers the server on the ambient Scope and
+          // RETURNS; the server lives until that scope closes. A host program
+          // (ECS task/service, EC2 instance) must therefore park forever after
+          // a successful registration — otherwise a pure `{ fetch }` program
+          // completes immediately, `Effect.scoped` closes the scope, and the
+          // container exits 0 in a crash-loop. (One-shot `{ run }` programs
+          // never call `serve`, so they still exit when `run` completes.)
+          Effect.andThen(http.serve(handler), Effect.never)
+        : Effect.void,
+    ),
   );
 
 export class HttpServer extends Context.Service<

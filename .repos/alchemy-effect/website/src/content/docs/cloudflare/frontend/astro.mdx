@@ -1,0 +1,113 @@
+---
+title: Astro
+description: Deploy an Astro site to Cloudflare with Alchemy — static output via StaticSite today; Vite-resource support is a TODO.
+sidebar:
+  order: 9
+---
+
+:::caution[Not yet supported by Cloudflare.Website.Vite]
+`Cloudflare.Website.Vite` does not support Astro yet — support is a
+TODO. Astro's build is orchestrated by the `astro` CLI rather than a
+plain `vite build` of your `vite.config`, so it never enters the Vite
+resource's build path (see
+[what "pure Vite" means](/cloudflare/frontend/vite#what-pure-vite-means)).
+:::
+
+## Deploy the static output with StaticSite
+
+Astro's static output is just a directory of files, and
+`Cloudflare.Website.StaticSite` deploys any directory produced by any
+build command. This isn't a theoretical workaround: the Alchemy docs
+site itself ([alchemy.run](/)) is an Astro/Starlight
+app deployed exactly this way.
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyAstroSite",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Cloudflare.Website.StaticSite("Website", {
+      command: "astro build",
+      outdir: "dist",
+      compatibility: {
+        flags: ["nodejs_compat"],
+      },
+    });
+    return { url: site.url };
+  }),
+);
+```
+
+`StaticSite` runs `astro build` as a shell command, content-hashes the
+`dist` directory, and deploys it as a Worker serving static assets —
+the docs site's own declaration is the same shape, except its command
+is `bun run build` (which ends in `astro build`).
+
+## Add a Worker in front
+
+Optionally, a custom Worker can run before asset serving — set `main`
+and `runWorkerFirst`:
+
+```diff lang="typescript"
+ const site = yield* Cloudflare.Website.StaticSite("Website", {
+   command: "astro build",
++  main: "./src/worker.ts",
+   outdir: "dist",
+   compatibility: {
+     flags: ["nodejs_compat"],
+   },
++  assets: {
++    runWorkerFirst: true,
++  },
+ });
+```
+
+The docs site uses this to rewrite OG and canonical tags with
+`HTMLRewriter` (so preview deployments unfurl themselves instead of
+production) and to serve 301 redirects — see
+[a custom Worker in front of your assets](/cloudflare/frontend/static-site#a-custom-worker-in-front-of-your-assets)
+for the full pattern.
+
+## What the workaround loses
+
+This path deploys Astro's **static output only**. Astro SSR —
+`output: "server"` with the Cloudflare adapter — is not verified with
+Alchemy, so server-rendered routes, Astro actions, and middleware
+won't run; everything must be rendered at build time.
+
+## Local dev
+
+For `alchemy dev`, use `StaticSite`'s standard external dev-server
+mechanism — `dev.command` spawns the framework's own dev server
+instead of running the build:
+
+```diff lang="typescript"
+ const site = yield* Cloudflare.Website.StaticSite("Website", {
+   command: "astro build",
++  dev: {
++    command: "astro dev",
++  },
+   outdir: "dist",
+ });
+```
+
+This is the same mechanism `StaticSite` uses for any framework's dev
+server (the docs site doesn't set `dev.command`, so treat the `astro
+dev` pairing as the standard recipe rather than a battle-tested one) —
+see [StaticSite](/cloudflare/frontend/static-site) for how external
+dev mode works.
+
+## Status
+
+Astro support in the Vite resource is tracked as a TODO; until it
+lands, the matrix on
+[Frontend frameworks](/cloudflare/frontend/frontends) reflects current
+status.

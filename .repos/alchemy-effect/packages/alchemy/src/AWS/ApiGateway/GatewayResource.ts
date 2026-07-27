@@ -1,5 +1,6 @@
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
@@ -54,7 +55,7 @@ export interface ApiGatewayResource extends ResourceType<
  * points either at `api.rootResourceId` (for top-level paths) or at
  * another `Resource`'s `resourceId` (for nested paths). Attach methods
  * to a resource by passing its `resourceId` to `ApiGateway.Method`.
- *
+ * @resource
  * @section Path resources
  * @example Top-level path
  * ```typescript
@@ -139,6 +140,52 @@ export const ResourceProvider = () =>
             return { action: "replace" } as const;
           }
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate parent RestApis, then list the resources under each.
+            const apiIds = yield* ag.getRestApis.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.items ?? [])
+                    .filter((api) => api.id != null)
+                    .map((api) => api.id!),
+                ),
+              ),
+            );
+            const rows = yield* Effect.forEach(
+              apiIds,
+              (restApiId) =>
+                ag.getResources.pages({ restApiId }).pipe(
+                  Stream.runCollect,
+                  Effect.map((chunk) =>
+                    Array.from(chunk).flatMap((page) =>
+                      (page.items ?? [])
+                        // The API root resource ("/") has no parentId/pathPart;
+                        // it isn't a managed `Resource`, so skip it.
+                        .filter(
+                          (r) =>
+                            r.id != null &&
+                            r.parentId != null &&
+                            r.pathPart != null,
+                        )
+                        .map((r) => ({
+                          resourceId: r.id!,
+                          restApiId,
+                          parentId: r.parentId!,
+                          pathPart: r.pathPart!,
+                        })),
+                    ),
+                  ),
+                  // A RestApi can vanish mid-enumeration; skip it.
+                  Effect.catchTag("NotFoundException", () =>
+                    Effect.succeed([]),
+                  ),
+                ),
+              { concurrency: 10 },
+            );
+            return rows.flat();
+          }),
         read: Effect.fn(function* ({ output }) {
           if (!output?.resourceId) return undefined;
           const r = yield* ag

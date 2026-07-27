@@ -1,0 +1,307 @@
+---
+title: SNS
+description: Create an SNS Topic, publish to it from a Lambda with the Publish binding, fan messages out to SQS queues, and consume notifications as a typed Stream.
+---
+
+**SNS** is AWS's pub/sub layer: publishers send a message to a
+**topic** once, and SNS pushes a copy to every subscriber —
+Lambda functions, SQS queues, HTTPS endpoints, email. In Alchemy
+it's the `Topic` and `Subscription` resources, producer bindings
+(`Publish`, `PublishBatch`, and the `Stream`-sink-shaped
+`TopicSink`), and a consumer side:
+`SNS.consumeTopicNotifications` subscribes a Lambda to the topic
+as a typed `Stream` of notifications, creating the subscription
+and invoke permission for you.
+
+## Create a topic
+
+```typescript
+// src/topic.ts
+import * as SNS from "alchemy/AWS/SNS";
+
+export const Orders = SNS.Topic("Orders");
+```
+
+No name required — Alchemy generates one from the app, stage,
+and logical ID. Raw SNS topic attributes (delivery policies,
+KMS keys, display names) go through the `attributes` prop:
+
+```typescript
+export const Orders = SNS.Topic("Orders", {
+  attributes: {
+    DisplayName: "Order events",
+  },
+});
+```
+
+FIFO topics are a flag:
+
+```typescript
+export const OrdersFifo = SNS.Topic("OrdersFifo", {
+  fifo: true,
+  attributes: {
+    ContentBasedDeduplication: "true",
+  },
+});
+```
+
+Changing `fifo` or the topic name **replaces** the topic —
+everything else updates in place.
+
+## Publish from a Lambda
+
+Bind `SNS.Publish(topic)` in the function's init phase and call
+it from runtime handlers. The binding quietly attaches
+`sns:Publish` scoped to the topic ARN to the function's
+execution role:
+
+```typescript
+// src/api.ts
+import * as AWS from "alchemy/AWS";
+import * as SNS from "alchemy/AWS/SNS";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Orders } from "./topic.ts";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  { main: import.meta.url, url: true },
+  Effect.gen(function* () {
+    const topic = yield* Orders;
+    const publish = yield* SNS.Publish(topic);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const response = yield* publish({
+          Message: JSON.stringify({ orderId: "o_123" }),
+          Subject: "OrderCreated",
+        });
+        return yield* HttpServerResponse.json({
+          id: response.MessageId,
+        });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(SNS.PublishHttp)),
+) {}
+```
+
+`SNS.PublishHttp` is the runtime layer that backs the binding
+with the SNS HTTP API — provide it on the function like any
+other binding layer.
+
+## Publish in batches
+
+`SNS.PublishBatch(topic)` ships up to 10 messages per API call
+(runtime layer: `SNS.PublishBatchHttp`):
+
+```typescript
+const publishBatch = yield* SNS.PublishBatch(topic);
+
+// runtime
+const response = yield* publishBatch({
+  PublishBatchRequestEntries: messages.map((message, index) => ({
+    Id: `${index}`,
+    Message: message,
+  })),
+});
+// response.Successful / response.Failed
+```
+
+## Forward a stream with `TopicSink`
+
+If you have a `Stream<string>` of payloads — DynamoDB change
+records, SQS messages, anything — `SNS.TopicSink(topic)` is the
+sink-shaped producer: it batches items and publishes each chunk
+through `PublishBatch`:
+
+```typescript
+const sink = yield* SNS.TopicSink(topic);
+
+// runtime
+yield* Stream.fromIterable(payloads).pipe(Stream.run(sink));
+```
+
+`TopicSinkHttp` is implemented on top of the `PublishBatch`
+binding, so provide it in two tiers with `Layer.provideMerge` —
+the sink on top, the batch layer beneath:
+
+```typescript
+Effect.provide(
+  Layer.provideMerge(SNS.TopicSinkHttp, SNS.PublishBatchHttp),
+)
+```
+
+## Consume notifications on a Lambda
+
+`SNS.consumeTopicNotifications(topic, ...)` is the consumer-side
+mirror of `SQS.consumeQueueMessages`: a typed `Stream` of SNS
+notifications you compose with any operator. Behind the scenes
+it creates the SNS subscription (protocol `lambda`, endpoint =
+this function) and the `lambda:InvokeFunction` permission for
+`sns.amazonaws.com`:
+
+```typescript
+// src/worker.ts
+import * as AWS from "alchemy/AWS";
+import * as SNS from "alchemy/AWS/SNS";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { Orders } from "./topic.ts";
+
+export default class Worker extends AWS.Lambda.Function<Worker>()(
+  "OrdersWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const topic = yield* Orders;
+
+    yield* SNS.consumeTopicNotifications(topic, (stream) =>
+      stream.pipe(
+        Stream.runForEach((notification) =>
+          Console.log(
+            `${notification.Subject}: ${notification.Message}`,
+          ),
+        ),
+      ),
+    );
+
+    return {};
+  }).pipe(Effect.provide(AWS.Lambda.TopicEventSource)),
+) {}
+```
+
+Each notification carries the SNS message shape — `Message`,
+`Subject`, `MessageId`, `TopicArn`, and friends. The
+consumer-side machinery ships in `AWS.Lambda.TopicEventSource`;
+provide it on the function.
+
+## Filter what the consumer sees
+
+Pass subscription attributes as an optional middle argument —
+`FilterPolicy` makes SNS drop non-matching messages before they
+ever invoke your function:
+
+```typescript
+yield* SNS.consumeTopicNotifications(
+  topic,
+  {
+    attributes: {
+      FilterPolicy: JSON.stringify({ type: ["order.created"] }),
+    },
+  },
+  (stream) =>
+    stream.pipe(
+      Stream.runForEach((notification) =>
+        Console.log(notification.Message),
+      ),
+    ),
+);
+```
+
+## Fan out to SQS queues
+
+The classic SNS pattern is topic-to-queues fan-out: one publish,
+one copy per queue, each queue drained by its own consumer at
+its own pace. Subscriptions are their own resource, so wiring a
+queue to a topic is one declaration:
+
+```typescript
+// alchemy.run.ts (inside the Stack's Effect.gen)
+import * as SNS from "alchemy/AWS/SNS";
+import * as SQS from "alchemy/AWS/SQS";
+
+const topic = yield* Orders;
+
+const emails = yield* SQS.Queue("EmailJobs");
+const analytics = yield* SQS.Queue("AnalyticsJobs");
+
+yield* SNS.Subscription("EmailSubscription", {
+  topicArn: topic.topicArn,
+  protocol: "sqs",
+  endpoint: emails.queueArn,
+});
+
+yield* SNS.Subscription("AnalyticsSubscription", {
+  topicArn: topic.topicArn,
+  protocol: "sqs",
+  endpoint: analytics.queueArn,
+});
+```
+
+One AWS-side requirement: the queue's access policy must let SNS
+deliver to it. Grant it with the queue's `policy` prop, scoped
+to the topic:
+
+```typescript
+const emails = yield* SQS.Queue("EmailJobs", {
+  policy: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: { Service: "sns.amazonaws.com" },
+        Action: "sqs:SendMessage",
+        Resource: "*",
+        Condition: {
+          ArnEquals: { "aws:SourceArn": topic.topicArn },
+        },
+      },
+    ],
+  },
+});
+```
+
+By default SNS wraps each delivery in a JSON envelope
+(`Message`, `Subject`, `TopicArn`, ...). Set
+`RawMessageDelivery` on the subscription to receive the bare
+message body instead:
+
+```typescript
+yield* SNS.Subscription("AnalyticsSubscription", {
+  topicArn: topic.topicArn,
+  protocol: "sqs",
+  endpoint: analytics.queueArn,
+  attributes: {
+    RawMessageDelivery: "true",
+  },
+});
+```
+
+Changing a subscription's `protocol`, `topicArn`, or `endpoint`
+**replaces** the subscription; `attributes` update in place.
+From here each queue is a normal SQS consumer —
+[`SQS.consumeQueueMessages`](/aws/messaging/sqs) picks the messages up on
+whatever Lambda you point at it.
+
+## SNS vs EventBridge vs SQS
+
+All three move messages; they sit at different points:
+
+- **[SQS](/aws/messaging/sqs)** is one queue, one consumer group.
+  Point-to-point work distribution: producers enqueue, a pool of
+  workers drains. No fan-out — a message is consumed once.
+- **SNS** is broadcast. Every subscriber gets its own copy, with
+  per-subscription filter policies. Reach for it when several
+  independent systems must react to the same event, or when you
+  want push delivery (Lambda, HTTPS, email) rather than polling.
+  Pair it with SQS (fan-out above) when each subscriber also
+  needs buffering and retries.
+- **[EventBridge](/aws/messaging/eventbridge)** is a routed event bus:
+  rules match on the event *content* and route to targets, with
+  first-class support for AWS service events, schedules, and
+  third-party sources. Choose it for event-driven architectures
+  with many event types on one bus; choose SNS when you have one
+  well-known channel and want the simplest possible
+  publish/subscribe with high fan-out.
+
+## Where next
+
+- [SQS](/aws/messaging/sqs) — the queue side of the fan-out pattern:
+  consumers, batching, dead-letter queues.
+- [EventBridge](/aws/messaging/eventbridge) — content-based routing when
+  one topic per channel stops scaling.
+- [Lambda](/aws/compute/lambda) — the runtime both the publisher and
+  consumer above are built on.
+- [`Topic` reference](/providers/aws/sns/topic) and
+  [`Subscription` reference](/providers/aws/sns/subscription) —
+  every prop and attribute.

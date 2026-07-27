@@ -11,9 +11,9 @@ import { BetterAuth } from "./BetterAuth.ts";
 export const CloudflareD1 = Layer.effect(
   BetterAuth,
   Effect.gen(function* () {
-    const d1 = yield* Cloudflare.D1Database("BetterAuth");
+    const d1 = yield* Cloudflare.D1.Database("BetterAuth");
 
-    const connection = yield* Cloudflare.D1Connection.bind(d1);
+    const connection = yield* Cloudflare.D1.QueryDatabase(d1);
 
     const BETTER_AUTH_SECRET = yield* Random("BETTER_AUTH_SECRET");
 
@@ -39,4 +39,4 @@ export const CloudflareD1 = Layer.effect(
       }),
     };
   }),
-).pipe(Layer.provide(Cloudflare.D1ConnectionLive));
+).pipe(Layer.provide(Cloudflare.D1.QueryDatabaseBinding));

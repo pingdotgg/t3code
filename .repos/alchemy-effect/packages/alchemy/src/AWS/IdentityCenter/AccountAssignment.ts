@@ -6,7 +6,11 @@ import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
-import { resolveInstance, retryIdentityCenter } from "./common.ts";
+import {
+  listInstances,
+  resolveInstance,
+  retryIdentityCenter,
+} from "./common.ts";
 
 export interface AccountAssignmentProps {
   /**
@@ -36,11 +40,17 @@ export interface AccountAssignment extends Resource<
   "AWS.IdentityCenter.AccountAssignment",
   AccountAssignmentProps,
   {
+    /** The Identity Center instance the assignment lives in. */
     instanceArn: string;
+    /** The permission set provisioned to the target. */
     permissionSetArn: string;
+    /** The user or group ID that was assigned. */
     principalId: string;
+    /** Whether the principal is a `USER` or `GROUP`. */
     principalType: "USER" | "GROUP";
+    /** The AWS account ID the assignment targets. */
     targetId: string;
+    /** The target type (`AWS_ACCOUNT`). */
     targetType: "AWS_ACCOUNT";
   },
   never,
@@ -50,7 +60,7 @@ export interface AccountAssignment extends Resource<
 /**
  * Assigns an IAM Identity Center permission set to a user or group in an AWS
  * account.
- *
+ * @resource
  * @section Creating Assignments
  * @example Assign A Group To A Workload Account
  * ```typescript
@@ -91,6 +101,36 @@ export const AccountAssignmentProvider = () =>
             return { action: "replace" } as const;
           }
         }),
+        // Enumerate every account assignment in the account/region. Assignments
+        // are keyed by (instance, permissionSet, account, principal) with no
+        // top-level list API, so fan out: list instances -> permission sets per
+        // instance -> accounts provisioned to each permission set -> account
+        // assignments per (account, permissionSet). Each `listAccountAssignments`
+        // item already carries every field of the `read`-shaped Attributes, so
+        // no per-item hydration is needed. All pagination is exhausted; missing
+        // parents (deleted concurrently) are skipped via the typed
+        // `ResourceNotFoundException` tag. Bounded concurrency keeps the fan-out
+        // from exploding.
+        list: () =>
+          Effect.gen(function* () {
+            const instances = yield* listInstances();
+
+            const perInstance = yield* Effect.forEach(
+              instances,
+              (instance) => {
+                const instanceArn = instance.InstanceArn;
+                if (!instanceArn) {
+                  return Effect.succeed(
+                    [] as AccountAssignment["Attributes"][],
+                  );
+                }
+                return listAssignmentsForInstance(instanceArn);
+              },
+              { concurrency: 5 },
+            );
+
+            return perInstance.flat();
+          }),
         read: Effect.fn(function* ({ olds, output }) {
           if (output?.instanceArn) {
             return yield* readAssignment({
@@ -190,6 +230,98 @@ export const AccountAssignmentProvider = () =>
     }),
   );
 
+const listAssignmentsForInstance = Effect.fn(function* (instanceArn: string) {
+  const permissionSetArns = yield* retryIdentityCenter(
+    ssoAdmin.listPermissionSets
+      .items({ InstanceArn: instanceArn, MaxResults: 100 })
+      .pipe(
+        Stream.runCollect,
+        Effect.map((items) => Array.from(items) as string[]),
+      ),
+  ).pipe(
+    Effect.catchTag("ResourceNotFoundException", () => Effect.succeed([])),
+  );
+
+  const perPermissionSet = yield* Effect.forEach(
+    permissionSetArns,
+    (permissionSetArn) =>
+      listAssignmentsForPermissionSet(instanceArn, permissionSetArn),
+    { concurrency: 10 },
+  );
+
+  return perPermissionSet.flat();
+});
+
+const listAssignmentsForPermissionSet = Effect.fn(function* (
+  instanceArn: string,
+  permissionSetArn: string,
+) {
+  const accountIds = yield* retryIdentityCenter(
+    ssoAdmin.listAccountsForProvisionedPermissionSet
+      .items({
+        InstanceArn: instanceArn,
+        PermissionSetArn: permissionSetArn,
+        MaxResults: 100,
+      })
+      .pipe(
+        Stream.runCollect,
+        Effect.map((items) => Array.from(items) as string[]),
+      ),
+  ).pipe(
+    Effect.catchTag("ResourceNotFoundException", () => Effect.succeed([])),
+  );
+
+  const perAccount = yield* Effect.forEach(
+    accountIds,
+    (accountId) =>
+      ssoAdmin.listAccountAssignments
+        .items({
+          InstanceArn: instanceArn,
+          AccountId: accountId,
+          PermissionSetArn: permissionSetArn,
+          MaxResults: 100,
+        })
+        .pipe(
+          Stream.runCollect,
+          Effect.map(
+            (items) => Array.from(items) as ssoAdmin.AccountAssignment[],
+          ),
+          retryIdentityCenter,
+          Effect.map((assignments) =>
+            assignments.flatMap(
+              (assignment): AccountAssignment["Attributes"][] => {
+                if (
+                  !assignment.AccountId ||
+                  !assignment.PermissionSetArn ||
+                  !assignment.PrincipalId ||
+                  (assignment.PrincipalType !== "USER" &&
+                    assignment.PrincipalType !== "GROUP")
+                ) {
+                  return [];
+                }
+                return [
+                  {
+                    instanceArn,
+                    permissionSetArn: assignment.PermissionSetArn,
+                    principalId: assignment.PrincipalId,
+                    principalType: assignment.PrincipalType as "USER" | "GROUP",
+                    targetId: assignment.AccountId,
+                    targetType: "AWS_ACCOUNT",
+                  },
+                ];
+              },
+            ),
+          ),
+          Effect.catchTag("ResourceNotFoundException", () =>
+            Effect.succeed([]),
+          ),
+        ),
+    { concurrency: 10 },
+  );
+
+  return perAccount.flat();
+});
+
 const readAssignment = Effect.fn(function* ({
   instanceArn,
   permissionSetArn,
@@ -216,16 +348,18 @@ const readAssignment = Effect.fn(function* ({
       assignment.PrincipalType === principalType,
   );
 
-  return match
-    ? ({
-        instanceArn: instance.InstanceArn!,
-        permissionSetArn,
-        principalId,
-        principalType,
-        targetId,
-        targetType: "AWS_ACCOUNT",
-      } satisfies AccountAssignment["Attributes"])
-    : undefined;
+  if (!match) {
+    return undefined;
+  }
+  const result: AccountAssignment["Attributes"] = {
+    instanceArn: instance.InstanceArn!,
+    permissionSetArn,
+    principalId,
+    principalType,
+    targetId,
+    targetType: "AWS_ACCOUNT",
+  };
+  return result;
 });
 
 const waitForAssignmentCreation = (instanceArn: string, requestId: string) =>
@@ -256,9 +390,10 @@ const waitForAssignmentCreation = (instanceArn: string, requestId: string) =>
   }).pipe(
     Effect.retry({
       while: (error: any) => error?._tag === "AssignmentCreationInProgress",
-      schedule: Schedule.spaced("2 seconds").pipe(
-        Schedule.both(Schedule.recurs(120)),
-      ),
+      schedule: Schedule.max([
+        Schedule.spaced("2 seconds"),
+        Schedule.recurs(120),
+      ]),
     }),
   );
 
@@ -290,8 +425,9 @@ const waitForAssignmentDeletion = (instanceArn: string, requestId: string) =>
   }).pipe(
     Effect.retry({
       while: (error: any) => error?._tag === "AssignmentDeletionInProgress",
-      schedule: Schedule.spaced("2 seconds").pipe(
-        Schedule.both(Schedule.recurs(120)),
-      ),
+      schedule: Schedule.max([
+        Schedule.spaced("2 seconds"),
+        Schedule.recurs(120),
+      ]),
     }),
   );
