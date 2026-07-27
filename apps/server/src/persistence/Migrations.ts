@@ -55,6 +55,7 @@ import Migration0044 from "./Migrations/044_ProjectionTurnsLatestByThreadIndex.t
 import Migration0045 from "./Migrations/045_SidebarPinnedThreads.ts";
 import Migration0046 from "./Migrations/046_SidebarAppliedMutations.ts";
 import Migration0047 from "./Migrations/047_CleanupUnrenderablePendingApprovals.ts";
+import Migration0048 from "./Migrations/048_ProjectionThreadMessageSearch.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -109,6 +110,7 @@ export const migrationEntries = [
   [45, "SidebarPinnedThreads", Migration0045],
   [46, "SidebarAppliedMutations", Migration0046],
   [47, "CleanupUnrenderablePendingApprovals", Migration0047],
+  [48, "ProjectionThreadMessageSearch", Migration0048],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

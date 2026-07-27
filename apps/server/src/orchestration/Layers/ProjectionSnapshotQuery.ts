@@ -183,6 +183,15 @@ const ProjectIdLookupInput = Schema.Struct({
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
 });
+const TranscriptSearchRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  projectTitle: Schema.NullOr(Schema.String),
+  branch: Schema.NullOr(Schema.String),
+  role: Schema.Literals(["user", "assistant"]),
+  excerpt: Schema.String,
+  updatedAt: IsoDateTime,
+});
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
   threadId: ThreadId,
@@ -1863,6 +1872,58 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const searchTranscript: NonNullable<ProjectionSnapshotQueryShape["searchTranscript"]> = (
+    query,
+  ) => {
+    const normalizedQuery = query.trim().replace(/\s+/g, " ");
+    if (normalizedQuery.length < 3) {
+      return Effect.succeed({ matches: [] });
+    }
+    const literalQuery = `"${normalizedQuery.replaceAll('"', '""')}"`;
+    return SqlSchema.findAll({
+      Request: Schema.Struct({ query: Schema.String }),
+      Result: TranscriptSearchRowSchema,
+      execute: ({ query: matchQuery }) => sql`
+        WITH matched AS (
+          SELECT
+            messages.thread_id AS "threadId",
+            threads.title,
+            projects.title AS "projectTitle",
+            threads.branch,
+            messages.role,
+            snippet(projection_thread_message_fts, 0, '', '', '...', 20) AS excerpt,
+            messages.updated_at AS "updatedAt",
+            bm25(projection_thread_message_fts) AS score,
+            ROW_NUMBER() OVER (
+              PARTITION BY messages.thread_id
+              ORDER BY bm25(projection_thread_message_fts), messages.updated_at DESC, messages.message_id ASC
+            ) AS thread_rank
+          FROM projection_thread_message_fts
+          JOIN projection_thread_messages AS messages
+            ON messages.rowid = projection_thread_message_fts.rowid
+          JOIN projection_threads AS threads ON threads.thread_id = messages.thread_id
+          LEFT JOIN projection_projects AS projects ON projects.project_id = threads.project_id
+          WHERE projection_thread_message_fts MATCH ${matchQuery}
+            AND threads.archived_at IS NULL
+            AND threads.deleted_at IS NULL
+        )
+        SELECT "threadId", title, "projectTitle", branch, role, excerpt, "updatedAt"
+        FROM matched
+        WHERE thread_rank = 1
+        ORDER BY score, "updatedAt" DESC, "threadId"
+        LIMIT 20
+      `,
+    })({ query: literalQuery }).pipe(
+      Effect.map((matches) => ({ matches })),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.searchTranscript:query",
+          "ProjectionSnapshotQuery.searchTranscript:decodeRows",
+        ),
+      ),
+    );
+  };
+
   return {
     getSnapshot,
     getShellSnapshot,
@@ -1875,6 +1936,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadShellProjectContextById,
     getThreadDetailById,
+    searchTranscript,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

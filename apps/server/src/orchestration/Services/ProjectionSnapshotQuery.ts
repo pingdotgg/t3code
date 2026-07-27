@@ -14,6 +14,7 @@ import type {
   OrchestrationShellSnapshot,
   OrchestrationThread,
   OrchestrationThreadShell,
+  OrchestrationSearchTranscriptResult,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -123,6 +124,9 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+  readonly searchTranscript?: (
+    query: string,
+  ) => Effect.Effect<OrchestrationSearchTranscriptResult, ProjectionRepositoryError>;
 }
 
 /**

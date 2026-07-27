@@ -932,6 +932,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.searchTranscript]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.searchTranscript,
+            (
+              projectionSnapshotQuery.searchTranscript?.(input.query) ??
+              Effect.succeed({ matches: [] })
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to search conversation transcripts",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.getThreadSnapshot]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getThreadSnapshot,

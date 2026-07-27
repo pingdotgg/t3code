@@ -38,6 +38,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  searchTranscript: "orchestration.searchTranscript",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -1749,6 +1750,27 @@ export const DispatchResult = Schema.Struct({
 });
 export type DispatchResult = typeof DispatchResult.Type;
 
+export const OrchestrationSearchTranscriptInput = Schema.Struct({
+  query: Schema.String,
+});
+export type OrchestrationSearchTranscriptInput = typeof OrchestrationSearchTranscriptInput.Type;
+
+export const OrchestrationTranscriptSearchMatch = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  projectTitle: Schema.NullOr(Schema.String),
+  branch: Schema.NullOr(Schema.String),
+  role: Schema.Literals(["user", "assistant"]),
+  excerpt: Schema.String,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationTranscriptSearchMatch = typeof OrchestrationTranscriptSearchMatch.Type;
+
+export const OrchestrationSearchTranscriptResult = Schema.Struct({
+  matches: Schema.Array(OrchestrationTranscriptSearchMatch),
+});
+export type OrchestrationSearchTranscriptResult = typeof OrchestrationSearchTranscriptResult.Type;
+
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
@@ -1827,6 +1849,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiffState: {
     input: OrchestrationGetFullThreadDiffStateInput,
     output: OrchestrationGetFullThreadDiffStateResult,
+  },
+  searchTranscript: {
+    input: OrchestrationSearchTranscriptInput,
+    output: OrchestrationSearchTranscriptResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,
