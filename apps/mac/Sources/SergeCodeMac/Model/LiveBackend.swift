@@ -2671,6 +2671,16 @@ public actor LiveBackend: BackendService {
                 projectPatches[override.projectID] = AutoReviewProjectOverridePatch(enabled: enabled)
             }
         }
+        // Only sent in "custom" mode: an incomplete custom pick (mode chosen,
+        // model not yet selected) must not clear the stored selection, and the
+        // server ignores the field in the other two modes anyway.
+        var fixModelSelection: ModelSelection?
+        if settings.autoReview.fixModelMode == "custom",
+            let instanceID = settings.autoReview.fixModelInstanceID,
+            let modelID = settings.autoReview.fixModelID
+        {
+            fixModelSelection = ModelSelection(instanceId: instanceID, model: modelID)
+        }
         let autoReviewPatch = AutoReviewSettingsPatch(
             enabled: settings.autoReview.enabled,
             mode: settings.autoReview.mode,
@@ -2680,7 +2690,11 @@ public actor LiveBackend: BackendService {
             mentionHandle: settings.autoReview.mentionHandle,
             pollInterval: settings.autoReview.pollIntervalSeconds * 1000,
             autoFixOriginThread: settings.autoReview.autoFixOriginThread,
+            fixModelMode: settings.autoReview.fixModelMode,
+            fixModelSelection: fixModelSelection,
             maxAttempts: settings.autoReview.maxAttempts,
+            concurrency: settings.autoReview.concurrency,
+            fixConcurrency: settings.autoReview.fixConcurrency,
             projects: projectPatches)
         let patch = ServerSettingsPatch(
             enableAssistantStreaming: settings.assistantStreaming,
@@ -2760,7 +2774,12 @@ public actor LiveBackend: BackendService {
                 mentionHandle: ar.mentionHandle,
                 pollIntervalSeconds: max(15, ar.pollIntervalMs / 1000),
                 autoFixOriginThread: ar.autoFixOriginThread,
+                fixModelMode: ar.fixModelMode,
+                fixModelInstanceID: ar.fixModelSelection?.instanceId,
+                fixModelID: ar.fixModelSelection?.model,
                 maxAttempts: ar.maxAttempts,
+                concurrency: ar.concurrency,
+                fixConcurrency: ar.fixConcurrency,
                 projectOverrides: overrides),
             autoArchiveSettledAfterMs: settings.autoArchiveSettledAfterMs)
     }
