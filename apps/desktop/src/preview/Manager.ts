@@ -2006,18 +2006,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       },
       () => wc.capturePage(),
     );
-    const captureStillCurrent = yield* Effect.all(
+    const currentCaptureSession = yield* Effect.all(
       [SynchronizedRef.get(frameCaptureSessionsRef), SynchronizedRef.get(tabsRef)],
       { concurrency: 2 },
     ).pipe(
-      Effect.map(
-        ([captureSessions, tabs]) =>
-          captureSessions.get(tabId) === captureSession &&
+      Effect.map(([captureSessions, tabs]) => {
+        const current = captureSessions.get(tabId);
+        return current?.scope === captureSession.scope &&
           tabs.get(tabId)?.webContentsId === wc.id &&
-          !wc.isDestroyed(),
-      ),
+          !wc.isDestroyed()
+          ? current
+          : undefined;
+      }),
     );
-    if (!captureStillCurrent) return;
+    if (!currentCaptureSession) return;
     const size = yield* attempt(
       {
         operation: "frameCapture.measureFrame",
@@ -2051,7 +2053,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       receivedAt,
     };
     const deliveries: Array<Effect.Effect<void>> = [];
-    if (captureSession.consumers.has("recording")) {
+    if (currentCaptureSession.consumers.has("recording")) {
       const listeners = yield* Ref.get(recordingFrameListenersRef);
       deliveries.push(
         Effect.forEach(
@@ -2061,7 +2063,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ),
       );
     }
-    if (captureSession.consumers.has("picture-in-picture")) {
+    if (currentCaptureSession.consumers.has("picture-in-picture")) {
       const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
         tabId,
       )?.window;
@@ -2229,6 +2231,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       if (!pictureInPictureSession) {
         yield* stopFrameCapture(tabId, "picture-in-picture");
+        const tabs = yield* SynchronizedRef.get(tabsRef);
+        if (tabs.has(tabId)) {
+          yield* update(tabId, { pictureInPicture: false });
+        }
         return;
       }
       yield* releasePictureInPicture(tabId, pictureInPictureSession, true);
@@ -2417,7 +2423,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         },
         () => pictureInPictureSession.window.showInactive(),
       );
-      yield* update(tabId, { pictureInPicture: true });
     });
     const initializationExit = yield* Effect.gen(function* () {
       const initializationFiber = yield* Effect.forkIn(
@@ -2442,6 +2447,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }
             return false;
           }
+          yield* update(tabId, { pictureInPicture: true });
           yield* Deferred.done(pictureInPictureSession.ready, initializationExit);
           return true;
         }),

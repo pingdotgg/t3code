@@ -918,6 +918,62 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps an in-flight frame when a capture consumer is added", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image: TestCapturedPreviewImage = {
+          toJPEG: vi.fn(() => Buffer.from("shared-in-flight-frame")),
+          getSize: vi.fn(() => ({ width: 1280, height: 720 })),
+        };
+        let markCaptureStarted!: () => void;
+        const captureStarted = new Promise<void>((resolve) => {
+          markCaptureStarted = resolve;
+        });
+        let resolveCapture: ((captured: TestCapturedPreviewImage) => void) | undefined;
+        const capturePage = vi.fn(() => {
+          markCaptureStarted();
+          return new Promise<TestCapturedPreviewImage>((resolve) => {
+            resolveCapture = resolve;
+          });
+        });
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+        const recordingFrames: DesktopPreviewRecordingFrame[] = [];
+        yield* manager.subscribeRecordingFrames((frame) =>
+          Effect.sync(() => {
+            recordingFrames.push(frame);
+          }),
+        );
+
+        yield* manager.createTab("tab_capture_consumer_added");
+        yield* manager.registerWebview("tab_capture_consumer_added", 42);
+        const recordingFiber = yield* manager
+          .startRecording("tab_capture_consumer_added")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => captureStarted);
+
+        yield* manager.openPictureInPicture("tab_capture_consumer_added");
+        resolveCapture?.(image);
+        yield* Fiber.join(recordingFiber);
+
+        expect(recordingFrames).toHaveLength(1);
+        expect(send).toHaveBeenCalledWith(
+          "desktop:preview-pip-frame",
+          expect.objectContaining({
+            tabId: "tab_capture_consumer_added",
+            data: Buffer.from("shared-in-flight-frame").toString("base64"),
+          }),
+        );
+
+        yield* manager.stopRecording("tab_capture_consumer_added");
+        yield* manager.closePictureInPicture("tab_capture_consumer_added");
+      }),
+    ),
+  );
+
   effectIt.effect("shares background frame capture between recording and picture-in-picture", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -1160,6 +1216,7 @@ describe("PreviewManager", () => {
 
         expect(Exit.hasInterrupts(openExit)).toBe(true);
         expect(pictureInPictureWindow.close).toHaveBeenCalledOnce();
+        expect(states.some((state) => state.pictureInPicture)).toBe(false);
         expect(states.at(-1)?.pictureInPicture).toBe(false);
       }),
     ),
