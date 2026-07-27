@@ -242,7 +242,7 @@ function SidebarV2ThreadTooltip({
     <TooltipPopup
       side="right"
       align="start"
-      sideOffset={8}
+      sideOffset={4}
       variant="glass"
       className="max-w-80 text-left whitespace-normal"
     >
