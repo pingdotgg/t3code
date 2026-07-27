@@ -48,6 +48,22 @@ describe("new-thread parity with the web UI", () => {
     ).toBe("new-worktree");
   });
 
+  it("Given a project header is selected, when opening a new thread, then that project is used", () => {
+    expect(
+      resolveNewThreadContext({
+        projects,
+        selectedProjectId: "project-two",
+        thread: null,
+        defaultEnvironmentMode: "local",
+      }),
+    ).toEqual({
+      projectIndex: 1,
+      workspaceMode: "current",
+      branch: null,
+      worktreePath: null,
+    });
+  });
+
   it("Given refs are loaded, then the current branch is selected for a new-worktree draft", () => {
     expect(resolveInitialBranch(refs, null)).toBe("feature/tui");
   });

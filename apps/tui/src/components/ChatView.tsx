@@ -76,7 +76,6 @@ import { ComposerDock, type ComposerDockContext } from "./ComposerDock.tsx";
 import { FilesView, type FilesStatus, type ViewingFile } from "./FilesView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
-import { NewThreadHero } from "./NewThreadHero.tsx";
 import { ImageLightbox, type ExpandedImagePreview } from "./ImageLightbox.tsx";
 import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
@@ -223,7 +222,7 @@ export function ChatView({
   const settingsScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Shared popover picker for composer controls and new-thread checkout context.
   const [picker, setPicker] = React.useState<{
-    readonly kind: "project" | "model" | "runtime" | "reasoning" | "workspace" | "branch";
+    readonly kind: "model" | "runtime" | "reasoning" | "workspace" | "branch";
     readonly target: "thread" | "new";
     readonly title: string;
     readonly status: SelectStatus;
@@ -669,6 +668,12 @@ export function ChatView({
     newDraftOriginSelectionRef.current = selectionKey;
     const context = resolveNewThreadContext({
       projects,
+      selectedProjectId:
+        state.selection?.kind === "project"
+          ? state.selection.id
+          : state.selection?.kind === "thread"
+            ? (detail?.projectId ?? null)
+            : null,
       thread: detail,
       defaultEnvironmentMode: newThreadSettings.defaultThreadEnvMode,
     });
@@ -728,22 +733,6 @@ export function ChatView({
         },
       ],
       selectedIndex: newWorkspaceMode === "current" ? 0 : 1,
-    });
-  };
-
-  const openProjectPicker = () => {
-    if (focus !== "new") return;
-    setPicker({
-      kind: "project",
-      target: "new",
-      title: "project",
-      status: projects.length > 0 ? "ready" : "empty",
-      options: projects.map((project) => ({
-        name: project.title,
-        description: project.workspaceRoot,
-        value: project.id,
-      })),
-      selectedIndex: activeProjectIndex,
     });
   };
 
@@ -932,33 +921,6 @@ export function ChatView({
     const value = typeof option?.value === "string" ? option.value : null;
     const kind = current.kind;
     if (!value) return;
-    if (kind === "project") {
-      const nextProjectIndex = projects.findIndex((project) => project.id === value);
-      const nextProject = projects[nextProjectIndex];
-      if (!nextProject) return;
-      setPicker(null);
-      if (nextProjectIndex === activeProjectIndex) return;
-
-      // A worktree path, branch, or pending checkout from the previous project
-      // must never leak into the newly selected destination.
-      newContextMutationTokenRef.current += 1;
-      newContextMutationPendingRef.current = false;
-      setNewContextMutationPending(false);
-      setProjectIndex(nextProjectIndex);
-      setNewWorkspaceMode(
-        newThreadSettings.defaultThreadEnvMode === "worktree" ? "new-worktree" : "current",
-      );
-      setNewBranch(null);
-      setNewContextWorktreePath(null);
-      setNewBranchRefs([]);
-      setNewBranchRefsStatus("loading");
-      setNewModelSelection(
-        resolveModelSelection(modelOptions, nextProject.defaultModelSelection) ??
-          nextProject.defaultModelSelection,
-      );
-      store.setStatus(`Project → ${nextProject.title}`, "success");
-      return;
-    }
     if (kind === "branch") {
       const ref = newBranchRefs.find((candidate) => candidate.name === value);
       if (ref) applyNewThreadBranch(ref);
@@ -1075,7 +1037,6 @@ export function ChatView({
   const composerContext: ComposerDockContext | null =
     focus === "new"
       ? {
-          project: activeNewThreadProject?.title ?? "Choose a project",
           workspace:
             newWorkspaceMode === "new-worktree"
               ? "New worktree"
@@ -1083,7 +1044,6 @@ export function ChatView({
                 ? "Current worktree"
                 : "Project workspace",
           branch: newBranch ?? "(current)",
-          onOpenProject: openProjectPicker,
           onOpenWorkspace: openWorkspacePicker,
           onOpenBranch: openBranchPicker,
         }
@@ -1151,8 +1111,7 @@ export function ChatView({
     (specialComposer || popoverOpen ? 0 : pendingPanelHeight) +
     (specialComposer ? 0 : attachmentPreviewHeight) +
     (compactComposerFooter ? 1 : 0) +
-    (composerContext ? 1 : 0) +
-    (composerContext?.project ? 1 : 0);
+    (composerContext ? 1 : 0);
   const verticalLayout = resolveChatVerticalLayout({
     terminalHeight: height,
     desiredEditorRows: desiredPromptLines,
@@ -1823,12 +1782,6 @@ export function ChatView({
     if (focus === "new") {
       list.push(
         {
-          id: "project",
-          title: "Change project",
-          keywords: "destination repository folder",
-          run: () => runCommand(openProjectPicker),
-        },
-        {
           id: "workspace",
           title: "Change workspace",
           keywords: "checkout worktree",
@@ -2262,7 +2215,9 @@ export function ChatView({
 
   const placeholder =
     focus === "new"
-      ? "Ask anything, @tag files/folders, $use skills, or / for commands"
+      ? activeNewThreadProject
+        ? `What should we build in ${activeNewThreadProject.title}?`
+        : "What should we build?"
       : detail
         ? "Ask anything, @tag files/folders, $use skills, or / for commands"
         : state.selection?.kind === "project"
@@ -2383,19 +2338,13 @@ export function ChatView({
                   height={panesHeight}
                   onClose={closeExpandedImage}
                 />
-              ) : focus === "new" ? (
-                <NewThreadHero
-                  projectTitle={activeNewThreadProject?.title ?? null}
-                  width={chatWidth}
-                  height={panesHeight}
-                  onOpenProject={openProjectPicker}
-                />
               ) : (
                 <MessagesTimeline
-                  detail={detail}
-                  approvals={approvals}
+                  detail={focus === "new" ? null : detail}
+                  approvals={focus === "new" ? [] : approvals}
                   approvalIndex={activeApprovalIndex}
                   projectHint={selectedProjectTitle}
+                  {...(focus === "new" ? { emptyHint: "" } : {})}
                   width={chatWidth}
                   height={panesHeight}
                   syntaxStyle={syntaxStyle}

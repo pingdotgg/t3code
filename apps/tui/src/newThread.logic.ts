@@ -15,20 +15,26 @@ export interface NewThreadContext {
 
 /**
  * Match the web UI's contextual new-thread behavior: start in the selected
- * thread's project/workspace when there is one, otherwise use the first project
- * and the server's configured default environment mode.
+ * project, inheriting the selected thread's workspace when applicable. Only
+ * fall back to the first project when there is no project context at all.
  */
 export function resolveNewThreadContext(input: {
   readonly projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id">>;
+  readonly selectedProjectId?: string | null;
   readonly thread: Pick<OrchestrationThread, "projectId" | "branch" | "worktreePath"> | null;
   readonly defaultEnvironmentMode: "local" | "worktree";
 }): NewThreadContext {
-  const contextualProjectIndex = input.thread
-    ? input.projects.findIndex((project) => project.id === input.thread?.projectId)
+  const contextualProjectId = input.selectedProjectId ?? input.thread?.projectId ?? null;
+  const contextualProjectIndex = contextualProjectId
+    ? input.projects.findIndex((project) => project.id === contextualProjectId)
     : -1;
   const projectIndex = contextualProjectIndex >= 0 ? contextualProjectIndex : 0;
 
-  if (contextualProjectIndex >= 0 && input.thread) {
+  if (
+    contextualProjectIndex >= 0 &&
+    input.thread &&
+    input.thread.projectId === contextualProjectId
+  ) {
     return {
       projectIndex,
       workspaceMode: "current",

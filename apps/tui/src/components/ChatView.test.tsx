@@ -1069,7 +1069,7 @@ describe("ChatView new-thread parity", () => {
     });
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("What should we build in Project one ▾?") &&
+        frame.includes("What should we build in Project one?") &&
         frame.includes("effort medium") &&
         frame.includes("▸ Send"),
     );
@@ -1094,7 +1094,6 @@ describe("ChatView new-thread parity", () => {
       await Promise.resolve();
     });
     const frame = await setup.waitForFrame((next) => next.includes("create failed"));
-    expect(frame).toContain("What should we build in Project one ▾?");
     expect(frame).not.toContain("new thread");
     expect(frame).toContain("preserve this new task");
     setup.renderer.destroy();
@@ -1121,7 +1120,7 @@ describe("ChatView new-thread parity", () => {
       await setup.renderOnce();
     });
     const frame = await setup.waitForFrame((next) =>
-      next.includes("What should we build in Project one ▾?"),
+      next.includes("What should we build in Project one?"),
     );
     expect(frame).toContain("▸ Send");
     expect(frame).not.toContain("new thread");
@@ -1150,7 +1149,7 @@ describe("ChatView new-thread parity", () => {
     });
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("What should we build in Project one ▾?") &&
+        frame.includes("What should we build in Project one?") &&
         frame.includes("main") &&
         frame.includes("^B Build"),
     );
@@ -1187,29 +1186,26 @@ describe("ChatView new-thread parity", () => {
     setup.renderer.destroy();
   });
 
-  it("Given a new-thread draft, when the destination project changes, then the visible context and created thread use that project", async () => {
+  it("Given a project header is selected, when a new-thread draft is opened, then the prompt and created thread use that project", async () => {
     const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
-    const refsCwds: string[] = [];
     const fake = fakeClient({
       detail: thread(),
-      shellSnapshot: shell(undefined, [project, projectTwo] as never),
-      listRefs: async (cwd) => {
-        refsCwds.push(cwd);
-        return {
+      shellSnapshot: shell([], [projectTwo] as never),
+      listRefs: async () =>
+        ({
           refs: [
             {
-              name: cwd.endsWith("project-two") ? "develop" : "main",
+              name: "develop",
               current: true,
               isDefault: true,
-              worktreePath: cwd,
+              worktreePath: "/workspace/project-two",
             },
           ],
           isRepo: true,
           hasPrimaryRemote: true,
           nextCursor: null,
           totalCount: 1,
-        } as never;
-      },
+        }) as never,
       createThread: async (input) => {
         calls.push(input);
         return "t-project-two" as never;
@@ -1220,49 +1216,27 @@ describe("ChatView new-thread parity", () => {
       height: 32,
     });
 
-    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      await setup.renderOnce();
+      fake.connect();
+      await setup.renderOnce();
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Project two"));
     await React.act(async () => {
       setup.mockInput.pressKey("n", { ctrl: true });
       await setup.renderOnce();
     });
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("What should we build in Project one ▾?") &&
-        frame.includes("project Project one ▾"),
+        frame.includes("What should we build in Project two?") &&
+        frame.includes("branch develop ▾"),
     );
     await React.act(async () => {
-      await setup.mockInput.typeText("build in the other project");
-      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.mockInput.typeText("build in the selected project");
       await setup.renderOnce();
     });
-    await setup.waitForFrame((frame) => frame.includes("Type a command"));
-    await React.act(async () => {
-      await setup.mockInput.typeText("change project");
-      await setup.renderOnce();
-    });
-    await setup.waitForFrame((frame) => frame.includes("Change project"));
-    await React.act(async () => {
-      setup.mockInput.pressEnter();
-      await setup.renderOnce();
-    });
-    await setup.waitForFrame(
-      (frame) => frame.includes("project ▸") && frame.includes("Project two"),
-    );
-    await React.act(async () => {
-      setup.mockInput.pressArrow("down");
-      await setup.renderOnce();
-    });
-    await React.act(async () => {
-      setup.mockInput.pressEnter();
-      await setup.renderOnce();
-    });
-    await setup.waitForFrame(
-      (frame) =>
-        frame.includes("What should we build in Project two ▾?") &&
-        frame.includes("project Project two ▾") &&
-        frame.includes("branch develop ▾") &&
-        frame.includes("build in the other project"),
-    );
+    await setup.waitForFrame((frame) => frame.includes("build in the selected project"));
     await React.act(async () => {
       setup.mockInput.pressEnter();
       await setup.renderOnce();
@@ -1270,12 +1244,11 @@ describe("ChatView new-thread parity", () => {
     });
     await setup.waitFor(() => calls.length === 1);
 
-    expect(refsCwds).toContain("/workspace/project-two");
     expect(calls[0]).toMatchObject({
       projectId: "p2",
       projectCwd: "/workspace/project-two",
       branch: "develop",
-      firstMessage: "build in the other project",
+      firstMessage: "build in the selected project",
       modelSelection: { instanceId: "codex", model: "gpt-5-mini" },
     });
     setup.renderer.destroy();
