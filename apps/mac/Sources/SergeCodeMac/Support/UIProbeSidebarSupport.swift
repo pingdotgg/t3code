@@ -72,6 +72,40 @@
             }
         }
 
+        /// Row views the table is still drawing that it no longer accounts for.
+        ///
+        /// This is what a stranded row *is*: `List` animated a row away, AppKit
+        /// kept its row view parented, and it goes on drawing over whatever
+        /// takes that slot. A row census cannot see it — `numberOfRows` is
+        /// already correct — so the only way to catch it without reading a
+        /// bitmap is to ask the table which of its row views it still owns.
+        static func strandedRowViews(in table: NSTableView) -> [NSTableRowView] {
+            var owned: Set<ObjectIdentifier> = []
+            for row in 0..<table.numberOfRows {
+                guard let view = table.rowView(atRow: row, makeIfNecessary: false) else { continue }
+                owned.insert(ObjectIdentifier(view))
+            }
+            // Searched from the scroll view down, not just `table.subviews`: a
+            // stranded row view is not always still parented to the table, and a
+            // copy hanging off the clip view draws over the list just the same.
+            var found: [NSTableRowView] = []
+            func walk(_ view: NSView) {
+                if let rowView = view as? NSTableRowView,
+                    !owned.contains(ObjectIdentifier(rowView)),
+                    !rowView.isHidden,
+                    // A row view parked outside the table is AppKit's reuse
+                    // pool, not a stain. Only what is drawn over the list can
+                    // sit on top of a live row.
+                    rowView.convert(rowView.bounds, to: table).intersects(table.bounds)
+                {
+                    found.append(rowView)
+                }
+                for subview in view.subviews { walk(subview) }
+            }
+            walk(table.enclosingScrollView ?? table)
+            return found
+        }
+
         /// Waits for the list to exist and realize its first rows. SwiftUI needs
         /// a runloop turn or two after a hosting view is installed, and how many
         /// is not something a probe can know in advance.
