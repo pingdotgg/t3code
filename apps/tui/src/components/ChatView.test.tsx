@@ -628,7 +628,7 @@ describe("ChatView acknowledged submissions", () => {
     setup.renderer.destroy();
   });
 
-  it("Given the terminal opens, then the centered prompt stays above it like the web layout", async () => {
+  it("Given the terminal takes focus, then the static prompt preserves its rows without leaving a bottom gap", async () => {
     const fake = fakeClient({ detail: thread() });
     const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
       width: 110,
@@ -644,8 +644,12 @@ describe("ChatView acknowledged submissions", () => {
     const lines = frame.split("\n");
     const promptRow = lines.findIndex((line) => line.includes("^P prompt"));
     const terminalRow = lines.findIndex((line) => line.includes("Terminal · Thread one"));
+    const footerRow = lines.findIndex(
+      (line, index) => index > terminalRow && line.includes("^E close term"),
+    );
     expect(promptRow).toBeGreaterThanOrEqual(0);
     expect(terminalRow).toBeGreaterThan(promptRow);
+    expect(footerRow).toBe(27);
     setup.renderer.destroy();
   });
 

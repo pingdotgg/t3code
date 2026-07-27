@@ -1118,9 +1118,9 @@ export function ChatView({
   const confirmWanted = overlay === "confirmDelete" ? 4 : 0;
   const specialComposer = focus === "rename" || focus === "filter" || focus === "commit";
   const desiredPromptLines = specialComposer || popoverOpen ? 1 : (promptHeight ?? autoPromptLines);
-  // OpenTUI measures five non-editor rows for the composer borders, footer, and margins.
+  // OpenTUI measures four non-editor rows for the composer borders, footer, and dock spacing.
   const composerChromeRows =
-    5 +
+    4 +
     (specialComposer || popoverOpen ? 0 : pendingPanelHeight) +
     (specialComposer ? 0 : attachmentPreviewHeight) +
     (compactComposerFooter ? 1 : 0) +

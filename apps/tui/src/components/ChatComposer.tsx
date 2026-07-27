@@ -258,7 +258,12 @@ export const ChatComposer = React.memo(function ChatComposer({
         width={width}
         onRemove={onRemoveAttachment}
       />
-      <box flexDirection="row" flexShrink={0}>
+      <box
+        flexDirection="row"
+        {...(!answering ? { height: Math.max(1, editorRows) } : {})}
+        flexShrink={0}
+        overflow="hidden"
+      >
         {showReplyEditor ? (
           // Multiline editor: Enter sends, Shift+Enter newlines, paste inserts the
           // full clipboard (no single-line cap). Uncontrolled — remounted via
