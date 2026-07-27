@@ -85,6 +85,13 @@ directory, and the existing service hardening. Reconciliation shares the lifecyc
 dashboard actions and the watchdog, leaves running slots alone, starts complete stopped slots without
 rewriting them, and will not rewrite a partial or live supervise tree.
 
+Hermes pre-seeds each dynamic service's supervision skeleton with the ownership required by its
+no-new-privileges container. After the native T3 service command writes an s6 run script, the plugin
+atomically removes only its redundant top-level `s6-svperms ...` line while preserving the script's
+mode and all other contents. Install, update, and boot recovery apply the same adaptation before the
+service is expected to run. Non-root dashboard processes pass their passwd account name to T3 and
+leave the service group implicit unless explicitly configured, matching `s6-setuidgid` semantics.
+
 Boot recovery never checks GitHub or downloads a release. It re-hashes the already installed binary
 against the digest recorded at install time before executing it. A missing, non-executable, changed, or
 architecture-incompatible binary leaves the Hermes dashboard running; the plugin status reports

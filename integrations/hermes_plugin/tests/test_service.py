@@ -11,6 +11,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
+from integrations.hermes_plugin import service as service_module
 from integrations.hermes_plugin.config import load_config
 from integrations.hermes_plugin.releases import ReleaseAsset
 from integrations.hermes_plugin.service import (
@@ -36,6 +37,31 @@ class ServiceDefinitionTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         root = Path(self.temporary.name)
         self.config = load_config(plugin_root=root / "plugin")
+
+    def test_removes_only_top_level_s6_svperms_and_preserves_script(self) -> None:
+        service_dir = Path(self.temporary.name) / "service" / "t3code"
+        service_dir.mkdir(parents=True)
+        run_path = service_dir / "run"
+        run_path.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "s6-svperms -G hermes /run/service/t3code\n"
+            "  s6-svperms nested-is-not-top-level\n"
+            "exec s6-setuidgid hermes t3 serve\n",
+            encoding="utf-8",
+        )
+        run_path.chmod(0o751)
+
+        service_module._remove_redundant_s6_svperms(service_dir)
+
+        self.assertEqual(
+            run_path.read_text(encoding="utf-8"),
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "  s6-svperms nested-is-not-top-level\n"
+            "exec s6-setuidgid hermes t3 serve\n",
+        )
+        self.assertEqual(run_path.stat().st_mode & 0o777, 0o751)
 
     def test_uses_t3_native_s6_service_command(self) -> None:
         config = replace(
@@ -137,6 +163,16 @@ class ServiceDefinitionTest(unittest.TestCase):
         )
         completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
+        def write_service(args, **_kwargs):
+            config.service_dir.mkdir(parents=True, exist_ok=True)
+            run_path = config.service_dir / "run"
+            run_path.write_text(
+                "#!/bin/sh\ns6-svperms -G hermes service\nexec t3 serve\n",
+                encoding="utf-8",
+            )
+            run_path.chmod(0o751)
+            return completed
+
         with (
             patch(
                 "integrations.hermes_plugin.service.install_release",
@@ -144,7 +180,7 @@ class ServiceDefinitionTest(unittest.TestCase):
             ),
             patch(
                 "integrations.hermes_plugin.service._command",
-                return_value=completed,
+                side_effect=write_service,
             ) as command,
             patch("integrations.hermes_plugin.service._install_watchdog") as watchdog,
             patch(
@@ -161,6 +197,12 @@ class ServiceDefinitionTest(unittest.TestCase):
         state = json.loads(config.service_state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["desired_state"], "installed")
         self.assertEqual(state["binary_version"], "1.2.3")
+        run_path = config.service_dir / "run"
+        self.assertEqual(
+            run_path.read_text(encoding="utf-8"),
+            "#!/bin/sh\nexec t3 serve\n",
+        )
+        self.assertEqual(run_path.stat().st_mode & 0o777, 0o751)
 
     def test_update_delegates_restart_to_the_native_service_command(self) -> None:
         root = Path(self.temporary.name)
@@ -195,6 +237,16 @@ class ServiceDefinitionTest(unittest.TestCase):
         )
         completed = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
+        def write_service(args, **_kwargs):
+            config.service_dir.mkdir(parents=True, exist_ok=True)
+            run_path = config.service_dir / "run"
+            run_path.write_text(
+                "#!/bin/sh\ns6-svperms -G hermes service\nexec t3 serve\n",
+                encoding="utf-8",
+            )
+            run_path.chmod(0o751)
+            return completed
+
         with (
             patch(
                 "integrations.hermes_plugin.service.install_release",
@@ -202,7 +254,7 @@ class ServiceDefinitionTest(unittest.TestCase):
             ),
             patch(
                 "integrations.hermes_plugin.service._command",
-                return_value=completed,
+                side_effect=write_service,
             ) as command,
             patch("integrations.hermes_plugin.service._install_watchdog") as watchdog,
             patch(
@@ -217,6 +269,12 @@ class ServiceDefinitionTest(unittest.TestCase):
         self.assertEqual(result["release"], "1.2.4")
         state = json.loads(config.service_state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["desired_state"], "installed")
+        run_path = config.service_dir / "run"
+        self.assertEqual(
+            run_path.read_text(encoding="utf-8"),
+            "#!/bin/sh\nexec t3 serve\n",
+        )
+        self.assertEqual(run_path.stat().st_mode & 0o777, 0o751)
 
     def test_failed_update_keeps_metadata_for_the_verified_replacement(
         self,
@@ -300,7 +358,12 @@ class ServiceDefinitionTest(unittest.TestCase):
         def run_command(args, **_kwargs):
             if args[1:3] == ["service", "install"]:
                 config.service_dir.mkdir(parents=True, exist_ok=True)
-                (config.service_dir / "run").touch()
+                run_path = config.service_dir / "run"
+                run_path.write_text(
+                    "#!/bin/sh\ns6-svperms -G hermes service\nexec t3 serve\n",
+                    encoding="utf-8",
+                )
+                run_path.chmod(0o751)
             return completed
 
         def install_watchdog(_config) -> None:
@@ -330,6 +393,12 @@ class ServiceDefinitionTest(unittest.TestCase):
         command.assert_any_call(_t3_service_args(config, "install"), timeout=45)
         watchdog.assert_called_once_with(config)
         install_release.assert_not_called()
+        run_path = config.service_dir / "run"
+        self.assertEqual(
+            run_path.read_text(encoding="utf-8"),
+            "#!/bin/sh\nexec t3 serve\n",
+        )
+        self.assertEqual(run_path.stat().st_mode & 0o777, 0o751)
 
     def test_explicit_uninstall_prevents_later_recovery(self) -> None:
         root = Path(self.temporary.name)
@@ -411,7 +480,7 @@ class ServiceDefinitionTest(unittest.TestCase):
         watchdog.assert_not_called()
         install_release.assert_not_called()
 
-    def test_reconcile_starts_complete_stopped_slots_without_rewriting(
+    def test_reconcile_adapts_complete_stopped_service_before_starting(
         self,
     ) -> None:
         root = Path(self.temporary.name)
@@ -438,9 +507,15 @@ class ServiceDefinitionTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        for service_dir in (config.service_dir, config.watchdog_service_dir):
-            service_dir.mkdir(parents=True, exist_ok=True)
-            (service_dir / "run").touch()
+        config.service_dir.mkdir(parents=True)
+        service_run = config.service_dir / "run"
+        service_run.write_text(
+            "#!/bin/sh\ns6-svperms -G hermes service\nexec t3 serve\n",
+            encoding="utf-8",
+        )
+        service_run.chmod(0o751)
+        config.watchdog_service_dir.mkdir(parents=True)
+        (config.watchdog_service_dir / "run").touch()
 
         def run_command(args, **_kwargs):
             return CompletedProcess(
@@ -474,6 +549,11 @@ class ServiceDefinitionTest(unittest.TestCase):
             timeout=5,
         )
         watchdog.assert_not_called()
+        self.assertEqual(
+            service_run.read_text(encoding="utf-8"),
+            "#!/bin/sh\nexec t3 serve\n",
+        )
+        self.assertEqual(service_run.stat().st_mode & 0o777, 0o751)
 
     def test_recovery_failure_is_exposed_without_hiding_service_status(self) -> None:
         root = Path(self.temporary.name)

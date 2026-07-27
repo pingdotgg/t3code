@@ -9,6 +9,7 @@ import os
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -318,6 +319,53 @@ def _prepare_service_dir(service_dir: Path) -> None:
     _seed_supervise_skeleton(service_dir)
 
 
+def _remove_redundant_s6_svperms(service_dir: Path) -> None:
+    """Adapt T3's native s6 script for Hermes' pre-seeded supervise tree."""
+
+    run_path = service_dir / "run"
+    temporary: Path | None = None
+    try:
+        descriptor = os.open(run_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, encoding="utf-8") as source:
+            mode = stat.S_IMODE(os.fstat(source.fileno()).st_mode)
+            contents = source.read()
+        adapted = "".join(
+            line
+            for line in contents.splitlines(keepends=True)
+            if not line.startswith("s6-svperms ")
+        )
+        if adapted == contents:
+            return
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=service_dir,
+            prefix=".run.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            output.write(adapted)
+            output.flush()
+            os.fchmod(output.fileno(), mode)
+            os.fsync(output.fileno())
+        os.replace(temporary, run_path)
+        directory = os.open(service_dir, os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except (OSError, UnicodeError) as error:
+        try:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ServiceError(
+            f"could not adapt the T3 s6 run script at {run_path}: {error}"
+        ) from error
+
+
 def _t3_service_args(config: PluginConfig, action: str) -> list[str]:
     args = [
         str(config.binary_path),
@@ -343,6 +391,17 @@ def _t3_service_args(config: PluginConfig, action: str) -> list[str]:
     if config.service_group:
         args.extend(["--service-group", config.service_group])
     return args
+
+
+def _write_t3_s6_service(
+    config: PluginConfig,
+    action: str,
+    *,
+    timeout: float,
+) -> subprocess.CompletedProcess[str]:
+    result = _command(_t3_service_args(config, action), timeout=timeout)
+    _remove_redundant_s6_svperms(config.service_dir)
+    return result
 
 
 def _render_watchdog_run(config: PluginConfig, watchdog_path: Path) -> str:
@@ -465,7 +524,7 @@ def _install_locked(config: PluginConfig) -> dict[str, object]:
     _set_desired_state(config, _DESIRED_INSTALLED, version=release.version)
     config.data_dir.mkdir(parents=True, exist_ok=True)
     _prepare_service_dir(config.service_dir)
-    _command(_t3_service_args(config, "install"), timeout=45)
+    _write_t3_s6_service(config, "install", timeout=45)
     try:
         _install_watchdog(config)
     except Exception:
@@ -497,7 +556,7 @@ def _update_locked(config: PluginConfig) -> dict[str, object]:
     release = install_release(config)
     _set_desired_state(config, _DESIRED_INSTALLED, version=release.version)
     _prepare_service_dir(config.service_dir)
-    _command(_t3_service_args(config, "update"), timeout=45)
+    _write_t3_s6_service(config, "update", timeout=45)
     _install_watchdog(config)
     return {
         "ok": True,
@@ -613,6 +672,7 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
         if service_installed and watchdog_installed:
             if not service_running:
                 _validate_recovery_binary(config, state)
+                _remove_redundant_s6_svperms(config.service_dir)
             _command(["s6-svscanctl", "-a", str(config.scan_dir)], timeout=5)
             if not service_running:
                 _command(["s6-svc", "-u", str(config.service_dir)], timeout=5)
@@ -649,7 +709,7 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
                 installed_service_now = True
                 config.data_dir.mkdir(parents=True, exist_ok=True)
                 _prepare_service_dir(config.service_dir)
-                _command(_t3_service_args(config, "install"), timeout=45)
+                _write_t3_s6_service(config, "install", timeout=45)
                 if not (config.service_dir / "run").is_file():
                     raise ServiceError(
                         "T3 recovery command completed without creating its s6 run file"
@@ -661,6 +721,7 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
                         "watchdog recovery completed without creating its s6 run file"
                     )
             if service_installed and not service_running:
+                _remove_redundant_s6_svperms(config.service_dir)
                 _command(["s6-svc", "-u", str(config.service_dir)], timeout=5)
             if watchdog_installed and not watchdog_running:
                 _command(
