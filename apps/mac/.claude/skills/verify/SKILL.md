@@ -30,7 +30,7 @@ another's PNGs (or a crashed run's leftovers). The probe echoes
   `UIProbe:` lines to stdout, then quits itself. Extend that file to drive
   new flows; keep it `#if DEBUG`.
 - `SERGECODE_UI_PROBE_SCENARIO=<name>` runs one focused scenario instead of
-  the default sweep. `sidebar-menus` synthesizes a right-click on *every* row
+  the default sweep. `sidebar-menus` synthesizes a right-click on _every_ row
   of the sidebar table — scrolling to reach rows below the fold, and failing
   the run if one never gets there — and asserts each opens an Alpine popover
   (never an `NSMenu`). It seeds a settled session — failing the run if it
