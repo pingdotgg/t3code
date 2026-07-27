@@ -1226,8 +1226,13 @@ export function KeybindingsSettingsPanel() {
   );
 
   const [isResetting, setIsResetting] = useState(false);
+  const primaryEnvironmentRef = useRef(primaryEnvironment);
+  useEffect(() => {
+    primaryEnvironmentRef.current = primaryEnvironment;
+  }, [primaryEnvironment]);
   const resetAllKeybindings = useCallback(() => {
-    if (!primaryEnvironment) return;
+    const environmentId = primaryEnvironment?.environmentId;
+    if (!environmentId) return;
     void (async () => {
       const confirmed = await readLocalApi()?.dialogs.confirm(
         [
@@ -1236,9 +1241,12 @@ export function KeybindingsSettingsPanel() {
         ].join("\n"),
       );
       if (!confirmed) return;
+      // The primary environment can change while the dialog is open, and this
+      // discards every customization — target only what the user was shown.
+      if (primaryEnvironmentRef.current?.environmentId !== environmentId) return;
       setIsResetting(true);
       const result = await resetKeybindingsMutation({
-        environmentId: primaryEnvironment.environmentId,
+        environmentId,
         input: {},
       });
       setIsResetting(false);
@@ -1250,7 +1258,7 @@ export function KeybindingsSettingsPanel() {
         type: "error",
       });
     })();
-  }, [primaryEnvironment, resetKeybindingsMutation]);
+  }, [primaryEnvironment?.environmentId, resetKeybindingsMutation]);
 
   const bindingsCount = (
     <span className="text-[11px] text-muted-foreground">

@@ -295,7 +295,8 @@ export class Keybindings extends Context.Service<
      * Project script bindings are kept — they have no default to restore, so
      * dropping them would delete shortcuts the reset cannot give back. A config
      * that fails to parse is replaced outright, since that is the state the
-     * reset exists to escape.
+     * reset exists to escape; a config that cannot be read at all fails
+     * instead, rather than overwriting rules that are still on disk.
      */
     readonly resetKeybindingRulesToDefaults: Effect.Effect<
       ResolvedKeybindingsConfig,
@@ -717,14 +718,23 @@ const make = Effect.gen(function* () {
       ),
     resetKeybindingRulesToDefaults: upsertSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const loaded = yield* Effect.result(loadWritableCustomKeybindingsConfig());
-        const customConfig = loaded._tag === "Success" ? loaded.success : [];
+        // The runtime loader, not the writable one: a config that cannot be
+        // parsed must resolve to "no rules to preserve" so the reset can still
+        // replace it, while a filesystem failure still aborts rather than
+        // overwriting a file we could not read.
+        const { keybindings: customConfig } = yield* loadRuntimeCustomKeybindingsConfig();
         const preservedScripts = customConfig.filter((entry) => isScriptKeybindingRule(entry));
-        const nextConfig = [...DEFAULT_KEYBINDINGS, ...preservedScripts];
-        const cappedConfig =
-          nextConfig.length > MAX_KEYBINDINGS_COUNT
-            ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
-            : nextConfig;
+        // Truncate the preserved scripts, never the defaults — a reset that
+        // dropped default rules to stay under the cap would defeat itself.
+        const scriptBudget = Math.max(0, MAX_KEYBINDINGS_COUNT - DEFAULT_KEYBINDINGS.length);
+        const cappedConfig = [...DEFAULT_KEYBINDINGS, ...preservedScripts.slice(0, scriptBudget)];
+        if (preservedScripts.length > scriptBudget) {
+          yield* Effect.logWarning("dropping script keybindings to stay under max entries", {
+            path: keybindingsConfigPath,
+            maxEntries: MAX_KEYBINDINGS_COUNT,
+            dropped: preservedScripts.length - scriptBudget,
+          });
+        }
         yield* writeConfigAtomically(cappedConfig);
         const nextResolved = mergeWithDefaultKeybindings(
           compileResolvedKeybindingsConfig(cappedConfig),
