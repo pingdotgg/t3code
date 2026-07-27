@@ -143,6 +143,8 @@ function relayProtectedErrorMessage(error: RelayProtectedErrorType): string {
       return `Relay could not link the environment (${error.reason}).`;
     case "RelayEnvironmentLinkUnavailableError":
       return `Relay cannot provision the managed endpoint (${error.reason}).`;
+    case "RelayEnvironmentLinkLimitExceededError":
+      return `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
     case "RelayAgentActivityPublishProofExpiredError":
       return "Relay rejected an expired agent activity publish proof.";
     case "RelayAgentActivityPublishProofInvalidError":

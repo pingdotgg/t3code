@@ -105,6 +105,13 @@ export const relayManagedEndpointAllocations = pgTable(
   ],
 );
 
+export const relayManagedTunnelLimits = pgTable("relay_managed_tunnel_limits", {
+  userId: varchar("user_id", { length: 191 }).primaryKey(),
+  maxTunnels: integer("max_tunnels").notNull(),
+  createdAt: varchar("created_at", { length: 64 }).notNull(),
+  updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+});
+
 export const relayEnvironmentCredentials = pgTable(
   "relay_environment_credentials",
   {
