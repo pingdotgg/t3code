@@ -48,6 +48,7 @@ import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
+  findActiveBrowserRecordingRuntimeTabId,
   startBrowserRecording,
   stopBrowserRecording,
   useActiveBrowserRecordingTabIds,
@@ -97,6 +98,12 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const runtimeTabId = tabId
     ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
     : null;
+  const recordingRuntimeTabId =
+    tabId && runtimeTabId
+      ? activeRecordingTabIds.has(runtimeTabId)
+        ? runtimeTabId
+        : findActiveBrowserRecordingRuntimeTabId(threadRef, tabId)
+      : null;
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
@@ -264,9 +271,8 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     (record: boolean) => {
       if (!previewBridge || !runtimeTabId || !tabId) return;
       const bridge = previewBridge;
-      const recordingThisTab = activeRecordingTabIds.has(runtimeTabId);
-      if (recordingThisTab) {
-        void stopBrowserRecording(runtimeTabId).then(
+      if (recordingRuntimeTabId) {
+        void stopBrowserRecording(recordingRuntimeTabId).then(
           (artifact) => {
             if (!artifact) return;
             let pathCopied = false;
@@ -497,7 +503,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         },
       );
     },
-    [activeRecordingTabIds, runtimeTabId, tabId, threadRef],
+    [recordingRuntimeTabId, runtimeTabId, tabId, threadRef],
   );
 
   const handlePickElement = useCallback(() => {
@@ -619,7 +625,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
-        recording={runtimeTabId !== null && activeRecordingTabIds.has(runtimeTabId)}
+        recording={recordingRuntimeTabId !== null}
         onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
         pictureInPicture={miniPlayer?.tabId === tabId}
         pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}

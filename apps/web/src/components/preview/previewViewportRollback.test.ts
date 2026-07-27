@@ -7,17 +7,30 @@ describe("shouldRollbackPreviewViewport", () => {
   const requested = { _tag: "freeform", width: 900, height: 600 } as const;
 
   it("rolls back a timed-out request that still owns the latest setting", () => {
-    expect(shouldRollbackPreviewViewport(fill, requested, requested)).toBe(true);
+    expect(shouldRollbackPreviewViewport(fill, requested, requested, "server-a", "server-a")).toBe(
+      true,
+    );
   });
 
-  it("does not overwrite a newer resize or repeat an identical setting", () => {
+  it("does not overwrite a newer resize, replacement server, or repeated setting", () => {
     expect(
-      shouldRollbackPreviewViewport(fill, requested, {
-        _tag: "freeform",
-        width: 1024,
-        height: 768,
-      }),
+      shouldRollbackPreviewViewport(
+        fill,
+        requested,
+        {
+          _tag: "freeform",
+          width: 1024,
+          height: 768,
+        },
+        "server-a",
+        "server-a",
+      ),
     ).toBe(false);
-    expect(shouldRollbackPreviewViewport(requested, requested, requested)).toBe(false);
+    expect(shouldRollbackPreviewViewport(fill, requested, requested, "server-a", "server-b")).toBe(
+      false,
+    );
+    expect(
+      shouldRollbackPreviewViewport(requested, requested, requested, "server-a", "server-a"),
+    ).toBe(false);
   });
 });

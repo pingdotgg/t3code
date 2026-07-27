@@ -102,6 +102,11 @@ interface ActiveRecording {
   lifecycle: BrowserRecordingLifecycle;
 }
 
+export interface ActiveBrowserRecordingTarget {
+  readonly runtimeTabId: string;
+  readonly serverTabId: string;
+}
+
 interface ActiveBrowserRecordingIndex {
   readonly tabIds: ReadonlySet<string>;
 }
@@ -128,10 +133,32 @@ export function readActiveBrowserRecordingTabIds(threadRef?: ScopedThreadRef): R
       (recording.threadRef?.environmentId === threadRef.environmentId &&
         recording.threadRef.threadId === threadRef.threadId)
     ) {
-      tabIds.add(recording.serverTabId);
+      tabIds.add(recording.tabId);
     }
   }
   return tabIds;
+}
+
+export function readActiveBrowserRecordingTargets(
+  threadRef: ScopedThreadRef,
+): ReadonlyArray<ActiveBrowserRecordingTarget> {
+  return Array.from(activeRecordings.values()).flatMap((recording) =>
+    recording.threadRef?.environmentId === threadRef.environmentId &&
+    recording.threadRef.threadId === threadRef.threadId
+      ? [{ runtimeTabId: recording.tabId, serverTabId: recording.serverTabId }]
+      : [],
+  );
+}
+
+export function findActiveBrowserRecordingRuntimeTabId(
+  threadRef: ScopedThreadRef,
+  serverTabId: string,
+): string | null {
+  return (
+    readActiveBrowserRecordingTargets(threadRef).find(
+      (recording) => recording.serverTabId === serverTabId,
+    )?.runtimeTabId ?? null
+  );
 }
 
 const preferredMimeType = (): string => {
@@ -298,6 +325,14 @@ export async function startBrowserRecording(
     throw new BrowserRecordingConflictError({
       requestedTabId: tabId,
       activeTabId: activeRecording.tabId,
+    });
+  }
+  const activeLogicalRecording =
+    threadRef === null ? null : findActiveBrowserRecordingRuntimeTabId(threadRef, serverTabId);
+  if (activeLogicalRecording !== null) {
+    throw new BrowserRecordingConflictError({
+      requestedTabId: tabId,
+      activeTabId: activeLogicalRecording,
     });
   }
   const surface = useBrowserSurfaceStore.getState().byTabId[tabId];
