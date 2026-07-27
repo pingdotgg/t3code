@@ -29,7 +29,6 @@ export interface HomeListOptions {
 
 export interface ResolvedHomeListOptions extends HomeListOptions {
   readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly projectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
 }
 
 export function resolveProjectGroupingMode(
@@ -69,7 +68,6 @@ interface HomeListOptionsContextValue {
   readonly options: HomeListOptions;
   readonly setOptions: Dispatch<SetStateAction<HomeListOptions>>;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly projectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
 }
 
 const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>(null);
@@ -78,15 +76,13 @@ const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>
 export function HomeListOptionsProvider({
   children,
   projectGroupingMode,
-  projectGroupingOverrides,
 }: PropsWithChildren<{
   readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly projectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
 }>) {
   const [options, setOptions] = useState<HomeListOptions>(defaultHomeListOptions);
   const value = useMemo(
-    () => ({ options, setOptions, projectGroupingMode, projectGroupingOverrides }),
-    [options, projectGroupingMode, projectGroupingOverrides],
+    () => ({ options, setOptions, projectGroupingMode }),
+    [options, projectGroupingMode],
   );
   return createElement(HomeListOptionsContext, { value }, children);
 }
@@ -125,7 +121,6 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
   const resolvedOptions: ResolvedHomeListOptions = {
     ...availableOptions,
     projectGroupingMode: shared?.projectGroupingMode ?? "repository",
-    projectGroupingOverrides: shared?.projectGroupingOverrides ?? {},
   };
 
   const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {

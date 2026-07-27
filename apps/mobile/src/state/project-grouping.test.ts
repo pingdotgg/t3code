@@ -20,14 +20,6 @@ describe("mobile project grouping preferences", () => {
     ).toBe("repository_path");
   });
 
-  it("preserves per-project overrides", () => {
-    expect(
-      resolveMobileProjectGroupingSettings({
-        projectGroupingOverrides: { "environment:/work/t3code": "separate" },
-      }).sidebarProjectGroupingOverrides,
-    ).toEqual({ "environment:/work/t3code": "separate" });
-  });
-
   it("dual-writes the legacy boolean for rollback compatibility", () => {
     expect(mobileProjectGroupingModePatch("separate")).toEqual({
       projectGroupingMode: "separate",

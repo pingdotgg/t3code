@@ -51,7 +51,6 @@ export function buildHomeProjectScopes(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId | null;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly projectGroupingOverrides?: Record<string, SidebarProjectGroupingMode>;
 }): ReadonlyArray<HomeProjectScope> {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
@@ -60,7 +59,7 @@ export function buildHomeProjectScopes(input: {
     projects,
     settings: {
       sidebarProjectGroupingMode: input.projectGroupingMode,
-      sidebarProjectGroupingOverrides: input.projectGroupingOverrides ?? {},
+      sidebarProjectGroupingOverrides: {},
     },
   }).map((group) => {
     return {
@@ -209,7 +208,6 @@ export function buildHomeThreadGroups(input: {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly projectGroupingOverrides?: Record<string, SidebarProjectGroupingMode>;
   /** Current time used for the recency window; defaults to now. Injectable for tests. */
   readonly now?: number;
 }): ReadonlyArray<HomeThreadGroup> {
