@@ -6,7 +6,13 @@ struct RootView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
 
-    @UIState private var showInspector = true
+    // Off until the user asks for it: the inspector shows a thread's changes
+    // timeline, so it has nothing to say on the welcome hero, where its
+    // toolbar toggle is disabled. Opening it there left a panel the user
+    // could not close, and stole width from a hero that then rendered
+    // off-centre. `inspectorPresented` keeps that true on the way back out
+    // too — deselecting a thread closes the panel rather than stranding it.
+    @UIState private var showInspector = false
     @UIState private var showNewSessionSheet = false
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -64,11 +70,14 @@ struct RootView: View {
             // per-thread detail view: re-presenting it on every thread
             // switch (and inside the cross-fade above) reset its column
             // width and flashed/clipped the panel.
-            .inspector(isPresented: $showInspector) {
+            .inspector(isPresented: inspectorPresented) {
                 Group {
                     if let thread = multi.selectedThread {
                         InspectorPanel(model: multi.activeModel, threadID: thread.id)
                     } else {
+                        // Only ever on screen for the length of the collapse
+                        // that follows a deselection — `inspectorPresented`
+                        // is false without a thread.
                         ContentUnavailableView(
                             "No Session",
                             systemImage: "sidebar.right",
@@ -159,6 +168,10 @@ struct RootView: View {
             DispatchQueue.main.async {
                 switch section {
                 case "inspector": showInspector.toggle()
+                // The inspector no longer starts open, so a probe that wants
+                // it on screen has to say so rather than inherit a default.
+                case "inspector.show": showInspector = true
+                case "inspector.hide": showInspector = false
                 case "sidebar": toggleSidebar()
                 default: break
                 }
@@ -274,6 +287,18 @@ struct RootView: View {
     private var selectedProject: Project? {
         guard let thread = multi.selectedThread else { return nil }
         return model.projects.first { $0.id == thread.projectID }
+    }
+
+    /// Gates the stored request on there being something to inspect. The
+    /// toolbar toggle is disabled without a selected thread, so a presented
+    /// inspector on the hero would have no control that can dismiss it.
+    private var inspectorPresented: Binding<Bool> {
+        Binding(
+            get: {
+                InspectorPresentation.isPresented(
+                    requested: showInspector, hasSelection: multi.selectedThread != nil)
+            },
+            set: { showInspector = $0 })
     }
 
     private var sidebarToggleTitle: String {
