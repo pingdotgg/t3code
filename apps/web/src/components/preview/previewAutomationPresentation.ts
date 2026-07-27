@@ -9,6 +9,7 @@ import { setActivePreviewTab } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
 import { PreviewAutomationBackgroundPresentationTimeoutError } from "./previewAutomationErrors";
+import type { PreviewAutomationVisibilityTimeoutError } from "./previewAutomationErrors";
 
 interface PreviewAutomationBackgroundPresentationInput {
   readonly threadRef: ScopedThreadRef;
@@ -16,6 +17,20 @@ interface PreviewAutomationBackgroundPresentationInput {
   readonly tabId: string;
   readonly timeoutMs: number;
 }
+
+type PreviewAutomationPresentationDiagnostics = Required<
+  Pick<
+    PreviewAutomationVisibilityTimeoutError,
+    | "activeSurfaceKind"
+    | "activeSurfaceId"
+    | "inlinePreviewOpen"
+    | "inlinePreviewTabId"
+    | "rightPanelOpen"
+    | "rightPanelSurfaceId"
+    | "surfaceRegistered"
+    | "presentationRectAvailable"
+  >
+>;
 
 const PREVIEW_AUTOMATION_COMPOSITOR_FRAME_FALLBACK_MS = 16;
 
@@ -63,13 +78,21 @@ export function revealPreviewAutomationTab(ref: ScopedThreadRef, tabId: string):
   usePreviewMiniPlayerStore.getState().open(ref, tabId);
 }
 
-export function readPreviewAutomationPresentationDiagnostics(ref: ScopedThreadRef, tabId: string) {
+function readPreviewAutomationPresentation(ref: ScopedThreadRef, tabId: string) {
   const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
   const miniPlayer = selectThreadPreviewMiniPlayer(
     usePreviewMiniPlayerStore.getState().byThreadKey,
     ref,
   );
   const presentation = useBrowserSurfaceStore.getState().byTabId[tabId];
+  return { panel, miniPlayer, presentation };
+}
+
+export function readPreviewAutomationPresentationDiagnostics(
+  ref: ScopedThreadRef,
+  tabId: string,
+): PreviewAutomationPresentationDiagnostics {
+  const { panel, miniPlayer, presentation } = readPreviewAutomationPresentation(ref, tabId);
   const activeSurfaceKind =
     miniPlayer !== null
       ? ("inline-preview" as const)
@@ -78,27 +101,26 @@ export function readPreviewAutomationPresentationDiagnostics(ref: ScopedThreadRe
         : ("none" as const);
   return {
     activeSurfaceKind,
-    activeSurfaceId: miniPlayer?.tabId ?? panel.activeSurfaceId,
+    activeSurfaceId:
+      miniPlayer !== null
+        ? `mini-player:${miniPlayer.tabId}`
+        : panel.isOpen
+          ? panel.activeSurfaceId
+          : null,
     inlinePreviewOpen: miniPlayer !== null,
     inlinePreviewTabId: miniPlayer?.tabId ?? null,
     rightPanelOpen: panel.isOpen,
     rightPanelSurfaceId: panel.activeSurfaceId,
     surfaceRegistered: presentation !== undefined,
-    presentationRectAvailable: presentation?.rect !== null && presentation?.rect !== undefined,
+    presentationRectAvailable: presentation?.rect != null,
   };
 }
 
 export function isPreviewAutomationTabPresented(ref: ScopedThreadRef, tabId: string): boolean {
-  const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
-  const miniPlayer = selectThreadPreviewMiniPlayer(
-    usePreviewMiniPlayerStore.getState().byThreadKey,
-    ref,
-  );
+  const { panel, miniPlayer, presentation } = readPreviewAutomationPresentation(ref, tabId);
   const requestedSurfaceIsActive =
     (panel.isOpen && panel.activeSurfaceId === `browser:${tabId}`) || miniPlayer?.tabId === tabId;
-  return (
-    requestedSurfaceIsActive && (useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false)
-  );
+  return requestedSurfaceIsActive && (presentation?.visible ?? false);
 }
 
 export async function waitForPreviewAutomationBackgroundPresentation(

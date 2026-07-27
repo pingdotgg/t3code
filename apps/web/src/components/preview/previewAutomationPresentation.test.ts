@@ -53,7 +53,7 @@ describe("preview automation presentation", () => {
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
     expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1")).toEqual({
       activeSurfaceKind: "inline-preview",
-      activeSurfaceId: "tab-1",
+      activeSurfaceId: "mini-player:tab-1",
       inlinePreviewOpen: true,
       inlinePreviewTabId: "tab-1",
       rightPanelOpen: false,
@@ -73,7 +73,58 @@ describe("preview automation presentation", () => {
 
     usePreviewMiniPlayerStore.getState().open(threadRef, "tab-2");
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
+    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1")).toEqual({
+      activeSurfaceKind: "inline-preview",
+      activeSurfaceId: "mini-player:tab-2",
+      inlinePreviewOpen: true,
+      inlinePreviewTabId: "tab-2",
+      rightPanelOpen: false,
+      rightPanelSurfaceId: null,
+      surfaceRegistered: true,
+      presentationRectAvailable: true,
+    });
     surface.release();
+  });
+
+  it("reports presentation precedence and hidden retained panel state", () => {
+    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+      activeSurfaceKind: "none",
+      activeSurfaceId: null,
+      inlinePreviewOpen: false,
+      inlinePreviewTabId: null,
+      rightPanelOpen: false,
+      rightPanelSurfaceId: null,
+      surfaceRegistered: false,
+      presentationRectAvailable: false,
+    });
+
+    useRightPanelStore.getState().openBrowser(threadRef, "tab-panel");
+    usePreviewMiniPlayerStore.getState().open(threadRef, "tab-inline");
+
+    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+      activeSurfaceKind: "inline-preview",
+      activeSurfaceId: "mini-player:tab-inline",
+      inlinePreviewOpen: true,
+      inlinePreviewTabId: "tab-inline",
+      rightPanelOpen: true,
+      rightPanelSurfaceId: "browser:tab-panel",
+      surfaceRegistered: false,
+      presentationRectAvailable: false,
+    });
+
+    usePreviewMiniPlayerStore.getState().close(threadRef);
+    useRightPanelStore.getState().close(threadRef);
+
+    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+      activeSurfaceKind: "none",
+      activeSurfaceId: null,
+      inlinePreviewOpen: false,
+      inlinePreviewTabId: null,
+      rightPanelOpen: false,
+      rightPanelSurfaceId: "browser:tab-panel",
+      surfaceRegistered: false,
+      presentationRectAvailable: false,
+    });
   });
 
   it("reports a right-panel presentation separately from the inline preview", () => {
