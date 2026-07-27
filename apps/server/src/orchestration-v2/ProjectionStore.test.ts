@@ -23,7 +23,11 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+import {
+  isTurnItemAtOrBeforeRun,
+  ProjectionStoreV2,
+  layer as projectionStoreLayer,
+} from "./ProjectionStore.ts";
 
 const TestLayer = Layer.mergeAll(
   projectionStoreLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -36,6 +40,48 @@ const modelSelection = {
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+it("includes imported runless history when selecting fork context through a run", () => {
+  const firstRunId = RunId.make("run:projection-imported-fork:1");
+  const secondRunId = RunId.make("run:projection-imported-fork:2");
+  const runOrdinalById = new Map([
+    [firstRunId, 1],
+    [secondRunId, 2],
+  ]);
+
+  assert.isTrue(
+    isTurnItemAtOrBeforeRun({
+      historyOrigin: "v1_import",
+      itemRunId: null,
+      runOrdinalById,
+      sourceRunOrdinal: 1,
+    }),
+  );
+  assert.isFalse(
+    isTurnItemAtOrBeforeRun({
+      historyOrigin: undefined,
+      itemRunId: null,
+      runOrdinalById,
+      sourceRunOrdinal: 1,
+    }),
+  );
+  assert.isTrue(
+    isTurnItemAtOrBeforeRun({
+      historyOrigin: "v1_import",
+      itemRunId: firstRunId,
+      runOrdinalById,
+      sourceRunOrdinal: 1,
+    }),
+  );
+  assert.isFalse(
+    isTurnItemAtOrBeforeRun({
+      historyOrigin: "v1_import",
+      itemRunId: secondRunId,
+      runOrdinalById,
+      sourceRunOrdinal: 1,
+    }),
+  );
+});
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
   it.effect("projects one shared provider session into multiple thread bindings", () =>
