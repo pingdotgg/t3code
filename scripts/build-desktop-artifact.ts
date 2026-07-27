@@ -507,19 +507,23 @@ function validateBundledClientAssets(clientDir: string) {
   });
 }
 
-function resolveDesktopRuntimeDependencies(
+export function resolveStandaloneRuntimeDependencies(
   dependencies: Record<string, string> | undefined,
   catalog: Record<string, string>,
+  label: string,
 ): Record<string, string> {
   if (!dependencies || Object.keys(dependencies).length === 0) {
     return {};
   }
 
   const runtimeDependencies = Object.fromEntries(
-    Object.entries(dependencies).filter(([dependencyName]) => dependencyName !== "electron"),
+    Object.entries(dependencies).filter(
+      ([dependencyName, dependencySpec]) =>
+        dependencyName !== "electron" && !dependencySpec.startsWith("workspace:"),
+    ),
   );
 
-  return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
+  return resolveCatalogDependencies(runtimeDependencies, catalog, label);
 }
 
 function resolveGitHubPublishConfig(updateChannel: "latest" | "nightly"):
@@ -859,7 +863,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const resolvedServerDependencies = yield* Effect.try({
     try: () =>
-      resolveCatalogDependencies(serverDependencies, workspaceConfig.catalog, "apps/server"),
+      resolveStandaloneRuntimeDependencies(
+        serverDependencies,
+        workspaceConfig.catalog,
+        "apps/server",
+      ),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve production dependencies from apps/server/package.json.",
@@ -868,7 +876,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
   const resolvedDesktopRuntimeDependencies = yield* Effect.try({
     try: () =>
-      resolveDesktopRuntimeDependencies(desktopPackageJson.dependencies, workspaceConfig.catalog),
+      resolveStandaloneRuntimeDependencies(
+        desktopPackageJson.dependencies,
+        workspaceConfig.catalog,
+        "apps/desktop",
+      ),
     catch: (cause) =>
       new BuildScriptError({
         message: "Could not resolve desktop runtime dependencies from apps/desktop/package.json.",

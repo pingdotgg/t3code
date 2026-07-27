@@ -1,4 +1,5 @@
 import {
+  ThreadId,
   type CopilotSettings,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -9,6 +10,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { startMcpHttpServer, type McpHttpServer, type McpServeOptions } from "../../mcpServer.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   AcpSessionRuntime,
   type AcpSessionRuntimeOptions,
@@ -61,7 +63,6 @@ const COPILOT_MCP_TOOLSETS = [
   "create_isolated_workspace",
   "switch_workspace",
 ] as const;
-
 type CopilotAcpRuntimeCopilotSettings = {
   readonly binaryPath: CopilotSettings["binaryPath"];
 };
@@ -135,8 +136,9 @@ export function buildCopilotMcpServerOptions(
 
 export function buildCopilotMcpServers(
   server: Pick<McpHttpServer, "authorization" | "url">,
+  threadId?: string,
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
-  return [
+  const servers: Array<EffectAcpSchema.McpServer> = [
     {
       type: "http",
       name: "t3-tools",
@@ -144,6 +146,25 @@ export function buildCopilotMcpServers(
       headers: [{ name: "Authorization", value: server.authorization }],
     },
   ];
+
+  const providerSession = threadId
+    ? McpProviderSession.readMcpProviderSession(ThreadId.make(threadId))
+    : undefined;
+  if (providerSession) {
+    servers.push({
+      type: "http",
+      name: "t3-code",
+      url: providerSession.endpoint,
+      headers: [
+        {
+          name: "Authorization",
+          value: providerSession.authorizationHeader,
+        },
+      ],
+    });
+  }
+
+  return servers;
 }
 
 export function resolveCopilotAcpModeId(
@@ -207,7 +228,7 @@ export const makeCopilotAcpRuntime = (
         clientInfo: COPILOT_CLIENT_INFO,
         clientCapabilities: COPILOT_CLIENT_CAPABILITIES,
         modeSwitchMethod: "set_mode",
-        mcpServers: buildCopilotMcpServers(mcpHttpServer),
+        mcpServers: buildCopilotMcpServers(mcpHttpServer, input.threadId),
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

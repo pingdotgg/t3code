@@ -8,6 +8,8 @@ import {
   AuthSessionId,
   CommandId,
   DEFAULT_REVIEW_CHANGES_SCOPE,
+  type DiscoveredLocalServer,
+  type DiscoveredLocalServerList,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   GitHubCliError,
@@ -114,6 +116,8 @@ import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentit
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { PreviewManager } from "./preview/Manager.ts";
+import { PortDiscovery } from "./preview/PortScanner.ts";
+import { PreviewAutomationBroker } from "./mcp/PreviewAutomationBroker.ts";
 import {
   BootstrapCredentialService,
   type BootstrapCredentialChange,
@@ -219,6 +223,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
       const previewManager = yield* PreviewManager;
+      const portDiscovery = yield* PortDiscovery;
+      const previewAutomationBroker = yield* PreviewAutomationBroker;
       const dispatchNormalizedCommand = makeClientCommandDispatcher({
         orchestrationEngine,
         startup,
@@ -1314,13 +1320,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.previewList, previewManager.list(input), {
             "rpc.aggregate": "preview",
           }),
-        [WS_METHODS.previewDiscoverLocalServers]: (input) =>
+        [WS_METHODS.previewAutomationConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.previewAutomationConnect,
+            previewAutomationBroker.connect(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationRespond]: (input) =>
           observeRpcEffect(
-            WS_METHODS.previewDiscoverLocalServers,
-            previewManager.discoverLocalServers(input),
-            {
-              "rpc.aggregate": "preview",
-            },
+            WS_METHODS.previewAutomationRespond,
+            previewAutomationBroker.respond(input),
+            { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.previewAutomationFocusHost]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewAutomationFocusHost,
+            previewAutomationBroker.focusHost(input),
+            { "rpc.aggregate": "preview-automation" },
           ),
         [WS_METHODS.subscribeGitStatus]: (input) =>
           observeRpcStream(
@@ -1758,9 +1774,26 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
-          observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.subscribe(), {
+          observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.subscribeDiscoveredLocalServers]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeDiscoveredLocalServers,
+            Stream.callback<DiscoveredLocalServerList>((queue) =>
+              Effect.gen(function* () {
+                yield* portDiscovery.retain;
+                const offerServers = (servers: ReadonlyArray<DiscoveredLocalServer>) =>
+                  Effect.gen(function* () {
+                    const scannedAt = DateTime.formatIso(yield* DateTime.now);
+                    yield* Queue.offer(queue, { servers, scannedAt });
+                  });
+                yield* offerServers(yield* portDiscovery.scan());
+                yield* portDiscovery.subscribe(offerServers);
+              }),
+            ),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.subscribeServerConfig]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,

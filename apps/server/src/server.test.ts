@@ -95,6 +95,9 @@ import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRu
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
 import { PreviewManager } from "./preview/Manager.ts";
+import { PortDiscovery } from "./preview/PortScanner.ts";
+import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
@@ -496,8 +499,24 @@ const buildAppUnderTest = (options?: {
           refresh: () => Effect.void,
           close: () => Effect.void,
           list: () => Effect.succeed({ sessions: [] }),
-          discoverLocalServers: () => Effect.succeed({ servers: [] }),
-          subscribe: () => Stream.empty,
+          events: Stream.empty,
+        }),
+      ),
+      Layer.provide(PreviewAutomationBroker.layer),
+      Layer.provide(
+        Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+          issue: () => Effect.die("Not implemented in server test."),
+          resolve: () => Effect.succeed(undefined),
+          revokeProviderSession: () => Effect.void,
+          revokeThread: () => Effect.void,
+          revokeAll: Effect.void,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PortDiscovery)({
+          scan: () => Effect.succeed([]),
+          subscribe: () => Effect.void,
+          retain: Effect.void,
         }),
       ),
       Layer.provide(

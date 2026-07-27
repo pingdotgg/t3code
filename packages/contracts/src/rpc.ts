@@ -86,9 +86,8 @@ import {
   RelayClientStatusSchema,
 } from "./relayClient.ts";
 import {
+  DiscoveredLocalServerList,
   PreviewCloseInput,
-  PreviewDiscoverLocalServersInput,
-  PreviewDiscoverLocalServersResult,
   PreviewError,
   PreviewEvent,
   PreviewListInput,
@@ -204,7 +203,6 @@ export const WS_METHODS = {
   previewRefresh: "preview.refresh",
   previewClose: "preview.close",
   previewList: "preview.list",
-  previewDiscoverLocalServers: "preview.discoverLocalServers",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -441,11 +439,6 @@ export const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
   success: PreviewListResult,
 });
 
-export const WsPreviewDiscoverLocalServersRpc = Rpc.make(WS_METHODS.previewDiscoverLocalServers, {
-  payload: PreviewDiscoverLocalServersInput,
-  success: PreviewDiscoverLocalServersResult,
-});
-
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -461,6 +454,15 @@ export const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomati
 export const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFocusHost, {
   payload: PreviewAutomationHostFocus,
 });
+
+export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
+  WS_METHODS.subscribeDiscoveredLocalServers,
+  {
+    payload: Schema.Struct({}),
+    success: DiscoveredLocalServerList,
+    stream: true,
+  },
+);
 
 export const WsSubscribeGitStatusRpc = Rpc.make(WS_METHODS.subscribeGitStatus, {
   payload: GitStatusInput,
@@ -899,10 +901,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewRefreshRpc,
   WsPreviewCloseRpc,
   WsPreviewListRpc,
-  WsPreviewDiscoverLocalServersRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,
   WsGitRefreshStatusRpc,

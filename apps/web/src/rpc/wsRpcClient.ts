@@ -84,8 +84,15 @@ export interface WsRpcClient {
     readonly refresh: RpcUnaryMethod<typeof WS_METHODS.previewRefresh>;
     readonly close: RpcUnaryMethod<typeof WS_METHODS.previewClose>;
     readonly list: RpcUnaryMethod<typeof WS_METHODS.previewList>;
-    readonly discoverLocalServers: RpcUnaryMethod<typeof WS_METHODS.previewDiscoverLocalServers>;
     readonly onEvent: RpcStreamMethod<typeof WS_METHODS.subscribePreviewEvents>;
+    readonly onDiscoveredLocalServers: RpcStreamMethod<
+      typeof WS_METHODS.subscribeDiscoveredLocalServers
+    >;
+    readonly automation: {
+      readonly connect: RpcInputStreamMethod<typeof WS_METHODS.previewAutomationConnect>;
+      readonly respond: RpcUnaryMethod<typeof WS_METHODS.previewAutomationRespond>;
+      readonly focusHost: RpcUnaryMethod<typeof WS_METHODS.previewAutomationFocusHost>;
+    };
   };
   readonly shell: {
     readonly openInEditor: (input: {
@@ -209,14 +216,30 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       refresh: (input) => transport.request((client) => client[WS_METHODS.previewRefresh](input)),
       close: (input) => transport.request((client) => client[WS_METHODS.previewClose](input)),
       list: (input) => transport.request((client) => client[WS_METHODS.previewList](input)),
-      discoverLocalServers: (input) =>
-        transport.request((client) => client[WS_METHODS.previewDiscoverLocalServers](input)),
       onEvent: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribePreviewEvents]({}),
           listener,
           options,
         ),
+      onDiscoveredLocalServers: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeDiscoveredLocalServers]({}),
+          listener,
+          options,
+        ),
+      automation: {
+        connect: (input, listener, options) =>
+          transport.subscribe(
+            (client) => client[WS_METHODS.previewAutomationConnect](input),
+            listener,
+            options,
+          ),
+        respond: (input) =>
+          transport.request((client) => client[WS_METHODS.previewAutomationRespond](input)),
+        focusHost: (input) =>
+          transport.request((client) => client[WS_METHODS.previewAutomationFocusHost](input)),
+      },
     },
     shell: {
       openInEditor: (input) =>

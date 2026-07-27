@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type {
+  DesktopBridge,
+  DesktopPreviewPointerEvent,
+  DesktopPreviewRecordingFrame,
+  DesktopPreviewTabState,
+} from "@t3tools/contracts";
+
+import * as IpcChannels from "./ipc/channels.ts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -27,27 +34,6 @@ const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 const SHOW_NOTIFICATION_CHANNEL = "desktop:show-notification";
 const NOTIFICATION_CLICKED_CHANNEL = "desktop:notification-clicked";
-const PREVIEW_CREATE_TAB_CHANNEL = "desktop:preview-create-tab";
-const PREVIEW_REGISTER_WEBVIEW_CHANNEL = "desktop:preview-register-webview";
-const PREVIEW_NAVIGATE_CHANNEL = "desktop:preview-navigate";
-const PREVIEW_GO_BACK_CHANNEL = "desktop:preview-go-back";
-const PREVIEW_GO_FORWARD_CHANNEL = "desktop:preview-go-forward";
-const PREVIEW_REFRESH_CHANNEL = "desktop:preview-refresh";
-const PREVIEW_HARD_RELOAD_CHANNEL = "desktop:preview-hard-reload";
-const PREVIEW_ZOOM_IN_CHANNEL = "desktop:preview-zoom-in";
-const PREVIEW_ZOOM_OUT_CHANNEL = "desktop:preview-zoom-out";
-const PREVIEW_RESET_ZOOM_CHANNEL = "desktop:preview-reset-zoom";
-const PREVIEW_OPEN_DEVTOOLS_CHANNEL = "desktop:preview-open-devtools";
-const PREVIEW_CLEAR_COOKIES_CHANNEL = "desktop:preview-clear-cookies";
-const PREVIEW_CLEAR_CACHE_CHANNEL = "desktop:preview-clear-cache";
-const PREVIEW_CAPTURE_SCREENSHOT_CHANNEL = "desktop:preview-capture-screenshot";
-const PREVIEW_START_RECORDING_CHANNEL = "desktop:preview-start-recording";
-const PREVIEW_STOP_RECORDING_CHANNEL = "desktop:preview-stop-recording";
-const PREVIEW_ANNOTATE_ELEMENT_CHANNEL = "desktop:preview-annotate-element";
-const PREVIEW_CLEAR_ANNOTATIONS_CHANNEL = "desktop:preview-clear-annotations";
-const PREVIEW_RUN_AUTOMATION_CHANNEL = "desktop:preview-run-automation";
-const PREVIEW_CLOSE_TAB_CHANNEL = "desktop:preview-close-tab";
-const PREVIEW_STATE_CHANNEL = "desktop:preview-state";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
@@ -65,36 +51,98 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstrap"]>;
   },
   preview: {
-    createTab: (input) => ipcRenderer.invoke(PREVIEW_CREATE_TAB_CHANNEL, input),
-    registerWebview: (input) => ipcRenderer.invoke(PREVIEW_REGISTER_WEBVIEW_CHANNEL, input),
-    navigate: (input) => ipcRenderer.invoke(PREVIEW_NAVIGATE_CHANNEL, input),
-    goBack: (input) => ipcRenderer.invoke(PREVIEW_GO_BACK_CHANNEL, input),
-    goForward: (input) => ipcRenderer.invoke(PREVIEW_GO_FORWARD_CHANNEL, input),
-    refresh: (input) => ipcRenderer.invoke(PREVIEW_REFRESH_CHANNEL, input),
-    hardReload: (input) => ipcRenderer.invoke(PREVIEW_HARD_RELOAD_CHANNEL, input),
-    zoomIn: (input) => ipcRenderer.invoke(PREVIEW_ZOOM_IN_CHANNEL, input),
-    zoomOut: (input) => ipcRenderer.invoke(PREVIEW_ZOOM_OUT_CHANNEL, input),
-    resetZoom: (input) => ipcRenderer.invoke(PREVIEW_RESET_ZOOM_CHANNEL, input),
-    openDevTools: (input) => ipcRenderer.invoke(PREVIEW_OPEN_DEVTOOLS_CHANNEL, input),
-    clearCookies: (input) => ipcRenderer.invoke(PREVIEW_CLEAR_COOKIES_CHANNEL, input),
-    clearCache: (input) => ipcRenderer.invoke(PREVIEW_CLEAR_CACHE_CHANNEL, input),
-    captureScreenshot: (input) => ipcRenderer.invoke(PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, input),
-    startRecording: (input) => ipcRenderer.invoke(PREVIEW_START_RECORDING_CHANNEL, input),
-    stopRecording: (input) => ipcRenderer.invoke(PREVIEW_STOP_RECORDING_CHANNEL, input),
-    annotateElement: (input) => ipcRenderer.invoke(PREVIEW_ANNOTATE_ELEMENT_CHANNEL, input),
-    clearAnnotations: (input) => ipcRenderer.invoke(PREVIEW_CLEAR_ANNOTATIONS_CHANNEL, input),
-    runAutomation: (input) => ipcRenderer.invoke(PREVIEW_RUN_AUTOMATION_CHANNEL, input),
-    closeTab: (input) => ipcRenderer.invoke(PREVIEW_CLOSE_TAB_CHANNEL, input),
+    createTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, { tabId }),
+    closeTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),
+    registerWebview: (tabId, webContentsId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL, { tabId, webContentsId }),
+    navigate: (tabId, url) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_NAVIGATE_CHANNEL, { tabId, url }),
+    goBack: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_GO_BACK_CHANNEL, { tabId }),
+    goForward: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_GO_FORWARD_CHANNEL, { tabId }),
+    refresh: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_REFRESH_CHANNEL, { tabId }),
+    zoomIn: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_ZOOM_IN_CHANNEL, { tabId }),
+    zoomOut: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL, { tabId }),
+    resetZoom: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL, { tabId }),
+    hardReload: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL, { tabId }),
+    setColorScheme: (tabId, colorScheme) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
+    openDevTools: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, { tabId }),
+    clearCookies: () => ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL),
+    clearCache: () => ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL),
+    getPreviewConfig: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId }),
+    setAnnotationTheme: (theme) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
+    pickElement: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, { tabId }),
+    cancelPickElement: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, { tabId }),
+    captureScreenshot: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL, { tabId }),
+    revealArtifact: (path) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),
+    copyArtifactToClipboard: (path) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_COPY_ARTIFACT_CHANNEL, { path }),
+    recording: {
+      startScreencast: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId }),
+      stopScreencast: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, { tabId }),
+      save: (tabId, mimeType, data) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL, {
+          tabId,
+          mimeType,
+          data,
+        }),
+      onFrame: (listener) => {
+        const wrappedListener = (_event: Electron.IpcRendererEvent, frame: unknown) => {
+          if (typeof frame !== "object" || frame === null) return;
+          listener(frame as DesktopPreviewRecordingFrame);
+        };
+        ipcRenderer.on(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
+        return () =>
+          ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
+      },
+    },
+    automation: {
+      status: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, { tabId }),
+      snapshot: (tabId) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL, { tabId }),
+      click: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL, { tabId, input }),
+      type: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL, { tabId, input }),
+      press: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL, { tabId, input }),
+      scroll: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL, { tabId, input }),
+      evaluate: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_EVALUATE_CHANNEL, { tabId, input }),
+      waitFor: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL, { tabId, input }),
+    },
     onStateChange: (listener) => {
-      const wrappedListener = (_event: Electron.IpcRendererEvent, change: unknown) => {
-        if (typeof change !== "object" || change === null) return;
-        listener(change as Parameters<typeof listener>[0]);
+      const wrappedListener = (
+        _event: Electron.IpcRendererEvent,
+        tabId: unknown,
+        state: unknown,
+      ) => {
+        if (typeof tabId !== "string" || typeof state !== "object" || state === null) return;
+        listener(tabId, state as DesktopPreviewTabState);
       };
-
-      ipcRenderer.on(PREVIEW_STATE_CHANNEL, wrappedListener);
-      return () => {
-        ipcRenderer.removeListener(PREVIEW_STATE_CHANNEL, wrappedListener);
+      ipcRenderer.on(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, wrappedListener);
+    },
+    onPointerEvent: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, pointerEvent: unknown) => {
+        if (typeof pointerEvent !== "object" || pointerEvent === null) return;
+        listener(pointerEvent as DesktopPreviewPointerEvent);
       };
+      ipcRenderer.on(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
     },
   },
   getClientSettings: () => ipcRenderer.invoke(GET_CLIENT_SETTINGS_CHANNEL),

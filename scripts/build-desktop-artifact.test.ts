@@ -16,6 +16,7 @@ import {
   resolveElectronFuses,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
+  resolveStandaloneRuntimeDependencies,
   resolveWindowsNsisConfig,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
@@ -30,6 +31,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Local Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
     assert.equal(resolveDesktopProductName("0.0.17", "dev"), "T3 Code (Dev)");
+  });
+
+  it("excludes bundled workspace packages from standalone runtime dependencies", () => {
+    assert.deepStrictEqual(
+      resolveStandaloneRuntimeDependencies(
+        {
+          "@t3tools/contracts": "workspace:*",
+          "@effect/platform-node": "catalog:",
+          electron: "40.6.0",
+          open: "^10.1.0",
+        },
+        { "@effect/platform-node": "4.0.0-beta.78" },
+        "apps/desktop",
+      ),
+      {
+        "@effect/platform-node": "4.0.0-beta.78",
+        open: "^10.1.0",
+      },
+    );
   });
 
   it("keeps RunAsNode enabled and hardens fuses, gating asar integrity to mac/win", () => {

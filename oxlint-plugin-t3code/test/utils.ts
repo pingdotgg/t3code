@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import { assert, it } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -112,8 +113,12 @@ export const createOxlintRuleHarness = (
     );
     yield* fs.writeFileString(sourcePath, source);
 
+    const spawn = resolveWindowsSpawn(oxlintBin);
     const output = yield* spawnAndCollectOutput(
-      ChildProcess.make(oxlintBin, ["--config", configPath, sourcePath], { cwd: repoRoot }),
+      ChildProcess.make(spawn.command, ["--config", configPath, sourcePath], {
+        cwd: repoRoot,
+        shell: spawn.shell,
+      }),
     );
 
     if (output.exitCode !== 0) {

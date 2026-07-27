@@ -14,6 +14,7 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
+    "@t3tools/shared": "workspace:*",
     "@types/bun": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",

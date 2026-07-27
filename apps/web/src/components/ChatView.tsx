@@ -124,7 +124,8 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import { BrowserPreviewPanel } from "./BrowserPreviewPanel";
+import { PreviewPanel } from "./preview/PreviewPanel";
+import { useBrowserPanelState, useRightPanelStore } from "~/rightPanelStore";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon } from "lucide-react";
@@ -1778,15 +1779,30 @@ function ChatViewBody(
   }, [activeThreadRef, setTerminalOpen, terminalState.terminalOpen]);
   const toggleBrowserPreview = useCallback(() => {
     setActiveRightPanel((current) => {
-      if (current === "browser-preview") return null;
+      if (current === "browser-preview") {
+        if (activeThreadRef) useRightPanelStore.getState().closeBrowser(activeThreadRef);
+        return null;
+      }
+      if (activeThreadRef) useRightPanelStore.getState().openBrowser(activeThreadRef, null);
       planSidebarDismissedForTurnRef.current =
         activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
       return "browser-preview";
     });
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  }, [activePlan?.turnId, activeThreadRef, sidebarProposedPlan?.turnId]);
   const closeBrowserPreview = useCallback(() => {
+    if (activeThreadRef) useRightPanelStore.getState().closeBrowser(activeThreadRef);
     setActiveRightPanel((current) => (current === "browser-preview" ? null : current));
-  }, []);
+  }, [activeThreadRef]);
+  const browserPanel = useBrowserPanelState(activeThreadRef);
+  const browserPanelVisibleRef = useRef(browserPanel.visible);
+  // Automation (`preview.open` with `show`) reveals the browser from outside
+  // React; mirror that request into the fork's single right-panel slot.
+  useEffect(() => {
+    const becameVisible = browserPanel.visible && !browserPanelVisibleRef.current;
+    browserPanelVisibleRef.current = browserPanel.visible;
+    if (!becameVisible) return;
+    setActiveRightPanel("browser-preview");
+  }, [browserPanel.visible]);
   const toggleInsights = useCallback(() => {
     setActiveRightPanel((current) => {
       if (current === "insights") return null;
@@ -4381,10 +4397,12 @@ function ChatViewBody(
             onClose={closePlanSidebar}
           />
         ) : null}
-        {browserPreviewOpen ? (
-          <BrowserPreviewPanel
-            environmentId={activeThread.environmentId}
-            threadId={activeThread.id}
+        {browserPreviewOpen && activeThreadRef ? (
+          <PreviewPanel
+            mode="inline"
+            threadRef={activeThreadRef}
+            tabId={browserPanel.tabId}
+            visible
             onClose={closeBrowserPreview}
           />
         ) : null}

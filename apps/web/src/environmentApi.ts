@@ -31,8 +31,15 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       refresh: rpcClient.preview.refresh,
       close: rpcClient.preview.close,
       list: rpcClient.preview.list,
-      discoverLocalServers: rpcClient.preview.discoverLocalServers,
+      automation: {
+        connect: (input, callback, options) =>
+          rpcClient.preview.automation.connect(input, callback, options),
+        respond: (response) => rpcClient.preview.automation.respond(response),
+        focusHost: (input) => rpcClient.preview.automation.focusHost(input),
+      },
       onEvent: (callback) => rpcClient.preview.onEvent(callback),
+      subscribePorts: (callback, options) =>
+        rpcClient.preview.onDiscoveredLocalServers(callback, options),
     },
     git: {
       pull: rpcClient.git.pull,

@@ -77,6 +77,21 @@ export interface WsRpcClient {
     readonly onEvent: RpcStreamMethod<typeof WS_METHODS.subscribeTerminalEvents>;
     readonly onMetadata: RpcStreamMethod<typeof WS_METHODS.subscribeTerminalMetadata>;
   };
+  readonly preview: {
+    readonly open: RpcUnaryMethod<typeof WS_METHODS.previewOpen>;
+    readonly navigate: RpcUnaryMethod<typeof WS_METHODS.previewNavigate>;
+    readonly refresh: RpcUnaryMethod<typeof WS_METHODS.previewRefresh>;
+    readonly close: RpcUnaryMethod<typeof WS_METHODS.previewClose>;
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.previewList>;
+    readonly reportStatus: RpcUnaryMethod<typeof WS_METHODS.previewReportStatus>;
+    readonly automation: {
+      readonly connect: RpcInputStreamMethod<typeof WS_METHODS.previewAutomationConnect>;
+      readonly respond: RpcUnaryMethod<typeof WS_METHODS.previewAutomationRespond>;
+      readonly focusHost: RpcUnaryMethod<typeof WS_METHODS.previewAutomationFocusHost>;
+    };
+    readonly onEvent: RpcStreamMethod<typeof WS_METHODS.subscribePreviewEvents>;
+    readonly subscribePorts: RpcStreamMethod<typeof WS_METHODS.subscribeDiscoveredLocalServers>;
+  };
   readonly projects: {
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
@@ -202,6 +217,39 @@ export function createWsRpcClient(
           (client) => client[WS_METHODS.subscribeTerminalMetadata]({}),
           listener,
           subscriptionOptions(options, WS_METHODS.subscribeTerminalMetadata),
+        ),
+    },
+    preview: {
+      open: (input) => transport.request((client) => client[WS_METHODS.previewOpen](input)),
+      navigate: (input) => transport.request((client) => client[WS_METHODS.previewNavigate](input)),
+      refresh: (input) => transport.request((client) => client[WS_METHODS.previewRefresh](input)),
+      close: (input) => transport.request((client) => client[WS_METHODS.previewClose](input)),
+      list: (input) => transport.request((client) => client[WS_METHODS.previewList](input)),
+      reportStatus: (input) =>
+        transport.request((client) => client[WS_METHODS.previewReportStatus](input)),
+      automation: {
+        connect: (input, listener, options) =>
+          transport.subscribe(
+            (client) => client[WS_METHODS.previewAutomationConnect](input),
+            listener,
+            subscriptionOptions(options, WS_METHODS.previewAutomationConnect),
+          ),
+        respond: (input) =>
+          transport.request((client) => client[WS_METHODS.previewAutomationRespond](input)),
+        focusHost: (input) =>
+          transport.request((client) => client[WS_METHODS.previewAutomationFocusHost](input)),
+      },
+      onEvent: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribePreviewEvents]({}),
+          listener,
+          subscriptionOptions(options, WS_METHODS.subscribePreviewEvents),
+        ),
+      subscribePorts: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeDiscoveredLocalServers]({}),
+          listener,
+          subscriptionOptions(options, WS_METHODS.subscribeDiscoveredLocalServers),
         ),
     },
     projects: {

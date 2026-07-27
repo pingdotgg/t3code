@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   COPILOT_AGENT_MODE_ID,
   COPILOT_LEGACY_AGENT_MODE_ID,
@@ -90,6 +92,43 @@ describe("buildCopilotAcpSpawnInput", () => {
         cliCommand: "t3-dev",
         cliBaseDir: "/tmp/t3-dev",
       });
+    });
+
+    it("appends the provider-scoped browser automation server", () => {
+      const threadId = ThreadId.make("thread-1");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("copilot"),
+        endpoint: "http://127.0.0.1:3000/mcp",
+        authorizationHeader: "******",
+      });
+
+      expect(
+        buildCopilotMcpServers(
+          {
+            url: "http://127.0.0.1:1234/mcp",
+            authorization: "t3-tools-token",
+          },
+          threadId,
+        ),
+      ).toEqual([
+        {
+          type: "http",
+          name: "t3-tools",
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [{ name: "Authorization", value: "t3-tools-token" }],
+        },
+        {
+          type: "http",
+          name: "t3-code",
+          url: "http://127.0.0.1:3000/mcp",
+          headers: [{ name: "Authorization", value: "******" }],
+        },
+      ]);
+
+      McpProviderSession.clearMcpProviderSession(threadId);
     });
   });
 });

@@ -24,7 +24,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import ChatView from "./ChatView";
 import { threadHasStarted } from "./ChatView.logic";
-import { BrowserPreviewHost } from "./BrowserPreviewHost";
+import { ElectronBrowserHost } from "~/browser/ElectronBrowserHost";
 import { Button } from "./ui/button";
 import { scopeProjectRef } from "@t3tools/client-runtime";
 import { DraftId, useComposerDraftStore, type DraftThreadEnvMode } from "../composerDraftStore";
@@ -320,7 +320,7 @@ export function ChatSplitArea(props: ChatSplitAreaProps) {
           onDiffPanelOpen={onDiffPanelOpen}
           reserveTitleBarControlInset={reserveTitleBarControlInset}
         />
-        <BrowserPreviewHost />
+        <ElectronBrowserHost />
       </>
     );
   }
@@ -335,7 +335,7 @@ export function ChatSplitArea(props: ChatSplitAreaProps) {
         onDiffPanelOpen={onDiffPanelOpen}
         reserveTitleBarControlInset={reserveTitleBarControlInset}
       />
-      <BrowserPreviewHost />
+      <ElectronBrowserHost />
     </>
   );
 }

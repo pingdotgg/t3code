@@ -87,7 +87,11 @@ import {
 import { NetService } from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { mobileRouteLayer } from "./mobileProtocol.ts";
-import { PreviewManagerLive } from "./preview/Manager.ts";
+import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as PreviewManager from "./preview/Manager.ts";
+import * as PortScanner from "./preview/PortScanner.ts";
 import * as CloudEnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as CloudServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CliTokenManager from "./cloud/CliTokenManager.ts";
@@ -193,9 +197,18 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitHubCliLive),
 );
 
+// The MCP credential registry and the automation broker are runtime services:
+// the websocket RPC handlers and the HTTP MCP endpoint must resolve the same
+// instances so a provider-scoped tool call reaches the registered browser host.
+const PreviewAutomationLayerLive = Layer.mergeAll(
+  PreviewAutomationBroker.layer,
+  McpSessionRegistry.layer,
+);
+
 const TerminalLayerLive = Layer.mergeAll(
   TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive)),
-  PreviewManagerLive,
+  PreviewManager.layer,
+  PortScanner.layer,
 );
 
 const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
@@ -321,6 +334,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(RepositoryIdentityResolverLive),
   Layer.provideMerge(ServerEnvironmentLive),
+  Layer.provideMerge(PreviewAutomationLayerLive),
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(CloudRuntimeLayerLive),
 );
@@ -360,6 +374,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,
+  McpHttpServer.layer,
 ).pipe(Layer.provideMerge(environmentAuthenticatedAuthLayer), Layer.provide(browserApiCorsLayer));
 
 export const makeServerLayer = Layer.unwrap(

@@ -12,16 +12,21 @@
     "start": "node scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vp test run --passWithNoTests",
-    "smoke-test": "node scripts/smoke-test.mjs"
+    "smoke-test": "node scripts/smoke-test.mjs",
+    "build:preview-annotation-css": "node scripts/build-preview-annotation-css.mjs"
   },
   "dependencies": {
-    "effect": "catalog:",
-    "electron": "40.6.0",
-    "electron-updater": "^6.6.2"
-  },
-  "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "effect": "catalog:",
+    "electron": "40.6.0",
+    "electron-updater": "^6.6.2",
+    "playwright-core": "1.60.0",
+    "react-grab": "^0.1.32"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",
     "electron-builder": "^26.15.3",

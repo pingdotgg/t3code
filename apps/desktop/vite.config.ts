@@ -23,5 +23,15 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preload.ts"],
     },
+    {
+      format: "cjs",
+      outDir: "dist-electron",
+      sourcemap: true,
+      outExtensions: () => ({ js: ".cjs" }),
+      entry: ["src/preview-pick-preload.ts"],
+      deps: {
+        alwaysBundle: (id) => id.startsWith("@t3tools/") || id.startsWith("react-grab"),
+      },
+    },
   ],
 });

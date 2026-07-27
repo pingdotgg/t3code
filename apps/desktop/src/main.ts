@@ -38,7 +38,6 @@ import * as Schema from "effect/Schema";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
-import { isPreviewPartition } from "@t3tools/shared/preview";
 import {
   enableV8CompileCache,
   resolveCompileCacheDir,
@@ -91,7 +90,7 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { createMainWindowWebPreferences } from "./mainWindowPreferences.ts";
-import { registerPreviewIpcHandlers } from "./previewBridge.ts";
+import { startPreviewRuntime, type PreviewRuntimeHandle } from "./preview/Runtime.ts";
 
 const decodeDesktopNotificationRequest = Schema.decodeUnknownSync(DesktopNotificationRequest);
 
@@ -157,6 +156,8 @@ const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
+const BROWSER_ARTIFACTS_DIR = Path.join(STATE_DIR, "browser-artifacts");
+let previewRuntime: PreviewRuntimeHandle | null = null;
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
@@ -1631,8 +1632,6 @@ function registerIpcHandlers(): void {
     } as const;
   });
 
-  registerPreviewIpcHandlers();
-
   ipcMain.removeHandler(GET_CLIENT_SETTINGS_CHANNEL);
   ipcMain.handle(GET_CLIENT_SETTINGS_CHANNEL, async () => readClientSettings(CLIENT_SETTINGS_PATH));
 
@@ -2057,8 +2056,14 @@ function createWindow(initialUrl?: string): BrowserWindow {
     webPreferences: createMainWindowWebPreferences(Path.join(__dirname, "preload.cjs")),
   });
 
+  void previewRuntime?.setMainWindow(window);
+
   window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-    if (typeof params.partition !== "string" || !isPreviewPartition(params.partition)) {
+    if (
+      typeof params.partition !== "string" ||
+      previewRuntime === null ||
+      !previewRuntime.isBrowserPartition(params.partition)
+    ) {
       event.preventDefault();
       return;
     }
@@ -2203,6 +2208,10 @@ async function bootstrap(): Promise<void> {
   }
 
   registerIpcHandlers();
+  previewRuntime = await startPreviewRuntime({ browserArtifactsDir: BROWSER_ARTIFACTS_DIR });
+  if (mainWindow) {
+    void previewRuntime.setMainWindow(mainWindow);
+  }
   writeDesktopLogHeader("bootstrap ipc handlers registered");
   startBackend();
   writeDesktopLogHeader("bootstrap backend start requested");
@@ -2231,6 +2240,8 @@ async function bootstrap(): Promise<void> {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  void previewRuntime?.dispose();
+  previewRuntime = null;
   updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();

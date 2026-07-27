@@ -1,467 +1,428 @@
+/**
+ * Per-thread preview UI state.
+ *
+ * Each thread owns an independent atom. Most consumers read exactly one
+ * thread; the desktop browser host uses the aggregate session atom because it
+ * is the one place that must enumerate every live preview tab.
+ */
+import { useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
-  type DesktopPreviewTabState,
+  type DesktopPreviewColorScheme,
   type PreviewEvent,
-  type PreviewNavStatus,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime";
-import { clampPreviewTitle } from "@t3tools/shared/preview";
-import { useEffect, useMemo } from "react";
-import { create } from "zustand";
+import { Atom } from "effect/unstable/reactivity";
 
-import { readEnvironmentApi } from "./environmentApi";
+import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
+import { appAtomRegistry } from "./rpc/atomRegistry";
 
-const MAX_RECENT_PREVIEW_URLS = 12;
+export interface DesktopPreviewOverlay {
+  canGoBack: boolean;
+  canGoForward: boolean;
+  loading: boolean;
+  zoomFactor: number;
+  colorScheme: DesktopPreviewColorScheme;
+  controller: "human" | "agent" | "none";
+}
 
 export interface ThreadPreviewState {
-  readonly sessions: readonly PreviewSessionSnapshot[];
-  readonly activeTabId: string | null;
-  readonly suppressedTabIds: readonly string[];
-  readonly desktopByTabId: Readonly<Record<string, DesktopPreviewTabState>>;
-  readonly surfaceByTabId: Readonly<Record<string, PreviewSurfaceRect>>;
-  readonly recentlySeenUrls: readonly string[];
-}
-
-export interface PreviewSurfaceRect {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}
-
-export interface HostedPreviewSurface {
-  readonly threadRef: ScopedThreadRef;
-  readonly snapshot: PreviewSessionSnapshot;
-  readonly rect: PreviewSurfaceRect;
-}
-
-interface PreviewStateStore {
-  readonly byThreadKey: Readonly<Record<string, ThreadPreviewState>>;
-}
-
-interface UsePreviewSessionOptions {
-  readonly onError?: (error: unknown) => void;
+  snapshot: PreviewSessionSnapshot | null;
+  sessions: Record<string, PreviewSessionSnapshot>;
+  /** Tabs intentionally closed by this client. Stale list snapshots must not resurrect them. */
+  suppressedTabIds: ReadonlySet<string>;
+  activeTabId: string | null;
+  desktopOverlay: DesktopPreviewOverlay | null;
+  desktopByTabId: Record<string, DesktopPreviewOverlay>;
+  recentlySeenUrls: string[];
 }
 
 const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
-  sessions: Object.freeze([]),
+  snapshot: null,
+  sessions: {},
+  suppressedTabIds: new Set<string>(),
   activeTabId: null,
-  suppressedTabIds: Object.freeze([]),
-  desktopByTabId: Object.freeze({}),
-  surfaceByTabId: Object.freeze({}),
-  recentlySeenUrls: Object.freeze([]),
+  desktopOverlay: null,
+  desktopByTabId: {},
+  recentlySeenUrls: [] as string[],
 });
 
-const usePreviewStateStore = create<PreviewStateStore>(() => ({
-  byThreadKey: {},
-}));
+const emptyPreviewStateAtom = Atom.make<ThreadPreviewState>(EMPTY_THREAD_PREVIEW_STATE).pipe(
+  Atom.withLabel("preview:empty-thread"),
+);
 
-function getThreadState(key: string): ThreadPreviewState {
-  return usePreviewStateStore.getState().byThreadKey[key] ?? EMPTY_THREAD_PREVIEW_STATE;
+export const previewStateAtom = Atom.family((threadKey: string) =>
+  Atom.make<ThreadPreviewState>(EMPTY_THREAD_PREVIEW_STATE).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`preview:thread:${threadKey}`),
+  ),
+);
+
+// Only the Electron browser host needs a cross-thread view. Keep that index
+// separate so thread-local readers never subscribe to unrelated previews.
+interface ActivePreviewThreadIndex {
+  readonly keys: ReadonlySet<string>;
 }
 
-function updateThreadState(
+const activePreviewThreadKeysAtom = Atom.make<ActivePreviewThreadIndex>({
+  keys: new Set<string>(),
+}).pipe(Atom.keepAlive, Atom.withLabel("preview:active-thread-keys"));
+
+const activePreviewSessionsAtom = Atom.make((get) => {
+  const byThreadKey: Record<string, ThreadPreviewState> = {};
+  for (const threadKey of get(activePreviewThreadKeysAtom).keys) {
+    const state = get(previewStateAtom(threadKey));
+    if (Object.keys(state.sessions).length > 0) {
+      byThreadKey[threadKey] = state;
+    }
+  }
+  return byThreadKey;
+}).pipe(Atom.withLabel("preview:active-sessions"));
+
+const changedPreviewThreadKeys = new Set<string>();
+
+function syncActivePreviewThread(threadKey: string, state: ThreadPreviewState): void {
+  const active = Object.keys(state.sessions).length > 0;
+  appAtomRegistry.update(activePreviewThreadKeysAtom, (current) => {
+    if (current.keys.has(threadKey) === active) return current;
+    const next = new Set(current.keys);
+    if (active) next.add(threadKey);
+    else next.delete(threadKey);
+    return { keys: next };
+  });
+}
+
+function updateThreadPreviewState(
   ref: ScopedThreadRef,
-  updater: (state: ThreadPreviewState) => ThreadPreviewState,
+  update: (current: ThreadPreviewState) => ThreadPreviewState,
 ): void {
-  const key = scopedThreadKey(ref);
-  usePreviewStateStore.setState((state) => ({
-    byThreadKey: {
-      ...state.byThreadKey,
-      [key]: updater(state.byThreadKey[key] ?? EMPTY_THREAD_PREVIEW_STATE),
-    },
-  }));
+  const threadKey = scopedThreadKey(ref);
+  const atom = previewStateAtom(threadKey);
+  let nextState = appAtomRegistry.get(atom);
+  const changed = appAtomRegistry.modify(atom, (current) => {
+    nextState = update(current);
+    return [nextState !== current, nextState];
+  });
+  if (!changed) return;
+  changedPreviewThreadKeys.add(threadKey);
+  syncActivePreviewThread(threadKey, nextState);
 }
 
-function withoutSuppressedSessions(
-  sessions: readonly PreviewSessionSnapshot[],
-  suppressedTabIds: readonly string[],
-): readonly PreviewSessionSnapshot[] {
-  if (suppressedTabIds.length === 0) {
-    return sessions;
-  }
-  const suppressed = new Set(suppressedTabIds);
-  return sessions.filter((session) => !suppressed.has(session.tabId));
-}
+const dedupeRecentUrls = (existing: string[], url: string): string[] => {
+  const next = [url, ...existing.filter((entry) => entry !== url)];
+  return next.slice(0, PREVIEW_RECENT_URL_LIMIT);
+};
 
-function withActiveTab(
-  state: ThreadPreviewState,
-  sessions: readonly PreviewSessionSnapshot[],
-): ThreadPreviewState {
-  const activeTabId =
-    state.activeTabId && sessions.some((session) => session.tabId === state.activeTabId)
-      ? state.activeTabId
-      : (sessions[0]?.tabId ?? null);
-
-  return {
-    ...state,
-    sessions,
-    activeTabId,
-  };
-}
-
-function upsertSession(
-  sessions: readonly PreviewSessionSnapshot[],
+const rememberSnapshotUrl = (
+  recentlySeenUrls: string[],
   snapshot: PreviewSessionSnapshot,
-): readonly PreviewSessionSnapshot[] {
-  const nextSessions = sessions.filter((session) => session.tabId !== snapshot.tabId);
-  return [snapshot, ...nextSessions];
+): string[] =>
+  snapshot.navStatus._tag === "Idle"
+    ? recentlySeenUrls
+    : dedupeRecentUrls(recentlySeenUrls, snapshot.navStatus.url);
+
+const latestSnapshot = (
+  sessions: Record<string, PreviewSessionSnapshot>,
+): PreviewSessionSnapshot | null =>
+  Object.values(sessions)
+    .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+    .at(-1) ?? null;
+
+const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPreviewState => {
+  if (!current.sessions[tabId]) return current;
+  const { [tabId]: _closed, ...sessions } = current.sessions;
+  const { [tabId]: _desktop, ...desktopByTabId } = current.desktopByTabId;
+  const nextSnapshot = latestSnapshot(sessions);
+  const activeTabId =
+    current.activeTabId === tabId ? (nextSnapshot?.tabId ?? null) : current.activeTabId;
+  const snapshot = activeTabId ? (sessions[activeTabId] ?? nextSnapshot) : nextSnapshot;
+  return {
+    ...current,
+    sessions,
+    desktopByTabId,
+    activeTabId: snapshot?.tabId ?? null,
+    snapshot,
+    desktopOverlay: snapshot ? (desktopByTabId[snapshot.tabId] ?? null) : null,
+  };
+};
+
+export function useThreadPreviewState(ref: ScopedThreadRef | null | undefined): ThreadPreviewState {
+  const atom = ref ? previewStateAtom(scopedThreadKey(ref)) : emptyPreviewStateAtom;
+  return useAtomValue(atom);
 }
 
-function removeSession(
-  sessions: readonly PreviewSessionSnapshot[],
-  tabId: string,
-): readonly PreviewSessionSnapshot[] {
-  return sessions.filter((session) => session.tabId !== tabId);
-}
-
-function rememberUrl(urls: readonly string[], url: string | null | undefined): readonly string[] {
-  if (!url) {
-    return urls;
-  }
-  return [url, ...urls.filter((existing) => existing !== url)].slice(0, MAX_RECENT_PREVIEW_URLS);
-}
-
-export function getPreviewSnapshotUrl(snapshot: PreviewSessionSnapshot | null): string {
-  const status = snapshot?.navStatus;
-  if (!status || status._tag === "Idle") {
-    return "";
-  }
-  return status.url;
-}
-
-export function getPreviewSnapshotTitle(snapshot: PreviewSessionSnapshot | null): string {
-  const status = snapshot?.navStatus;
-  if (!status || status._tag === "Idle") {
-    return "Browser";
-  }
-  return status.title || status.url || "Browser";
-}
-
-export function desktopPreviewNavStatusToPreviewNavStatus(
-  state: DesktopPreviewTabState,
-): PreviewNavStatus {
-  const fallbackUrl = state.url ?? "";
-  const fallbackTitle = clampPreviewTitle(state.title || fallbackUrl);
-
-  switch (state.navStatus.kind) {
-    case "loading": {
-      const url = state.navStatus.url || fallbackUrl;
-      if (!url) {
-        return { _tag: "Idle" };
-      }
-      return {
-        _tag: "Loading",
-        url,
-        title: clampPreviewTitle(state.navStatus.title || fallbackTitle),
-      };
-    }
-    case "success": {
-      const url = state.navStatus.url || fallbackUrl;
-      if (!url) {
-        return { _tag: "Idle" };
-      }
-      return {
-        _tag: "Success",
-        url,
-        title: clampPreviewTitle(state.navStatus.title || fallbackTitle),
-      };
-    }
-    case "failed": {
-      const url = state.navStatus.url || fallbackUrl;
-      if (!url) {
-        return { _tag: "Idle" };
-      }
-      return {
-        _tag: "LoadFailed",
-        url,
-        title: clampPreviewTitle(state.navStatus.title || fallbackTitle),
-        code: state.navStatus.errorCode,
-        description: state.navStatus.errorText,
-      };
-    }
-    case "idle":
-      return { _tag: "Idle" };
-  }
+export function useActivePreviewSessions(): Record<string, ThreadPreviewState> {
+  return useAtomValue(activePreviewSessionsAtom);
 }
 
 export function readThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState {
-  return getThreadState(scopedThreadKey(ref));
+  return appAtomRegistry.get(previewStateAtom(scopedThreadKey(ref)));
 }
 
-export function useThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState {
-  const key = scopedThreadKey(ref);
-  return usePreviewStateStore((state) => state.byThreadKey[key] ?? EMPTY_THREAD_PREVIEW_STATE);
+export function subscribeThreadPreviewState(
+  ref: ScopedThreadRef,
+  listener: (state: ThreadPreviewState, previous: ThreadPreviewState) => void,
+): () => void {
+  const atom = previewStateAtom(scopedThreadKey(ref));
+  let previous = appAtomRegistry.get(atom);
+  return appAtomRegistry.subscribe(atom, (state) => {
+    const prior = previous;
+    previous = state;
+    listener(state, prior);
+  });
 }
 
-export function getActivePreviewSnapshot(state: ThreadPreviewState): PreviewSessionSnapshot | null {
-  return (
-    state.sessions.find((session) => session.tabId === state.activeTabId) ??
-    state.sessions[0] ??
-    null
-  );
-}
-
-export function useActivePreviewSessions(): readonly PreviewSessionSnapshot[] {
-  const byThreadKey = usePreviewStateStore((state) => state.byThreadKey);
-  return useMemo(
-    () => Object.values(byThreadKey).flatMap((threadState) => threadState.sessions),
-    [byThreadKey],
-  );
-}
-
-const threadRefByKeyCache = new Map<string, ScopedThreadRef>();
-
-/**
- * Returns a stable {@link ScopedThreadRef} instance for a given thread key.
- * `parseScopedThreadKey` allocates a fresh object each call; reusing one keeps
- * referential identity stable across renders so effects/callbacks keyed on the
- * ref (e.g. the hosted webview's createTab / register effects) don't re-run on
- * every store update.
- */
-function stableThreadRefFromKey(threadKey: string): ScopedThreadRef | null {
-  const cached = threadRefByKeyCache.get(threadKey);
-  if (cached) {
-    return cached;
-  }
-  const parsed = parseScopedThreadKey(threadKey);
-  if (parsed) {
-    threadRefByKeyCache.set(threadKey, parsed);
-  }
-  return parsed;
-}
-
-export function useHostedPreviewSurfaces(): readonly HostedPreviewSurface[] {
-  const byThreadKey = usePreviewStateStore((state) => state.byThreadKey);
-  return useMemo(
-    () =>
-      Object.entries(byThreadKey).flatMap(([threadKey, threadState]) => {
-        const threadRef = stableThreadRefFromKey(threadKey);
-        if (!threadRef) {
-          return [];
-        }
-        return threadState.sessions.flatMap((snapshot) => {
-          const rect = threadState.surfaceByTabId[snapshot.tabId];
-          return rect ? [{ threadRef, snapshot, rect }] : [];
-        });
-      }),
-    [byThreadKey],
-  );
-}
-
-export function findPreviewThreadRefByTabId(tabId: string): ScopedThreadRef | null {
-  const byThreadKey = usePreviewStateStore.getState().byThreadKey;
-  for (const [threadKey, threadState] of Object.entries(byThreadKey)) {
-    if (!threadState.sessions.some((session) => session.tabId === tabId)) {
-      continue;
+export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEvent): void {
+  updateThreadPreviewState(ref, (current) => {
+    switch (event.type) {
+      case "opened":
+      case "navigated":
+      case "resized": {
+        const snapshot = event.snapshot;
+        if (current.suppressedTabIds.has(snapshot.tabId)) return current;
+        const recentlySeenUrls =
+          snapshot.navStatus._tag === "Idle"
+            ? current.recentlySeenUrls
+            : dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url);
+        const sessions = { ...current.sessions, [snapshot.tabId]: snapshot };
+        const activeTabId = event.type === "opened" ? snapshot.tabId : current.activeTabId;
+        const activeSnapshot = sessions[activeTabId ?? snapshot.tabId] ?? snapshot;
+        return {
+          ...current,
+          sessions,
+          activeTabId: activeTabId ?? snapshot.tabId,
+          snapshot: activeSnapshot,
+          desktopOverlay: current.desktopByTabId[activeSnapshot.tabId] ?? null,
+          recentlySeenUrls,
+        };
+      }
+      case "failed": {
+        const existing = current.sessions[event.tabId];
+        if (!existing) return current;
+        const failedSnapshot = {
+          ...existing,
+          navStatus: {
+            _tag: "LoadFailed" as const,
+            url: event.url,
+            title: event.title,
+            code: event.code,
+            description: event.description,
+          },
+          updatedAt: event.createdAt,
+        };
+        const sessions = { ...current.sessions, [event.tabId]: failedSnapshot };
+        return {
+          ...current,
+          sessions,
+          snapshot: current.activeTabId === event.tabId ? failedSnapshot : current.snapshot,
+        };
+      }
+      case "closed":
+        return removeSession(current, event.tabId);
     }
-    return stableThreadRefFromKey(threadKey);
-  }
-  return null;
-}
-
-export function activatePreviewTab(ref: ScopedThreadRef, tabId: string): void {
-  updateThreadState(ref, (state) => {
-    if (!state.sessions.some((session) => session.tabId === tabId)) {
-      return state;
-    }
-    return {
-      ...state,
-      activeTabId: tabId,
-    };
   });
 }
 
 export function applyPreviewServerSnapshot(
   ref: ScopedThreadRef,
-  snapshot: PreviewSessionSnapshot,
+  snapshot: PreviewSessionSnapshot | null,
 ): void {
-  updateThreadState(ref, (state) => {
-    const sessions = upsertSession(state.sessions, snapshot);
-    return withActiveTab(
-      {
-        ...state,
-        suppressedTabIds: state.suppressedTabIds.filter((tabId) => tabId !== snapshot.tabId),
-        recentlySeenUrls: rememberUrl(state.recentlySeenUrls, getPreviewSnapshotUrl(snapshot)),
-      },
-      sessions,
-    );
+  updateThreadPreviewState(ref, (current) => {
+    if (!snapshot && current.snapshot === null) return current;
+    if (!snapshot) {
+      return {
+        ...current,
+        snapshot: null,
+        sessions: {},
+        activeTabId: null,
+        desktopOverlay: null,
+        desktopByTabId: {},
+      };
+    }
+    if (current.suppressedTabIds.has(snapshot.tabId)) return current;
+    const existing = current.sessions[snapshot.tabId];
+    if (existing && existing.updatedAt > snapshot.updatedAt) return current;
+    const recentlySeenUrls = rememberSnapshotUrl(current.recentlySeenUrls, snapshot);
+    return {
+      ...current,
+      snapshot,
+      sessions: { ...current.sessions, [snapshot.tabId]: snapshot },
+      activeTabId: snapshot.tabId,
+      desktopOverlay: current.desktopByTabId[snapshot.tabId] ?? null,
+      recentlySeenUrls,
+    };
   });
 }
 
-export function applyPreviewServerSnapshotList(
+/**
+ * Merge a server mutation without changing which tab the user is viewing.
+ *
+ * Commands such as resize can target background tabs. Their response is
+ * authoritative for that tab, but it is not a request to focus the tab.
+ */
+export function updatePreviewServerSnapshot(
   ref: ScopedThreadRef,
-  sessions: readonly PreviewSessionSnapshot[],
+  snapshot: PreviewSessionSnapshot,
 ): void {
-  updateThreadState(ref, (state) =>
-    withActiveTab(
-      {
-        ...state,
-        recentlySeenUrls: sessions.reduce(
-          (urls, session) => rememberUrl(urls, getPreviewSnapshotUrl(session)),
-          state.recentlySeenUrls,
-        ),
-      },
-      withoutSuppressedSessions(sessions, state.suppressedTabIds),
-    ),
-  );
+  updateThreadPreviewState(ref, (current) => {
+    if (current.suppressedTabIds.has(snapshot.tabId)) return current;
+    const existing = current.sessions[snapshot.tabId];
+    if (existing && existing.updatedAt > snapshot.updatedAt) return current;
+    const sessions = { ...current.sessions, [snapshot.tabId]: snapshot };
+    const activeTabId =
+      current.activeTabId && sessions[current.activeTabId] ? current.activeTabId : snapshot.tabId;
+    const activeSnapshot = sessions[activeTabId] ?? snapshot;
+    return {
+      ...current,
+      sessions,
+      activeTabId,
+      snapshot: activeSnapshot,
+      desktopOverlay: current.desktopByTabId[activeTabId] ?? null,
+      recentlySeenUrls: rememberSnapshotUrl(current.recentlySeenUrls, snapshot),
+    };
+  });
 }
 
-export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEvent): void {
-  if (event.type === "closed") {
-    markPreviewTabClosed(ref, event.tabId);
-    return;
-  }
-
-  if ("snapshot" in event) {
-    applyPreviewServerSnapshot(ref, event.snapshot);
-    return;
-  }
-
-  updateThreadState(ref, (state) => {
-    const current = state.sessions.find((session) => session.tabId === event.tabId);
-    if (!current) {
-      return state;
+/**
+ * Replace the local session index from an authoritative preview.list result.
+ * Missing tabs are removed while the current active tab is preserved whenever
+ * it still exists in the server result.
+ */
+export function reconcilePreviewServerSessions(
+  ref: ScopedThreadRef,
+  snapshots: ReadonlyArray<PreviewSessionSnapshot>,
+): void {
+  updateThreadPreviewState(ref, (current) => {
+    const sessions: Record<string, PreviewSessionSnapshot> = {};
+    let recentlySeenUrls = current.recentlySeenUrls;
+    for (const snapshot of snapshots) {
+      if (current.suppressedTabIds.has(snapshot.tabId)) continue;
+      const existing = current.sessions[snapshot.tabId];
+      const next = existing && existing.updatedAt > snapshot.updatedAt ? existing : snapshot;
+      sessions[next.tabId] = next;
+      recentlySeenUrls = rememberSnapshotUrl(recentlySeenUrls, next);
     }
 
-    const snapshot: PreviewSessionSnapshot = {
-      ...current,
-      navStatus: {
-        _tag: "LoadFailed",
-        url: event.url,
-        title: clampPreviewTitle(event.title),
-        code: event.code,
-        description: event.description,
-      },
-      updatedAt: event.createdAt,
-    };
-
-    return withActiveTab(
-      {
-        ...state,
-        recentlySeenUrls: rememberUrl(state.recentlySeenUrls, event.url),
-      },
-      upsertSession(state.sessions, snapshot),
+    const fallback = latestSnapshot(sessions);
+    const activeTabId =
+      current.activeTabId && sessions[current.activeTabId]
+        ? current.activeTabId
+        : (fallback?.tabId ?? null);
+    const snapshot = activeTabId ? (sessions[activeTabId] ?? null) : null;
+    const desktopByTabId = Object.fromEntries(
+      Object.entries(current.desktopByTabId).filter(([tabId]) => sessions[tabId] !== undefined),
     );
+    return {
+      ...current,
+      sessions,
+      activeTabId,
+      snapshot,
+      desktopByTabId,
+      desktopOverlay: activeTabId ? (desktopByTabId[activeTabId] ?? null) : null,
+      recentlySeenUrls,
+    };
   });
 }
 
 export function applyPreviewDesktopState(
   ref: ScopedThreadRef,
-  desktopState: DesktopPreviewTabState,
+  tabId: string,
+  overlay: DesktopPreviewOverlay | null,
 ): void {
-  updateThreadState(ref, (state) => {
-    const current = state.sessions.find((session) => session.tabId === desktopState.tabId);
-    const sessions = current
-      ? upsertSession(state.sessions, {
-          ...current,
-          navStatus: desktopPreviewNavStatusToPreviewNavStatus(desktopState),
-          canGoBack: desktopState.canGoBack,
-          canGoForward: desktopState.canGoForward,
-          updatedAt: desktopState.updatedAt,
-        })
-      : state.sessions;
+  updateThreadPreviewState(ref, (current) => {
+    const desktopByTabId = { ...current.desktopByTabId };
+    if (overlay) desktopByTabId[tabId] = overlay;
+    else delete desktopByTabId[tabId];
+    return {
+      ...current,
+      desktopByTabId,
+      desktopOverlay: current.activeTabId === tabId ? overlay : current.desktopOverlay,
+    };
+  });
+}
 
-    return withActiveTab(
-      {
-        ...state,
-        desktopByTabId: {
-          ...state.desktopByTabId,
-          [desktopState.tabId]: desktopState,
-        },
-        recentlySeenUrls: rememberUrl(state.recentlySeenUrls, desktopState.url),
-      },
-      sessions,
-    );
+export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): void {
+  updateThreadPreviewState(ref, (current) => {
+    const suppressedTabIds = new Set(current.suppressedTabIds);
+    suppressedTabIds.add(tabId);
+    return {
+      ...removeSession(current, tabId),
+      suppressedTabIds,
+    };
+  });
+}
+
+export function cancelPreviewSessionClose(
+  ref: ScopedThreadRef,
+  snapshot: PreviewSessionSnapshot | null,
+  tabId: string,
+): void {
+  updateThreadPreviewState(ref, (current) => {
+    if (!current.suppressedTabIds.has(tabId)) return current;
+    const suppressedTabIds = new Set(current.suppressedTabIds);
+    suppressedTabIds.delete(tabId);
+    if (!snapshot) {
+      return { ...current, suppressedTabIds };
+    }
+    const recentlySeenUrls =
+      snapshot.navStatus._tag !== "Idle"
+        ? dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url)
+        : current.recentlySeenUrls;
+    return {
+      ...current,
+      snapshot,
+      sessions: { ...current.sessions, [snapshot.tabId]: snapshot },
+      suppressedTabIds,
+      activeTabId: snapshot.tabId,
+      desktopOverlay: current.desktopByTabId[snapshot.tabId] ?? null,
+      recentlySeenUrls,
+    };
+  });
+}
+
+export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {
+  updateThreadPreviewState(ref, (current) => {
+    const snapshot = current.sessions[tabId];
+    if (!snapshot || current.activeTabId === tabId) return current;
+    return {
+      ...current,
+      activeTabId: tabId,
+      snapshot,
+      desktopOverlay: current.desktopByTabId[tabId] ?? null,
+    };
   });
 }
 
 export function rememberPreviewUrl(ref: ScopedThreadRef, url: string): void {
-  updateThreadState(ref, (state) => ({
-    ...state,
-    recentlySeenUrls: rememberUrl(state.recentlySeenUrls, url),
+  if (url.trim().length === 0) return;
+  updateThreadPreviewState(ref, (current) => ({
+    ...current,
+    recentlySeenUrls: dedupeRecentUrls(current.recentlySeenUrls, url),
   }));
 }
 
-export function markPreviewTabClosed(ref: ScopedThreadRef, tabId: string): void {
-  updateThreadState(ref, (state) => {
-    const sessions = removeSession(state.sessions, tabId);
-    const { [tabId]: _closedDesktopState, ...desktopByTabId } = state.desktopByTabId;
-    const { [tabId]: _closedSurface, ...surfaceByTabId } = state.surfaceByTabId;
-
-    return withActiveTab(
-      {
-        ...state,
-        suppressedTabIds: state.suppressedTabIds.includes(tabId)
-          ? state.suppressedTabIds
-          : [...state.suppressedTabIds, tabId],
-        desktopByTabId,
-        surfaceByTabId,
-      },
-      sessions,
-    );
-  });
+export function removePreviewThread(ref: ScopedThreadRef): void {
+  const threadKey = scopedThreadKey(ref);
+  appAtomRegistry.set(previewStateAtom(threadKey), EMPTY_THREAD_PREVIEW_STATE);
+  syncActivePreviewThread(threadKey, EMPTY_THREAD_PREVIEW_STATE);
+  changedPreviewThreadKeys.delete(threadKey);
 }
 
-export function setPreviewSurfaceRect(
-  ref: ScopedThreadRef,
-  tabId: string,
-  rect: PreviewSurfaceRect | null,
-): void {
-  updateThreadState(ref, (state) => {
-    const { [tabId]: _previousRect, ...surfaceByTabId } = state.surfaceByTabId;
-    return {
-      ...state,
-      surfaceByTabId: rect
-        ? {
-            ...surfaceByTabId,
-            [tabId]: rect,
-          }
-        : surfaceByTabId,
-    };
-  });
+export function isPreviewSupportedInRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean(window.desktopBridge?.preview);
 }
 
-export function usePreviewSession(
-  ref: ScopedThreadRef,
-  options: UsePreviewSessionOptions = {},
-): void {
-  const onError = options.onError;
-
-  useEffect(() => {
-    const api = readEnvironmentApi(ref.environmentId);
-    if (!api) {
-      // A reconnect or environment switch can temporarily leave this ref
-      // without an API. The next effect run subscribes when one is available.
-      onError?.(new Error("Environment disconnected."));
-      return;
-    }
-
-    let cancelled = false;
-    void api.preview
-      .list({ threadId: ref.threadId })
-      .then((result) => {
-        if (!cancelled) {
-          applyPreviewServerSnapshotList(ref, result.sessions);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          onError?.(error);
-        }
-      });
-
-    const unsubscribe = api.preview.onEvent((event) => {
-      if (event.threadId !== ref.threadId) {
-        return;
-      }
-      applyPreviewServerEvent(ref, event);
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [onError, ref]);
+export function resetPreviewStateForTests(): void {
+  for (const threadKey of changedPreviewThreadKeys) {
+    appAtomRegistry.set(previewStateAtom(threadKey), EMPTY_THREAD_PREVIEW_STATE);
+  }
+  changedPreviewThreadKeys.clear();
+  appAtomRegistry.set(activePreviewThreadKeysAtom, { keys: new Set<string>() });
 }
+
+export const __testing = {
+  EMPTY_THREAD_PREVIEW_STATE,
+  RECENT_URL_LIMIT: PREVIEW_RECENT_URL_LIMIT,
+};

@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import { it, assert } from "@effect/vitest";
 
 import * as AcpClient from "./client.ts";
@@ -34,9 +35,10 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const command = ChildProcess.make("bun", ["run", yield* mockPeerPath], {
+      const spawn = resolveWindowsSpawn("bun");
+      const command = ChildProcess.make(spawn.command, ["run", yield* mockPeerPath], {
         cwd: path.join(import.meta.dirname, ".."),
-        shell: process.platform === "win32",
+        shell: spawn.shell,
         ...(env ? { env: { ...process.env, ...env } } : {}),
       });
       return yield* spawner.spawn(command);
