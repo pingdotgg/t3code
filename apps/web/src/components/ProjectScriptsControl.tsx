@@ -112,6 +112,21 @@ export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
 
+function fileScriptKey(fileScript: T3ProjectFileScript): string {
+  return `${fileScript.name}\u0000${fileScript.command}`;
+}
+
+export function isT3ProjectFileScriptImported(
+  scripts: ReadonlyArray<ProjectScript>,
+  fileScript: T3ProjectFileScript,
+): boolean {
+  return scripts.some(
+    (script) =>
+      script.command === fileScript.command ||
+      script.name.toLowerCase() === fileScript.name.toLowerCase(),
+  );
+}
+
 interface ProjectScriptsControlProps {
   scripts: ReadonlyArray<ProjectScript>;
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
@@ -156,6 +171,7 @@ export default function ProjectScriptsControl({
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [importingFileScriptKey, setImportingFileScriptKey] = useState<string | null>(null);
 
   const primaryScript = useMemo(() => {
     if (preferredScriptId) {
@@ -165,15 +181,7 @@ export default function ProjectScriptsControl({
     return primaryProjectScript(scripts);
   }, [preferredScriptId, scripts]);
   const importableScripts = useMemo(
-    () =>
-      fileScripts.filter(
-        (fileScript) =>
-          !scripts.some(
-            (script) =>
-              script.command === fileScript.command ||
-              script.name.toLowerCase() === fileScript.name.toLowerCase(),
-          ),
-      ),
+    () => fileScripts.filter((fileScript) => !isT3ProjectFileScriptImported(scripts, fileScript)),
     [fileScripts, scripts],
   );
   const isEditing = editingScriptId !== null;
@@ -290,6 +298,9 @@ export default function ProjectScriptsControl({
   }, [editingScriptId, onDeleteScript]);
 
   const importFileScript = async (fileScript: T3ProjectFileScript) => {
+    const key = fileScriptKey(fileScript);
+    if (importingFileScriptKey !== null) return;
+    setImportingFileScriptKey(key);
     const payload: NewProjectScriptInput = {
       name: fileScript.name,
       command: fileScript.command,
@@ -299,22 +310,26 @@ export default function ProjectScriptsControl({
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
-    const result = await onAddScript(payload);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      // Surface the failure through the regular add dialog, prefilled so the
-      // user can adjust and retry.
-      const error = squashAtomCommandFailure(result);
-      setEditingScriptId(null);
-      setName(payload.name);
-      setCommand(payload.command);
-      setIcon(payload.icon);
-      setIconPickerOpen(false);
-      setRunOnWorktreeCreate(payload.runOnWorktreeCreate);
-      setKeybinding("");
-      setPreviewUrl(payload.previewUrl ?? "");
-      setAutoOpenPreview(payload.autoOpenPreview);
-      setValidationError(error instanceof Error ? error.message : "Failed to import action.");
-      setDialogOpen(true);
+    try {
+      const result = await onAddScript(payload);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        // Surface the failure through the regular add dialog, prefilled so the
+        // user can adjust and retry.
+        const error = squashAtomCommandFailure(result);
+        setEditingScriptId(null);
+        setName(payload.name);
+        setCommand(payload.command);
+        setIcon(payload.icon);
+        setIconPickerOpen(false);
+        setRunOnWorktreeCreate(payload.runOnWorktreeCreate);
+        setKeybinding("");
+        setPreviewUrl(payload.previewUrl ?? "");
+        setAutoOpenPreview(payload.autoOpenPreview);
+        setValidationError(error instanceof Error ? error.message : "Failed to import action.");
+        setDialogOpen(true);
+      }
+    } finally {
+      setImportingFileScriptKey(null);
     }
   };
 
@@ -422,6 +437,58 @@ export default function ProjectScriptsControl({
                   </div>
                 );
               })}
+            </div>
+          ) : null}
+          {fileScripts.length > 0 ? (
+            <div className="mt-3 border-t border-border/60 pt-3">
+              <div className="px-3 pb-1 text-xs font-medium text-muted-foreground sm:px-4">
+                From t3.json
+              </div>
+              <div className="grid gap-1">
+                {fileScripts.map((fileScript) => {
+                  const key = fileScriptKey(fileScript);
+                  const imported = isT3ProjectFileScriptImported(scripts, fileScript);
+                  const importing = importingFileScriptKey === key;
+                  return (
+                    <div
+                      key={key}
+                      className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-2 sm:px-4"
+                    >
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background">
+                        <ScriptIcon icon={fileScript.icon ?? "play"} className="size-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-medium text-foreground">
+                            {fileScript.name}
+                          </span>
+                          <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            Repository
+                          </span>
+                          {fileScript.runOnWorktreeCreate ? (
+                            <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              Setup
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                          {fileScript.command}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={imported || importing || importingFileScriptKey !== null}
+                        onClick={() => void importFileScript(fileScript)}
+                      >
+                        <DownloadIcon className="size-3.5" />
+                        {importing ? "Importing…" : imported ? "Imported" : "Import"}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
         </div>

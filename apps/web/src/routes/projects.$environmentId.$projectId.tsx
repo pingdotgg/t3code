@@ -1,10 +1,18 @@
-import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, ServerIcon, Trash2Icon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  FileJsonIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  ServerIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
 import type { AuthGateBeforeLoadArgs } from "./-authGateRouteContext";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { createDefaultModelSelection, createModelSelection } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  isAtomCommandInterrupted,
   mapAtomCommandResult,
   settlePromise,
   squashAtomCommandFailure,
@@ -24,7 +32,7 @@ import type {
   SidebarProjectGroupingMode,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { DEFAULT_MODEL } from "@t3tools/contracts";
+import { DEFAULT_MODEL, EnvironmentId, T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -98,6 +106,9 @@ import {
 } from "../state/server";
 import { deriveProjectGroupingOverrideKey, selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { useT3ProjectFile } from "../hooks/useT3ProjectFileScripts";
+import { useOpenInPreferredEditor } from "../editorPreferences";
+import { resolvePathLinkTarget } from "../terminal-links";
 
 const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   github: "GitHub",
@@ -302,6 +313,17 @@ function ProjectRouteView() {
   const projectServerConfig = project?.environmentId
     ? (serverConfigs.get(project.environmentId) ?? null)
     : null;
+  const t3ProjectFile = useT3ProjectFile(
+    project?.environmentId ?? EnvironmentId.make(environmentId),
+    project?.workspaceRoot ?? null,
+  );
+  const openInPreferredEditor = useOpenInPreferredEditor(
+    project?.environmentId ?? null,
+    projectServerConfig?.availableEditors ?? [],
+  );
+  const t3ProjectFilePath = project
+    ? resolvePathLinkTarget(T3_PROJECT_FILE_NAME, project.workspaceRoot)
+    : null;
   const keybindings =
     project?.environmentId && project.environmentId !== primaryEnvironmentId
       ? (projectServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS)
@@ -438,6 +460,13 @@ function ProjectRouteView() {
       }),
     );
   }, []);
+
+  const openT3ProjectFile = useCallback(async () => {
+    if (t3ProjectFilePath === null) return;
+    const result = await openInPreferredEditor(t3ProjectFilePath);
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    showProjectSettingsError("Unable to open t3.json", squashAtomCommandFailure(result));
+  }, [openInPreferredEditor, showProjectSettingsError, t3ProjectFilePath]);
 
   const refreshProjectDetails = projectDetails.refresh;
 
@@ -1453,11 +1482,53 @@ function ProjectRouteView() {
                   })}
                 </SettingsSection>
 
+                <SettingsSection title="Repository">
+                  <ProjectSettingRow
+                    title={T3_PROJECT_FILE_NAME}
+                    description={
+                      t3ProjectFile.status === "ready"
+                        ? `Loaded from the repository root. ${
+                            t3ProjectFile.scripts.length === 0
+                              ? "No shared actions are declared."
+                              : `${t3ProjectFile.scripts.length} shared action${
+                                  t3ProjectFile.scripts.length === 1 ? "" : "s"
+                                } declared.`
+                          }`
+                        : t3ProjectFile.status === "invalid"
+                          ? t3ProjectFile.error
+                          : t3ProjectFile.status === "unavailable"
+                            ? "No readable t3.json was found. Open it in your editor to create or fix it."
+                            : "Checking the repository configuration…"
+                    }
+                    control={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          t3ProjectFilePath === null ||
+                          (projectServerConfig?.availableEditors.length ?? 0) === 0
+                        }
+                        title={
+                          (projectServerConfig?.availableEditors.length ?? 0) === 0
+                            ? "No editor is available in this environment."
+                            : (t3ProjectFilePath ?? undefined)
+                        }
+                        onClick={() => void openT3ProjectFile()}
+                      >
+                        <FileJsonIcon className="size-3.5" />
+                        Open in editor
+                      </Button>
+                    }
+                  />
+                </SettingsSection>
+
                 <SettingsSection title="Automation">
                   <div className="min-w-0">
                     <ProjectScriptsControl
                       variant="settings"
                       scripts={projectDetails.data.scripts}
+                      fileScripts={t3ProjectFile.scripts}
                       keybindings={keybindings}
                       onAddScript={saveProjectScript}
                       onUpdateScript={updateProjectScript}

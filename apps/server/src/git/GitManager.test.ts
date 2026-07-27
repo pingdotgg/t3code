@@ -16,7 +16,6 @@ import { expect } from "vite-plus/test";
 import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
-  ModelSelection,
   SourceControlProviderInfo,
   ThreadId,
 } from "@t3tools/contracts";
