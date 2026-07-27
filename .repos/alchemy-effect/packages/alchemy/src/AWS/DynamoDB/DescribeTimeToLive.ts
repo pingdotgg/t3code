@@ -1,8 +1,6 @@
-import * as DynamoDB from "@distilled.cloud/aws/dynamodb";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type * as DynamoDB from "@distilled.cloud/aws/dynamodb";
+import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Table } from "./Table.ts";
 
 export interface DescribeTimeToLiveRequest extends Omit<
@@ -10,8 +8,25 @@ export interface DescribeTimeToLiveRequest extends Omit<
   "TableName"
 > {}
 
-export class DescribeTimeToLive extends Binding.Service<
+/**
+ * Runtime binding for `dynamodb:DescribeTimeToLive`.
+ *
+ * Bind this operation to a `Table` inside a function runtime to get a callable
+ * that reads the table's TTL configuration. Provide the
+ * `DescribeTimeToLiveHttp` layer on the Function to satisfy the binding.
+ * @binding
+ * @section Time to Live
+ * @example Read the TTL Configuration
+ * ```typescript
+ * const describeTimeToLive = yield* AWS.DynamoDB.DescribeTimeToLive(table);
+ *
+ * const response = yield* describeTimeToLive();
+ * const ttlStatus = response.TimeToLiveDescription?.TimeToLiveStatus;
+ * ```
+ */
+export interface DescribeTimeToLive extends Binding.Service<
   DescribeTimeToLive,
+  "AWS.DynamoDB.DescribeTimeToLive",
   <T extends Table>(
     table: T,
   ) => Effect.Effect<
@@ -22,51 +37,7 @@ export class DescribeTimeToLive extends Binding.Service<
       DynamoDB.DescribeTimeToLiveError
     >
   >
->()("AWS.DynamoDB.DescribeTimeToLive") {}
-
-export const DescribeTimeToLiveLive = Layer.effect(
-  DescribeTimeToLive,
-  Effect.gen(function* () {
-    const Policy = yield* DescribeTimeToLivePolicy;
-    const describeTimeToLive = yield* DynamoDB.describeTimeToLive;
-
-    return Effect.fn(function* <T extends Table>(table: T) {
-      const TableName = yield* table.tableName;
-      yield* Policy(table);
-      return Effect.fn(function* (request?: DescribeTimeToLiveRequest) {
-        return yield* describeTimeToLive({
-          ...request,
-          TableName: yield* TableName,
-        });
-      });
-    });
-  }),
+> {}
+export const DescribeTimeToLive = Binding.Service<DescribeTimeToLive>(
+  "AWS.DynamoDB.DescribeTimeToLive",
 );
-
-export class DescribeTimeToLivePolicy extends Binding.Policy<
-  DescribeTimeToLivePolicy,
-  <T extends Table>(table: T) => Effect.Effect<void>
->()("AWS.DynamoDB.DescribeTimeToLive") {}
-
-export const DescribeTimeToLivePolicyLive =
-  DescribeTimeToLivePolicy.layer.succeed(
-    Effect.fn(function* (host, table) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.DynamoDB.DescribeTimeToLive(${table}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["dynamodb:DescribeTimeToLive"],
-                Resource: [table.tableArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `DescribeTimeToLivePolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

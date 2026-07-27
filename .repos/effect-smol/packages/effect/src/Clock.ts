@@ -1,60 +1,8 @@
 /**
- * The `Clock` module provides functionality for time-based operations in Effect applications.
- * It offers precise time measurements, scheduling capabilities, and controlled time management
- * for testing scenarios.
- *
- * The Clock service is a core component of the Effect runtime, providing:
- * - Current time access in milliseconds and nanoseconds
- * - Sleep operations for delaying execution
- * - Time-based scheduling primitives
- * - Testable time control through `TestClock`
- *
- * ## Key Features
- *
- * - **Precise timing**: Access to both millisecond and nanosecond precision
- * - **Sleep operations**: Non-blocking sleep with proper interruption handling
- * - **Service integration**: Seamless integration with Effect's dependency injection
- * - **Testable**: Mock time control for deterministic testing
- * - **Resource-safe**: Automatic cleanup of time-based resources
- *
- * **Example** (Measuring elapsed time)
- *
- * ```ts
- * import { Clock, Effect } from "effect"
- *
- * // Get current time in milliseconds
- * const getCurrentTime = Clock.currentTimeMillis
- *
- * // Sleep for 1 second
- * const sleep1Second = Effect.sleep("1 seconds")
- *
- * // Measure execution time
- * const measureTime = Effect.gen(function*() {
- *   const start = yield* Clock.currentTimeMillis
- *   yield* Effect.sleep("100 millis")
- *   const end = yield* Clock.currentTimeMillis
- *   return end - start
- * })
- * ```
- *
- * **Example** (Using the Clock service)
- *
- * ```ts
- * import { Clock, Effect } from "effect"
- *
- * // Using Clock service directly
- * const program = Effect.gen(function*() {
- *   const clock = yield* Clock.Clock
- *   const currentTime = yield* clock.currentTimeMillis
- *   console.log(`Current time: ${currentTime}`)
- *
- *   // Sleep for 500ms
- *   yield* Effect.sleep("500 millis")
- *
- *   const afterSleep = yield* clock.currentTimeMillis
- *   console.log(`After sleep: ${afterSleep}`)
- * })
- * ```
+ * Service and helpers for reading time and sleeping inside Effect programs.
+ * The active `Clock` provides current time in milliseconds or nanoseconds and a
+ * `sleep` operation for delaying work. Because time is accessed through a
+ * service, tests can replace the clock with a controlled implementation.
  *
  * @since 2.0.0
  */
@@ -135,12 +83,12 @@ export interface Clock {
 }
 
 /**
- * Context reference for the current Clock service in the environment.
+ * Context reference for the active time service in the environment.
  *
  * **When to use**
  *
- * Use when you need to access or provide the full Clock service rather than a
- * single timestamp accessor.
+ * Use when you need to access or provide the full time service, including sleep
+ * operations, rather than a single timestamp accessor.
  *
  * **Example** (Accessing the Clock service)
  *
@@ -170,7 +118,7 @@ export const Clock: Context.Reference<Clock> = effect.ClockRef
  * Use when you need the full Clock service interface to perform multiple time
  * operations or call unsafe variants within a single effect.
  *
- * **Example** (Using the current Clock service)
+ * **Example** (Accessing the current Clock service)
  *
  * ```ts
  * import { Clock, Effect } from "effect"

@@ -3,7 +3,7 @@ import * as RpcServer from "./RpcServer.ts";
 import type { ServerRpcSession } from "./RpcServerSession.ts";
 
 export const RpcServerBun = RpcServer.layerServer(
-  Effect.fnUntraced(function* ({
+  Effect.fn(function* ({
     parentConnected,
     parentDisconnected,
     createRpcSession,

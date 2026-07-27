@@ -1,25 +1,78 @@
-import {
-  Credentials,
-  fromApiToken,
-} from "@distilled.cloud/cloudflare/Credentials";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
-import type * as Binding from "../../Binding.ts";
-import { RuntimeContext } from "../../RuntimeContext.ts";
+import type * as Redacted from "effect/Redacted";
+import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import { AccountApiToken } from "../ApiToken/AccountApiToken.ts";
-import type { ApiTokenPermissionGroupRef } from "../ApiToken/Common.ts";
+import type { PermissionGroupRef } from "../ApiToken/Common.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import type { Credentials } from "../Credentials.ts";
+import { authorizeWith } from "../HttpClientUtils.ts";
 import { Worker } from "../Workers/Worker.ts";
+
+/**
+ * Shared runtime body for a tunnel binding. Mints a scoped
+ * {@link AccountApiToken} (with the given permission groups), attaches the
+ * narrow allow-policy to it (guarded by the runtime flag so it is a no-op once
+ * deployed), binds the token's outputs into the Worker, then builds the client.
+ *
+ * Pass the result to `Layer.effect(<Callable>, ...)`.
+ */
+export const makeTunnelClient = <C>(
+  sid: string,
+  permissionGroups: PermissionGroupRef[],
+  makeClient: (auth: TunnelAuth) => C,
+) =>
+  Effect.gen(function* () {
+    const Token = yield* AccountApiToken;
+    const env = yield* CloudflareEnvironment;
+
+    return Effect.fn(function* () {
+      const ctx = yield* Worker;
+      const token = yield* Token(`${ctx.LogicalId}Token`);
+      if (!globalThis.__ALCHEMY_RUNTIME__) {
+        const { accountId } = yield* env;
+        yield* token.bind(sid, {
+          policies: [
+            {
+              effect: "allow",
+              permissionGroups,
+              resources: {
+                [`com.cloudflare.api.account.${accountId}`]: "*",
+              },
+            },
+          ],
+        });
+      }
+      return makeClient(makeTunnelAuth(yield* bindTunnelToken(token)));
+    });
+  });
+
+/**
+ * Injectable auth for the tunnel client builders. Both the scoped-token
+ * (`*Binding`) and current-credentials (`*Local`) variants supply an
+ * `authorize` (which provides `Credentials` + `HttpClient` to a raw SDK op)
+ * and an `accountId`, so the client builders are agnostic to how creds are
+ * obtained.
+ */
+export interface TunnelAuth {
+  authorize: <A, E>(
+    eff: Effect.Effect<A, E, Credentials | HttpClient.HttpClient>,
+  ) => Effect.Effect<A, E, RuntimeContext>;
+  accountId: Effect.Effect<string>;
+}
+
+/** Build a scoped-token {@link TunnelAuth} from a bound {@link Token}. */
+export const makeTunnelAuth = (token: Token): TunnelAuth => ({
+  authorize: authorizeWith(token),
+  accountId: token.accountId,
+});
 
 /**
  * Runtime accessors for a tunnel binding's token, obtained by binding the
  * {@link AccountApiToken}'s outputs in the Worker's Init phase. Each accessor
  * reads the value back from the Worker's environment at runtime.
  */
-export interface TunnelToken {
+export interface Token {
   /** The token's plaintext value (injected as a `secret_text` binding). */
   value: Effect.Effect<Redacted.Redacted<string>>;
   /** The account id the token is scoped to. */
@@ -29,86 +82,11 @@ export interface TunnelToken {
 /**
  * Bind an {@link AccountApiToken}'s outputs into the Worker so they can be read
  * at runtime: `token.value` is injected as a `secret_text` binding and
- * `token.accountId` as `plain_text`. Returns the {@link TunnelToken} accessors.
+ * `token.accountId` as `plain_text`. Returns the {@link Token} accessors.
  */
 export const bindTunnelToken = (token: AccountApiToken) =>
   Effect.gen(function* () {
     const value = yield* token.value;
     const accountId = yield* token.accountId;
-    return { value, accountId } satisfies TunnelToken;
+    return { value, accountId } satisfies Token;
   });
-
-/**
- * Resolve credentials from a bound token and provide them (plus the
- * fetch-based HTTP client) to a raw SDK operation.
- */
-export const authorizeWith =
-  (token: TunnelToken) =>
-  <A, E>(
-    eff: Effect.Effect<A, E, Credentials | HttpClient>,
-  ): Effect.Effect<A, E, RuntimeContext> =>
-    token.value.pipe(
-      Effect.flatMap((value) =>
-        eff.pipe(
-          Effect.provide(
-            fromApiToken({ apiToken: Redacted.value(value) }).pipe(
-              Layer.provideMerge(FetchHttpClient.layer),
-            ),
-          ),
-        ),
-      ),
-    );
-
-/**
- * Shared runtime body for a tunnel binding: create a scoped token, attach the
- * (narrow) policy, bind the token's outputs into the Worker, then build the
- * client. Pass the result to `Layer.effect(<Binding>, ...)`.
- */
-export const makeTunnelClient = <C>(
-  Policy: Binding.Policy<
-    any,
-    any,
-    (token: AccountApiToken) => Effect.Effect<void>
-  >,
-  makeClient: (token: TunnelToken) => C,
-) =>
-  Effect.gen(function* () {
-    const Token = yield* AccountApiToken;
-    const attach = yield* Policy;
-
-    return Effect.fn(function* () {
-      const ctx = yield* Worker;
-      const token = yield* Token(`${ctx.LogicalId}Token`);
-      yield* attach(token);
-      return makeClient(yield* bindTunnelToken(token));
-    });
-  });
-
-/**
- * Build the deploy-time policy layer for a tunnel binding: attach an allow
- * policy with the given permission groups to the binding's token.
- */
-export const makeTunnelPolicyLive = <Self, Id extends string>(
-  Policy: Binding.Policy<
-    Self,
-    Id,
-    (token: AccountApiToken) => Effect.Effect<void>
-  >,
-  sid: string,
-  permissionGroups: ApiTokenPermissionGroupRef[],
-) =>
-  Policy.layer.effect(
-    Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
-      return (_host, token) =>
-        token.bind(sid, {
-          policies: [
-            {
-              effect: "allow",
-              permissionGroups,
-              resources: { [`com.cloudflare.api.account.${accountId}`]: "*" },
-            },
-          ],
-        });
-    }),
-  );

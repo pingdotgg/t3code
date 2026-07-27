@@ -1,51 +1,20 @@
 /**
- * Pseudo-random generation through Effect's service context. The module exposes
- * effectful generators for booleans, doubles, safe integers, bounded numbers,
- * shuffling, and deterministic seeded runs.
+ * Provides pseudo-random generation through an Effect service.
  *
- * **Mental model**
- *
- * Randomness is read from the current {@link Random} service instead of a
- * global singleton. That makes random programs reproducible in tests and local
- * simulations with {@link withSeed}, while still allowing applications to
- * replace the service at the edge.
- *
- * **Common tasks**
- *
- * - Draw a floating-point value in `[0, 1)` with {@link next}
- * - Draw an integer with {@link nextInt} or {@link nextIntBetween}
- * - Draw a floating-point value in a custom range with {@link nextBetween}
- * - Randomize an iterable with {@link shuffle}
- * - Run the same random sequence repeatedly with {@link withSeed}
- *
- * **Gotchas**
- *
- * - The default service is not suitable for secrets, session identifiers,
- *   tokens, or other security-sensitive values.
- * - `withSeed` is deterministic by design. A predictable seed does not make
- *   generated values cryptographically secure.
- * - Bounded integer generation rounds bounds before drawing from the range.
- *
- * **Example** (Generating random values)
- *
- * ```ts
- * import { Effect, Random } from "effect"
- *
- * const program = Effect.gen(function*() {
- *   const randomFloat = yield* Random.next
- *   const randomInt = yield* Random.nextInt
- *   const diceRoll = yield* Random.nextIntBetween(1, 6)
- *
- *   return { randomFloat, randomInt, diceRoll }
- * })
- * ```
+ * This module exposes effectful generators for booleans, doubles, safe
+ * integers, bounded numbers, shuffling, and deterministic seeded runs. Because
+ * random generation is a service, tests and applications can replace the
+ * generator used by Effect programs.
  *
  * @since 4.0.0
  */
+import type * as Arr from "./Array.ts"
+import * as Cause from "./Cause.ts"
 import type * as Context from "./Context.ts"
 import * as Effect from "./Effect.ts"
 import { dual } from "./Function.ts"
 import * as random from "./internal/random.ts"
+import type * as NonEmptyIterable from "./NonEmptyIterable.ts"
 import * as Predicate from "./Predicate.ts"
 
 /**
@@ -258,6 +227,45 @@ export const shuffle = <A>(elements: Iterable<A>): Effect.Effect<Array<A>> =>
     }
     return buffer
   })
+
+/**
+ * Gets a random element from an iterable.
+ *
+ * **When to use**
+ *
+ * Use to select one value uniformly from a collection using the active `Random`
+ * service.
+ *
+ * **Details**
+ *
+ * If the input type is known to be non-empty, the returned effect cannot fail.
+ * Otherwise, empty iterables fail with `Cause.NoSuchElementError`.
+ *
+ * **Example** (Choosing a random value)
+ *
+ * ```ts
+ * import { Effect, Random } from "effect"
+ *
+ * const program = Effect.gen(function*() {
+ *   const value = yield* Random.choice(["red", "green", "blue"] as const)
+ *   console.log(value)
+ * })
+ * ```
+ *
+ * @category Random Number Generators
+ * @since 3.6.0
+ */
+export const choice: <Self extends Iterable<unknown>>(
+  elements: Self
+) => Self extends NonEmptyIterable.NonEmptyIterable<infer A> ? Effect.Effect<A>
+  : Self extends Arr.NonEmptyReadonlyArray<infer A> ? Effect.Effect<A>
+  : Self extends Iterable<infer A> ? Effect.Effect<A, Cause.NoSuchElementError>
+  : never = ((elements: Iterable<unknown>) => {
+    const buffer = Array.from(elements)
+    return buffer.length === 0
+      ? Effect.fail(new Cause.NoSuchElementError("Cannot select a random element from an empty array"))
+      : randomWith((r) => buffer[Math.min(buffer.length - 1, Math.floor(r.nextDoubleUnsafe() * buffer.length))]!)
+  }) as any
 
 /**
  * Seeds the pseudo-random number generator with the specified value.
@@ -561,84 +569,22 @@ function add32(x: number, y: number): number {
   return (msb << 16) | (lsb & 0xffff)
 }
 
+const seedEncoder = new TextEncoder()
+
 /**
- * Convert a UTF-16 strings to UTF-8 encoded 32-bit integers (little-endian).
+ * Convert a string to UTF-8 encoded 32-bit integers (little-endian).
  */
 function toIntArray(seed: string): Array<number> {
-  let c1 = 0 // First UTF-16 code unit
-  let c2 = 0 // Second UTF-16 code unit (for surrogate pairs)
-  let unicode = 0 // Combined unicode code point from surrogate pair
-  const result: Array<number> = [] // Result array of 32-bit integers
-  const buffer: Array<number> = [] // Temporary buffer for the UTF-8 bytes (max 4 bytes)
-  const length = seed.length - 1
+  const bytes = seedEncoder.encode(seed)
+  const result: Array<number> = []
 
-  let index = 0
-  while (index < length) {
-    c1 = seed.charCodeAt(index++)
-    c2 = seed.charCodeAt(index + 1)
-
-    // 0x0000 - 0x007f: ASCII, single byte UTF-8: 0xxxxxxxx
-    // Example: 'A' (0x41) -> [0x41]
-    if (c1 < 0x0080) {
-      buffer.push(c1)
-    } //
-    // 0x0080 - 0x07ff: Two byte UTF-8: 110xxxxx 10xxxxxx
-    // Example: '¢' (0xA2) -> [0xC2, 0xA2]
-    else if (c1 < 0x0800) {
-      // First byte: upper 5 bits + 110xxxxx marker
-      // 0xA2 >>> 6 (0x02), & 0x1f = 0x02, | 0xc0 = 0xC2
-      buffer.push(((c1 >>> 6) & 0x1f) | 0xc0)
-      // Second byte: lower 6 bits + 10xxxxxxxx marker
-      // 0xA2 & 0x3f = 0x22, | 0x80 = 0xA2
-      buffer.push(((c1 >>> 0) & 0x3f) | 0x80)
-    } //
-    // 0x0800 - 0xffff (non-surrogate): Three byte UTF-8: 1110xxxx 10xxxxxx 10xxxxxx
-    // Example: '€' (0x20AC) -> [0xE2, 0x82, 0xAC]
-    else if ((c1 & 0xf800) != 0xd800) {
-      // First byte: top 4 bits + 1110xxxx marker
-      // 0x20AC >>> 12 = 0x02, & 0x0f = 0x02, | 0xe0 = 0xE2
-      buffer.push(((c1 >>> 12) & 0x0f) | 0xe0)
-      // Second byte: middle 6 bits + 10xxxxxx marker
-      // 0x20AC >>> 6 = 0x82, & 0x3f = 0x02, | 0x80 = 0x82
-      buffer.push(((c1 >>> 6) & 0x3f) | 0x80)
-      // Third byte: lower 6 bits + 10xxxxxx marker
-      // 0x20AC & 0x3f = 0x2C, | 0x80 = 0xAC
-      buffer.push(((c1 >>> 0) & 0x3f) | 0x80)
-    } //
-    // 0xd800 - 0xdfff: Surrogate pairs, four byte UTF-8: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
-    // Example: '𐍈' (U+10348, surrogates 0xD800 0xDF48) -> [0xF0, 0x90, 0x8D, 0x88]
-    else if (((c1 & 0xfc00) == 0xd800) && ((c2 & 0xfc00) == 0xdc00)) {
-      // Decode surrogate pair: combine 10 bits from each + 0x10000
-      // ((0xDF48 & 0x3f) | ((0xD800 & 0x3f) << 10)) + 0x10000 = 0x10348
-      unicode = ((c2 & 0x3f) | ((c1 & 0x3f) << 10)) + 0x10000
-      // First byte: top 3 bits + 11110xxx marker
-      // 0x10348 >>> 18 = 0x00, & 0x07 = 0x00, | 0xf0 = 0xF0
-      buffer.push(((unicode >>> 18) & 0x07) | 0xf0)
-      // Second byte: next 6 bits + 10xxxxxx marker
-      // 0x10348 >>> 12 = 0x10, & 0x3f = 0x10, | 0x80 = 0x90
-      buffer.push(((unicode >>> 12) & 0x3f) | 0x80)
-      // Third byte: next 6 bits + 10xxxxxx marker
-      // 0x10348 >>> 6 = 0x40D, & 0x3f = 0x0D, | 0x80 = 0x8D
-      buffer.push(((unicode >>> 6) & 0x3f) | 0x80)
-      // Fourth byte: lower 6 bits + 10xxxxxx marker
-      // 0x10348 & 0x3f = 0x08, | 0x80 = 0x88
-      buffer.push(((unicode >>> 0) & 0x3f) | 0x80)
-      index++ // Skip second surrogate
-    } else {
-      // invalid char
-    }
-
-    // Pack 4 UTF-8 bytes -> 32-bit int (little-endian)
-    // Example: [0xE2, 0x82, 0xAC, 0x00] -> 0x00ACE2E2
-    if (buffer.length > 3) {
-      result.push(
-        (buffer.shift()! << 0) | // Byte 0 at bits 0-7:   0xE2 << 0  = 0x000000E2
-          (buffer.shift()! << 8) | // Byte 1 at bits 8-15:  0x82 << 8  = 0x00008200
-          (buffer.shift()! << 16) | // Byte 2 at bits 16-23: 0xAC << 16 = 0x00AC0000
-          (buffer.shift()! << 24) // Byte 3 at bits 24-31: 0x00 << 24 = 0x00000000
-      )
-      // Result: 0x00AC82E2
-    }
+  for (let index = 0; index < bytes.length; index += 4) {
+    result.push(
+      ((bytes[index] ?? 0) << 0) |
+        ((bytes[index + 1] ?? 0) << 8) |
+        ((bytes[index + 2] ?? 0) << 16) |
+        ((bytes[index + 3] ?? 0) << 24)
+    )
   }
 
   return result

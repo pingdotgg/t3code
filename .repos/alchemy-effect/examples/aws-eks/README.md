@@ -1,18 +1,24 @@
-# AWS EKS Auto Mode Example
+# AWS EKS Example
 
-This example is fully TypeScript-driven. It provisions:
+A "guestbook" app on EKS Auto Mode, fully TypeScript-driven — no YAML, no
+`kubectl apply`, no Helm.
 
-- `AWS.EC2.Network`
-- `AWS.EKS.AutoCluster`
-- `AWS.EKS.AccessEntry` for cluster-admin access
-- `AWS.EKS.Addon` for `metrics-server` and `snapshot-controller`
-- `AWS.EKS.LoadBalancedWorkload` for deployment + public service composition
-- `AWS.EKS.PodIdentityWorkload` for workload identity + deployment composition
-- `Kubernetes.Namespace`
-- `Kubernetes.Job`
-
-There is no YAML or `kubectl apply` step. The workloads are declared in
-[`alchemy.run.ts`](./alchemy.run.ts) and reconciled by the EKS cluster resource.
+- [`src/infra.ts`](./src/infra.ts) — the shared infrastructure: a VPC, an
+  `AWS.EKS.Cluster` with `compute: "auto"` (the provider creates and owns the
+  cluster + node IAM roles and enables managed compute, storage, and load
+  balancing), a DynamoDB table, and a namespace applied as a raw manifest via
+  `AWS.EKS.Manifest` + the typed `alchemy/Kubernetes` builders.
+- [`src/Api.ts`](./src/Api.ts) — an effectful `AWS.EKS.Deployment` in the
+  tagged form (`Api.make(props, impl)`): an Effect HTTP server bundled into a
+  generated image, exposed through an internet-facing NLB, with DynamoDB
+  bindings that land IAM on the pod-identity role and inject the table name
+  into the pod. Includes the typed `podTemplate` escape hatch.
+- [`src/SeedJob.ts`](./src/SeedJob.ts) — an inline-effect one-shot
+  `AWS.EKS.Job` (`{ run }`) that seeds the guestbook table when the Job is
+  applied on deploy.
+- [`alchemy.run.ts`](./alchemy.run.ts) — thin composition: yields the shared
+  infra, the tagged `Api` (via `Effect.provide(ApiLive)`), an EXTERNAL
+  nginx `AWS.EKS.Deployment` (registry `image:` source), and the `SeedJob`.
 
 ## Commands
 
@@ -22,34 +28,23 @@ bun run --filter aws-eks-example deploy
 bun run --filter aws-eks-example destroy
 ```
 
-## Cluster Access
+The cluster control plane takes ~15 minutes to provision.
 
-By default, the example grants cluster-admin access to the IAM principal that is
-running the deploy. If your current caller is not a normal IAM user or IAM role,
-set this before deploy:
+## Try it
 
 ```sh
-export EKS_ADMIN_PRINCIPAL_ARN=arn:aws:iam::123456789012:role/YourAdminRole
+# outputs: apiUrl (note the :3000 — the NLB listens on the Service port), webUrl
+curl "$apiUrl/entries"                            # seeded by SeedJob
+curl -X POST "$apiUrl/entries?author=you&message=hello"
+curl "$apiUrl/entries/ada"
+curl "$webUrl"                                    # external nginx deployment
 ```
-
-## What Gets Deployed
-
-The example creates these in-cluster workloads in code:
-
-- a `demo` namespace
-- an `echo-server` workload created with `AWS.EKS.LoadBalancedWorkload`
-- a `pod-identity-demo` workload created with `AWS.EKS.PodIdentityWorkload`
-- a `cluster-info` job
-
-The pod identity workload creates the Kubernetes service account, IAM role,
-`AWS.EKS.PodIdentityAssociation`, and deployment together.
 
 ## Optional Inspection
 
-If you want to inspect the cluster manually after deploy, you can still use your
-normal kubeconfig flow, for example:
+To inspect the cluster manually after deploy:
 
 ```sh
-aws eks update-kubeconfig --name alchemy-eks-auto-example --region "$AWS_REGION"
-kubectl get pods -n demo
+aws eks update-kubeconfig --name <clusterName output> --region "$AWS_REGION"
+kubectl get pods -n guestbook
 ```

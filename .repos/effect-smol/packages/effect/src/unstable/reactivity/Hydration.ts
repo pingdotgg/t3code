@@ -1,35 +1,12 @@
 /**
- * Moves serializable reactivity state between `AtomRegistry` instances.
+ * Saves and restores serializable atom state.
  *
- * The `Hydration` module snapshots atoms marked with `Atom.serializable` and
- * loads those encoded values into another registry before the atoms are read. It
- * is useful for server rendering, browser bootstrapping, route transitions, and
- * other handoffs where a new registry should start from values computed by a
- * previous one.
- *
- * **Mental model**
- *
- * `dehydrate` walks the source registry and produces `DehydratedAtomValue`
- * records keyed by each atom's serialization key. `hydrate` stores those encoded
- * values in the target registry so the matching atom can decode them with its own
- * serializable codec. Atom identity is not transferred; only the stable key,
- * encoded value, dehydration timestamp, and optional async handoff are.
- *
- * **Common tasks**
- *
- * Use `dehydrate` before rendering or crossing a route boundary, then call
- * `hydrate` on the registry that will serve the next read. Use `toValues` when
- * code accepts generic `DehydratedAtom` entries but needs the concrete record
- * shape, and use `encodeInitialAs` to choose how `AsyncResult.Initial` values
- * should appear in the snapshot.
- *
- * **Gotchas**
- *
- * Only serializable atoms are included, and the target registry must contain
- * atoms with matching stable keys and compatible codecs. The optional
- * `resultPromise` used for `AsyncResult.Initial` is a live JavaScript promise; it
- * can be handed to another registry in the same runtime, but it cannot be sent
- * through JSON or across process boundaries.
+ * `dehydrate` reads atoms marked with `Atom.serializable` from an
+ * `AtomRegistry` and returns encoded entries keyed by their serialization keys.
+ * `hydrate` preloads those entries into another registry before the atoms are
+ * read. Initial `AsyncResult` values can be ignored, encoded as values, or
+ * represented by promises that update the target registry once the result is no
+ * longer initial.
  *
  * @since 4.0.0
  */

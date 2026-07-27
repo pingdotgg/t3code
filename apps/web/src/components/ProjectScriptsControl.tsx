@@ -141,6 +141,10 @@ export default function ProjectScriptsControl({
 }: ProjectScriptsControlProps) {
   const addScriptFormId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState({
+    scripts: false,
+    imports: false,
+  });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
@@ -258,6 +262,7 @@ export default function ProjectScriptsControl({
   };
 
   const openEditDialog = (script: ProjectScript) => {
+    setActionsMenuOpen({ scripts: false, imports: false });
     setEditingScriptId(script.id);
     setName(script.name);
     setCommand(script.command);
@@ -445,7 +450,11 @@ export default function ProjectScriptsControl({
             <TooltipPopup side="top">Run {primaryScript.name}</TooltipPopup>
           </Tooltip>
           <GroupSeparator className="hidden @3xl/header-actions:block" />
-          <Menu highlightItemOnHover={false}>
+          <Menu
+            highlightItemOnHover={false}
+            open={actionsMenuOpen.scripts}
+            onOpenChange={(open) => setActionsMenuOpen({ scripts: open, imports: false })}
+          >
             <MenuTrigger
               render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
             >
@@ -508,7 +517,11 @@ export default function ProjectScriptsControl({
 
     if (importableScripts.length > 0) {
       return (
-        <Menu highlightItemOnHover={false}>
+        <Menu
+          highlightItemOnHover={false}
+          open={actionsMenuOpen.imports}
+          onOpenChange={(open) => setActionsMenuOpen({ scripts: false, imports: open })}
+        >
           <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
             <PlusIcon className="size-3.5" />
             <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">

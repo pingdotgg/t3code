@@ -113,15 +113,10 @@ export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }
 export function resolveThreadPr(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
-  hasDedicatedWorktree: boolean;
 }): ThreadPr | null {
-  const { threadBranch, gitStatus, hasDedicatedWorktree } = input;
+  const { threadBranch, gitStatus } = input;
   if (gitStatus === null) {
     return null;
-  }
-
-  if (hasDedicatedWorktree) {
-    return gitStatus.pr ?? null;
   }
 
   if (threadBranch === null || gitStatus.refName !== threadBranch) {
@@ -258,7 +253,6 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const pr = resolveThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
-    hasDedicatedWorktree: thread.worktreePath !== null,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({
