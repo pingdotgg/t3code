@@ -137,12 +137,12 @@ interface CopilotSessionContext {
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
-  readonly fullAccessWarningKeys: Set<string>;
   readonly turns: Array<CopilotRetainedTurnSnapshot>;
   activeTurnId: TurnId | undefined;
   inFlightTurnId: TurnId | undefined;
   cancelRequestedTurnId: TurnId | undefined;
   readonly fatalErrorByTurnId: Map<TurnId, string>;
+  readonly policyErrorByTurnId: Map<TurnId, string>;
   readonly backgroundAgents: Map<
     string,
     {
@@ -160,6 +160,8 @@ type CopilotStartSessionInput = Parameters<CopilotAdapterShape["startSession"]>[
 
 const COPILOT_FORK_UNSUPPORTED_DETAIL =
   "This Copilot ACP agent does not support native chat forking. The visible T3 chat fork was created, but Copilot context cannot be continued safely from it.";
+const WORKSPACE_HANDOFF_REQUIRED_MESSAGE =
+  "T3 blocked a raw Git worktree mutation. Use the create_isolated_workspace or switch_workspace tool so the thread's workspace, checkpoints, and diffs stay aligned.";
 
 function stringifyCause(value: unknown): string {
   if (value instanceof Error) {
@@ -322,12 +324,6 @@ function parseCopilotResume(raw: unknown): { sessionId: string } | undefined {
   if (raw.schemaVersion !== COPILOT_RESUME_VERSION) return undefined;
   if (typeof raw.sessionId !== "string" || !raw.sessionId.trim()) return undefined;
   return { sessionId: raw.sessionId.trim() };
-}
-
-function leakedFullAccessWarningKey(
-  permissionRequest: ReturnType<typeof normalizeCopilotPermissionRequest>,
-): string {
-  return `${permissionRequest.kind}:${permissionRequest.toolCall?.itemType ?? "unknown"}`;
 }
 
 function textOrFallback(value: string | null | undefined, fallback: string): string {
@@ -826,12 +822,12 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
       readonly copilotSettings: CopilotRuntimeCopilotSettings;
       readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
       readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
-      readonly fullAccessWarningKeys: Set<string>;
       readonly getCurrentTurnId: () => TurnId | undefined;
       readonly onSessionEvent?: (
         event: AcpParsedSessionEvent,
       ) => Effect.Effect<AcpParsedSessionEvent>;
       readonly onFatalCopilotError?: (turnId: TurnId, message: string) => void;
+      readonly onPolicyError?: (turnId: TurnId, message: string) => void;
       readonly resumeSessionId?: string;
       readonly resumeFallback?: "create" | "fail";
     }) =>
@@ -855,6 +851,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           childProcessSpawner,
           threadId: input.threadId,
           cwd: input.cwd,
+          baseDir: serverConfig.baseDir,
           runtimeMode: input.runtimeMode,
           ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
           ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
@@ -875,25 +872,25 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 permissionRequest,
               });
 
-              if (input.runtimeMode === "full-access") {
-                const warningKey = leakedFullAccessWarningKey(permissionRequest);
-                if (!input.fullAccessWarningKeys.has(warningKey)) {
-                  input.fullAccessWarningKeys.add(warningKey);
+              if (autoApproval._tag === "cancel") {
+                if (autoApproval.reason === "workspace_handoff_required") {
+                  const turnId = input.getCurrentTurnId();
+                  if (turnId) {
+                    input.onPolicyError?.(turnId, WORKSPACE_HANDOFF_REQUIRED_MESSAGE);
+                  }
                   yield* offerRuntimeEvent({
-                    type: "runtime.warning",
+                    type: "runtime.error",
                     ...(yield* makeEventStamp()),
                     provider: PROVIDER,
                     threadId: input.threadId,
-                    turnId: input.getCurrentTurnId(),
+                    ...(turnId ? { turnId } : {}),
                     payload: {
-                      message: "Copilot requested permission despite full-access runtime mode.",
-                      detail: {
-                        requestKind: permissionRequest.kind,
-                        requestDetail: permissionRequest.detail ?? null,
-                      },
+                      message: WORKSPACE_HANDOFF_REQUIRED_MESSAGE,
+                      class: "provider_error",
                     },
                   });
                 }
+                return { outcome: { outcome: "cancelled" as const } };
               }
 
               if (autoApproval._tag === "select") {
@@ -1239,7 +1236,6 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           copilotSettings: ctx.copilotSettings,
           pendingApprovals: ctx.pendingApprovals,
           pendingUserInputs: ctx.pendingUserInputs,
-          fullAccessWarningKeys: ctx.fullAccessWarningKeys,
           resumeSessionId,
           getCurrentTurnId: () => ctx.activeTurnId,
           onSessionEvent: (event) => processBackgroundAgentEvent(ctx, event),
@@ -1248,6 +1244,9 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             if (ctx.cancelRequestedTurnId !== turnId) {
               ctx.cancelRequestedTurnId = turnId;
             }
+          },
+          onPolicyError: (turnId, message) => {
+            ctx.policyErrorByTurnId.set(turnId, message);
           },
         }).pipe(
           Effect.tapError(() =>
@@ -1405,7 +1404,6 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
-          const fullAccessWarningKeys = new Set<string>();
           let ctx: CopilotSessionContext | undefined;
           const resumeSessionId = parseCopilotResume(input.resumeCursor)?.sessionId;
           const runtime = yield* openRuntime({
@@ -1415,7 +1413,6 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             copilotSettings: { binaryPath: copilotSettings.binaryPath },
             pendingApprovals,
             pendingUserInputs,
-            fullAccessWarningKeys,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
             getCurrentTurnId: () => ctx?.activeTurnId,
@@ -1427,6 +1424,9 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               if (ctx.cancelRequestedTurnId !== turnId) {
                 ctx.cancelRequestedTurnId = turnId;
               }
+            },
+            onPolicyError: (turnId, message) => {
+              ctx?.policyErrorByTurnId.set(turnId, message);
             },
           });
 
@@ -1456,12 +1456,12 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               notificationFiber: runtime.notificationFiber,
               pendingApprovals,
               pendingUserInputs,
-              fullAccessWarningKeys,
               turns: [],
               activeTurnId: undefined,
               inFlightTurnId: undefined,
               cancelRequestedTurnId: undefined,
               fatalErrorByTurnId: new Map<TurnId, string>(),
+              policyErrorByTurnId: new Map<TurnId, string>(),
               backgroundAgents: new Map(),
               backgroundActivitySignal: undefined,
               stopped: false,
@@ -1731,14 +1731,17 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         const stopReason =
           promptOutcome._tag === "completed" ? promptOutcome.result.stopReason : "cancelled";
         const fatalErrorMessage = ctx.fatalErrorByTurnId.get(turnId);
+        const policyErrorMessage = ctx.policyErrorByTurnId.get(turnId);
         ctx.fatalErrorByTurnId.delete(turnId);
+        ctx.policyErrorByTurnId.delete(turnId);
         ctx.turns.push({
           id: turnId,
           items: [
             {
               prompt: retainedPromptParts(promptParts),
-              result:
-                promptOutcome._tag === "completed"
+              result: policyErrorMessage
+                ? { stopReason: "workspace_handoff_required" }
+                : promptOutcome._tag === "completed"
                   ? retainedPromptResult(promptOutcome.result)
                   : { stopReason: fatalErrorMessage ? "failed" : "cancelled" },
             },
@@ -1773,10 +1776,16 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                 stopReason: "copilot_fatal_capi_error",
                 errorMessage: fatalErrorMessage,
               }
-            : {
-                state: stopReason === "cancelled" ? "cancelled" : "completed",
-                stopReason: stopReason ?? null,
-              },
+            : policyErrorMessage
+              ? {
+                  state: "failed",
+                  stopReason: "workspace_handoff_required",
+                  errorMessage: policyErrorMessage,
+                }
+              : {
+                  state: stopReason === "cancelled" ? "cancelled" : "completed",
+                  stopReason: stopReason ?? null,
+                },
         });
 
         return {

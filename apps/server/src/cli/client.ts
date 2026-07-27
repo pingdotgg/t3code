@@ -64,6 +64,20 @@ export class CliRpcError extends Schema.TaggedErrorClass<CliRpcError>()("CliRpcE
   cause: Schema.optional(Schema.Unknown),
 }) {}
 
+export const isDefinitiveCommandRejectionResponse = (body: string): boolean => {
+  try {
+    const decoded: unknown = JSON.parse(body);
+    return (
+      typeof decoded === "object" &&
+      decoded !== null &&
+      "code" in decoded &&
+      decoded.code === "command-rejected"
+    );
+  } catch {
+    return false;
+  }
+};
+
 const JsonRecord = Schema.Record(Schema.String, Schema.Unknown);
 const DispatchResult = Schema.Struct({ sequence: Schema.Number });
 const decodeJsonRecord = Schema.decodeUnknownEffect(JsonRecord);
@@ -333,8 +347,13 @@ const dispatchCommand = (
         const httpClient = yield* HttpClient.HttpClient;
         const response = yield* httpClient.execute(request);
         if (response.status < 200 || response.status >= 300) {
+          const responseBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+          const responseDetail = responseBody.trim().slice(0, 1_000);
+          const rejectionMarker = isDefinitiveCommandRejectionResponse(responseBody)
+            ? "ORCHESTRATION_COMMAND_REJECTED: "
+            : "";
           return yield* new CliRpcError({
-            message: `Failed to dispatch orchestration command: HTTP ${response.status}.`,
+            message: `${rejectionMarker}Failed to dispatch orchestration command: HTTP ${response.status}.${responseDetail.length > 0 ? ` ${responseDetail}` : ""}`,
           });
         }
         return yield* decodeDispatchResult(response).pipe(

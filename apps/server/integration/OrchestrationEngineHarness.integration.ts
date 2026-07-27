@@ -313,7 +313,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(serverSettingsLayer),
       Layer.provideMerge(
         Layer.succeed(ReviewSnapshotVerifier, {
-          isCurrent: () => Effect.succeed(true),
+          currentSnapshot: (input) => Effect.succeed(input.snapshot),
         }),
       ),
     );

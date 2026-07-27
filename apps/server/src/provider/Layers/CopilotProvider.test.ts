@@ -83,6 +83,7 @@ const EXPECTED_COPILOT_BUILT_IN_MODEL_SLUGS = [
   "gpt-4.1",
   "gpt-4o",
   "claude-fable-5",
+  "claude-opus-5",
   "claude-opus-4.8",
   "claude-opus-4.7",
   "claude-opus-4.6",

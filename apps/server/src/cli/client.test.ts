@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { wsRpcProtocolLayer } from "./client.ts";
+import { isDefinitiveCommandRejectionResponse, wsRpcProtocolLayer } from "./client.ts";
 
 it.effect("provides a Node WebSocket constructor for the CLI RPC protocol", () =>
   Effect.scoped(
@@ -11,3 +11,17 @@ it.effect("provides a Node WebSocket constructor for the CLI RPC protocol", () =
     ),
   ),
 );
+
+it("only classifies structured invariant responses as definitive command rejections", () => {
+  assert.isTrue(
+    isDefinitiveCommandRejectionResponse(
+      JSON.stringify({ error: "invariant failed", code: "command-rejected" }),
+    ),
+  );
+  assert.isFalse(
+    isDefinitiveCommandRejectionResponse(
+      JSON.stringify({ error: "storage failed", code: "dispatch-failed" }),
+    ),
+  );
+  assert.isFalse(isDefinitiveCommandRejectionResponse("<html>server unavailable</html>"));
+});

@@ -587,13 +587,13 @@ export function resolveDesktopProductName(
 }
 
 export function resolveDesktopAppId(flavor: typeof DesktopBuildFlavor.Type): string {
-  return flavor === "dev" ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
+  return flavor === "dev" ? "com.t3tools.t3code.dev" : "com.t3tools.t3code.alpha";
 }
 
 export function resolveDesktopArtifactName(flavor: typeof DesktopBuildFlavor.Type): string {
   return flavor === "dev"
     ? "T3-Code-Dev-${version}-${arch}.${ext}"
-    : "T3-Code-${version}-${arch}.${ext}";
+    : "T3-Code-Local-Alpha-${version}-${arch}.${ext}";
 }
 
 /**
@@ -724,7 +724,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName,
     // Electron reads app.getName() from the packaged package.json. Keep it in
     // sync with electron-builder's bundle name so runtime flavor detection
-    // selects the Dev profile instead of contending with Alpha's LevelDB.
+    // selects an isolated profile instead of contending with another flavor.
     extraMetadata: { productName },
     artifactName: resolveDesktopArtifactName(flavor),
     directories: {

@@ -1,8 +1,4 @@
-import type {
-  ProviderApprovalDecision,
-  RuntimeMode,
-  ToolLifecycleItemType,
-} from "@t3tools/contracts";
+import type { ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type { AcpPermissionRequest } from "./AcpRuntimeModel.ts";
@@ -13,6 +9,7 @@ export type CopilotPermissionSelection =
     }
   | {
       readonly _tag: "cancel";
+      readonly reason?: "workspace_handoff_required";
     }
   | {
       readonly _tag: "select";
@@ -58,6 +55,11 @@ function getPermissionText(params: EffectAcpSchema.RequestPermissionRequest): st
     .toLowerCase();
 }
 
+function isRawGitWorktreeMutation(params: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const text = getPermissionText(params);
+  return /\bgit\b(?:(?![;&|]\s*git\b)[\s\S]){0,300}\bworktree\s+(?:add|move|remove)\b/.test(text);
+}
+
 function isQuestionLikePermissionRequest(
   params: EffectAcpSchema.RequestPermissionRequest,
 ): boolean {
@@ -71,7 +73,6 @@ function isQuestionLikePermissionRequest(
   return (
     normalizedToolName === "ask" ||
     normalizedToolName === "question" ||
-    text.includes("?") ||
     text.includes("question") ||
     text.includes("ask user") ||
     text.includes("exit plan") ||
@@ -111,40 +112,15 @@ function isAutoAcceptEditsPermission(permissionRequest: AcpPermissionRequest): b
   );
 }
 
-function isKnownAutoApprovablePermission(input: {
-  readonly params: EffectAcpSchema.RequestPermissionRequest;
-  readonly permissionRequest: AcpPermissionRequest;
-}): boolean {
-  if (isQuestionLikePermissionRequest(input.params)) {
-    return false;
-  }
-
-  switch (input.permissionRequest.kind) {
-    case "read":
-    case "edit":
-    case "write":
-    case "delete":
-    case "move":
-    case "search":
-    case "fetch":
-    case "execute":
-      return true;
-    default:
-      break;
-  }
-
-  const itemType: ToolLifecycleItemType | undefined = input.permissionRequest.toolCall?.itemType;
-  return (
-    itemType === "command_execution" || itemType === "file_change" || itemType === "web_search"
-  );
-}
-
 export function selectCopilotPermissionForRuntimeMode(input: {
   readonly runtimeMode: RuntimeMode;
   readonly params: EffectAcpSchema.RequestPermissionRequest;
   readonly permissionRequest: AcpPermissionRequest;
 }): CopilotPermissionSelection {
-  if (!isKnownAutoApprovablePermission(input)) {
+  if (isRawGitWorktreeMutation(input.params)) {
+    return { _tag: "cancel", reason: "workspace_handoff_required" };
+  }
+  if (isQuestionLikePermissionRequest(input.params)) {
     return { _tag: "ask" };
   }
 

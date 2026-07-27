@@ -53,14 +53,16 @@ log() { printf '\n[install-t3-dev] %s\n' "$*"; }
 
 log "Quitting any running ${APP_NAME} instance..."
 osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
-# Wait only as long as needed for a clean exit, then force-kill stragglers.
 for _ in {1..20}; do
   if ! pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
     break
   fi
   sleep 0.05
 done
-pkill -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1 || true
+if pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
+  echo "${APP_NAME} did not quit; close it and retry." >&2
+  exit 1
+fi
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
   if [[ "$USE_DMG" -eq 1 ]]; then

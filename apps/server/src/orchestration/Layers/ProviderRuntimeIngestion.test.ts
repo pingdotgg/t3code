@@ -259,7 +259,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(
         Layer.succeed(ReviewSnapshotVerifier, {
-          isCurrent: () => Effect.succeed(true),
+          currentSnapshot: (input) => Effect.succeed(input.snapshot),
         }),
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
@@ -574,6 +574,94 @@ describe("ProviderRuntimeIngestion", () => {
       status: "parsed",
       findings: [{ id: "finding-1", location: { path: "src/later.ts" } }],
       verdict: "request-changes",
+    });
+  });
+
+  it("refreshes the review result on a re-review and keeps it through ordinary replies", async () => {
+    const harness = await createHarness({
+      reviewSnapshot: {
+        scope: { kind: "uncommitted", branch: "main", untrackedFiles: [] },
+        diff: buildLargeReviewDiff(),
+        diffHash: "snapshot-hash",
+      },
+    });
+    const runTurn = async (turnId: string, text: string) => {
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId(`evt-${turnId}-started`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        turnId: asTurnId(turnId),
+      });
+      await waitForThread(harness.engine, (thread) => thread.session?.activeTurnId === turnId);
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-${turnId}-output`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId(turnId),
+        createdAt: new Date().toISOString(),
+        payload: { streamKind: "assistant_text", delta: text },
+      });
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId(`evt-${turnId}-completed`),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId(turnId),
+        createdAt: new Date().toISOString(),
+        payload: { state: "completed" },
+      });
+    };
+    const reviewOutput = (title: string, correctness: string) =>
+      JSON.stringify({
+        findings: [
+          {
+            priority: 1,
+            title,
+            body: "The replacement needs validation.",
+            confidence_score: 0.9,
+            code_location: {
+              absolute_file_path: "/workspace/project/src/later.ts",
+              line_range: { start: 1, end: 1 },
+            },
+          },
+        ],
+        overall_correctness: correctness,
+        overall_explanation: "Summary.",
+        overall_confidence_score: 0.9,
+      });
+
+    await runTurn("review-turn-a", reviewOutput("[P1] First finding", "patch is incorrect"));
+    await waitForThread(harness.engine, (thread) =>
+      Boolean(
+        thread.reviewResult?.status === "parsed" &&
+        thread.reviewResult.findings.some((finding) => finding.title === "First finding"),
+      ),
+    );
+
+    await runTurn("review-turn-b", "I fixed the merge conflicts.");
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.messages.at(-1)?.text === "I fixed the merge conflicts.",
+    );
+    const afterReply = await waitForThread(harness.engine, () => true);
+    expect(afterReply.reviewResult).toMatchObject({
+      status: "parsed",
+      findings: [{ title: "First finding" }],
+    });
+
+    await runTurn("review-turn-c", reviewOutput("[P1] Second finding", "patch is incorrect"));
+    const refreshed = await waitForThread(harness.engine, (thread) =>
+      Boolean(
+        thread.reviewResult?.status === "parsed" &&
+        thread.reviewResult.findings.some((finding) => finding.title === "Second finding"),
+      ),
+    );
+    expect(refreshed.reviewResult).toMatchObject({
+      status: "parsed",
+      findings: [{ title: "Second finding" }],
     });
   });
 

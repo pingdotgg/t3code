@@ -133,7 +133,7 @@ type AcpStartState =
     }
   | { readonly _tag: "Started"; readonly result: AcpStartedState };
 
-interface AcpAssistantSegmentState {
+export interface AcpAssistantSegmentState {
   readonly nextSegmentIndex: number;
   readonly activeItemId?: string;
 }
@@ -687,7 +687,7 @@ function configOptionCurrentValueMatches(
   return currentValue.trim() === String(value).trim();
 }
 
-const handleSessionUpdate = ({
+export const handleSessionUpdate = ({
   queue,
   modeStateRef,
   toolCallsRef,
@@ -709,10 +709,6 @@ const handleSessionUpdate = ({
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
-        yield* closeActiveAssistantSegment({
-          queue,
-          assistantSegmentRef,
-        });
         const { previous, merged } = yield* Ref.modify(toolCallsRef, (current) => {
           const previous = current.get(event.toolCall.toolCallId);
           const nextToolCall = mergeToolCallState(previous, event.toolCall);
@@ -724,6 +720,17 @@ const handleSessionUpdate = ({
           }
           return [{ previous, merged: nextToolCall }, next] as const;
         });
+        // Close the active assistant segment only when a tool call is first
+        // observed (a genuine `tool_call` start where the model paused its
+        // prose). Progress and completion updates to an already-tracked call
+        // must not chop continuously streamed narration into per-update
+        // messages.
+        if (previous === undefined) {
+          yield* closeActiveAssistantSegment({
+            queue,
+            assistantSegmentRef,
+          });
+        }
         if (!shouldEmitToolCallUpdate(previous, merged)) {
           continue;
         }

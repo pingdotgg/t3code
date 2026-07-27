@@ -6,6 +6,7 @@ import {
   agentRunDismissKey,
   buildSidebarThreadRows,
   expandSidebarThreadsWithAgentRuns,
+  selectVisibleSidebarThreads,
 } from "./sidebarThreadTree";
 import type { AgentRun } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
@@ -129,6 +130,23 @@ describe("buildSidebarThreadRows", () => {
     expect(visibleThreads).toEqual([]);
   });
 
+  it("does not promote historical descendants of archived threads to roots", () => {
+    const archivedParent = thread("thread-1", {
+      archivedAt: "2026-01-01T00:00:04.000Z",
+    });
+    const child = thread("thread-2", { parentThreadId: archivedParent.id });
+    const grandchild = thread("thread-3", { parentThreadId: child.id });
+    const unrelatedOrphan = thread("thread-4", {
+      parentThreadId: ThreadId.make("missing"),
+    });
+
+    expect(
+      selectVisibleSidebarThreads([archivedParent, child, grandchild, unrelatedOrphan]).map(
+        (candidate) => candidate.id,
+      ),
+    ).toEqual([unrelatedOrphan.id]);
+  });
+
   it("renders child chats indented directly below expanded parents", () => {
     const parent = thread("thread-1");
     const child = thread("thread-2", { parentThreadId: parent.id });
@@ -198,7 +216,7 @@ describe("buildSidebarThreadRows", () => {
       resolveThreadStatus: (candidate) => (candidate.id === child.id ? completedStatus : null),
     });
 
-    expect(manuallyCollapsed.rowViews.map((row) => row.thread.id)).toEqual([parent.id]);
+    expect(manuallyCollapsed.rowViews.map((row) => row.thread.id)).toEqual([parent.id, child.id]);
   });
 
   it("keeps the active settled child and its ancestors visible", () => {
@@ -210,7 +228,10 @@ describe("buildSidebarThreadRows", () => {
       threads: [parent, child, grandchild],
       pinnedThreadKeys: [],
       activeThreadKey: key(grandchild.id),
-      expandedOverrideByThreadKey: new Map(),
+      expandedOverrideByThreadKey: new Map([
+        [key(parent.id), false],
+        [key(child.id), false],
+      ]),
       sortOrder: "created_at",
       resolveThreadStatus: () => null,
     });
@@ -238,7 +259,7 @@ describe("buildSidebarThreadRows", () => {
     expect(result.rowViews[0]?.isExpanded).toBe(true);
   });
 
-  it("omits collapsed descendants while rolling up their status", () => {
+  it("keeps active descendants visible after their parent is explicitly collapsed", () => {
     const parent = thread("thread-1");
     const child = thread("thread-2", { parentThreadId: parent.id });
 
@@ -250,7 +271,7 @@ describe("buildSidebarThreadRows", () => {
       resolveThreadStatus: (candidate) => (candidate.id === child.id ? workingStatus : null),
     });
 
-    expect(result.rowViews.map((row) => row.thread.id)).toEqual([parent.id]);
+    expect(result.rowViews.map((row) => row.thread.id)).toEqual([parent.id, child.id]);
     expect(result.rowViews[0]?.childCount).toBe(1);
     expect(result.rowViews[0]?.rolledUpStatus?.label).toBe("Working");
     expect(result.projectStatus?.label).toBe("Working");

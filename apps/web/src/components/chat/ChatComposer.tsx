@@ -36,6 +36,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
+import { readLocalApi } from "~/localApi";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -119,7 +120,7 @@ import {
   formatProviderDisplayName,
 } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
-import { searchProviderSkills } from "../../providerSkillSearch";
+import { providerSkillsFromCatalog, searchProviderSkills } from "../../providerSkillSearch";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -880,6 +881,19 @@ export const ChatComposer = memo(
       }),
     );
     const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+    const skillCatalogQuery = useQuery({
+      queryKey: ["server", "skills"],
+      queryFn: async () => {
+        const api = readLocalApi();
+        if (!api) throw new Error("Local API not found");
+        return api.server.listSkills();
+      },
+      enabled: composerTriggerKind === "skill",
+    });
+    const catalogProviderSkills = useMemo(
+      () => providerSkillsFromCatalog(skillCatalogQuery.data?.skills ?? [], selectedProvider),
+      [selectedProvider, skillCatalogQuery.data?.skills],
+    );
 
     const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
       if (!composerTrigger) return [];
@@ -935,23 +949,34 @@ export const ChatComposer = memo(
         return searchSlashCommandItems(slashCommandItems, query);
       }
       if (composerTrigger.kind === "skill") {
-        return searchProviderSkills(
-          selectedProviderStatus?.skills ?? [],
-          composerTrigger.query,
-        ).map((skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }));
+        const skillsByName = new Map(
+          catalogProviderSkills.map((skill) => [skill.name, skill] as const),
+        );
+        for (const skill of selectedProviderStatus?.skills ?? []) {
+          skillsByName.set(skill.name, skill);
+        }
+        return searchProviderSkills([...skillsByName.values()], composerTrigger.query).map(
+          (skill) => ({
+            id: `skill:${selectedProvider}:${skill.name}`,
+            type: "skill" as const,
+            provider: selectedProvider,
+            skill,
+            label: formatProviderSkillDisplayName(skill),
+            description:
+              skill.shortDescription ??
+              skill.description ??
+              (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+          }),
+        );
       }
       return [];
-    }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries]);
+    }, [
+      catalogProviderSkills,
+      composerTrigger,
+      selectedProvider,
+      selectedProviderStatus,
+      workspaceEntries,
+    ]);
 
     const composerMenuOpen = Boolean(composerTrigger);
     const composerMenuSearchKey = composerTrigger
@@ -1018,10 +1043,11 @@ export const ChatComposer = memo(
     ]);
 
     const isComposerMenuLoading =
-      composerTriggerKind === "path" &&
-      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-        workspaceEntriesQuery.isLoading ||
-        workspaceEntriesQuery.isFetching);
+      (composerTriggerKind === "path" &&
+        ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+          workspaceEntriesQuery.isLoading ||
+          workspaceEntriesQuery.isFetching)) ||
+      (composerTriggerKind === "skill" && skillCatalogQuery.isLoading);
     const composerMenuEmptyState = useMemo(() => {
       if (composerTriggerKind === "skill") {
         return "No skills found. Try / to browse provider commands.";

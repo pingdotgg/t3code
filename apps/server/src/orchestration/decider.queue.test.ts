@@ -99,6 +99,120 @@ describe("decider queued turns", () => {
     });
   });
 
+  it("updates workspace metadata and queues continuation atomically", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-handoff");
+    const queuedTurnId = asQueuedTurnId("queued-turn-handoff");
+    const readModel = await makeThreadReadModel({ now, threadId });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.workspace.handoff",
+          commandId: CommandId.make("cmd-workspace-handoff"),
+          threadId,
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff",
+          continuation: {
+            id: queuedTurnId,
+            threadId,
+            message: {
+              messageId: asMessageId("message-handoff"),
+              role: "user",
+              text: "continue in workspace",
+              attachments: [],
+            },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: now,
+            updatedAt: now,
+            failedAt: null,
+            failureMessage: null,
+          },
+        },
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toEqual([
+      "thread.meta-updated",
+      "thread.queued-turn-created",
+    ]);
+    expect(events[0]?.payload).toMatchObject({
+      threadId,
+      branch: "feature/handoff",
+      worktreePath: "/tmp/handoff",
+    });
+    expect(events[1]?.payload).toMatchObject({
+      threadId,
+      queuedTurn: {
+        id: queuedTurnId,
+        message: { text: "continue in workspace" },
+      },
+    });
+  });
+
+  it("uses an existing queued turn instead of appending a duplicate continuation", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-existing-queue");
+    const readModel = await makeThreadReadModel({ now, threadId });
+    const queuedEvent = (await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.create",
+          commandId: CommandId.make("cmd-existing-queue"),
+          threadId,
+          queuedTurnId: asQueuedTurnId("queued-turn-existing"),
+          message: {
+            messageId: asMessageId("message-existing"),
+            role: "user",
+            text: "user follow-up",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: now,
+        },
+        readModel,
+      }),
+    )) as OrchestrationEvent;
+    const withExistingQueue = await Effect.runPromise(
+      projectEvent(readModel, { ...queuedEvent, sequence: 2 }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.workspace.handoff",
+          commandId: CommandId.make("cmd-workspace-handoff"),
+          threadId,
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff",
+          continuation: {
+            id: asQueuedTurnId("queued-turn-synthetic"),
+            threadId,
+            message: {
+              messageId: asMessageId("message-synthetic"),
+              role: "user",
+              text: "synthetic continuation",
+              attachments: [],
+            },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: now,
+            updatedAt: now,
+            failedAt: null,
+            failureMessage: null,
+          },
+        },
+        readModel: withExistingQueue,
+      }),
+    );
+
+    expect(result).toMatchObject({ type: "thread.meta-updated" });
+  });
+
   it("dispatches a queued turn as a user message and turn start", async () => {
     const now = "2026-03-01T00:00:00.000Z";
     const dispatchedAt = "2026-03-01T00:00:01.000Z";

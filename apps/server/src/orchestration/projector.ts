@@ -508,6 +508,9 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             reviewResult: payload.result,
+            // The result is anchored to this snapshot; keep the diff the panel
+            // renders aligned with the findings it annotates.
+            reviewSnapshot: payload.result.snapshot,
             updatedAt: event.occurredAt,
           }),
         })),

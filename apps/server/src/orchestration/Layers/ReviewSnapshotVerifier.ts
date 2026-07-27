@@ -8,7 +8,7 @@ export const ReviewSnapshotVerifierLive = Layer.effect(
   Effect.gen(function* () {
     const git = yield* GitCore;
     return ReviewSnapshotVerifier.of({
-      isCurrent: (input) =>
+      currentSnapshot: (input) =>
         git
           .resolveReviewChangesContext({
             cwd: input.cwd,
@@ -19,13 +19,7 @@ export const ReviewSnapshotVerifierLive = Layer.effect(
                 ? { pullRequestNumber: input.snapshot.scope.number }
                 : {}),
           })
-          .pipe(
-            Effect.map(
-              (context) =>
-                context.snapshot !== undefined &&
-                context.snapshot.diffHash === input.snapshot.diffHash,
-            ),
-          ),
+          .pipe(Effect.map((context) => context.snapshot ?? null)),
     });
   }),
 );

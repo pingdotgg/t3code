@@ -33,6 +33,7 @@
     "dist:desktop:win:x64": "node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "install:t3:dev": "bash scripts/install-t3-dev.sh",
     "install:t3:alpha": "bash scripts/install-t3-alpha.sh",
+    "install:t3:official": "bash scripts/install-t3-official.sh",
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "node scripts/clean.ts",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"

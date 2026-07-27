@@ -62,6 +62,20 @@ type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
 
+function findActiveWorktreeOwner(
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+  worktreePath: string,
+) {
+  return readModel.threads.find(
+    (thread) =>
+      thread.id !== threadId &&
+      thread.deletedAt === null &&
+      thread.archivedAt === null &&
+      thread.worktreePath === worktreePath,
+  );
+}
+
 function forkedTitle(title: string): string {
   return title.startsWith(FORK_TITLE_PREFIX) ? title : `${FORK_TITLE_PREFIX}${title}`;
 }
@@ -570,7 +584,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
+      const metaUpdatedEvent: PlannedOrchestrationEvent = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -589,6 +603,85 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      return metaUpdatedEvent;
+    }
+
+    case "thread.workspace.handoff": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (command.continuation.threadId !== command.threadId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Workspace continuation '${command.continuation.id}' belongs to thread '${command.continuation.threadId}', not '${command.threadId}'.`,
+        });
+      }
+      if (
+        (thread.queuedTurns ?? []).some((queuedTurn) => queuedTurn.id === command.continuation.id)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.continuation.id}' already exists on thread '${command.threadId}'.`,
+        });
+      }
+
+      const worktreeOwner = findActiveWorktreeOwner(
+        readModel,
+        command.threadId,
+        command.worktreePath,
+      );
+      if (worktreeOwner !== undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Worktree '${command.worktreePath}' is already bound to active thread '${worktreeOwner.id}'.`,
+        });
+      }
+
+      const firstQueuedTurn = thread.queuedTurns?.[0];
+      if (firstQueuedTurn !== undefined && firstQueuedTurn.failedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Failed queued turn '${firstQueuedTurn.id}' must be resolved before workspace handoff.`,
+        });
+      }
+
+      const occurredAt = nowIso();
+      const metaUpdatedEvent: PlannedOrchestrationEvent = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          branch: command.branch,
+          worktreePath: command.worktreePath,
+          updatedAt: occurredAt,
+        },
+      };
+      if (firstQueuedTurn !== undefined) {
+        return metaUpdatedEvent;
+      }
+      return [
+        metaUpdatedEvent,
+        {
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.continuation.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.queued-turn-created",
+          payload: {
+            threadId: command.threadId,
+            queuedTurn: command.continuation,
+          },
+        },
+      ];
     }
 
     case "thread.runtime-mode.set": {

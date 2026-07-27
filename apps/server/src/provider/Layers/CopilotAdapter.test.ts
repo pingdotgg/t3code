@@ -743,7 +743,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       });
 
       const argv = yield* Effect.promise(() => readArgvLog(argvLogPath));
-      assert.deepEqual(argv[0], ["--acp", "--allow-all"]);
+      assert.deepEqual(argv[0], ["--acp"]);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const methods = requests.map((request) => request.method);
@@ -802,7 +802,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("throttles leaked full-access permission warnings to one per permission kind", () =>
+  it.effect("does not warn for expected full-access permission requests", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const settings = yield* ServerSettingsService;
@@ -833,7 +833,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
             event.type === "request.opened" ||
             event.type === "turn.completed",
         ),
-        Stream.take(2),
+        Stream.take(1),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -847,8 +847,122 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       const events = Array.from(yield* Fiber.join(relevantEventsFiber));
       assert.deepEqual(
         events.map((event) => event.type),
-        ["runtime.warning", "turn.completed"],
+        ["turn.completed"],
       );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("fails turns that attempt raw worktree mutations with actionable guidance", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("copilot-worktree-mutation-thread");
+
+      yield* isolateCopilotHome();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockCopilotWrapper({
+          T3_ACP_PERMISSION_REQUEST_COUNT: "1",
+          T3_ACP_PERMISSION_REQUEST_KIND: "execute",
+          T3_ACP_PERMISSION_REQUEST_COMMAND:
+            "git worktree add -b feature /tmp/copilot-worktree HEAD",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: COPILOT_DRIVER,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+      });
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "create a worktree",
+        attachments: [],
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.equal(
+        events.some((event) => event.type === "request.opened"),
+        false,
+      );
+      assert.equal(
+        events.some(
+          (event) =>
+            event.type === "runtime.error" &&
+            event.payload.message.includes("create_isolated_workspace"),
+        ),
+        true,
+      );
+      const completed = events.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.equal(completed.payload.stopReason, "workspace_handoff_required");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("approves MCP tool permission requests in full-access instead of cancelling them", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("copilot-mcp-permission-thread");
+
+      yield* isolateCopilotHome();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockCopilotWrapper({
+          T3_ACP_PERMISSION_REQUEST_COUNT: "1",
+          T3_ACP_PERMISSION_REQUEST_KIND: "other",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: COPILOT_DRIVER,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+      });
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "create an isolated workspace",
+        attachments: [],
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const messageText = events
+        .filter((event) => event.type === "content.delta")
+        .map((event) => event.payload.delta)
+        .join(" ");
+      assert.equal(messageText.includes("permission-outcomes=selected:allow-always"), true);
+
+      const completed = events.find((event) => event.type === "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "completed");
+      }
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1260,7 +1374,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("passes env-gated T3 MCP server descriptors during Copilot ACP session startup", () =>
+  it.effect("serves env-gated T3 MCP tools over HTTP during Copilot ACP session startup", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const settings = yield* ServerSettingsService;
@@ -1315,27 +1429,44 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       const [mcpServers] = yield* Effect.promise(() =>
         readJsonLines<
           ReadonlyArray<{
+            readonly type: string;
             readonly name: string;
-            readonly command: string;
-            readonly args: string[];
-            readonly env: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+            readonly url: string;
+            readonly headers: ReadonlyArray<{ readonly name: string; readonly value: string }>;
           }>
         >(mcpLogPath),
       );
       assert.equal(mcpServers?.[0]?.name, "t3-tools");
-      assert.equal(mcpServers?.[0]?.command, "t3-test");
-      assert.deepEqual(mcpServers?.[0]?.args, [
-        "mcp",
-        "serve",
-        "--cwd",
-        process.cwd(),
-        "--toolsets",
-        "read_file,search_files",
-      ]);
-      assert.deepEqual(mcpServers?.[0]?.env, [
-        { name: "T3_MCP_THREAD_ID", value: threadId },
-        { name: "T3_MCP_CLI_COMMAND", value: "t3-test" },
-      ]);
+      assert.equal(mcpServers?.[0]?.type, "http");
+      const mcpServer = mcpServers?.[0];
+      assert.isDefined(mcpServer);
+      const authorization = mcpServer.headers.find(
+        (header) => header.name.toLowerCase() === "authorization",
+      )?.value;
+      assert.isDefined(authorization);
+      const response = yield* Effect.tryPromise(() =>
+        fetch(mcpServer.url, {
+          method: "POST",
+          headers: {
+            authorization,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/list",
+            params: {},
+          }),
+        }),
+      );
+      assert.equal(response.status, 200);
+      const body = (yield* Effect.tryPromise(() => response.json())) as {
+        readonly result?: { readonly tools?: ReadonlyArray<{ readonly name?: string }> };
+      };
+      assert.deepEqual(
+        body.result?.tools?.map((tool) => tool.name),
+        ["read_file", "search_files", "create_isolated_workspace", "switch_workspace"],
+      );
 
       yield* adapter.stopSession(threadId);
     }),
@@ -1583,7 +1714,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("restarts resumed sessions with updated runtime-mode startup args", () =>
+  it.effect("restarts resumed sessions without bypassing ACP permissions", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const settings = yield* ServerSettingsService;
@@ -1619,7 +1750,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
 
       const argv = yield* Effect.promise(() => readArgvLog(argvLogPath));
       assert.deepEqual(argv[0], ["--acp"]);
-      assert.deepEqual(argv[1], ["--acp", "--allow-all"]);
+      assert.deepEqual(argv[1], ["--acp"]);
     }),
   );
 

@@ -18,6 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
 import { deriveTimelineEntries, formatElapsed, type AgentRun } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
@@ -102,7 +103,7 @@ interface TimelineRowSharedState {
   onForkAssistantMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
-  reviewResultMessageId: string | null;
+  reviewOutputMessageIds: ReadonlySet<string>;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -204,12 +205,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
-  const reviewResultMessageId = useMemo(() => {
-    if (!reviewResultActive) return null;
-    const row = rawRows
-      .toReversed()
-      .find((entry) => entry.kind === "message" && entry.message.role === "assistant");
-    return row?.id ?? null;
+  // The reviewer's structured output is rendered as the findings card, so hide
+  // the raw JSON message it came from — identified by content, because later
+  // turns in the same review thread append ordinary assistant replies.
+  const reviewOutputMessageIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!reviewResultActive) return ids;
+    for (const entry of rawRows) {
+      if (
+        entry.kind === "message" &&
+        entry.message.role === "assistant" &&
+        isReviewOutputText(entry.message.text ?? "")
+      ) {
+        ids.add(entry.id);
+      }
+    }
+    return ids;
   }, [rawRows, reviewResultActive]);
 
   const handleScroll = useCallback(() => {
@@ -259,7 +270,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkAssistantMessage: handleForkAssistantMessage,
       onImageExpand,
       onOpenTurnDiff,
-      reviewResultMessageId,
+      reviewOutputMessageIds,
     }),
     [
       activeTurnInProgress,
@@ -280,7 +291,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       handleForkAssistantMessage,
       onImageExpand,
       onOpenTurnDiff,
-      reviewResultMessageId,
+      reviewOutputMessageIds,
     ],
   );
 
@@ -466,7 +477,7 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           return (
             <>
               <div className="min-w-0 px-1 py-0.5">
-                {ctx.reviewResultMessageId === row.id ? null : (
+                {ctx.reviewOutputMessageIds.has(row.id) ? null : (
                   <ChatMarkdown
                     text={messageText}
                     cwd={ctx.markdownCwd}

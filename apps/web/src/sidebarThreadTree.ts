@@ -72,6 +72,43 @@ export function expandSidebarThreadsWithAgentRuns(input: {
   });
 }
 
+export function selectVisibleSidebarThreads(
+  threads: readonly SidebarThreadSummary[],
+): SidebarThreadSummary[] {
+  const threadByKey = new Map(threads.map((thread) => [getThreadKey(thread), thread] as const));
+  const visibilityByKey = new Map<string, boolean>();
+  const resolvingKeys = new Set<string>();
+
+  const isVisible = (thread: SidebarThreadSummary): boolean => {
+    const threadKey = getThreadKey(thread);
+    const cached = visibilityByKey.get(threadKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (thread.archivedAt !== null) {
+      visibilityByKey.set(threadKey, false);
+      return false;
+    }
+    if (resolvingKeys.has(threadKey)) {
+      return true;
+    }
+
+    resolvingKeys.add(threadKey);
+    const parent =
+      thread.parentThreadId === null
+        ? undefined
+        : threadByKey.get(
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.parentThreadId)),
+          );
+    const visible = parent === undefined || isVisible(parent);
+    resolvingKeys.delete(threadKey);
+    visibilityByKey.set(threadKey, visible);
+    return visible;
+  };
+
+  return threads.filter(isVisible);
+}
+
 export interface SidebarThreadRowView {
   thread: SidebarThreadSummary;
   threadKey: string;
@@ -106,7 +143,8 @@ export interface BuildSidebarThreadRowsInput {
   /**
    * Explicit per-thread expand/collapse choices keyed by thread key. When a
    * parent has no entry, expansion falls back to the status-driven default:
-   * expanded only while it (or a descendant) is active.
+   * expanded only while it (or a descendant) is active. An active descendant
+   * always remains visible, even after an explicit collapse.
    */
   expandedOverrideByThreadKey: ReadonlyMap<string, boolean>;
   sortOrder: SidebarThreadSortOrder;
@@ -252,9 +290,12 @@ function flattenRows(input: {
         })
       : false;
     const override = input.expandedOverrideByThreadKey.get(node.threadKey);
+    const hasActiveDescendant =
+      containsActiveDescendant ||
+      node.children.some((child) => isActiveThreadStatus(child.rolledUpStatus));
     const isExpanded =
       hasChildren &&
-      (override ?? (containsActiveDescendant || isActiveThreadStatus(node.rolledUpStatus)));
+      (hasActiveDescendant || (override ?? isActiveThreadStatus(node.rolledUpStatus)));
     input.output.push({
       thread: node.thread,
       threadKey: node.threadKey,

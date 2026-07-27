@@ -108,6 +108,24 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
+function isActionableApprovalRequest(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+  const request = payload as Record<string, unknown>;
+  return (
+    request.requestKind === "command" ||
+    request.requestKind === "file-read" ||
+    request.requestKind === "file-change" ||
+    request.requestType === "command_execution_approval" ||
+    request.requestType === "exec_command_approval" ||
+    request.requestType === "dynamic_tool_call" ||
+    request.requestType === "file_read_approval" ||
+    request.requestType === "file_change_approval" ||
+    request.requestType === "apply_patch_approval"
+  );
+}
+
 function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
@@ -730,7 +748,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             ...(event.type === "thread.review-result-set"
-              ? { reviewResult: event.payload.result }
+              ? {
+                  reviewResult: event.payload.result,
+                  reviewSnapshot: event.payload.result.snapshot,
+                }
               : {}),
             updatedAt: event.occurredAt,
           });
@@ -1470,6 +1491,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           // pollute this projection — they have their own accounting via
           // derivePendingUserInputCountFromActivities.
           if (event.payload.activity.kind !== "approval.requested") {
+            return;
+          }
+          if (!isActionableApprovalRequest(event.payload.activity.payload)) {
             return;
           }
           if (Option.isSome(existingRow) && existingRow.value.status === "resolved") {

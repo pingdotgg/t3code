@@ -8,6 +8,7 @@ import {
   COPILOT_PLAN_MODE_ID,
   buildCopilotRuntimeModeArgs,
   buildCopilotAcpSpawnInput,
+  buildCopilotMcpServerOptions,
   buildCopilotMcpServers,
   isCopilotPlanModeId,
   normalizeCopilotAcpModeId,
@@ -28,41 +29,74 @@ describe("buildCopilotAcpSpawnInput", () => {
       buildCopilotAcpSpawnInput({ binaryPath: "/opt/bin/copilot" }, "/tmp/project", "full-access"),
     ).toEqual({
       command: "/opt/bin/copilot",
-      args: ["--acp", "--allow-all"],
+      args: ["--acp"],
       cwd: "/tmp/project",
     });
   });
 
   describe("buildCopilotMcpServers", () => {
-    it("keeps MCP disabled by default", () => {
-      expect(buildCopilotMcpServers("/tmp/project", "thread-1", {})).toEqual([]);
+    it("exposes the workspace handoff tool by default", () => {
+      expect(
+        buildCopilotMcpServerOptions(
+          "/tmp/project",
+          "thread-1",
+          "/tmp/t3-dev",
+          {},
+          {
+            execPath: "/usr/bin/node",
+            entryPath: "/app/bin.mjs",
+          },
+        ),
+      ).toEqual({
+        cwd: "/tmp/project",
+        toolsets: new Set(["create_isolated_workspace", "switch_workspace"]),
+        threadId: "thread-1",
+        cliCommand: "/usr/bin/node",
+        cliArgsPrefix: ["/app/bin.mjs"],
+        cliBaseDir: "/tmp/t3-dev",
+      });
+
+      expect(
+        buildCopilotMcpServers({
+          url: "http://127.0.0.1:1234/mcp",
+          authorization: "Bearer secret",
+        }),
+      ).toEqual([
+        {
+          type: "http",
+          name: "t3-tools",
+          url: "http://127.0.0.1:1234/mcp",
+          headers: [{ name: "Authorization", value: "Bearer secret" }],
+        },
+      ]);
     });
 
-    it("builds an env-gated T3 MCP stdio server descriptor", () => {
+    it("builds env-gated T3 MCP HTTP server options", () => {
       expect(
-        buildCopilotMcpServers("/tmp/project", "thread-1", {
+        buildCopilotMcpServerOptions("/tmp/project", "thread-1", "/tmp/t3-dev", {
           T3_COPILOT_ACP_ENABLE_MCP: "1",
           T3_COPILOT_ACP_MCP_COMMAND: "t3-dev",
           T3_COPILOT_ACP_MCP_TOOLSETS: "read_file,search_files",
         }),
-      ).toEqual([
-        {
-          name: "t3-tools",
-          command: "t3-dev",
-          args: ["mcp", "serve", "--cwd", "/tmp/project", "--toolsets", "read_file,search_files"],
-          env: [
-            { name: "T3_MCP_THREAD_ID", value: "thread-1" },
-            { name: "T3_MCP_CLI_COMMAND", value: "t3-dev" },
-          ],
-        },
-      ]);
+      ).toEqual({
+        cwd: "/tmp/project",
+        toolsets: new Set([
+          "read_file",
+          "search_files",
+          "create_isolated_workspace",
+          "switch_workspace",
+        ]),
+        threadId: "thread-1",
+        cliCommand: "t3-dev",
+        cliBaseDir: "/tmp/t3-dev",
+      });
     });
   });
 });
 
 describe("buildCopilotRuntimeModeArgs", () => {
-  it("maps full-access to allow-all startup args", () => {
-    expect(buildCopilotRuntimeModeArgs("full-access")).toEqual(["--allow-all"]);
+  it("keeps ACP permission interception active in full-access mode", () => {
+    expect(buildCopilotRuntimeModeArgs("full-access")).toEqual([]);
   });
 
   it("does not add startup args for stricter runtime modes", () => {

@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createInterface } from "node:readline";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -26,17 +28,28 @@ interface McpTool {
   };
 }
 
-interface McpServeOptions {
+export interface McpServeOptions {
   readonly cwd: string;
   readonly toolsets: ReadonlySet<string>;
   readonly threadId: string | undefined;
   readonly cliCommand: string;
+  readonly cliArgsPrefix?: ReadonlyArray<string>;
+  readonly cliBaseDir?: string;
+}
+
+export interface McpHttpServer {
+  readonly url: string;
+  readonly authorization: string;
+  readonly close: () => Promise<void>;
 }
 
 const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_HTTP_REQUEST_BYTES = 1024 * 1024;
 const MAX_SEARCH_RESULTS = 100;
 const MAX_TERMINAL_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_TERMINAL_TIMEOUT_MS = 30_000;
+const WORKSPACE_HANDOFF_CONTINUATION_PROMPT =
+  "Continue the task from the previous user request in the newly bound workspace. Do not merely acknowledge the workspace change; proceed with the requested work.";
 const SKIPPED_DIRECTORIES = new Set([".git", "node_modules", "dist", ".next", ".turbo"]);
 
 const TOOL_ALIASES: ReadonlyMap<string, string> = new Map([
@@ -58,7 +71,189 @@ const TOOL_ALIASES: ReadonlyMap<string, string> = new Map([
   ["preview_annotate", "preview_annotate"],
   ["create_isolated_workspace", "create_isolated_workspace"],
   ["worktree_handoff", "create_isolated_workspace"],
+  ["switch_workspace", "switch_workspace"],
+  ["use_existing_worktree", "switch_workspace"],
 ] as const);
+
+function writeJsonResponse(response: ServerResponse, status: number, payload: unknown): void {
+  response.writeHead(status, {
+    "cache-control": "no-store",
+    "content-type": "application/json",
+  });
+  response.end(JSON.stringify(payload));
+}
+
+async function readJsonRequest(request: IncomingMessage): Promise<unknown> {
+  const chunks: Array<Buffer> = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_HTTP_REQUEST_BYTES) {
+      throw new Error("MCP request body is too large");
+    }
+    chunks.push(buffer);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+async function handleMcpHttpRequest(
+  options: McpServeOptions,
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.writeHead(405, { allow: "POST" });
+    response.end();
+    return;
+  }
+
+  let body: JsonRpcRequest;
+  try {
+    body = asRecord(await readJsonRequest(request)) as JsonRpcRequest;
+  } catch (error) {
+    writeJsonResponse(response, 400, {
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32700,
+        message: error instanceof Error ? error.message : "Invalid JSON",
+      },
+    });
+    return;
+  }
+
+  if (body.id === undefined) {
+    response.writeHead(202);
+    response.end();
+    return;
+  }
+
+  switch (body.method) {
+    case "initialize": {
+      const params = asRecord(body.params);
+      writeJsonResponse(response, 200, {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {
+          protocolVersion: asString(params.protocolVersion) ?? "2025-03-26",
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: "t3-tools", version: "1.0.0" },
+        },
+      });
+      return;
+    }
+    case "ping": {
+      writeJsonResponse(response, 200, {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {},
+      });
+      return;
+    }
+    case "tools/list": {
+      writeJsonResponse(response, 200, {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: { tools: availableTools(options.toolsets) },
+      });
+      return;
+    }
+    case "tools/call": {
+      const params = asRecord(body.params);
+      const name = asString(params.name);
+      if (!name) {
+        writeJsonResponse(response, 200, {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            isError: true,
+            content: [{ type: "text", text: "tools/call requires a tool name" }],
+          },
+        });
+        return;
+      }
+      try {
+        const text = await callTool(options, name, asRecord(params.arguments));
+        writeJsonResponse(response, 200, {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { content: [{ type: "text", text }] },
+        });
+      } catch (error) {
+        writeJsonResponse(response, 200, {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: error instanceof Error ? error.message : String(error),
+              },
+            ],
+          },
+        });
+      }
+      return;
+    }
+    default: {
+      writeJsonResponse(response, 200, {
+        jsonrpc: "2.0",
+        id: body.id,
+        error: { code: -32601, message: `Method not found: ${body.method ?? ""}` },
+      });
+    }
+  }
+}
+
+export async function startMcpHttpServer(options: McpServeOptions): Promise<McpHttpServer> {
+  const authorization = `Bearer ${randomUUID()}`;
+  const server = createServer((request, response) => {
+    if (request.headers.authorization !== authorization) {
+      response.writeHead(401, { "www-authenticate": "Bearer" });
+      response.end();
+      return;
+    }
+    void handleMcpHttpRequest(options, request, response).catch((error) => {
+      if (!response.headersSent) {
+        writeJsonResponse(response, 500, {
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : "Internal server error",
+          },
+        });
+      } else {
+        response.destroy(error instanceof Error ? error : undefined);
+      }
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw new Error("Could not resolve the T3 MCP HTTP server address");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp`,
+    authorization,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      }),
+  };
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -171,15 +366,23 @@ async function terminalTool(root: string, args: Record<string, unknown>): Promis
   if (command.trim() !== command || command.includes("/") || command.includes(" ")) {
     throw new Error("terminal command must be an executable name; pass arguments via args");
   }
-  const commandArgs = asStringArray(args.args);
+  return await spawnCommand(root, command, asStringArray(args.args), args.timeoutMs);
+}
+
+async function spawnCommand(
+  root: string,
+  command: string,
+  commandArgs: ReadonlyArray<string>,
+  requestedTimeoutMs?: unknown,
+): Promise<string> {
   const timeoutMs =
-    typeof args.timeoutMs === "number" && Number.isFinite(args.timeoutMs)
-      ? Math.max(1, Math.min(args.timeoutMs, DEFAULT_TERMINAL_TIMEOUT_MS))
+    typeof requestedTimeoutMs === "number" && Number.isFinite(requestedTimeoutMs)
+      ? Math.max(1, Math.min(requestedTimeoutMs, DEFAULT_TERMINAL_TIMEOUT_MS))
       : DEFAULT_TERMINAL_TIMEOUT_MS;
 
   return await new Promise<string>((resolve) => {
     const { command: spawnTarget, shell } = resolveWindowsSpawn(command);
-    const child = spawn(spawnTarget, commandArgs, {
+    const child = spawn(spawnTarget, [...commandArgs], {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       shell,
@@ -249,24 +452,90 @@ async function runCommand(
   command: string,
   args: ReadonlyArray<string>,
 ): Promise<TerminalResult> {
-  const output = await terminalTool(root, { command, args });
+  const output = await spawnCommand(root, command, args);
   const result = JSON.parse(output) as TerminalResult;
   if (result.code !== 0) {
     const detail =
-      result.stderr.trim() || result.stdout.trim() || `exited with code ${result.code}`;
+      [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n") ||
+      `exited with code ${result.code}`;
     throw new Error(`${command} ${args.join(" ")} failed: ${detail}`);
   }
   return result;
 }
 
-function requireAbsolutePath(value: string | undefined): string {
+function requireAbsolutePath(value: string | undefined, toolName: string): string {
   if (!value) {
-    throw new Error("create_isolated_workspace requires an absolute path");
+    throw new Error(`${toolName} requires an absolute path`);
   }
   if (!path.isAbsolute(value)) {
-    throw new Error(`create_isolated_workspace path must be absolute: ${value}`);
+    throw new Error(`${toolName} path must be absolute: ${value}`);
   }
   return value;
+}
+
+const toErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const isDefinitiveBindingRejection = (error: unknown): boolean =>
+  toErrorMessage(error).includes("ORCHESTRATION_COMMAND_REJECTED:");
+
+async function recordThreadWorkspaceBinding(
+  options: McpServeOptions,
+  branch: string,
+  worktreePath: string,
+): Promise<void> {
+  if (!options.threadId) {
+    throw new Error("Workspace binding is only available from a T3 provider session");
+  }
+  const commandId = `workspace-handoff:${randomUUID()}`;
+  const commandArgs = [
+    ...(options.cliArgsPrefix ?? []),
+    "chat",
+    "handoff",
+    options.threadId,
+    "--branch",
+    branch,
+    "--worktree",
+    worktreePath,
+    "--continue-prompt",
+    WORKSPACE_HANDOFF_CONTINUATION_PROMPT,
+    "--command-id",
+    commandId,
+    ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
+  ];
+  try {
+    await runCommand(options.cwd, options.cliCommand, commandArgs);
+  } catch (firstError) {
+    if (isDefinitiveBindingRejection(firstError)) {
+      throw firstError;
+    }
+    try {
+      await runCommand(options.cwd, options.cliCommand, commandArgs);
+    } catch (retryError) {
+      throw new Error(
+        `Workspace binding failed after retry.\nFirst attempt: ${toErrorMessage(firstError)}\nRetry: ${toErrorMessage(retryError)}`,
+        { cause: retryError },
+      );
+    }
+  }
+}
+
+async function rollbackCreatedWorktree(
+  options: McpServeOptions,
+  branch: string,
+  worktreePath: string,
+): Promise<void> {
+  await runCommand(options.cwd, "git", ["worktree", "remove", "--force", worktreePath]);
+  await runCommand(options.cwd, "git", ["branch", "--delete", "--force", branch]);
+}
+
+async function resolveGitCommonDir(cwd: string): Promise<string> {
+  const result = await runCommand(cwd, "git", ["rev-parse", "--git-common-dir"]);
+  const commonDir = result.stdout.trim();
+  if (!commonDir) {
+    throw new Error(`Could not resolve the Git common directory for ${cwd}`);
+  }
+  return await fs.realpath(path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir));
 }
 
 async function createIsolatedWorkspaceTool(
@@ -282,7 +551,7 @@ async function createIsolatedWorkspaceTool(
     throw new Error("create_isolated_workspace requires a non-empty branch");
   }
   const branchName = branch.trim();
-  const targetPath = requireAbsolutePath(asString(args.path));
+  const targetPath = requireAbsolutePath(asString(args.path), "create_isolated_workspace");
   const baseRef = asString(args.baseRef);
 
   const currentBranch =
@@ -301,37 +570,58 @@ async function createIsolatedWorkspaceTool(
   ]);
 
   try {
-    await runCommand(options.cwd, options.cliCommand, [
-      "chat",
-      "set-branch",
-      options.threadId,
-      "--branch",
-      branchName,
-      "--worktree",
-      targetPath,
-    ]);
-  } catch (error) {
-    const worktreeRemoved = await runCommand(options.cwd, "git", [
-      "worktree",
-      "remove",
-      "--force",
-      targetPath,
-    ])
-      .then(() => true)
-      .catch(() => false);
-    if (worktreeRemoved) {
-      await runCommand(options.cwd, "git", ["branch", "--delete", "--force", branchName]).catch(
-        () => undefined,
+    await recordThreadWorkspaceBinding(options, branchName, targetPath);
+  } catch (bindingError) {
+    if (!isDefinitiveBindingRejection(bindingError)) {
+      throw new Error(
+        `${toErrorMessage(bindingError)}\nThe worktree was preserved because the server may have committed the handoff despite the lost response. Use switch_workspace with '${targetPath}' to retry the binding, or inspect chat '${options.threadId}' before removing it.`,
+        { cause: bindingError },
       );
     }
-    throw error;
+    try {
+      await rollbackCreatedWorktree(options, branchName, targetPath);
+    } catch (cleanupError) {
+      throw new Error(
+        `${toErrorMessage(bindingError)}\nWorkspace cleanup also failed: ${toErrorMessage(cleanupError)}`,
+        { cause: cleanupError },
+      );
+    }
+    throw bindingError;
   }
 
   return JSON.stringify({
     worktreePath: targetPath,
     branch: branchName,
     baseRef: currentBranch,
-    note: "Handoff recorded. Finish this turn normally; the next turn starts in the worktree.",
+    continuationQueued: true,
+    note: "Handoff recorded. Finish this turn without editing the new worktree; T3 will automatically continue in the bound workspace.",
+  });
+}
+
+async function switchWorkspaceTool(
+  options: McpServeOptions,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const targetPath = requireAbsolutePath(asString(args.path), "switch_workspace");
+  const [sourceCommonDir, targetCommonDir, branchResult] = await Promise.all([
+    resolveGitCommonDir(options.cwd),
+    resolveGitCommonDir(targetPath),
+    runCommand(targetPath, "git", ["branch", "--show-current"]),
+  ]);
+  if (sourceCommonDir !== targetCommonDir) {
+    throw new Error("switch_workspace can only bind a worktree from the same Git repository");
+  }
+  const branch = branchResult.stdout.trim();
+  if (!branch) {
+    throw new Error("switch_workspace requires the target worktree to have a checked-out branch");
+  }
+
+  await recordThreadWorkspaceBinding(options, branch, targetPath);
+  return JSON.stringify({
+    worktreePath: targetPath,
+    branch,
+    continuationQueued: true,
+    note: "Handoff recorded. Finish this turn without editing the worktree; T3 will automatically continue there.",
   });
 }
 
@@ -442,7 +732,7 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: "create_isolated_workspace",
     description:
-      "Use this instead of git worktree add when work needs an isolated checkout. It creates a git worktree and binds this T3 thread to it, so the next turn resumes there. Finish the current turn normally after calling it.",
+      "Required instead of running git worktree add directly when this thread needs a new isolated checkout. Creates a Git worktree, durably binds this T3 thread to it, and queues an automatic continuation. After calling, do not edit the new worktree during the current turn; finish so T3 can restart in the bound workspace and continue automatically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -451,6 +741,18 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
         baseRef: { type: "string", description: "Optional branch or ref to start from." },
       },
       required: ["branch", "path"],
+    },
+  },
+  {
+    name: "switch_workspace",
+    description:
+      "Required instead of running git worktree move/remove or editing another checkout directly when this thread must use an existing worktree. Validates that the path belongs to the same Git repository, durably binds the thread, and queues an automatic continuation. After calling, finish so T3 can restart there and continue automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute path of an existing Git worktree." },
+      },
+      required: ["path"],
     },
   },
 ];
@@ -487,6 +789,8 @@ async function callTool(options: McpServeOptions, name: string, args: Record<str
       return `${name} requires the desktop preview bridge. This lightweight MCP adapter runs in the backend process and cannot access Electron webviews directly yet.`;
     case "create_isolated_workspace":
       return await createIsolatedWorkspaceTool(options, args);
+    case "switch_workspace":
+      return await switchWorkspaceTool(options, args);
     default:
       throw new Error(`Unsupported MCP tool: ${name}`);
   }
@@ -567,6 +871,15 @@ export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: 
       toolsets: normalizeToolsets(input.toolsets),
       threadId: process.env.T3_MCP_THREAD_ID,
       cliCommand: process.env.T3_MCP_CLI_COMMAND?.trim() || "t3",
+      cliArgsPrefix: (() => {
+        const raw = process.env.T3_MCP_CLI_ARGS_PREFIX?.trim();
+        if (!raw) return [];
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
+          throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
+        }
+        return parsed;
+      })(),
     }),
   );
 
@@ -574,4 +887,5 @@ export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: 
 export const __testing = {
   availableTools,
   createIsolatedWorkspaceTool,
+  switchWorkspaceTool,
 };

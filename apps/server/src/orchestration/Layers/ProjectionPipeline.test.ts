@@ -1655,6 +1655,49 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("does not project unrenderable approval requests as pending approvals", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const event = yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-unrenderable-approval"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-unrenderable-approval"),
+        occurredAt: "2026-07-24T21:00:00.000Z",
+        commandId: CommandId.make("cmd-unrenderable-approval"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-unrenderable-approval"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-unrenderable-approval"),
+          activity: {
+            id: EventId.make("activity-unrenderable-approval"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Approval requested",
+            payload: {
+              requestId: "unrenderable-approval-request",
+              requestType: "unknown",
+              detail: "/tmp/worktree",
+            },
+            turnId: null,
+            createdAt: "2026-07-24T21:00:00.000Z",
+          },
+        },
+      });
+      yield* projectionPipeline.projectEvent(event);
+
+      const approvalRows = yield* sql<{ readonly requestId: string }>`
+        SELECT request_id AS "requestId"
+        FROM projection_pending_approvals
+        WHERE request_id = 'unrenderable-approval-request'
+      `;
+      assert.deepEqual(approvalRows, []);
+    }),
+  );
+
   it.effect("ignores non-stale provider approval response failures", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
