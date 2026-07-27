@@ -25,6 +25,44 @@ import {
 } from "./tailscale.ts";
 
 const encoder = new TextEncoder();
+
+/**
+ * Asserts nothing reachable from `error` contains `secret`. Recurses through
+ * nested objects, arrays, and `cause` chains rather than checking only
+ * top-level strings: a leak one level down (say, a wrapped cause carrying raw
+ * stderr) is just as visible in a log, and a shallow check would pass it.
+ *
+ * Walks values instead of serializing so it holds for fields added later, and
+ * tracks visited objects so a cyclic cause chain terminates.
+ */
+function assertCarriesNoSecret(error: object, secret: string): void {
+  const seen = new WeakSet<object>();
+
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === "string") {
+      assert.notInclude(value, secret, `${path} leaked stderr`);
+      return;
+    }
+    if (typeof value !== "object" || value === null || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => walk(entry, `${path}[${String(index)}]`));
+      return;
+    }
+    // `message` and `cause` are getters on Error subclasses, so they are not
+    // own enumerable properties and Object.entries alone would skip them.
+    walk((value as { message?: unknown }).message, `${path}.message`);
+    walk((value as { cause?: unknown }).cause, `${path}.cause`);
+    for (const [key, nested] of Object.entries(value)) {
+      walk(nested, `${path}.${key}`);
+    }
+  };
+
+  walk(error, "error");
+}
 const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
 const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
 
@@ -194,6 +232,26 @@ describe("tailscale", () => {
       assert.notProperty(error, "stderr");
       assert.notInclude(error.message, "tskey-auth-secret-token-value");
       assert.equal(error.message, "tailscale status exited with code 7.");
+      assert.equal(error.stderrDiagnostic, "not-logged-in");
+      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
+    });
+  });
+
+  it.effect("classifies unrecognized stderr without quoting it", () => {
+    const layer = mockSpawnerLayer(() => ({
+      code: 3,
+      stderr: "something novel went wrong for node fluffy-badger tskey-auth-secret-token-value",
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleCommandExitError);
+      // Unmatched stderr degrades to "unknown" rather than passing text
+      // through — that fallback is what keeps novel output from leaking.
+      assert.equal(error.stderrDiagnostic, "unknown");
+      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
+      assertCarriesNoSecret(error, "fluffy-badger");
     });
   });
 
@@ -253,6 +311,10 @@ describe("tailscale", () => {
       assert.notProperty(error, "command");
       assert.notProperty(error, "stderr");
       assert.notInclude(error.message, "tskey-auth-secret-token-value");
+      // The diagnostic classifies the failure without quoting stderr, so the
+      // key cannot reach a log through it either.
+      assert.equal(error.stderrDiagnostic, "permission-denied");
+      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
     });
   });
 
