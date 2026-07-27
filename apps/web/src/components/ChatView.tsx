@@ -3874,7 +3874,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activeThreadPr = resolveThreadPr({
     threadBranch: activeThread?.branch ?? null,
     gitStatus: gitStatusQuery.data ?? null,
-    hasDedicatedWorktree: (activeThread?.worktreePath ?? null) !== null,
   });
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;

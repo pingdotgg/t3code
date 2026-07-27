@@ -35,6 +35,7 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
@@ -591,9 +592,11 @@ export function BranchToolbarBranchSelector({
 
   // PR pill shown next to the branch selector when the active branch has one.
   const branchPr = resolveThreadPr({
-    threadBranch: resolvedActiveBranch,
+    threadBranch: resolveBranchToolbarPrBranch({
+      activeThreadBranch,
+      resolvedActiveBranch,
+    }),
     gitStatus: branchStatusQuery.data ?? null,
-    hasDedicatedWorktree: activeWorktreePath !== null,
   });
   const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
