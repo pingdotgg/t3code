@@ -150,6 +150,9 @@ private struct HeaderChipChrome: ViewModifier {
 /// bar states rather than offers.
 struct HeaderChip<Label: View>: View {
     var role: HeaderChipRole = .readout
+    /// Cap for a chip whose label has no natural bound (the transient git
+    /// outcome). Left nil, the chip takes exactly the width its label needs.
+    var maxWidth: CGFloat?
     var isIconOnly: Bool = false
     @ViewBuilder var label: Label
 
@@ -157,7 +160,7 @@ struct HeaderChip<Label: View>: View {
         label.modifier(
             HeaderChipChrome(
                 role: role, isOn: false, isHovering: false, isPressed: false,
-                maxWidth: nil, isIconOnly: isIconOnly))
+                maxWidth: maxWidth, isIconOnly: isIconOnly))
     }
 }
 

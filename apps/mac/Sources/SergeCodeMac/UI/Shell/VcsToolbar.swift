@@ -102,8 +102,9 @@ struct VcsToolbar: View {
 
     /// A chip's glyph plus its optional text, at the bar's shared spacing.
     /// `text` is nil at the densities where the chip folds down to its glyph;
-    /// the caller always supplies `accessibility` so folding never removes
-    /// meaning, only characters.
+    /// every call site pairs that with a `.help` and an `.accessibilityLabel`
+    /// carrying the full sentence, so folding removes characters and never
+    /// meaning.
     @ViewBuilder
     private func chipLabel(_ symbol: String, _ text: String?) -> some View {
         HStack(spacing: HeaderChipMetrics.contentSpacing) {
@@ -551,7 +552,14 @@ struct VcsToolbar: View {
     /// (often a long error) rides in the tooltip so the bar never grows a
     /// second line.
     private func outcomeChip(_ outcome: GitActionOutcome) -> some View {
-        HeaderChip(role: .tinted(outcome.success ? AlpineTheme.statusSuccess : .red)) {
+        HeaderChip(
+            role: .tinted(outcome.success ? AlpineTheme.statusSuccess : .red),
+            // Capped on the chip, not on the title inside it: a cap applied
+            // within a `fixedSize`d chip clips the text instead of truncating
+            // it, because the chip proposes the title its full ideal width.
+            maxWidth: density.outcomeChipWidth,
+            isIconOnly: density == .minimal
+        ) {
             HStack(spacing: HeaderChipMetrics.contentSpacing) {
                 let icon = Image(
                     systemName: outcome.success ? "checkmark.circle.fill" : "xmark.octagon.fill"
@@ -565,8 +573,7 @@ struct VcsToolbar: View {
                 if density > .minimal {
                     Text(outcome.title)
                         .lineLimit(1)
-                        .frame(maxWidth: density == .full ? 220 : 120, alignment: .leading)
-                        .fixedSize(horizontal: density == .full, vertical: false)
+                        .truncationMode(.tail)
                 }
                 if density == .full, let prURL = outcome.prURL, let url = URL(string: prURL) {
                     Button("Open PR") { NSWorkspace.shared.open(url) }

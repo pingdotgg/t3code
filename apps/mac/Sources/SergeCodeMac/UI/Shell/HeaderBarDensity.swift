@@ -25,6 +25,17 @@ enum HeaderBarDensity: Comparable, CaseIterable, Sendable {
         case .minimal: 96
         }
     }
+
+    /// Width cap for the transient git-action outcome chip, whose title is a
+    /// server string of no bounded length. `nil` at the tier where the chip
+    /// folds to its glyph and the title lives only in the tooltip.
+    var outcomeChipWidth: CGFloat? {
+        switch self {
+        case .full: 320
+        case .compact: 190
+        case .minimal: nil
+        }
+    }
 }
 
 // MARK: - Inventory
@@ -168,13 +179,11 @@ extension GitBarInventory {
         var chips: [CGFloat] = []
 
         if let outcomeTitle {
-            switch density {
-            case .full:
+            if let cap = density.outcomeChipWidth {
                 chips.append(
-                    chip(icons: 2, textWidth: min(220, Ink.character * CGFloat(outcomeTitle.count))))
-            case .compact:
-                chips.append(chip(icons: 2, textWidth: 120))
-            case .minimal:
+                    min(cap, chip(icons: 2, textWidth: Ink.character * CGFloat(outcomeTitle.count)))
+                )
+            } else {
                 chips.append(chip(icons: 2))
             }
         }
