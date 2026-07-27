@@ -17,7 +17,6 @@ import {
 
 const CLAUDE_AGENT_INSTANCE = ProviderInstanceId.make("claudeAgent");
 const CODEX_INSTANCE = ProviderInstanceId.make("codex");
-const OLDER_TIMESTAMP = "2026-07-24T11:00:00.000Z";
 
 function makeEntry(input: {
   id: string;
@@ -229,68 +228,21 @@ describe("promptStashStore", () => {
     expect(attached).toBe(false);
   });
 
-  /** Writes a queue straight to storage, as another tab would. */
-  function seedStorage(scopeKey: string, entries: ReadonlyArray<PromptStashEntry>) {
+  it("settles a pending count left behind by a crashed or closed session", () => {
+    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
     writePromptStashStorageForTest(
-      JSON.stringify({ version: 1, state: { queuesByScopeKey: { [scopeKey]: entries } } }),
+      JSON.stringify({
+        version: 1,
+        state: {
+          queuesByScopeKey: {
+            [scopeKey]: [{ ...makeEntry({ id: "orphan" }), pendingImageCount: 2 }],
+          },
+        },
+      }),
     );
-  }
 
-  it("keeps another tab's entries when stashing", () => {
-    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
-    seedStorage(scopeKey, [{ ...makeEntry({ id: "from-other-tab" }), createdAt: OLDER_TIMESTAMP }]);
-
-    usePromptStashStore.getState().stashEntry(makeEntry({ id: "from-this-tab" }));
-
-    const ids = (usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? []).map(
-      (entry) => entry.id,
-    );
-    expect(ids).toEqual(["from-this-tab", "from-other-tab"]);
-  });
-
-  // The previous id-union merge could not tell "another tab created this"
-  // from "this tab deleted it", so deletes came back. Reading disk as the
-  // source of truth removes the ambiguity.
-  it("does not resurrect an entry another tab deleted", () => {
-    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
-    const store = usePromptStashStore.getState();
-    store.stashEntry(makeEntry({ id: "doomed" }));
-    // The other tab deletes it and writes the emptied queue.
-    seedStorage(scopeKey, []);
-
-    store.stashEntry(makeEntry({ id: "fresh" }));
-
-    const ids = (usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? []).map(
-      (entry) => entry.id,
-    );
-    expect(ids).toEqual(["fresh"]);
-    expect(ids).not.toContain("doomed");
-  });
-
-  it("does not clobber another tab's finalized images when taking an entry", () => {
-    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
-    const store = usePromptStashStore.getState();
-    store.stashEntry(makeEntry({ id: "mine" }));
-    // Another tab adds an entry after this one's in-memory state was built.
-    seedStorage(scopeKey, [
-      { ...makeEntry({ id: "mine" }), createdAt: OLDER_TIMESTAMP },
-      { ...makeEntry({ id: "theirs" }), createdAt: OLDER_TIMESTAMP },
-    ]);
-
-    store.takeEntry(scopeKey, "mine");
-
-    const ids = (usePromptStashStore.getState().queuesByScopeKey[scopeKey] ?? []).map(
-      (entry) => entry.id,
-    );
-    expect(ids).toEqual(["theirs"]);
-  });
-
-  it("settles a pending count left behind by a closed tab", () => {
-    const scopeKey = promptStashScopeKey(CLAUDE_AGENT_INSTANCE);
-    seedStorage(scopeKey, [{ ...makeEntry({ id: "orphan" }), pendingImageCount: 2 }]);
-
-    // Any read of persisted state must settle the stale count, or the entry
-    // would stay stuck showing "saving…" and refuse to restore.
+    // Hydration must settle the stale count, or the entry would stay stuck
+    // showing "saving…" with images that no longer exist anywhere.
     const entry = usePromptStashStore.getState().queuesByScopeKey[scopeKey]?.[0];
     expect(entry?.pendingImageCount).toBe(0);
     expect(entry?.unreadableImageNames).toHaveLength(2);
