@@ -6,7 +6,11 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
-import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessWorkingDirectory,
+} from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -662,8 +666,9 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     // (`vite`, `node`) reach other worktrees' servers. Killing the process
     // group also reaps the `node --watch` children, which vp does not clean
     // up and which would otherwise outlive the runner holding the server port.
+    const hostPlatform = yield* HostProcessPlatform;
     yield* Effect.logInfo(
-      `[dev-runner] stop: ${resolveStopCommand(process.pid, process.platform)} (kills this runner and every child; never kill by name pattern)`,
+      `[dev-runner] stop: ${resolveStopCommand(process.pid, hostPlatform)} (kills this runner and every child; never kill by name pattern)`,
     );
 
     // Before the share block: --dry-run only resolves and prints. Sharing would
