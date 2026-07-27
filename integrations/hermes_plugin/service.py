@@ -18,6 +18,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -47,6 +49,9 @@ class ServiceStatus:
     desired_state: str = "unknown"
     reconciliation_status: str = "idle"
     reconciliation_error: str | None = None
+    installed_version: str | None = None
+    source_commit: str | None = None
+    coherent: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -57,6 +62,8 @@ _DESIRED_INSTALLED = "installed"
 _DESIRED_UNINSTALLED = "uninstalled"
 _RECONCILIATION_LOCK = threading.Lock()
 _RUNTIME_RECONCILIATION: dict[str, dict[str, str | None]] = {}
+_STATUS_DIGEST_LOCK = threading.Lock()
+_STATUS_DIGEST_CACHE: dict[tuple[str, int, int, int, int, int], str] = {}
 _SERVICE_START_TIMEOUT_SECONDS = 10.0
 _SERVICE_START_POLL_SECONDS = 0.1
 _SERVICE_STABLE_SECONDS = 0.5
@@ -179,6 +186,7 @@ def _set_desired_state(
     desired_state: str,
     *,
     version: str | None = None,
+    source_commit: str | None = None,
 ) -> None:
     state: dict[str, object] = {
         "version": _STATE_VERSION,
@@ -189,6 +197,9 @@ def _set_desired_state(
         state["binary_sha256"] = _binary_sha256(config.binary_path)
         if version is not None:
             state["binary_version"] = version
+        if source_commit is not None and version is not None:
+            state["product_version"] = version
+            state["product_source_commit"] = source_commit
     _write_service_state(config, state)
     with _RECONCILIATION_LOCK:
         _RUNTIME_RECONCILIATION.pop(str(config.service_state_path), None)
@@ -334,9 +345,10 @@ def _wait_for_service_up(
         time.sleep(poll_interval)
 
 
-def _reachable(port: int) -> bool:
+def _reachable(host: str, port: int) -> bool:
+    probe_host = _health_probe_host(host).strip("[]")
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.75):
+        with socket.create_connection((probe_host, port), timeout=0.75):
             return True
     except OSError:
         return False
@@ -570,7 +582,7 @@ def _verify_t3_service_up(
             reject_pid=reject_pid,
         )
     except ServiceError:
-        if not _reachable(config.port):
+        if not _reachable(config.host, config.port):
             raise
         _terminate_exact_stale_service(config)
         _command(["s6-svc", "-u", str(config.service_dir)], timeout=5)
@@ -585,18 +597,191 @@ def _verify_t3_service_up(
     return pid
 
 
+def _health_probe_host(configured_host: str) -> str:
+    host = configured_host.strip()
+    if host in {"", "0.0.0.0", "*"}:
+        return "127.0.0.1"
+    if host in {"::", "[::]"}:
+        return "[::1]"
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def _http_healthy(host: str, port: int) -> bool:
+    try:
+        request = urllib.request.Request(
+            f"http://{_health_probe_host(host)}:{port}/",
+            headers={"User-Agent": "t3code-hermes-health"},
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return 200 <= response.status < 400
+    except (OSError, urllib.error.URLError):
+        return False
+
+
+def _verify_product_health(
+    config: PluginConfig,
+    pid: int,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> None:
+    proc_dir = proc_root / str(pid)
+    process_status = _proc_status(proc_dir)
+    if (
+        process_status is None
+        or process_status[0] != _expected_service_uid(config)
+    ):
+        raise ServiceError(
+            "live T3 service is not running as the configured service account"
+        )
+    if _proc_command(proc_dir) != [str(config.binary_path), "serve"]:
+        raise ServiceError(
+            "live T3 service command does not match the installed runtime"
+        )
+    if _proc_link(proc_dir, "exe") != (str(config.binary_path), False):
+        raise ServiceError("live T3 service executable is not the installed runtime")
+    if _proc_link(proc_dir, "cwd") != (str(config.service_dir), False):
+        raise ServiceError("live T3 service cwd is not the current s6 slot")
+    if not _process_has_expected_hermes_home(pid, config, proc_root=proc_root):
+        raise ServiceError("live T3 service is missing the configured HERMES_HOME")
+    sockets = _listening_socket_inodes(config.port, proc_root)
+    if not _process_owns_socket(proc_dir, sockets):
+        raise ServiceError("live T3 service does not own the configured listener")
+    if not _http_healthy(config.host, config.port):
+        raise ServiceError("live T3 service did not pass HTTP health verification")
+
+
+def _current_source_commit(config: PluginConfig) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=config.plugin_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    commit = result.stdout.strip()
+    if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", commit):
+        return commit
+    return None
+
+
+def _source_checkout_clean(config: PluginConfig) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=config.plugin_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and not result.stdout.strip()
+
+
+def _binary_digest_for_status(path: Path) -> str | None:
+    try:
+        before = path.stat()
+    except OSError:
+        return None
+    key = (
+        str(path),
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    with _STATUS_DIGEST_LOCK:
+        cached = _STATUS_DIGEST_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        digest = _binary_sha256(path)
+        after = path.stat()
+    except (OSError, ServiceError):
+        return None
+    if (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        return None
+    with _STATUS_DIGEST_LOCK:
+        _STATUS_DIGEST_CACHE.clear()
+        _STATUS_DIGEST_CACHE[key] = digest
+    return digest
+
+
 def status(config: PluginConfig) -> ServiceStatus:
     desired_state, reconciliation_status, reconciliation_error = (
         _service_state_for_status(config)
     )
+    source_commit = _current_source_commit(config)
+    product_version = None
+    expected_source_commit = None
+    expected_binary_sha256 = None
+    try:
+        state = _read_service_state(config)
+        if state is not None:
+            raw_version = state.get("product_version")
+            raw_commit = state.get("product_source_commit")
+            raw_digest = state.get("binary_sha256")
+            product_version = str(raw_version) if isinstance(raw_version, str) else None
+            expected_source_commit = (
+                str(raw_commit) if isinstance(raw_commit, str) else None
+            )
+            expected_binary_sha256 = (
+                str(raw_digest) if isinstance(raw_digest, str) else None
+            )
+    except ServiceError:
+        pass
+    binary_digest = (
+        _binary_digest_for_status(config.binary_path)
+        if expected_binary_sha256
+        else None
+    )
+    binary_verified = bool(
+        expected_binary_sha256
+        and expected_binary_sha256 == binary_digest
+    )
+    current_binary_version = (
+        binary_version(config.binary_path) if binary_verified else None
+    )
+    coherent = bool(
+        product_version
+        and product_version == current_binary_version
+        and binary_verified
+        and expected_source_commit
+        and expected_source_commit == source_commit
+        and _source_checkout_clean(config)
+    )
     return ServiceStatus(
         binary_installed=config.binary_path.is_file(),
-        binary_version=binary_version(config.binary_path),
+        binary_version=current_binary_version,
         service_installed=(config.service_dir / "run").is_file(),
         service_running=_service_running(config.service_dir),
         watchdog_installed=(config.watchdog_service_dir / "run").is_file(),
         watchdog_running=_service_running(config.watchdog_service_dir),
-        reachable=_reachable(config.port),
+        reachable=_reachable(config.host, config.port),
         host=config.host,
         port=config.port,
         service_dir=str(config.service_dir),
@@ -604,6 +789,9 @@ def status(config: PluginConfig) -> ServiceStatus:
         desired_state=desired_state,
         reconciliation_status=reconciliation_status,
         reconciliation_error=reconciliation_error,
+        installed_version=product_version if coherent else None,
+        source_commit=source_commit,
+        coherent=coherent,
     )
 
 
@@ -966,6 +1154,74 @@ def _update_locked(config: PluginConfig) -> dict[str, object]:
     }
 
 
+def _activate_staged_product_locked(
+    config: PluginConfig,
+    *,
+    staged_binary: Path,
+    product_version: str,
+    source_commit: str,
+    binary_sha256: str,
+) -> dict[str, object]:
+    if _binary_sha256(staged_binary) != binary_sha256:
+        raise ServiceError("staged coherent runtime checksum changed before activation")
+    reported_version = binary_version(staged_binary)
+    if reported_version != product_version:
+        raise ServiceError(
+            f"staged coherent runtime reported {reported_version or 'no version'}; "
+            f"expected {product_version}"
+        )
+    config.binary_path.parent.mkdir(parents=True, exist_ok=True)
+    replacement = config.binary_path.with_name(f".{config.binary_path.name}.product")
+    shutil.copyfile(staged_binary, replacement)
+    replacement.chmod(0o755)
+    os.replace(replacement, config.binary_path)
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    service_exists = (config.service_dir / "run").is_file()
+    _prepare_service_dir(config.service_dir)
+    _write_t3_s6_service(
+        config,
+        "update" if service_exists else "install",
+        timeout=45,
+    )
+    _install_watchdog(config)
+    pid = _verify_t3_service_up(config)
+    _verify_product_health(config, pid)
+    _set_desired_state(
+        config,
+        _DESIRED_INSTALLED,
+        version=product_version,
+        source_commit=source_commit,
+    )
+    return {
+        "ok": True,
+        "service_pid": pid,
+        "http_healthy": True,
+    }
+
+
+def _restore_runtime_after_product_rollback(
+    config: PluginConfig,
+    *,
+    installed_intent: bool,
+) -> None:
+    if not installed_intent or not config.binary_path.is_file():
+        _remove_service_dir(config.watchdog_service_dir)
+        _remove_service_dir(config.service_dir)
+        return
+    service_exists = (config.service_dir / "run").is_file()
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_service_dir(config.service_dir)
+    _write_t3_s6_service(
+        config,
+        "update" if service_exists else "install",
+        timeout=45,
+    )
+    _install_watchdog(config)
+    pid = _verify_t3_service_up(config)
+    _verify_product_health(config, pid)
+
+
 def uninstall(config: PluginConfig) -> dict[str, object]:
     with lifecycle_lock(config):
         return _uninstall_locked(config)
@@ -1038,6 +1294,22 @@ def _validate_recovery_binary(
     return version
 
 
+def _validate_recovery_source(
+    config: PluginConfig,
+    state: dict[str, object],
+) -> None:
+    expected = state.get("product_source_commit")
+    if not isinstance(expected, str):
+        return
+    current = _current_source_commit(config)
+    if current != expected or not _source_checkout_clean(config):
+        raise ServiceError(
+            "automatic recovery found plugin source that is changed or does "
+            "not match the installed coherent product version; use the single "
+            "Update action after resolving local checkout changes"
+        )
+
+
 def reconcile(config: PluginConfig) -> dict[str, object]:
     """Restore missing ephemeral s6 slots from durable operator intent."""
 
@@ -1058,6 +1330,7 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
         if state is None or state["desired_state"] != _DESIRED_INSTALLED:
             _record_reconciliation(config, "not_requested")
             return {"ok": True, "action": "not_requested"}
+        _validate_recovery_source(config, state)
 
         service_installed = (config.service_dir / "run").is_file()
         watchdog_installed = (config.watchdog_service_dir / "run").is_file()

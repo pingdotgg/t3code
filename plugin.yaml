@@ -7,3 +7,7 @@ platforms:
   - linux
 provides_tools: []
 provides_hooks: []
+update:
+  mode: managed
+  contract: t3code-hermes-v1
+  entrypoint: integrations/hermes_plugin/update_process.py

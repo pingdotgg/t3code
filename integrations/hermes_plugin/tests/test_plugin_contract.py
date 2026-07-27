@@ -55,6 +55,11 @@ class HermesPluginContractTest(unittest.TestCase):
             manifest[key] = value.strip()
         self.assertEqual(manifest["name"], "t3code")
         self.assertEqual(manifest["kind"], "standalone")
+        manifest_text = (REPOSITORY_ROOT / "plugin.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("  mode: managed\n", manifest_text)
+        self.assertIn("  contract: t3code-hermes-v1\n", manifest_text)
 
         parent = types.ModuleType("hermes_plugins")
         parent.__path__ = []
@@ -131,13 +136,34 @@ class HermesPluginContractTest(unittest.TestCase):
             )
 
         with (
-            patch.object(module.service, "install", side_effect=install),
+            patch.object(module.coherent_update, "install", side_effect=install),
             patch.object(module, "_response", return_value={}),
         ):
             asyncio.run(invoke_concurrently())
             asyncio.run(invoke_concurrently())
 
         self.assertEqual(peak, 1)
+
+        coherent_status = {"installed_version": "0.0.30", "coherent": True}
+        with (
+            patch.object(
+                module.coherent_update,
+                "update",
+                return_value={
+                    "ok": True,
+                    "action": "updated",
+                    "status": coherent_status,
+                },
+            ) as coherent_update,
+            patch.object(module.service, "update") as runtime_only_update,
+            patch.object(module, "_response") as stale_response,
+        ):
+            result = asyncio.run(module._run_action("update", FakeRequest()))
+
+        self.assertEqual(result["status"], coherent_status)
+        coherent_update.assert_called_once()
+        runtime_only_update.assert_not_called()
+        stale_response.assert_not_called()
 
         def reconcile(_config):
             return install(_config)
@@ -149,7 +175,7 @@ class HermesPluginContractTest(unittest.TestCase):
             )
 
         with (
-            patch.object(module.service, "install", side_effect=install),
+            patch.object(module.coherent_update, "install", side_effect=install),
             patch.object(module.service, "reconcile", side_effect=reconcile),
             patch.object(module, "_response", return_value={}),
         ):

@@ -24,18 +24,18 @@ Hermes executable.
 
 ### Hermes plugin installation
 
-The T3 Code repository is also a Hermes plugin. Installing the repository root keeps Hermes' native
-Git-based plugin updater working:
+The T3 Code repository is also a Hermes plugin. Install the repository root with Hermes:
 
 ```bash
 hermes plugins install totalolage/t3code --enable
 ```
 
 Restart the Hermes dashboard after the first install so it mounts the plugin's backend routes, then
-open the **T3 Code** tab. **Install and start** downloads the newest compatible standalone release,
-verifies its adjacent SHA-256 asset, and asks T3 Code to install its own s6 service at
-`/run/service/t3code`. The current release workflow publishes this companion binary for Linux x64;
-ARM64 Hermes hosts are rejected until a Linux ARM64 standalone artifact is available.
+open the **T3 Code** tab. **Install and start** resolves one T3/Hermes product release, advances the
+plugin checkout and checksum-verified native runtime to that release together, activates the s6
+service, and verifies the live process and HTTP endpoint. The current release workflow publishes the
+companion binary for Linux x64; ARM64 Hermes hosts are rejected until a Linux ARM64 standalone
+artifact is available.
 
 The service listens on port `3773` by default. The plugin exposes that address from its Hermes
 dashboard tab and does not proxy T3 Code traffic through the Hermes dashboard API. Hermes plugin
@@ -58,10 +58,47 @@ Configuration overrides are environment variables:
 T3 Code uses its normal pairing flow on first launch. The initial pairing URL is written to
 `$HERMES_HOME/t3code/data/userdata/logs/boot-service.log`.
 
-Hermes and T3 Code update independently. `hermes plugins update t3code` updates the plugin source;
-restart the dashboard when that update changes `plugin_api.py`. The dashboard tab's **Update**
-button downloads and checksum-verifies the latest compatible T3 Code binary, then asks T3 Code to
-rewrite and restart its own s6 service while preserving the configured host and port.
+There is one T3 Code **Update** operation. It selects the newest release whose Git tag contains the
+`t3code-hermes` product contract and whose GitHub release contains the matching native binary and
+adjacent checksum. The release tag binds the plugin source commit and native runtime version into one
+identity. Update stages and validates both before cutover, refuses a dirty checkout without changing
+anything, checks out the exact release-tag commit in detached-HEAD mode while preserving the prior
+commit and branch for rollback, runs activation in a fresh Python process from the new commit, and
+reports success only after the new runtime owns the configured listener and passes supervisor,
+process identity, service-account, `HERMES_HOME`, and HTTP health checks.
+
+If activation or Hermes backend reload fails, Update resets the clean checkout to its prior commit,
+restores the verified prior binary, regenerates the prior native service definition with that binary,
+restores the watchdog and durable desired-state file, and reports whether rollback succeeded. It
+also requires Hermes to remount and attest the prior backend before reporting rollback success.
+Failed rollback retains the staged target and prior snapshot for operator recovery. It never edits
+T3's generated environment marker by hand. Internal source/runtime diagnostics remain available,
+but the dashboard displays only the coherent installed product version.
+
+#### Required Hermes managed-update contract
+
+Hermes currently exposes `hermes plugins update <name>` and the Plugins-page update action as a
+generic `git pull --ff-only`, followed by metadata rescan. That operation neither delegates to the
+plugin nor reloads Python routers already mounted in the dashboard process, so it can create the
+source-only state this integration forbids.
+
+The plugin declares `update.mode: managed` and `contract: t3code-hermes-v1`. Hermes core must add a
+managed-plugin update contract that:
+
+1. hides/delegates its generic Git update action for a managed plugin, including the CLI and dashboard
+   API, so both invoke the plugin's single coherent Update operation;
+2. exposes `hermes_cli.managed_plugin_update.get_managed_update_contract(name)` with version `1`,
+   a mutation-free `preflight(plugin_name, plugin_root)`, and
+   `complete(plugin_name, plugin_root, source_commit, product_version)`, and
+   `rollback(plugin_name, plugin_root, source_commit, product_version)`; and
+3. makes those handoffs reload or restart the dashboard through a host-owned coordinator that
+   outlives the requesting dashboard process. Each response must attest the source commit and product
+   version actually mounted, and return only after the requested backend is active. A metadata rescan
+   or page reload is not sufficient.
+
+Until Hermes supplies that contract, T3's Update and Install actions fail during preflight before
+fetching, pulling, replacing the binary, or touching supervision. T3 does not emulate the missing
+host primitive with a page reload, metadata rescan, or unsafe self-restart.
 
 The companion watchdog checks for `plugin.yaml` every 15 minutes by default. Two consecutive misses
 remove the T3 Code and watchdog s6 slots. This covers direct plugin-directory removal without making
@@ -72,7 +109,8 @@ uninstallation immediate. T3 Code data and the downloaded binary remain under
 
 The plugin records explicit service intent in
 `$HERMES_HOME/t3code/service-state.json`. A successful **Install and start** or **Update** records
-`installed` together with the installed binary's version and SHA-256 digest. **Remove service**
+`installed` together with the coherent product version, plugin source commit, installed binary
+version, and SHA-256 digest. **Remove service**
 records `uninstalled` before it starts tearing down supervision; if that state cannot be persisted,
 the removal is rejected without touching the s6 slots. The orphan-cleanup watchdog also records
 `uninstalled` when it removes services after the plugin directory disappears.
@@ -103,17 +141,20 @@ mode and all other contents. Install, update, and boot recovery apply the same a
 service is expected to run. Non-root dashboard processes pass their passwd account name to T3 and
 leave the service group implicit unless explicitly configured, matching `s6-setuidgid` semantics.
 
-Boot recovery never checks GitHub or downloads a release. It re-hashes the already installed binary
-against the digest recorded at install time before executing it. A missing, non-executable, changed, or
-architecture-incompatible binary leaves the Hermes dashboard running; the plugin status reports
+Boot recovery never checks GitHub or downloads a release. It validates the local source commit,
+re-hashes the already installed binary against the digest recorded at install time, and restores that
+same coherent version. It is never an implicit upgrade. A mismatched source commit or a missing,
+non-executable, changed, or architecture-incompatible binary leaves the Hermes dashboard running;
+the plugin status reports
 `reconciliation_status=failed` and an actionable `reconciliation_error`. Use **Install and start**
 to download and verify a replacement.
 
 Plugin versions predating this state file retained only the binary and application data, so a legacy
 install is indistinguishable from one the operator intentionally removed. The plugin therefore never
-infers intent from an old binary or executes it during migration. After upgrading an existing plugin,
-click **Install and start** once to verify the retained or replacement release and establish explicit
-durable intent. From then on, boot recovery is automatic and **Remove service** remains authoritative.
+infers intent from an old binary or executes it during migration. After Hermes gains the managed
+update contract above, run **Install and start** once to establish a coherent product version and
+explicit durable intent. From then on, boot recovery is automatic and **Remove service** remains
+authoritative.
 
 ## Projects and execution
 
