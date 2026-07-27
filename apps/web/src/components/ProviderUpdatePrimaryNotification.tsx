@@ -57,7 +57,7 @@ function ProviderUpdateToastIcon({ provider }: { provider: ProviderDriverKind })
   );
 }
 
-function updateProviderUpdateToast(input: {
+export function updateProviderUpdateToast(input: {
   readonly toastId: ProviderUpdateToastId;
   readonly view: ProviderUpdateToastView;
   readonly openSettings: () => void;
@@ -68,6 +68,9 @@ function updateProviderUpdateToast(input: {
       title: input.view.title,
       description: input.view.description,
       timeout: 0,
+      // Base UI shallow-merges toast updates, so omitting actionProps would
+      // retain the prompt's now-stale Update button in loading/success states.
+      actionProps: undefined,
       data: {
         hideCopyButton: true,
         ...(input.view.dismissAfterVisibleMs !== undefined
