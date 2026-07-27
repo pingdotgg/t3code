@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import SergeCodeMac
@@ -454,6 +455,79 @@ struct ModelPickerCatalogTests {
         #expect(
             ModelPickerCatalog.highlightAfterRemoval(
                 previousKeys: before, removedKey: "z", remainingKeys: ["a", "c"]) == "a")
+    }
+
+    @Test("a favorites search with no match in scope widens to every model")
+    func favoritesScopeSearchWidens() {
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(instance: "codex", modelID: "gpt-5", name: "GPT-5", provider: .codex),
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        )
+        let favorites: Set<String> = ["codex/gpt-5"]
+
+        let inFavorites = ModelPickerCatalog.searchResults(
+            items, scope: .favorites, query: "gpt", favorites: favorites)
+        let widened = ModelPickerCatalog.searchResults(
+            items, scope: .favorites, query: "sonnet", favorites: favorites)
+
+        #expect(inFavorites.items.map(\.option.modelID) == ["gpt-5"])
+        #expect(inFavorites.didWidenToAllModels == false)
+        // Searching a model you have not starred still finds it — the field is
+        // the picker's one global affordance.
+        #expect(widened.items.map(\.option.modelID) == ["sonnet-5"])
+        #expect(widened.didWidenToAllModels)
+    }
+
+    @Test("unfavoriting the highlighted row hands the keyboard the row below it")
+    @MainActor
+    func highlightRecoveryAfterUnfavoriting() {
+        let suite = "ModelPickerCatalogTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let preferences = ModelPickerPreferences(defaults: defaults)
+        preferences.toggleFavorite("claude/sonnet-5")
+        preferences.toggleFavorite("codex/gpt-5")
+
+        let items = ModelPickerCatalog.items(
+            from: [
+                option(instance: "codex", modelID: "gpt-5", name: "GPT-5", provider: .codex),
+                option(instance: "claude", modelID: "sonnet-5", name: "Sonnet 5", provider: .claude),
+            ],
+            selectedInstanceID: nil,
+            selectedModelID: nil
+        )
+        func favoriteRowKeys() -> [String] {
+            ModelPickerCatalog.filteredItems(
+                items, scope: .favorites, query: "", favorites: preferences.favorites
+            ).map(\.id)
+        }
+
+        // The composition the popover performs: snapshot the rows, mutate the
+        // store, recompute, then recover the highlight. The pure helper alone
+        // cannot show that the row list actually shrinks by the removed key.
+        let highlighted = "claude/sonnet-5"
+        let before = favoriteRowKeys()
+        preferences.toggleFavorite(highlighted)
+        let after = favoriteRowKeys()
+
+        #expect(before.contains(highlighted))
+        #expect(after == ["codex/gpt-5"])
+        #expect(
+            ModelPickerCatalog.highlightAfterRemoval(
+                previousKeys: before, removedKey: highlighted, remainingKeys: after)
+                == "codex/gpt-5")
+
+        // Unstarring the last favorite leaves the scope empty, and the
+        // keyboard must end up with no target rather than a stale one.
+        preferences.toggleFavorite("codex/gpt-5")
+        #expect(
+            ModelPickerCatalog.highlightAfterRemoval(
+                previousKeys: after, removedKey: "codex/gpt-5", remainingKeys: favoriteRowKeys())
+                == nil)
     }
 
     @Test("a repeated recents key yields one row")
