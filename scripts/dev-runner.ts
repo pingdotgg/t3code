@@ -422,6 +422,25 @@ export function devPortProbeHosts(configuredHost: string | undefined): ReadonlyA
   return [...DEV_PORT_PROBE_HOSTS, host];
 }
 
+/**
+ * The exact command that stops this runner and everything it spawned, printed
+ * at startup. Exists because the alternative — guessing a `pkill` pattern —
+ * has twice killed the agent running the session (its argv contains the
+ * worktree path) and can reach other worktrees' dev servers.
+ *
+ * Targets the process group: children are spawned with `detached: false`, so
+ * the whole stack (including the `node --watch` server processes, which keep
+ * the group after re-parenting to init) shares it. The pgid is resolved via
+ * `ps` rather than assumed equal to our PID — under `bun run dev` the group
+ * leader is bun, not this runner, and `kill -- -<runnerPid>` would name a
+ * group that does not exist.
+ */
+export function resolveStopCommand(pid: number, platform: NodeJS.Platform): string {
+  return platform === "win32"
+    ? `taskkill /pid ${String(pid)} /T`
+    : `kill -TERM -"$(ps -o pgid= -p ${String(pid)} | tr -d ' ')"`;
+}
+
 const makeDefaultCheckPortAvailability =
   (configuredHost: string | undefined): PortAvailabilityCheck<NetService.NetService> =>
   (port, role) =>
@@ -634,6 +653,17 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
 
     yield* Effect.logInfo(
       `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
+    );
+
+    // The one safe way to stop this stack, printed so nobody has to invent
+    // one. Name-pattern kills (`pkill -f <worktree>`, `pgrep | xargs kill`)
+    // are the documented footgun here: an agent driving this session has the
+    // worktree path in its own argv and matches itself, and broad patterns
+    // (`vite`, `node`) reach other worktrees' servers. Killing the process
+    // group also reaps the `node --watch` children, which vp does not clean
+    // up and which would otherwise outlive the runner holding the server port.
+    yield* Effect.logInfo(
+      `[dev-runner] stop: ${resolveStopCommand(process.pid, process.platform)} (kills this runner and every child; never kill by name pattern)`,
     );
 
     // Before the share block: --dry-run only resolves and prints. Sharing would

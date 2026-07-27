@@ -19,6 +19,7 @@
 - Start the web stack with `bun run dev`. Use `bun run dev:share` when someone needs to open it from another device on the tailnet.
 - Browser dev is single-origin: Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known` to the backend. Do not set `VITE_HTTP_URL` or `VITE_WS_URL` for `dev`/`dev:web`.
 - Worktree paths supply stable preferred port offsets. Read the actual server and web ports from the `[dev-runner]` line because occupied ports can still shift them.
+- Stop a dev server with the exact command from its `[dev-runner] stop:` line (a process-group kill). Never kill by name or path pattern — `pkill -f <worktree>` and `pgrep | xargs kill` match the agent's own process and other worktrees' servers.
 
 ## Package Roles
 
