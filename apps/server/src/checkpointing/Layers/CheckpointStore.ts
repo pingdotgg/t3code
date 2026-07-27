@@ -24,6 +24,23 @@ import { parseTurnDiffFilesFromNumstat } from "../Diffs.ts";
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const CHECKPOINT_DIFF_NUMSTAT_MAX_OUTPUT_BYTES = 10_000_000;
 
+/**
+ * Bounds the history walk used to separate turn-authored commits from base
+ * movement. Threads that move their base by more than this fall back to a
+ * plain checkpoint-to-checkpoint diff.
+ */
+const BASE_MOVEMENT_MAX_COMMITS = 1000;
+
+/** Reflog subjects for operations that move a workspace onto history it did not author. */
+const BASE_MOVING_REFLOG_OPERATIONS = /^(rebase|merge|pull)\b/;
+
+function parseCommitOids(stdout: string): ReadonlyArray<string> {
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 const makeCheckpointStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -118,8 +135,8 @@ const makeCheckpointStore = Effect.gen(function* () {
           GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
         };
 
-        const headExists = yield* hasHeadCommit(input.cwd);
-        if (headExists) {
+        const headCommit = yield* resolveHeadCommit(input.cwd);
+        if (headCommit !== null) {
           yield* git.execute({
             operation,
             cwd: input.cwd,
@@ -153,10 +170,19 @@ const makeCheckpointStore = Effect.gen(function* () {
 
         const worktreeRoot = yield* resolveWorktreeRoot(input.cwd);
         const message = `t3 checkpoint ref=${input.checkpointRef}\n\nt3-worktree=${worktreeRoot}`;
+        // The workspace HEAD is recorded as the checkpoint's parent so later
+        // diffs can tell turn-authored work apart from base movement (rebase,
+        // merge, pull) that happened during the turn.
         const commitTreeResult = yield* git.execute({
           operation,
           cwd: input.cwd,
-          args: ["commit-tree", treeOid, "-m", message],
+          args: [
+            "commit-tree",
+            treeOid,
+            ...(headCommit !== null ? ["-p", headCommit] : []),
+            "-m",
+            message,
+          ],
           env: commitEnv,
         });
         const commitOid = commitTreeResult.stdout.trim();
@@ -224,6 +250,278 @@ const makeCheckpointStore = Effect.gen(function* () {
       ?.map((filePath) => normalizeChangedFilePath(filePath, { cwd: input.cwd }))
       .filter((filePath): filePath is string => filePath !== null);
 
+  const resolveCommitParent = (
+    cwd: string,
+    commit: string,
+  ): Effect.Effect<string | null, GitCommandError> =>
+    git
+      .execute({
+        operation: "CheckpointStore.resolveCommitParent",
+        cwd,
+        args: ["rev-parse", "--verify", "--quiet", `${commit}^`],
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result) => {
+          if (result.code !== 0) {
+            return null;
+          }
+          const parent = result.stdout.trim();
+          return parent.length > 0 ? parent : null;
+        }),
+      );
+
+  const resolveCurrentBranch = (cwd: string): Effect.Effect<string | null, GitCommandError> =>
+    git
+      .execute({
+        operation: "CheckpointStore.resolveCurrentBranch",
+        cwd,
+        args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.map((result) => {
+          if (result.code !== 0) {
+            return null;
+          }
+          const branch = result.stdout.trim();
+          return branch.length > 0 ? branch : null;
+        }),
+      );
+
+  /**
+   * Report whether the workspace adopted history it did not author between
+   * `fromBaseCommit` and `toBaseCommit`, using the operations Git records in
+   * HEAD's reflog.
+   *
+   * Ref topology alone cannot answer this. A branch forked off an intermediate
+   * turn commit and a branch carrying a base the turn rebased onto produce the
+   * same shape: an unrelated ref pointing into the first-parent chain above the
+   * prior turn's base. Only the reflog distinguishes commits the workspace
+   * authored from history a rebase, merge, or pull brought in.
+   *
+   * The scan is bounded to the turn's own window so an on-demand diff of an
+   * older turn cannot observe base movement from a later one, and it must reach
+   * both ends of that window to be trusted. A trimmed reflog, or a checkpoint
+   * captured in a different worktree, therefore reports no movement and leaves
+   * the plain checkpoint-to-checkpoint diff in place.
+   */
+  const hasBaseMovingOperation = Effect.fn("hasBaseMovingOperation")(function* (input: {
+    readonly cwd: string;
+    readonly fromBaseCommit: string;
+    readonly toBaseCommit: string;
+  }) {
+    const reflogResult = yield* git.execute({
+      operation: "CheckpointStore.resolveHeadReflog",
+      cwd: input.cwd,
+      args: [
+        "reflog",
+        "show",
+        "--no-abbrev",
+        "--format=%H %gs",
+        `--max-count=${BASE_MOVEMENT_MAX_COMMITS}`,
+        "HEAD",
+      ],
+      allowNonZeroExit: true,
+    });
+    if (reflogResult.code !== 0) {
+      return false;
+    }
+
+    let insideTurnWindow = false;
+    let baseMoved = false;
+    for (const entry of reflogResult.stdout.split("\n")) {
+      const separatorIndex = entry.indexOf(" ");
+      if (separatorIndex === -1) {
+        continue;
+      }
+      const commit = entry.slice(0, separatorIndex);
+      if (!insideTurnWindow) {
+        // Entries above the turn's end belong to later turns.
+        insideTurnWindow = commit === input.toBaseCommit;
+      }
+      if (commit === input.fromBaseCommit) {
+        return insideTurnWindow && baseMoved;
+      }
+      if (insideTurnWindow && BASE_MOVING_REFLOG_OPERATIONS.test(entry.slice(separatorIndex + 1))) {
+        baseMoved = true;
+      }
+    }
+    return false;
+  });
+
+  /**
+   * Resolve the newest commit on `toBaseCommit`'s first-parent chain that also
+   * exists on an unrelated branch, i.e. the base the turn's own commits sit on.
+   *
+   * Two ref families are excluded from "unrelated", because both can point at
+   * the turn's own work and would misreport it as base movement:
+   * - refs that already contain `toBaseCommit` (stacked branches descending from
+   *   this thread's work);
+   * - the checked-out branch and its remote-tracking refs, which a mid-turn push
+   *   leaves pointing at a commit the turn itself authored.
+   *
+   * The walk stops at `fromBaseCommit`, since reaching it means every commit
+   * above it was authored during the turn. Base movement that arrives on the
+   * checked-out branch itself (a same-branch fast-forward pull) is therefore not
+   * detected; that case degrades to a plain checkpoint-to-checkpoint diff rather
+   * than dropping turn-authored work.
+   *
+   * A merge keeps the turn's own history as its first parent, so the adopted
+   * base is the merge's other parent rather than a commit on the chain.
+   */
+  const resolveForeignBaseCommit = Effect.fn("resolveForeignBaseCommit")(function* (input: {
+    readonly cwd: string;
+    readonly fromBaseCommit: string;
+    readonly toBaseCommit: string;
+  }) {
+    const currentBranch = yield* resolveCurrentBranch(input.cwd);
+    const unrelatedTipsResult = yield* git.execute({
+      operation: "CheckpointStore.resolveUnrelatedRefTips",
+      cwd: input.cwd,
+      args: [
+        "for-each-ref",
+        `--no-contains=${input.toBaseCommit}`,
+        ...(currentBranch === null
+          ? []
+          : [`--exclude=refs/heads/${currentBranch}`, `--exclude=refs/remotes/*/${currentBranch}`]),
+        "--format=%(objectname)",
+        "refs/heads",
+        "refs/remotes",
+      ],
+    });
+    const unrelatedTips = Array.from(new Set(parseCommitOids(unrelatedTipsResult.stdout)));
+    if (unrelatedTips.length === 0) {
+      return null;
+    }
+
+    const [chainResult, turnAuthoredResult] = yield* Effect.all(
+      [
+        git.execute({
+          operation: "CheckpointStore.resolveBaseChain",
+          cwd: input.cwd,
+          args: [
+            "rev-list",
+            "--parents",
+            "--first-parent",
+            `--max-count=${BASE_MOVEMENT_MAX_COMMITS}`,
+            input.toBaseCommit,
+          ],
+        }),
+        git.execute({
+          operation: "CheckpointStore.resolveTurnAuthoredCommits",
+          cwd: input.cwd,
+          args: [
+            "rev-list",
+            `--max-count=${BASE_MOVEMENT_MAX_COMMITS}`,
+            input.toBaseCommit,
+            "--not",
+            ...unrelatedTips,
+          ],
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    const turnAuthored = new Set(parseCommitOids(turnAuthoredResult.stdout));
+    for (const entry of parseCommitOids(chainResult.stdout)) {
+      const [commit, ...parents] = entry.split(" ");
+      if (commit === undefined || commit === input.fromBaseCommit) {
+        return null;
+      }
+      if (!turnAuthored.has(commit)) {
+        return commit;
+      }
+      const adoptedParent = parents.slice(1).find((parent) => !turnAuthored.has(parent));
+      if (adoptedParent !== undefined) {
+        return adoptedParent;
+      }
+    }
+    return null;
+  });
+
+  /**
+   * Rebase the "from" checkpoint onto the base that the "to" checkpoint was
+   * captured against, so a turn diff excludes commits that entered the base
+   * during the turn instead of attributing them to the turn.
+   *
+   * Returns the original checkpoint commit whenever the base did not move or
+   * the projection cannot be computed cleanly.
+   */
+  const projectFromCheckpointOntoBase = Effect.fn("projectFromCheckpointOntoBase")(
+    function* (input: {
+      readonly cwd: string;
+      readonly fromCommitOid: string;
+      readonly toCommitOid: string;
+    }) {
+      const [fromBaseCommit, toBaseCommit] = yield* Effect.all(
+        [
+          resolveCommitParent(input.cwd, input.fromCommitOid),
+          resolveCommitParent(input.cwd, input.toCommitOid),
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (fromBaseCommit === null || toBaseCommit === null || fromBaseCommit === toBaseCommit) {
+        return input.fromCommitOid;
+      }
+
+      const baseMoved = yield* hasBaseMovingOperation({
+        cwd: input.cwd,
+        fromBaseCommit,
+        toBaseCommit,
+      });
+      if (!baseMoved) {
+        return input.fromCommitOid;
+      }
+
+      const newBaseCommit = yield* resolveForeignBaseCommit({
+        cwd: input.cwd,
+        fromBaseCommit,
+        toBaseCommit,
+      });
+      if (newBaseCommit === null) {
+        return input.fromCommitOid;
+      }
+
+      // A rebase leaves `fromBaseCommit` off the new base's history, so it is not
+      // a usable merge base: replaying against it would revert earlier turns' work
+      // out of the projection. Their common ancestor is equivalent when the base
+      // only moved forward, and correct when it was rewritten.
+      const mergeBaseResult = yield* git.execute({
+        operation: "CheckpointStore.resolveProjectionMergeBase",
+        cwd: input.cwd,
+        args: ["merge-base", newBaseCommit, fromBaseCommit],
+        allowNonZeroExit: true,
+      });
+      if (mergeBaseResult.code !== 0) {
+        return input.fromCommitOid;
+      }
+      const mergeBaseCommit = mergeBaseResult.stdout.trim();
+      if (mergeBaseCommit.length === 0) {
+        return input.fromCommitOid;
+      }
+
+      const mergeResult = yield* git.execute({
+        operation: "CheckpointStore.projectFromCheckpointOntoBase",
+        cwd: input.cwd,
+        args: [
+          "merge-tree",
+          "--write-tree",
+          `--merge-base=${mergeBaseCommit}`,
+          newBaseCommit,
+          input.fromCommitOid,
+        ],
+        allowNonZeroExit: true,
+        maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+      });
+      if (mergeResult.code !== 0) {
+        return input.fromCommitOid;
+      }
+      const treeOid = mergeResult.stdout.split("\n")[0]?.trim() ?? "";
+      return treeOid.length > 0 ? treeOid : input.fromCommitOid;
+    },
+  );
+
   const resolveDiffCommits = Effect.fn("resolveDiffCommits")(function* (input: {
     readonly cwd: string;
     readonly fromCheckpointRef: CheckpointRef;
@@ -233,6 +531,7 @@ const makeCheckpointStore = Effect.gen(function* () {
   }) {
     let fromCommitOid = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
     const toCommitOid = yield* resolveCheckpointCommit(input.cwd, input.toCheckpointRef);
+    const fromCheckpointExists = fromCommitOid !== null;
 
     if (!fromCommitOid && input.fallbackFromToHead === true) {
       const headCommit = yield* resolveHeadCommit(input.cwd);
@@ -248,6 +547,15 @@ const makeCheckpointStore = Effect.gen(function* () {
         cwd: input.cwd,
         detail: "Checkpoint ref is unavailable for diff operation.",
       });
+    }
+
+    if (fromCheckpointExists) {
+      const projectedFromOid = yield* projectFromCheckpointOntoBase({
+        cwd: input.cwd,
+        fromCommitOid,
+        toCommitOid,
+      }).pipe(Effect.catch(() => Effect.succeed(fromCommitOid)));
+      return { fromCommitOid: projectedFromOid, toCommitOid };
     }
 
     return { fromCommitOid, toCommitOid };
