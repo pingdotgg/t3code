@@ -22,6 +22,7 @@ import {
   type ServerProvider,
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
@@ -281,19 +282,26 @@ function makeMutableServerSettingsService(
     const settingsRef = yield* Ref.make(initial);
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
 
+    const updateSettingsWith = (
+      plan: (current: ContractServerSettings) => ServerSettingsPatch | undefined,
+    ) =>
+      Effect.gen(function* () {
+        const current = yield* Ref.get(settingsRef);
+        const patch = plan(current);
+        if (patch === undefined) return current;
+        const next = applyServerSettingsPatch(current, patch);
+        encodeServerSettings(next);
+        yield* Ref.set(settingsRef, next);
+        yield* PubSub.publish(changes, next);
+        return next;
+      });
+
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
-      updateSettings: (patch) =>
-        Effect.gen(function* () {
-          const current = yield* Ref.get(settingsRef);
-          const next = applyServerSettingsPatch(current, patch);
-          encodeServerSettings(next);
-          yield* Ref.set(settingsRef, next);
-          yield* PubSub.publish(changes, next);
-          return next;
-        }),
+      updateSettings: (patch) => updateSettingsWith(() => patch),
+      updateSettingsWith,
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

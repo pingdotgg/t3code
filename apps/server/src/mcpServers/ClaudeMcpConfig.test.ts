@@ -28,7 +28,7 @@ it.layer(NodeServices.layer)("readClaudeMcpServers", (it) => {
         }`,
       );
 
-      const servers = yield* readClaudeMcpServers({ homePath: tempDir }, {});
+      const { definitions: servers } = yield* readClaudeMcpServers({ homePath: tempDir }, {});
 
       assert.deepEqual(
         servers.map((server) => server.name),
@@ -42,18 +42,23 @@ it.layer(NodeServices.layer)("readClaudeMcpServers", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("returns nothing for a missing or malformed config", () =>
+  it.effect("reports an incomplete read for a malformed config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-mcp-" });
 
+      // An absent config is a complete read of "no servers"...
       const missing = yield* readClaudeMcpServers({ homePath: path.join(tempDir, "absent") }, {});
-      assert.deepEqual(missing, []);
+      assert.deepEqual(missing.definitions, []);
+      assert.equal(missing.complete, true);
 
+      // ...but a file that exists and cannot be parsed leaves the list unknown,
+      // which is what stops the adapter from taking over MCP resolution.
       yield* writeClaudeConfig(tempDir, "{ not json");
       const malformed = yield* readClaudeMcpServers({ homePath: tempDir }, {});
-      assert.deepEqual(malformed, []);
+      assert.deepEqual(malformed.definitions, []);
+      assert.equal(malformed.complete, false);
     }).pipe(Effect.scoped),
   );
 
@@ -70,7 +75,10 @@ it.layer(NodeServices.layer)("readClaudeMcpServers", (it) => {
       );
       assert.equal(configPath, path.join(tempDir, ".claude.json"));
 
-      const servers = yield* readClaudeMcpServers({ homePath: "" }, { CLAUDE_CONFIG_DIR: tempDir });
+      const { definitions: servers } = yield* readClaudeMcpServers(
+        { homePath: "" },
+        { CLAUDE_CONFIG_DIR: tempDir },
+      );
       assert.deepEqual(
         servers.map((server) => server.name),
         ["alpaca"],
@@ -89,7 +97,7 @@ it.layer(NodeServices.layer)("readClaudeMcpServers", (it) => {
         '{ "mcpServers": { "codegraph": { "command": "codegraph" } } }',
       );
 
-      const servers = yield* readClaudeMcpServers(
+      const { definitions: servers } = yield* readClaudeMcpServers(
         { homePath: "" },
         { CLAUDE_CONFIG_DIR: "nested-home" },
         workspace,
@@ -137,7 +145,11 @@ it.layer(NodeServices.layer)("readClaudeMcpServers", (it) => {
         ].join("\n"),
       );
 
-      const servers = yield* readClaudeMcpServers({ homePath: tempDir }, {}, workspace);
+      const { definitions: servers } = yield* readClaudeMcpServers(
+        { homePath: tempDir },
+        {},
+        workspace,
+      );
 
       assert.deepEqual(servers.map((server) => `${server.name}:${server.scope}`).sort(), [
         "approved:project",

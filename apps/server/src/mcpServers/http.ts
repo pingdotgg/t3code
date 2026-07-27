@@ -4,7 +4,6 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Semaphore from "effect/Semaphore";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import {
@@ -22,11 +21,6 @@ export const mcpServersHttpApiLayer = HttpApiBuilder.group(
   "mcpServers",
   Effect.fnUntraced(function* (handlers) {
     const settingsService = yield* ServerSettingsService;
-    // `updateSettings` locks around its own write, but the disable list is
-    // computed from a settings snapshot read before that lock. Serialize the
-    // whole read-plan-write here so two overlapping toggles cannot both plan
-    // from the same snapshot and drop one another's entry.
-    const toggleSemaphore = yield* Semaphore.make(1);
 
     return handlers
       .handle(
@@ -43,25 +37,27 @@ export const mcpServersHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
 
-          yield* toggleSemaphore.withPermits(1)(
-            Effect.gen(function* () {
-              const settings = yield* settingsService.getSettings.pipe(
-                Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
-              );
-              const plan = planDisabledMcpServersWrite(settings, {
-                instanceId: args.payload.providerInstanceId,
-                name: args.payload.name,
-                enabled: args.payload.enabled,
-              });
-              if (plan.kind === "unsupported") {
-                return yield* failEnvironmentInvalidRequest("invalid_command");
-              }
-
-              yield* settingsService
-                .updateSettings(plan.patch)
-                .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
-            }),
+          const target = {
+            instanceId: args.payload.providerInstanceId,
+            name: args.payload.name,
+            enabled: args.payload.enabled,
+          };
+          const settings = yield* settingsService.getSettings.pipe(
+            Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)),
           );
+          if (planDisabledMcpServersWrite(settings, target).kind === "unsupported") {
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          }
+
+          // Re-plan inside the settings write lock: the disable list is a
+          // read-modify-write, so planning from a snapshot taken outside the
+          // lock could drop a concurrent writer's changes.
+          yield* settingsService
+            .updateSettingsWith((current) => {
+              const plan = planDisabledMcpServersWrite(current, target);
+              return plan.kind === "unsupported" ? undefined : plan.patch;
+            })
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
 
           return yield* discoverGlobalMcpInventory();
         }),

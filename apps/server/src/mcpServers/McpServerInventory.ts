@@ -57,16 +57,38 @@ function trimmedOrUndefined(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+const SECRET_FLAG_PATTERN = /(token|key|secret|password|passwd|credential|auth)/i;
+const REDACTED = "…";
+
 /**
- * Render a stdio server as its command line for display. Environment values
- * are deliberately dropped: MCP `env` blocks routinely hold API keys, and this
- * inventory is served to remote clients.
+ * Render a stdio server as its command line for display. Environment values are
+ * dropped entirely and secret-looking arguments are redacted: MCP configs
+ * routinely carry API keys, and this inventory is served to remote clients.
  */
-function stdioDetail(command: string, args: unknown): string {
+export function stdioDetail(command: string, args: unknown): string {
   const parts = Array.isArray(args)
     ? args.filter((arg): arg is string => typeof arg === "string")
     : [];
-  return [command, ...parts].join(" ");
+  const rendered: Array<string> = [];
+  let redactNext = false;
+  for (const part of parts) {
+    if (redactNext) {
+      rendered.push(REDACTED);
+      redactNext = false;
+      continue;
+    }
+    // `--token=abc` carries the value inline; `--token abc` carries it next.
+    const inlineSeparator = part.indexOf("=");
+    if (inlineSeparator > 0 && SECRET_FLAG_PATTERN.test(part.slice(0, inlineSeparator))) {
+      rendered.push(`${part.slice(0, inlineSeparator)}=${REDACTED}`);
+      continue;
+    }
+    if (part.startsWith("-") && SECRET_FLAG_PATTERN.test(part)) {
+      redactNext = true;
+    }
+    rendered.push(part);
+  }
+  return [command, ...rendered].join(" ");
 }
 
 function claudeTransport(entry: Record<string, unknown>): McpServerTransport {
@@ -88,7 +110,7 @@ const discoverClaudeMcpServers = Effect.fn("McpServerInventory.discoverClaudeMcp
     if (decoded._tag === "None") return [];
     const settings = decoded.value;
 
-    const definitions = yield* readClaudeMcpServers(settings, environment, cwd);
+    const { definitions } = yield* readClaudeMcpServers(settings, environment, cwd);
 
     const disabled = new Set(settings.disabledMcpServers);
     const entries: McpServerInventoryEntry[] = [];

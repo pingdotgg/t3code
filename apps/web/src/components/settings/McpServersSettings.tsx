@@ -191,7 +191,25 @@ function EnvironmentMcpInventory({
         )
         .then((inventory) => {
           if (generation !== generationRef.current) return;
-          setState({ status: "loaded", inventory });
+          // Merge only this row's confirmed value. Replacing the whole
+          // inventory would let a slower response for one server overwrite a
+          // newer response for another.
+          const confirmed = inventory.servers.find(
+            (entry) =>
+              entry.providerInstanceId === server.providerInstanceId && entry.name === server.name,
+          );
+          setState((current) =>
+            current.status === "loaded"
+              ? {
+                  status: "loaded",
+                  inventory: withServerEnabled(
+                    current.inventory,
+                    { providerInstanceId: server.providerInstanceId, name: server.name },
+                    confirmed?.enabled ?? enabled,
+                  ),
+                }
+              : { status: "loaded", inventory },
+          );
         })
         .catch((cause: unknown) => {
           toastManager.add({

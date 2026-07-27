@@ -450,6 +450,31 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("leaves MCP resolution to the CLI when the config cannot be read", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-mcp-"));
+    NodeFS.writeFileSync(NodePath.join(home, ".claude.json"), "{ not json");
+    const harness = makeHarness({
+      claudeConfig: { homePath: home, disabledMcpServers: ["alpaca"] },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      // Failing open keeps the session's own servers; a partial list plus
+      // strict mode would strip every one of them.
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.strictMcpConfig, undefined);
+      assert.equal(createInput?.options.mcpServers, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("uses bypass permissions for full-access claude sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

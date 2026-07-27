@@ -41,6 +41,17 @@ export interface ClaudeMcpServerDefinition {
   readonly definition: Record<string, unknown>;
 }
 
+export interface ClaudeMcpServerRead {
+  /**
+   * False when a config file exists but could not be read or parsed, so the
+   * list below may be missing servers the CLI would load. Callers that replace
+   * the CLI's own resolution (`--strict-mcp-config`) must not act on an
+   * incomplete list.
+   */
+  readonly complete: boolean;
+  readonly definitions: ReadonlyArray<ClaudeMcpServerDefinition>;
+}
+
 function readServerMap(value: unknown): ReadonlyArray<readonly [string, Record<string, unknown>]> {
   if (typeof value !== "object" || value === null) return [];
   const entries: Array<readonly [string, Record<string, unknown>]> = [];
@@ -58,20 +69,33 @@ function readStringArray(value: unknown): ReadonlyArray<string> {
     : [];
 }
 
+/**
+ * A config file is either absent (no servers, and that is the truth), readable
+ * (its parsed contents), or unusable — unreadable or malformed, meaning the
+ * server list this file would contribute is unknown.
+ */
+type JsonFileRead =
+  | { readonly kind: "absent" }
+  | { readonly kind: "object"; readonly value: Record<string, unknown> }
+  | { readonly kind: "unusable" };
+
 const readJsonObject = Effect.fn("readClaudeJsonObject")(function* (
   filePath: string,
-): Effect.fn.Return<Record<string, unknown> | undefined, never, FileSystem.FileSystem> {
+): Effect.fn.Return<JsonFileRead, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
+  const exists = yield* fileSystem.exists(filePath).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) return { kind: "absent" };
+
   const contents = yield* fileSystem
     .readFileString(filePath)
     .pipe(Effect.orElseSucceed(() => undefined));
-  if (contents === undefined) return undefined;
+  if (contents === undefined) return { kind: "unusable" };
   const decoded = decodeJsonOption(contents);
-  if (decoded._tag === "None") return undefined;
+  if (decoded._tag === "None") return { kind: "unusable" };
   const parsed = decoded.value;
   return typeof parsed === "object" && parsed !== null
-    ? (parsed as Record<string, unknown>)
-    : undefined;
+    ? { kind: "object", value: parsed as Record<string, unknown> }
+    : { kind: "unusable" };
 });
 
 /**
@@ -127,14 +151,12 @@ export const readClaudeMcpServers = Effect.fn("readClaudeMcpServers")(function* 
   config: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
   cwd?: string,
-): Effect.fn.Return<
-  ReadonlyArray<ClaudeMcpServerDefinition>,
-  never,
-  FileSystem.FileSystem | Path.Path
-> {
+): Effect.fn.Return<ClaudeMcpServerRead, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const configPath = yield* resolveClaudeMcpConfigFilePath(config, environment, cwd);
-  const claudeJson = yield* readJsonObject(configPath);
+  const claudeRead = yield* readJsonObject(configPath);
+  const claudeJson = claudeRead.kind === "object" ? claudeRead.value : undefined;
+  let complete = claudeRead.kind !== "unusable";
 
   const byName = new Map<string, ClaudeMcpServerDefinition>();
   for (const [name, definition] of readServerMap(claudeJson?.mcpServers)) {
@@ -142,7 +164,7 @@ export const readClaudeMcpServers = Effect.fn("readClaudeMcpServers")(function* 
   }
 
   if (cwd === undefined) {
-    return [...byName.values()];
+    return { complete, definitions: [...byName.values()] };
   }
 
   const projects = claudeJson?.projects;
@@ -157,7 +179,9 @@ export const readClaudeMcpServers = Effect.fn("readClaudeMcpServers")(function* 
       : undefined;
 
   const mcpJsonPath = path.join(cwd, ".mcp.json");
-  const mcpJson = yield* readJsonObject(mcpJsonPath);
+  const mcpJsonRead = yield* readJsonObject(mcpJsonPath);
+  const mcpJson = mcpJsonRead.kind === "object" ? mcpJsonRead.value : undefined;
+  if (mcpJsonRead.kind === "unusable") complete = false;
   const approveAll = projectConfig?.enableAllProjectMcpServers === true;
   const approved = new Set(readStringArray(projectConfig?.enabledMcpjsonServers));
   const rejected = new Set(readStringArray(projectConfig?.disabledMcpjsonServers));
@@ -170,5 +194,5 @@ export const readClaudeMcpServers = Effect.fn("readClaudeMcpServers")(function* 
     byName.set(name, { name, scope: "local", sourcePath: configPath, definition });
   }
 
-  return [...byName.values()];
+  return { complete, definitions: [...byName.values()] };
 });

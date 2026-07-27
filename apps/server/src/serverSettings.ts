@@ -125,6 +125,16 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * Derive the patch from the current settings *inside* the write lock, for
+     * read-modify-write updates (list edits, counters) that would otherwise
+     * race another writer between reading and patching. Returning `undefined`
+     * leaves settings untouched.
+     */
+    readonly updateSettingsWith: (
+      plan: (current: ServerSettings) => ServerSettingsPatch | undefined,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
   }
@@ -145,16 +155,26 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
 
+    const updateSettingsWith = (
+      plan: (current: ServerSettings) => ServerSettingsPatch | undefined,
+    ) =>
+      Ref.get(currentSettingsRef).pipe(
+        Effect.flatMap((currentSettings) => {
+          const patch = plan(currentSettings);
+          return patch === undefined
+            ? Effect.succeed(currentSettings)
+            : normalizeServerSettings(applyServerSettingsPatch(currentSettings, patch)).pipe(
+                Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+              );
+        }),
+      );
+
     return {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef),
-      updateSettings: (patch) =>
-        Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-        ),
+      updateSettings: (patch) => updateSettingsWith(() => patch),
+      updateSettingsWith,
       streamChanges: Stream.empty,
     } satisfies ServerSettingsService["Service"];
   });
@@ -556,6 +576,28 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const updateSettingsWith = (plan: (current: ServerSettings) => ServerSettingsPatch | undefined) =>
+    writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* getSettingsFromCache;
+        const patch = plan(current);
+        if (patch === undefined) {
+          const unchanged = yield* materializeProviderEnvironmentSecrets(current);
+          return resolveTextGenerationProvider(unchanged);
+        }
+        const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          current,
+          applyServerSettingsPatch(current, patch),
+        );
+        const next = yield* normalizeServerSettings(nextPersisted);
+        yield* writeSettingsAtomically(next);
+        yield* Cache.set(settingsCache, cacheKey, next);
+        yield* emitChange(next);
+        const materialized = yield* materializeProviderEnvironmentSecrets(next);
+        return resolveTextGenerationProvider(materialized);
+      }),
+    );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -563,22 +605,8 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) =>
-      writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
-        }),
-      ),
+    updateSettings: (patch) => updateSettingsWith(() => patch),
+    updateSettingsWith,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>

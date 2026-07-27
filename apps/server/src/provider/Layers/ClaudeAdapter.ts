@@ -892,6 +892,12 @@ const CLAUDE_SETTING_SOURCES = [
  * Configured MCP servers minus the ones disabled in T3 Code, in the shape the
  * Agent SDK's `mcpServers` option accepts. Paired with `strictMcpConfig` so
  * this map is the whole set the session sees.
+ *
+ * Returns `undefined` when discovery could not read every config file: taking
+ * over resolution with a partial list would strip working servers from the
+ * session over a transient read error, so the session falls back to the CLI's
+ * own resolution — the user's disable list is ignored for that run, which is
+ * the safer direction to fail.
  */
 const buildEnabledClaudeMcpServerMap = Effect.fn("buildEnabledClaudeMcpServerMap")(function* (
   claudeSettings: ClaudeSettings,
@@ -899,8 +905,15 @@ const buildEnabledClaudeMcpServerMap = Effect.fn("buildEnabledClaudeMcpServerMap
   // The session workspace cwd, so a relative `CLAUDE_CONFIG_DIR` resolves the
   // same way it will inside the spawned CLI.
   cwd: string | undefined,
-): Effect.fn.Return<Record<string, unknown>, never, FileSystem.FileSystem | Path.Path> {
-  const definitions = yield* readClaudeMcpServers(claudeSettings, environment, cwd);
+): Effect.fn.Return<Record<string, unknown> | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const { complete, definitions } = yield* readClaudeMcpServers(claudeSettings, environment, cwd);
+  if (!complete) {
+    yield* Effect.logWarning(
+      "Could not read every Claude MCP config file; leaving MCP resolution to the CLI for this session.",
+    );
+    return undefined;
+  }
+
   const disabled = new Set(claudeSettings.disabledMcpServers);
   const enabled: Record<string, unknown> = {};
   for (const { name, definition } of definitions) {
