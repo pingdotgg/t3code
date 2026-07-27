@@ -265,6 +265,21 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
+    const claimableCandidatePredicate = (availableBefore?: string) =>
+      sql`
+        ${
+          availableBefore === undefined
+            ? sql`1 = 1`
+            : sql`candidate.available_at <= ${availableBefore}`
+        }
+        AND candidate.status = 'pending'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM orchestration_v2_effect_outbox AS active
+          WHERE active.thread_id = candidate.thread_id
+            AND active.status = 'running'
+        )
+      `;
 
     const cancellationSignal = (effectId: string) => {
       const existing = cancellationSignals.get(effectId);
@@ -375,14 +390,20 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           ),
         ),
       signalCancellations: (effectIds) =>
-        Effect.forEach(
-          effectIds,
-          (effectId) => {
-            const signal = cancellationSignals.get(effectId);
-            return signal === undefined ? Effect.void : Deferred.succeed(signal, undefined);
-          },
-          { discard: true },
-        ),
+        Effect.gen(function* () {
+          yield* Effect.forEach(
+            effectIds,
+            (effectId) => {
+              const signal = cancellationSignals.get(effectId);
+              return signal === undefined ? Effect.void : Deferred.succeed(signal, undefined);
+            },
+            { discard: true },
+          );
+          // Cancellation can unblock other pending work on the same thread.
+          // This method is deliberately post-commit, so it is also the safe
+          // place to wake claimers after the durable status change.
+          if (effectIds.length > 0) yield* notifyAvailable(effectIds.length);
+        }),
       awaitCancellation: (effectId) => Deferred.await(cancellationSignal(effectId)),
       clearCancellation: (effectId) =>
         Effect.sync(() => {
@@ -445,14 +466,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
-              WHERE candidate.available_at <= ${nowIso}
-                AND candidate.status = 'pending'
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM orchestration_v2_effect_outbox AS active
-                  WHERE active.thread_id = candidate.thread_id
-                    AND active.status = 'running'
-                )
+              WHERE ${claimableCandidatePredicate(nowIso)}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
               LIMIT 1
             )
@@ -468,13 +482,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         const rows = yield* sql<{ readonly available_at: string | null }>`
           SELECT MIN(candidate.available_at) AS available_at
           FROM orchestration_v2_effect_outbox AS candidate
-            WHERE candidate.status = 'pending'
-              AND NOT EXISTS (
-                SELECT 1
-                FROM orchestration_v2_effect_outbox AS active
-                WHERE active.thread_id = candidate.thread_id
-                  AND active.status = 'running'
-              )
+          WHERE ${claimableCandidatePredicate()}
         `.pipe(Effect.withTracerEnabled(false));
         const availableAt = rows[0]?.available_at;
         if (availableAt === undefined || availableAt === null) return Option.none();

@@ -528,11 +528,10 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
           const now = DateTime.toEpochMillis(yield* DateTime.now);
           const sleepMs = Option.match(nextClaimableAt, {
             onNone: () => livenessPollIntervalMs,
-            onSome: (availableAt) =>
-              Math.min(
-                livenessPollIntervalMs,
-                Math.max(1, DateTime.toEpochMillis(availableAt) - now),
-              ),
+            onSome: (availableAt) => {
+              const untilAvailable = DateTime.toEpochMillis(availableAt) - now;
+              return Math.min(livenessPollIntervalMs, untilAvailable > 0 ? untilAvailable : 25);
+            },
           });
           yield* Effect.raceFirst(
             worker.awaitWork.pipe(Effect.as("notified" as const)),

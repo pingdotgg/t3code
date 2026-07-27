@@ -258,6 +258,30 @@ it.effect("does not hot-loop when a claim fails", () =>
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
+it.effect("backs off briefly when a due deadline loses a claim race", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const now = yield* DateTime.now;
+    const worker = OrchestrationEffectWorkerV2.of({
+      awaitWork: Effect.never,
+      runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),
+      nextClaimableAt: Effect.succeed(Option.some(now)),
+      drain: () => Effect.succeed(0),
+    });
+
+    yield* runDaemonWithOptions({
+      concurrency: 1,
+      livenessPollIntervalMs: 1_000,
+    }).pipe(Effect.provideService(OrchestrationEffectWorkerV2, worker), Effect.forkScoped);
+
+    while ((yield* Ref.get(attempts)) < 1) yield* Effect.yieldNow;
+    yield* TestClock.adjust("24 millis");
+    assert.equal(yield* Ref.get(attempts), 1);
+    yield* TestClock.adjust("1 millis");
+    while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
 it.effect("detaches a handed-off session only after the old turn terminalizes", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;

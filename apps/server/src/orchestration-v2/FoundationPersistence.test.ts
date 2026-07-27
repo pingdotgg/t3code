@@ -583,6 +583,45 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("does not wake claimers for effects from an idempotent command retry", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const outbox = yield* EffectOutboxV2;
+      const now = yield* DateTime.now;
+      const commandId = CommandId.make("command:foundation-idempotent-wakeup");
+      const threadId = ThreadId.make("thread:foundation-idempotent-wakeup");
+      const input = {
+        commandId,
+        threadId,
+        commandType: "foundation.idempotent-wakeup",
+        acceptedAt: now,
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-idempotent-wakeup",
+            thread: makeThread(threadId, now),
+            now,
+          }),
+        ],
+        effects: [
+          {
+            id: "effect:foundation-idempotent-wakeup",
+            commandId,
+            threadId,
+            request: { type: "terminal.cleanup" as const },
+          },
+        ],
+      };
+
+      assert.isTrue((yield* eventSink.commitCommand(input)).committed);
+      yield* outbox.awaitAvailable;
+      assert.isFalse((yield* eventSink.commitCommand(input)).committed);
+
+      const unexpectedWake = yield* outbox.awaitAvailable.pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.isUndefined(unexpectedWake.pollUnsafe());
+    }).pipe(Effect.provide(Layer.fresh(TestLayer))),
+  );
+
   it.effect("does not publish a stale provider start after an interrupt wins", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
@@ -987,7 +1026,64 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
 
       assert.isTrue(Option.isNone(claim));
       assert.notInclude(spans, "sql.execute");
-    }),
+    }).pipe(Effect.provide(Layer.fresh(effectOutboxProvided))),
+  );
+
+  it.effect("wakes claimers when cancellation unblocks same-thread work", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-cancellation-wakeup");
+      const threadId = ThreadId.make("thread:foundation-cancellation-wakeup");
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-cancellation-wakeup:a-running",
+          commandId,
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-cancellation-wakeup"),
+          },
+        },
+        {
+          id: "effect:foundation-cancellation-wakeup:b-pending",
+          commandId,
+          threadId,
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+
+      const running = yield* outbox.claimNext({
+        workerId: "cancellation-wakeup-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(running));
+      if (Option.isNone(running)) return;
+      assert.equal(running.value.request.type, "provider-turn.start");
+
+      const cancelledEffectIds = yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["provider-turn.start"],
+        reason: "Test cancellation wakeup.",
+      });
+      yield* outbox.signalCancellations(cancelledEffectIds);
+
+      const wake = yield* outbox.awaitAvailable.pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.isDefined(wake.pollUnsafe());
+
+      const unblocked = yield* outbox.claimNext({
+        workerId: "cancellation-wakeup-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(unblocked));
+      if (Option.isSome(unblocked)) {
+        assert.equal(unblocked.value.request.type, "terminal.cleanup");
+        yield* outbox.succeed({
+          effectId: unblocked.value.id,
+          workerId: "cancellation-wakeup-worker",
+        });
+      }
+    }).pipe(Effect.provide(Layer.fresh(effectOutboxProvided))),
   );
 
   it.effect("executes a retry at its durable deadline instead of the liveness interval", () =>

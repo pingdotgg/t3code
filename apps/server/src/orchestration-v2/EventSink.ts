@@ -367,7 +367,7 @@ const baseLayer: Layer.Layer<
         }),
       );
       yield* effectOutbox.signalCancellations(result.cancelledEffectIds);
-      if (input.effects.length > 0) {
+      if (result.committed && input.effects.length > 0) {
         yield* effectOutbox.notifyAvailable(input.effects.length);
       }
       if (result.committed) {
