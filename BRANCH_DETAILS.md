@@ -1,6 +1,6 @@
 # Preview Automation Reliability
 
-Product-native preview automation remains bounded and recoverable across the web host, MCP server, and Electron CDP controller. Preserve this behavior until upstream provides equivalent operation deadlines, control-session recovery, and degraded semantic snapshots.
+Product-native preview automation is bounded and recoverable across the web host, MCP server, and Electron CDP controller. The branch-specific layer covers operation deadlines, control-session recovery, background capture presentation, and degraded semantic snapshots.
 
 Expected behavior:
 
@@ -13,7 +13,7 @@ Expected behavior:
 - The shared preview contract treats snapshot screenshots as nullable. MCP snapshot responses omit image content when capture is unavailable while preserving structured semantic content and explicitly reporting `screenshot: null`; tool descriptions promise a PNG only when capture is available. The desktop snapshot IPC schema and preload adapter default an omitted `background` flag to `false`, preserving foreground-capture behavior for legacy callers.
 - The renderer automation consumer reserves response grace before the broker deadline and converts a stalled host operation into a typed `PreviewAutomationTimeoutError` instead of leaving the broker to surface a generic execution failure. Short caller-supplied timeouts retain their full execution budget instead of being consumed by fixed grace deductions. Requests that ask to show the browser use the request's remaining bounded visibility budget rather than a fixed two-second ceiling, and their stable-presentation dwell contracts to fit short deadlines instead of requiring an impossible fixed 100 milliseconds. Reused empty or failed tabs acknowledge without waiting for a browser surface those states intentionally hide. Visibility timeouts report whether the right panel was open, which surface was active, whether the requested browser surface was registered, and whether it had a presentation rectangle.
 - A newly created preview tab applies its server snapshot and assigned tab id, initiates any requested selection, and acknowledges server-side creation immediately without making the first call depend on cold React panel rendering, Electron overlay registration, or page readiness. Its initial URL continues loading exactly once in that same tab; status can report progress, while later wait, snapshot, or interaction operations own any attachment or page-readiness wait. Reopening an existing shown tab selects both the preview-state tab and its matching right-panel surface, then waits for stable panel presentation; while the request remains pending it reasserts that explicit selection across route hydration or session reconciliation instead of accepting one transient visible frame. Reused tabs retain overlay, navigation, and requested-visibility readiness checks because their existing automation target should already be available.
-- The standard dev runner keeps local navigation and direct backend URLs on `127.0.0.1`. Browser modes follow upstream's single-origin architecture: they leave client HTTP/WebSocket URLs and generic `HOST` unset so remote sharing and origin-derived HMR keep working, while Vite's default listener and its default backend proxy use explicit IPv4 loopback. Explicit IPv6 backend binds proxy through IPv6 loopback. Desktop mode continues to pin `HOST` and its renderer/backend URLs to `127.0.0.1`; server-only mode keeps direct HTTP/WebSocket URLs on the same IPv4 loopback.
+- The standard dev runner keeps local navigation and direct backend URLs on `127.0.0.1`. Browser modes use single-origin routing: they leave client HTTP/WebSocket URLs and generic `HOST` unset so remote sharing and origin-derived HMR keep working, while Vite's default listener and its default backend proxy use explicit IPv4 loopback. Explicit IPv6 backend binds proxy through IPv6 loopback. Desktop mode pins `HOST` and its renderer/backend URLs to `127.0.0.1`; server-only mode keeps direct HTTP/WebSocket URLs on the same IPv4 loopback.
 - The primary pairing route watches for later URL-fragment changes while it remains mounted. Navigating an already-loaded `/pair` document to `/pair#token=...` claims each new token once, removes the secret fragment, and runs the normal pairing exchange without requiring a reload or a second desktop window.
 
 Current limitations:
@@ -30,6 +30,7 @@ Primary files:
 - `apps/web/src/browser/HostedBrowserWebview.tsx`
 - `apps/web/src/browser/browserSurfaceStore.ts`
 - `apps/web/src/browser/hostedBrowserWebviewStyle.ts`
+- `apps/web/src/components/auth/PairingRouteSurface.logic.ts`
 - `apps/web/src/components/auth/PairingRouteSurface.tsx`
 - `apps/web/src/components/preview/PreviewAutomationHosts.tsx`
 - `apps/web/src/components/preview/previewAutomationPresentation.ts`
@@ -51,4 +52,4 @@ vp test run scripts/dev-runner.test.ts apps/desktop/src/preview/Manager.test.ts 
 
 - Web: `5744`
 - Server/WebSocket: `13784`
-- Start the dev runner with `T3CODE_PORT_OFFSET=11` to select these branch-fixed ports instead of upstream's worktree-path-derived starting offset. The runner can still advance when either port is unavailable, so confirm the printed ports before testing.
+- Start the dev runner with `T3CODE_PORT_OFFSET=11` to select these branch-fixed ports. This overrides the worktree-path-derived starting offset. The runner can still advance when either port is unavailable, so confirm the printed ports before testing.
