@@ -1395,6 +1395,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const appServerArgs = [
+          "--enable",
+          "default_mode_request_user_input",
+          ...(mcpSession
+            ? [
+                "-c",
+                `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                "-c",
+                'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+              ]
+            : []),
+        ];
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -1411,18 +1423,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          appServerArgs,
           ...(mcpSession
             ? {
                 environment: {
                   ...(options?.environment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
               }
             : {}),
         };

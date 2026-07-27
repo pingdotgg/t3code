@@ -142,9 +142,11 @@ Your active mode changes only when new developer instructions with a different \
 
 ## request_user_input availability
 
-The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
+Use the \`request_user_input\` tool only when it is listed in the available tools for this turn.
 
-In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. When \`request_user_input\` is available, reserve it for genuine human-only blockers such as one-time verification codes, CAPTCHA handoffs, missing personal or application details, and high-impact decisions where a reasonable assumption would be risky. Do not use it for routine preferences or information that can be discovered from local context. For a free-form value such as a verification code, let the user supply a custom answer through the prompt.
+
+If human input is required but \`request_user_input\` is unavailable, ask one concise plain-text question. Never write a multiple choice question as a textual assistant message.
 ${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
 </collaboration_mode>`;
 

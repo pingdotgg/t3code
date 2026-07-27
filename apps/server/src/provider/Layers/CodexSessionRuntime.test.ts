@@ -259,6 +259,21 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
   });
 
+  it("reserves Default-mode user input prompts for genuine human blockers", () => {
+    const instructions = buildCodexDeveloperInstructions("default", {
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
+    });
+
+    NodeAssert.doesNotMatch(instructions, /unavailable in Default mode/);
+    NodeAssert.match(instructions, /only when it is listed in the available tools/);
+    NodeAssert.match(instructions, /one-time verification codes/);
+    NodeAssert.match(instructions, /CAPTCHA handoffs/);
+    NodeAssert.match(instructions, /missing personal or application details/);
+    NodeAssert.match(instructions, /Do not use it for routine preferences/);
+    NodeAssert.match(instructions, /ask one concise plain-text question/);
+  });
+
   it("includes runtime info alongside plan mode instructions", () => {
     const instructions = buildCodexDeveloperInstructions("plan", {
       model: "gpt-5.3-codex",
