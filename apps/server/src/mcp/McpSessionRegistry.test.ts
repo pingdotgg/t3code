@@ -55,6 +55,31 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
+it.effect("revokes one provider session without revoking another credential for the thread", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const threadId = ThreadId.make("thread-selective-revocation");
+    const first = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const second = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    });
+    const firstToken = first.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const secondToken = second.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    yield* registry.revokeProviderSession(second.config.providerSessionId);
+
+    expect(yield* registry.resolve(firstToken)).toMatchObject({
+      threadId,
+      providerSessionId: first.config.providerSessionId,
+    });
+    expect(yield* registry.resolve(secondToken)).toBeUndefined();
+  }),
+);
+
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [
