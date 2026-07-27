@@ -8,6 +8,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  QueuedTurnId,
   type OrchestrationEvent,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -218,6 +219,31 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000)
     }
     if (Date.now() >= deadline) {
       throw new Error(`Timed out waiting for git ref '${ref}'.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return poll();
+  };
+  return poll();
+}
+
+async function waitForGitFileAtRef(
+  cwd: string,
+  ref: string,
+  filePath: string,
+  contents: string,
+  timeoutMs = 15_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  const poll = async (): Promise<void> => {
+    try {
+      if (gitShowFileAtRef(cwd, ref, filePath) === contents) {
+        return;
+      }
+    } catch {
+      // The ref may not exist until the reactor has captured the baseline.
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for '${filePath}' at '${ref}'.`);
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
     return poll();
@@ -1030,6 +1056,71 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v1\n");
+  });
+
+  it("re-baselines a shared checkpoint ref after workspace handoff", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const baselineRef = checkpointRefForThreadTurn(threadId, 0);
+    const handoffCwd = `${harness.cwd}-handoff`;
+    tempDirs.push(handoffCwd);
+
+    fs.writeFileSync(path.join(harness.cwd, "README.md"), "pre-handoff\n", "utf8");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-handoff"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-before-handoff"),
+          role: "user",
+          text: "start before handoff",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    await waitForGitFileAtRef(harness.cwd, baselineRef, "README.md", "pre-handoff\n");
+
+    runGit(harness.cwd, ["worktree", "add", "-b", "handoff", handoffCwd, "HEAD"]);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.workspace.handoff",
+        commandId: CommandId.make("cmd-workspace-handoff"),
+        threadId,
+        branch: "handoff",
+        worktreePath: handoffCwd,
+        continuation: {
+          id: QueuedTurnId.make("queued-turn-handoff"),
+          threadId,
+          message: {
+            messageId: MessageId.make("message-handoff"),
+            role: "user",
+            text: "continue after handoff",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          failedAt: null,
+          failureMessage: null,
+        },
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-after-handoff"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId: asTurnId("turn-after-handoff"),
+    });
+
+    await waitForGitFileAtRef(handoffCwd, baselineRef, "README.md", "v1\n");
   });
 
   it("captures turn completion checkpoint from project workspace root when provider session cwd is unavailable", async () => {

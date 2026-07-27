@@ -21,6 +21,11 @@ export interface CaptureCheckpointInput {
   readonly checkpointRef: CheckpointRef;
 }
 
+export interface CheckpointRefMatchesWorkspaceInput {
+  readonly cwd: string;
+  readonly checkpointRef: CheckpointRef;
+}
+
 export interface RestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
@@ -69,6 +74,13 @@ export interface CheckpointStoreShape {
    */
   readonly hasCheckpointRef: (
     input: Omit<RestoreCheckpointInput, "fallbackToHead">,
+  ) => Effect.Effect<boolean, CheckpointStoreError>;
+
+  /**
+   * Check whether a checkpoint ref was captured from the current Git worktree.
+   */
+  readonly checkpointRefMatchesWorkspace: (
+    input: CheckpointRefMatchesWorkspaceInput,
   ) => Effect.Effect<boolean, CheckpointStoreError>;
 
   /**

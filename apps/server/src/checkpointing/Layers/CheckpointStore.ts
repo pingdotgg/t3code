@@ -78,6 +78,15 @@ const makeCheckpointStore = Effect.gen(function* () {
         }),
       );
 
+  const resolveWorktreeRoot = (cwd: string): Effect.Effect<string, GitCommandError> =>
+    git
+      .execute({
+        operation: "CheckpointStore.resolveWorktreeRoot",
+        cwd,
+        args: ["rev-parse", "--show-toplevel"],
+      })
+      .pipe(Effect.map((result) => result.stdout.trim()));
+
   const isGitRepository: CheckpointStoreShape["isGitRepository"] = (cwd) =>
     git
       .execute({
@@ -142,7 +151,8 @@ const makeCheckpointStore = Effect.gen(function* () {
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        const worktreeRoot = yield* resolveWorktreeRoot(input.cwd);
+        const message = `t3 checkpoint ref=${input.checkpointRef}\n\nt3-worktree=${worktreeRoot}`;
         const commitTreeResult = yield* git.execute({
           operation,
           cwd: input.cwd,
@@ -184,6 +194,27 @@ const makeCheckpointStore = Effect.gen(function* () {
     resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
       Effect.map((commit) => commit !== null),
     );
+
+  const checkpointRefMatchesWorkspace: CheckpointStoreShape["checkpointRefMatchesWorkspace"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const checkpointCommit = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
+      if (!checkpointCommit) {
+        return false;
+      }
+      const [worktreeRoot, commitMessage] = yield* Effect.all([
+        resolveWorktreeRoot(input.cwd),
+        git
+          .execute({
+            operation: "CheckpointStore.checkpointRefMatchesWorkspace",
+            cwd: input.cwd,
+            args: ["show", "-s", "--format=%B", checkpointCommit],
+          })
+          .pipe(Effect.map((result) => result.stdout)),
+      ]);
+      return commitMessage.includes(`t3-worktree=${worktreeRoot}\n`);
+    });
 
   const normalizeDiffPaths = (input: {
     readonly cwd: string;
@@ -338,6 +369,7 @@ const makeCheckpointStore = Effect.gen(function* () {
     isGitRepository,
     captureCheckpoint,
     hasCheckpointRef,
+    checkpointRefMatchesWorkspace,
     restoreCheckpoint,
     diffCheckpoints,
     diffCheckpointFiles,

@@ -544,11 +544,11 @@ const make = Effect.gen(function* () {
 
       const currentTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
       const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
-      const baselineExists = yield* checkpointStore.hasCheckpointRef({
+      const baselineMatchesWorkspace = yield* checkpointStore.checkpointRefMatchesWorkspace({
         cwd: checkpointCwd,
         checkpointRef: baselineCheckpointRef,
       });
-      if (baselineExists) {
+      if (baselineMatchesWorkspace) {
         return;
       }
 
@@ -623,11 +623,11 @@ const make = Effect.gen(function* () {
 
     const currentTurnCount = latestCapturedCheckpointTurnCount(thread.checkpoints);
     const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
-    const baselineExists = yield* checkpointStore.hasCheckpointRef({
+    const baselineMatchesWorkspace = yield* checkpointStore.checkpointRefMatchesWorkspace({
       cwd: checkpointCwd,
       checkpointRef: baselineCheckpointRef,
     });
-    if (baselineExists) {
+    if (baselineMatchesWorkspace) {
       return;
     }
 

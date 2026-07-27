@@ -144,6 +144,7 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly checkpointIsGitRepository?: boolean;
     readonly checkpointRefExists?: boolean;
+    readonly checkpointRefMatchesWorkspace?: boolean;
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -289,6 +290,9 @@ describe("ProviderCommandReactor", () => {
     const checkpointStore: CheckpointStoreShape = {
       isGitRepository: vi.fn(() => Effect.succeed(input?.checkpointIsGitRepository ?? false)),
       hasCheckpointRef: vi.fn(() => Effect.succeed(input?.checkpointRefExists ?? false)),
+      checkpointRefMatchesWorkspace: vi.fn(() =>
+        Effect.succeed(input?.checkpointRefMatchesWorkspace ?? input?.checkpointRefExists ?? false),
+      ),
       captureCheckpoint: vi.fn((_) =>
         Effect.sync(() => {
           turnStartOrder.push("captureCheckpoint");
@@ -576,6 +580,43 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         message: {
           messageId: asMessageId("user-message-checkpoint-baseline"),
+          role: "user",
+          text: "change files",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.turnStartOrder.length === 2);
+
+    expect(harness.checkpointStore.captureCheckpoint).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-project",
+      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    });
+    expect(harness.turnStartOrder).toEqual(["captureCheckpoint", "sendTurn"]);
+  });
+
+  it("recaptures the pre-turn checkpoint when a shared ref belongs to another worktree", async () => {
+    // After a workspace handoff the checkpoint ref is still visible from the new
+    // worktree, because worktrees share a ref store. Reusing it would leave the
+    // provider running against a baseline captured from a different tree.
+    const harness = await createHarness({
+      checkpointIsGitRepository: true,
+      checkpointRefExists: true,
+      checkpointRefMatchesWorkspace: false,
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-checkpoint-handoff"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-checkpoint-handoff"),
           role: "user",
           text: "change files",
           attachments: [],

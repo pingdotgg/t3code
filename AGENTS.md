@@ -47,6 +47,7 @@ Write only the small, concise amount of code needed to solve the problem; avoid 
 - Workspace handoff retries must reuse a durable orchestration command ID. If every response is lost, preserve the created worktree because the binding may already have committed; only roll back after a definitive server rejection, and surface cleanup failures.
 - Local desktop flavors must never use Official's `~/.t3` home: a local migration can replace scoped auth tables while retaining migration 31, leaving upstream `fetch-session-state` broken because the scopes migration cannot replay.
 - Review findings must never be silently dropped: reviewers cite file line numbers that often land on unchanged context, so anchor findings to any line the diff renders and only discard ones naming a file outside the reviewed diff. Review threads stay conversational — refresh the result on every turn that emits reviewer JSON, re-resolve the snapshot it is anchored to, and identify the raw-JSON message by content rather than assuming it is the last assistant message.
+- Shared Git checkpoint refs need worktree provenance; validate a baseline against the thread's current worktree before reusing it after a workspace handoff.
 
 ## Keep This File Updated
 
