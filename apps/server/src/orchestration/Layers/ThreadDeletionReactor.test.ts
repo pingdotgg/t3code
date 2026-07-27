@@ -2,6 +2,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  PreviewSessionLookupError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -71,6 +72,7 @@ function testReactorLayer(input: {
   readonly getBinding: ProviderSessionDirectory["Service"]["getBinding"];
   readonly getProjectedSession: ProjectionThreadSessionRepository["Service"]["getByThreadId"];
   readonly archiveThread: ThreadColdStorage["Service"]["archiveThread"];
+  readonly closePreview?: PreviewManager["Service"]["close"];
   readonly pendingArchives?: ReadonlyArray<ThreadId>;
 }) {
   return ThreadDeletionReactorLive.pipe(
@@ -100,7 +102,7 @@ function testReactorLayer(input: {
     ),
     Layer.provide(
       Layer.mock(PreviewManager)({
-        close: () => Effect.void,
+        close: input.closePreview ?? (() => Effect.void),
       }),
     ),
     Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
@@ -190,6 +192,44 @@ effectIt.effect("archives a settled thread when its provider binding is already 
       yield* reactor.drain;
 
       expect(yield* Ref.get(stopCalls)).toBe(0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("closes previews before archiving a thread lifecycle job", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-archive-preview");
+    const archived = yield* Deferred.make<void>();
+    const previewCloseCalls = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closePreview: ({ threadId: closedThreadId }) =>
+        Ref.update(previewCloseCalls, (calls) => [...calls, closedThreadId]).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new PreviewSessionLookupError({
+                threadId: closedThreadId,
+                tabId: "missing-preview",
+              }),
+            ),
+          ),
+        ),
+      archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(archived);
+      yield* reactor.drain;
+
+      expect(yield* Ref.get(previewCloseCalls)).toEqual([threadId]);
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -351,7 +391,7 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
     const threadId = ThreadId.make("thread-force-delete-cold");
     const commandId = CommandId.make("command-force-delete-cold");
     const deleteStarted = yield* Deferred.make<void>();
-    const previewClosed = yield* Deferred.make<void>();
+    const previewCloseCalls = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
 
     const orchestrationEngineLayer = Layer.succeed(OrchestrationEngineService, {
       readEvents: () => Stream.empty,
@@ -366,10 +406,8 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
       close: () => Effect.void,
     });
     const previewLayer = Layer.mock(PreviewManager)({
-      close: (input) =>
-        Effect.sync(() => {
-          assert.equal(input.threadId, threadId);
-        }).pipe(Effect.andThen(Deferred.succeed(previewClosed, undefined)), Effect.asVoid),
+      close: ({ threadId: closedThreadId }) =>
+        Ref.update(previewCloseCalls, (calls) => [...calls, closedThreadId]),
     });
     const loggerLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
     const coldStorageLayer = ThreadColdStorageLive.pipe(
@@ -512,9 +550,9 @@ effectIt.effect("force-deleting a project removes an already-cold archived threa
 
       yield* reactor.start();
       yield* PubSub.publish(events, { ...deletedEvent, sequence: 4 });
-      yield* Deferred.await(previewClosed);
       yield* Deferred.await(deleteStarted);
       yield* reactor.drain;
+      expect(yield* Ref.get(previewCloseCalls)).toEqual([threadId]);
 
       const hotRows = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM projection_threads WHERE thread_id = ${threadId}

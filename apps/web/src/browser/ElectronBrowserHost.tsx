@@ -8,17 +8,18 @@ import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { removePreviewThread, useActivePreviewSessions } from "~/previewStateStore";
-import { useThreadRefs } from "~/state/entities";
+import { useLiveEnvironmentIds, useThreadRefs } from "~/state/entities";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
-import { collectRemovedPreviewThreadRefs } from "./previewThreadLifecycle";
+import { reconcilePreviewThreadRefs } from "./previewThreadLifecycle";
 
 export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
   const activeThreadRefs = useThreadRefs();
+  const liveEnvironmentIds = useLiveEnvironmentIds();
   const previousActiveThreadRefs = useRef(activeThreadRefs);
   const sessions = useMemo(
     () =>
@@ -36,16 +37,17 @@ export function ElectronBrowserHost() {
   );
 
   useEffect(() => {
-    const removedThreadRefs = collectRemovedPreviewThreadRefs({
+    const reconciliation = reconcilePreviewThreadRefs({
       previousActiveThreadRefs: previousActiveThreadRefs.current,
       activeThreadRefs,
+      liveEnvironmentIds,
     });
-    previousActiveThreadRefs.current = activeThreadRefs;
-    for (const threadRef of removedThreadRefs) {
+    previousActiveThreadRefs.current = reconciliation.nextActiveThreadRefs;
+    for (const threadRef of reconciliation.removedThreadRefs) {
       removePreviewThread(threadRef);
       usePreviewMiniPlayerStore.getState().removeThread(threadRef);
     }
-  }, [activeThreadRefs]);
+  }, [activeThreadRefs, liveEnvironmentIds]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
