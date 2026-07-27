@@ -134,6 +134,23 @@ const fixtures = [
 ] satisfies ReadonlyArray<OrchestrationThreadActivity>;
 
 describe("projectActivityPayload", () => {
+  function comparableThreadFeed(activities: ReadonlyArray<OrchestrationThreadActivity>) {
+    return buildThreadFeed(makeThread(activities)).map((entry) =>
+      entry.type === "activity"
+        ? {
+            ...entry,
+            activity: {
+              ...entry.activity,
+              fullDetail: entry.activity.getFullDetail(),
+              copyText: entry.activity.getCopyText(),
+              getFullDetail: undefined,
+              getCopyText: undefined,
+            },
+          }
+        : entry,
+    );
+  }
+
   it("drops unread bulk while retaining command, file, tool, and summary inputs", () => {
     const projected = projectActivityPayload(fixtures[0]!);
     expect(projected.payload).toEqual({
@@ -170,9 +187,7 @@ describe("projectActivityPayload", () => {
     for (const activity of fixtures) {
       const projected = projectActivityPayload(activity);
       expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([activity]));
-      expect(buildThreadFeed(makeThread([projected]))).toEqual(
-        buildThreadFeed(makeThread([activity])),
-      );
+      expect(comparableThreadFeed([projected])).toEqual(comparableThreadFeed([activity]));
     }
   });
 
