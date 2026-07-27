@@ -12,6 +12,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+
+/**
+ * A missing `.git` is the ordinary answer to "is this a worktree root?" — it
+ * means keep walking up. Any other failure is not evidence of absence: an
+ * unreadable file, a busy descriptor or a disconnected network mount all say
+ * "unknown", and answering "not a worktree" to unknown is precisely the
+ * outcome this module exists to prevent, because the caller then falls through
+ * to the shared home and its live database. Only absence is absence; the rest
+ * propagate.
+ */
+const isAbsent = (error: PlatformError.PlatformError): boolean => error.reason._tag === "NotFound";
 
 /**
  * A `.git` file points at the real git directory. A linked worktree's lives at
@@ -55,7 +67,11 @@ const pointsAtLinkedWorktree = (gitFileContents: string, path: Path.Path): boole
  */
 export const resolveGitWorktreePath = (
   cwd: string,
-): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  string | undefined,
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -63,7 +79,10 @@ export const resolveGitWorktreePath = (
     let directory = path.resolve(cwd);
     for (;;) {
       const gitPath = path.join(directory, ".git");
-      const info = yield* fileSystem.stat(gitPath).pipe(Effect.option);
+      const info = yield* fileSystem.stat(gitPath).pipe(
+        Effect.map(Option.some),
+        Effect.catchIf(isAbsent, () => Effect.succeed(Option.none())),
+      );
       if (Option.isSome(info)) {
         // A directory means the main checkout. Stop either way: nesting one
         // repository inside another does not make the outer one this root.
@@ -71,10 +90,10 @@ export const resolveGitWorktreePath = (
           return undefined;
         }
         // A submodule also has a `.git` file, but it is not a worktree of this
-        // repository and gets no worktree-local home.
-        const contents = yield* fileSystem
-          .readFileString(gitPath)
-          .pipe(Effect.orElseSucceed(() => ""));
+        // repository and gets no worktree-local home. `stat` has already
+        // established the file is there, so a read failure here is a real
+        // fault rather than an answer — let it surface.
+        const contents = yield* fileSystem.readFileString(gitPath);
         return pointsAtLinkedWorktree(contents, path) ? directory : undefined;
       }
       const parent = path.dirname(directory);
@@ -92,7 +111,11 @@ export const resolveGitWorktreePath = (
  */
 export const resolveWorktreeT3Home = (
   cwd: string,
-): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  string | undefined,
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const worktreePath = yield* resolveGitWorktreePath(cwd);
     if (worktreePath === undefined) {
