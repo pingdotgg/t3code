@@ -687,6 +687,45 @@
         /// merely logged for the same reason — a dock that stopped mounting
         /// entirely would otherwise log `phase=none`, write a perfectly
         /// valid-looking PNG of a thread with no dock in it, and pass.
+        /// Text of the detail column only — the pane that hosts either the
+        /// chat surface or `DiffReviewView`, never both.
+        ///
+        /// `mainWindowText()` is too coarse to prove which of those two is
+        /// mounted: the sidebar and the inspector are in the same window, and
+        /// the inspector's turn card quotes the user's prompt. Today it
+        /// truncates that quote, so a window-wide search happens to give the
+        /// right answer, but that is luck rather than a property — widen the
+        /// card and the check silently passes forever.
+        ///
+        /// `NavigationSplitView` + `.inspector` nests two `NSSplitView`s:
+        /// the outer splits sidebar | rest, the inner splits detail |
+        /// inspector. So the deepest split's first pane is the detail column.
+        ///
+        /// Returns nil rather than falling back to the whole window if that
+        /// pane cannot be found. Every way this can guess wrong — a changed
+        /// hierarchy, a missing split — then yields a loud failure instead of
+        /// a silent pass, which is the direction a regression check has to
+        /// fail in.
+        private static func detailColumnText() -> String? {
+            guard let window = NSApp.windows.first(where: { $0.isVisible }),
+                let root = window.contentView
+            else { return nil }
+
+            var deepest: (depth: Int, split: NSSplitView)?
+            func walk(_ view: NSView, depth: Int) {
+                if let split = view as? NSSplitView, !split.arrangedSubviews.isEmpty,
+                    depth > (deepest?.depth ?? -1)
+                {
+                    deepest = (depth, split)
+                }
+                for sub in view.subviews { walk(sub, depth: depth + 1) }
+            }
+            walk(root, depth: 0)
+
+            guard let pane = deepest?.split.arrangedSubviews.first else { return nil }
+            return accessibleText(in: pane)
+        }
+
         private static func probeLiveActivitySurfaces(
             model: AppModel, multi: MultiDeviceModel, dir: String
         ) async -> [String] {
@@ -747,12 +786,14 @@
                 let onChatSurface = model.threadState("thread-8")?.isReviewing != true
                 // The load-bearing check, read back off the live window
                 // rather than off the model: the thread's own transcript text
-                // is on screen. `DiffReviewView` renders a file list and diff
-                // hunks and contains none of it, so this cannot be satisfied
-                // by the pane the pet must not be captured on.
+                // is in the *detail column*. `DiffReviewView` occupies that
+                // same column and renders a file list and diff hunks instead,
+                // so this cannot be satisfied by the pane the pet must not be
+                // captured on — and scoping to the column keeps the sidebar
+                // and the inspector's quoted prompt out of the search.
                 //
-                // Pulled from the timeline rather than hardcoded so the
-                // fixture and the assertion cannot drift apart.
+                // Excerpt pulled from the timeline rather than hardcoded so
+                // the fixture and the assertion cannot drift apart.
                 let transcriptExcerpt = model.timeline(threadID: "thread-8")
                     .compactMap { item -> String? in
                         if case .userMessage(_, let text, _, _) = item { return text }
@@ -760,21 +801,32 @@
                     }
                     .first
                     .map { String($0.prefix(40)) }
-                let onChatTranscript = transcriptExcerpt.map(mainWindowText().contains) ?? false
+                let columnText = detailColumnText()
+                let onChatTranscript: Bool
+                if let columnText, let transcriptExcerpt {
+                    onChatTranscript = columnText.contains(transcriptExcerpt)
+                } else {
+                    onChatTranscript = false
+                }
                 print(
                     "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
                         + "phase=\(petPhase?.rawValue ?? "none") "
-                        + "chatSurface=\(onChatSurface) transcriptOnScreen=\(onChatTranscript)")
+                        + "chatSurface=\(onChatSurface) "
+                        + "columnChars=\(columnText?.count ?? -1) "
+                        + "transcriptInColumn=\(onChatTranscript)")
                 failures.append(
                     contentsOf: expectSelected("thread-8", model: model, scene: "review-pet"))
                 if petPhase != .reviewing {
                     print("UIProbe: FAIL review pet expected the reviewing phase")
                     failures.append("review-pet-phase")
                 }
-                if !onChatTranscript {
+                if columnText == nil {
+                    print("UIProbe: FAIL review pet could not locate the detail column")
+                    failures.append("review-pet-no-detail-column")
+                } else if !onChatTranscript {
                     print(
-                        "UIProbe: FAIL review pet captured a surface with no transcript on it "
-                            + "(looked for \"\(transcriptExcerpt ?? "")\")")
+                        "UIProbe: FAIL review pet captured a detail column with no transcript "
+                            + "on it (looked for \"\(transcriptExcerpt ?? "")\")")
                     failures.append("review-pet-wrong-surface")
                 }
                 // Secondary, and deliberately still `!= true`: it mirrors
