@@ -34,7 +34,6 @@ export const relayMobileDevices = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
-    index("idx_relay_mobile_devices_user").on(table.userId),
     uniqueIndex("idx_relay_mobile_devices_push_token").on(table.pushToken),
     uniqueIndex("idx_relay_mobile_devices_push_to_start_token").on(table.pushToStartToken),
   ],
@@ -56,7 +55,6 @@ export const relayLiveActivities = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
-    index("idx_relay_live_activities_user").on(table.userId),
     uniqueIndex("idx_relay_live_activities_activity_push_token").on(table.activityPushToken),
   ],
 );
