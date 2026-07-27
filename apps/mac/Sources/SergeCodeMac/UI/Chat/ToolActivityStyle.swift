@@ -67,28 +67,53 @@ extension ToolEventKind {
     }
 }
 
+/// Shape, size and fill shared by every leading activity badge: the static
+/// `ActivityIconChip` on transcript rows and the live dock's `AuroraChip`.
+///
+/// One definition because the two stack in the same column, the dock's badge
+/// sitting directly under the last row's, where a point of difference in
+/// radius or tint strength reads immediately as a mistake.
+enum ActivityChipMetrics {
+    static let size = TranscriptMetrics.iconColumn
+    static let strokeOpacity = 0.35
+
+    static func cornerRadius(size: CGFloat = size) -> CGFloat { size * 0.32 }
+
+    static func shape(size: CGFloat = size) -> RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius(size: size), style: .continuous)
+    }
+
+    static func glyphFont(size: CGFloat = size) -> Font {
+        .system(size: size * 0.46, weight: .semibold)
+    }
+
+    static func fill(tint: Color) -> LinearGradient {
+        LinearGradient(
+            colors: [tint.opacity(0.30), tint.opacity(0.12)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing)
+    }
+}
+
 /// Squircle badge leading every activity row: a kind-tinted gradient tile
 /// with the tool glyph. Deliberately bolder than the old 16pt glyph column —
 /// the stream should be glanceable from across the room.
 struct ActivityIconChip: View {
     let style: ToolActivityStyle
-    var size: CGFloat = TranscriptMetrics.iconColumn
-
-    private var cornerRadius: CGFloat { size * 0.32 }
+    var size: CGFloat = ActivityChipMetrics.size
 
     var body: some View {
         Image(systemName: style.symbolName)
-            .font(.system(size: size * 0.46, weight: .semibold))
+            .font(ActivityChipMetrics.glyphFont(size: size))
             .foregroundStyle(style.tint)
             .frame(width: size, height: size)
             .background(
-                LinearGradient(
-                    colors: [style.tint.opacity(0.30), style.tint.opacity(0.12)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                ActivityChipMetrics.fill(tint: style.tint),
+                in: ActivityChipMetrics.shape(size: size))
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(style.tint.opacity(0.35), lineWidth: 0.5))
+                ActivityChipMetrics.shape(size: size)
+                    .strokeBorder(
+                        style.tint.opacity(ActivityChipMetrics.strokeOpacity),
+                        lineWidth: 0.5))
     }
 }

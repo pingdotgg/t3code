@@ -57,7 +57,7 @@ another's PNGs (or a crashed run's leftovers). The probe echoes
   runs can stall on the sidecar). Override with
   `SERGECODE_UI_PROBE_TIMEOUT=<seconds>`.
 - `SERGECODE_PLAYFUL_MOTION=0` (DEBUG only) renders every playful surface —
-  the live activity dock's aurora orb, the auto-review pet — in its opt-out
+  the live activity dock's aurora chip, the auto-review pet — in its opt-out
   presentation for the whole run, so the fallbacks can be captured. Re-run
   the probe with it to check both sides of that branch. It never writes the
   stored preference.

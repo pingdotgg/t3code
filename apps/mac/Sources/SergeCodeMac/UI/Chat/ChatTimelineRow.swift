@@ -937,10 +937,10 @@ private struct ToolEventRow: View {
                         }
                         .successRipple(
                             fire: displayState == .succeeded,
-                            cornerRadius: TranscriptMetrics.iconColumn * 0.32)
+                            cornerRadius: ActivityChipMetrics.cornerRadius())
                         .failureRipple(
                             fire: displayState == .failed,
-                            cornerRadius: TranscriptMetrics.iconColumn * 0.32)
+                            cornerRadius: ActivityChipMetrics.cornerRadius())
                     Text(name)
                         .font(SurgeTypography.toolTitle)
                         .layoutPriority(1)
