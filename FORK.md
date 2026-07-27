@@ -23,6 +23,11 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 - Fork release jobs use GitHub-hosted runners where upstream private runners are unavailable.
 - Web dist release archives are built as hosted static apps and carry the release channel.
 
+### Nix Package
+
+- The fork exposes the server and web bundle as an `x86_64-linux` flake package.
+- The package version follows the server manifest by default and supports the generated nightly version override.
+
 ### Desktop Updater Channels
 
 - Stable builds use `latest`; nightly builds use `nightly`.
