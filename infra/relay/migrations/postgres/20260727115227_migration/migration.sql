@@ -4,4 +4,3 @@ CREATE TABLE "relay_managed_tunnel_limits" (
 	"created_at" varchar(64) NOT NULL,
 	"updated_at" varchar(64) NOT NULL
 );
-
