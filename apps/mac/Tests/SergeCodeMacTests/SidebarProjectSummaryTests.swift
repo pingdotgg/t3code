@@ -35,6 +35,63 @@ struct SidebarProjectSummaryTests {
         #expect(SidebarProjectSummary.empty.segments.isEmpty)
     }
 
+    @Test("bands plus their gaps come to exactly the track at the meter's size")
+    func meterLayoutFillsTheTrack() {
+        let summary = SidebarProjectSummary(attention: 1, running: 3, idle: 2, settled: 6)
+        let layout = summary.meterLayout(track: 44, spacing: 1.5, minimumBar: 2)
+
+        #expect(layout.widths.count == 4)
+        #expect(layout.spacing == 1.5)
+        #expect(abs(layout.occupied - 44) < 0.0001)
+        #expect(layout.widths.allSatisfy { $0 >= 2 })
+    }
+
+    /// Both reservations come out of the track before the remainder is shared,
+    /// rather than being clamped on afterwards. Four bands at a 2pt minimum plus
+    /// three 1.5pt gaps want 12.5pt, and an `HStack` handed more than its frame
+    /// draws past it instead of compressing.
+    @Test("a track too narrow for the requested gaps and floor never overflows")
+    func narrowTrackDoesNotOverflow() {
+        let summary = SidebarProjectSummary(attention: 1, running: 1, idle: 1, settled: 1)
+
+        for track in [0.0, 1.0, 4.0, 6.5, 10.0, 12.5, 20.0, 44.0] {
+            let layout = summary.meterLayout(track: track, spacing: 1.5, minimumBar: 2)
+            #expect(layout.widths.allSatisfy { $0 >= 0 })
+            #expect(layout.spacing >= 0)
+            #expect(abs(layout.occupied - track) < 0.0001)
+        }
+    }
+
+    /// Gaps are laid out whether or not the bands have room, so on a track that
+    /// cannot seat them the gap is what gives — otherwise three 1.5pt gaps alone
+    /// would overrun a 4pt meter no matter how narrow the bands got.
+    @Test("gaps shrink before they can overrun the track")
+    func gapsShrinkOnANarrowTrack() {
+        let summary = SidebarProjectSummary(attention: 2, running: 1, idle: 1, settled: 1)
+        let layout = summary.meterLayout(track: 4, spacing: 1.5, minimumBar: 2)
+
+        #expect(layout.spacing < 1.5)
+        #expect(layout.spacing * 3 <= 4 * SidebarProjectSummary.maximumGapShare + 0.0001)
+        #expect(abs(layout.occupied - 4) < 0.0001)
+    }
+
+    @Test("bands keep their proportions once the track is wide enough")
+    func bandsKeepTheirProportions() {
+        let summary = SidebarProjectSummary(attention: 1, running: 5, idle: 0, settled: 0)
+        let layout = summary.meterLayout(track: 44, spacing: 1.5, minimumBar: 2)
+
+        #expect(layout.widths[1] > layout.widths[0])
+    }
+
+    @Test("an empty summary has no bands to lay out")
+    func emptySummaryHasNoBars() {
+        let layout = SidebarProjectSummary.empty.meterLayout(
+            track: 44, spacing: 1.5, minimumBar: 2)
+
+        #expect(layout.widths.isEmpty)
+        #expect(layout.occupied == 0)
+    }
+
     @Test("subtitle leads with what wants a human, then with what is moving")
     func subtitlePrioritizesAttentionThenActivity() {
         #expect(

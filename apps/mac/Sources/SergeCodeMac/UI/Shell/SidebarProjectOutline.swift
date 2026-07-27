@@ -132,13 +132,36 @@ struct SidebarActivityMeter: View {
     var width: CGFloat = 44
     var height: CGFloat = 4
 
+    /// The gap the meter asks for between bands, and the smallest band it asks
+    /// to keep. Both are requests: `meterLayout` reserves them out of the track
+    /// before sharing the remainder, and shrinks them on a track too narrow to
+    /// afford them, so the bands can never add up to more than the meter.
+    private static let requestedSpacing: Double = 1.5
+    private static let requestedMinimumBar: Double = 2
+
+    /// A band paired with the width the geometry gave it. Identified by kind, so
+    /// a bucket emptying out removes *that* band rather than renumbering the
+    /// rest and animating every one of them.
+    private struct Band: Identifiable {
+        let segment: SidebarProjectSummary.Segment
+        let width: CGFloat
+
+        var id: String { segment.id }
+    }
+
     var body: some View {
-        let segments = summary.segments
-        HStack(spacing: 1.5) {
-            ForEach(segments) { segment in
+        let layout = summary.meterLayout(
+            track: Double(width),
+            spacing: Self.requestedSpacing,
+            minimumBar: Self.requestedMinimumBar)
+        let bands = zip(summary.segments, layout.widths).map {
+            Band(segment: $0, width: $1)
+        }
+        HStack(spacing: layout.spacing) {
+            ForEach(bands) { band in
                 Capsule(style: .continuous)
-                    .fill(segment.kind.color)
-                    .frame(width: max(2, barWidth(segment, count: segments.count)))
+                    .fill(band.segment.kind.color)
+                    .frame(width: band.width)
                     .transition(Motion.pop(from: .leading))
             }
         }
@@ -150,11 +173,6 @@ struct SidebarActivityMeter: View {
         .animation(Motion.structure, value: summary)
         .accessibilityElement()
         .accessibilityLabel(summary.accessibilitySummary)
-    }
-
-    private func barWidth(_ segment: SidebarProjectSummary.Segment, count: Int) -> CGFloat {
-        let gaps = CGFloat(max(0, count - 1)) * 1.5
-        return (width - gaps) * segment.fraction
     }
 }
 

@@ -86,6 +86,47 @@ struct SidebarProjectSummary: Equatable, Sendable {
         }
     }
 
+    /// Where the meter's bands sit: their point widths and the gap actually used
+    /// between them.
+    struct MeterLayout: Equatable, Sendable {
+        let widths: [Double]
+        let spacing: Double
+
+        /// What the bands and their gaps occupy together. Never more than the
+        /// track they were laid out for.
+        var occupied: Double {
+            widths.reduce(0, +) + spacing * Double(max(0, widths.count - 1))
+        }
+    }
+
+    /// Gaps never claim more than this share of the track. An `HStack` lays its
+    /// spacing out whether or not the bands have room, so on a meter too narrow
+    /// to seat the requested gaps the gaps are what has to give.
+    static let maximumGapShare = 0.5
+
+    /// Lays the bands out across a `track`-wide meter. Widths plus gaps come to
+    /// exactly `track`, at any track width and any band count.
+    ///
+    /// Both reservations happen before the remainder is shared out, rather than
+    /// being clamped on afterwards. Clamping is what overflows: four bands each
+    /// raised to a 2pt minimum, plus three 1.5pt gaps, want 12.5pt — more than a
+    /// narrow meter has — and an `HStack` handed more than its frame does not
+    /// compress, it draws past it. Reserving degrades instead: the gap shrinks
+    /// first, then the band floor, and the proportions survive to the end.
+    func meterLayout(track: Double, spacing: Double, minimumBar: Double) -> MeterLayout {
+        let bands = segments
+        guard !bands.isEmpty else { return MeterLayout(widths: [], spacing: spacing) }
+        let gapCount = Double(bands.count - 1)
+        let affordableGaps = min(spacing * gapCount, max(0, track) * Self.maximumGapShare)
+        let resolvedSpacing = gapCount > 0 ? affordableGaps / gapCount : spacing
+        let usable = max(0, track - affordableGaps)
+        let floor = min(minimumBar, usable / Double(bands.count))
+        let slack = usable - floor * Double(bands.count)
+        return MeterLayout(
+            widths: bands.map { floor + slack * $0.fraction },
+            spacing: resolvedSpacing)
+    }
+
     // MARK: - Text
 
     /// The header's second line. Deliberately short: what is on fire, then
