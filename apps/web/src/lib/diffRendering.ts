@@ -52,6 +52,25 @@ export type RenderablePatch =
       reason: string;
     };
 
+export interface DiffLineStat {
+  additions: number;
+  deletions: number;
+}
+
+export function getDiffLineStat(files: ReadonlyArray<FileDiffMetadata>): DiffLineStat {
+  return files.reduce<DiffLineStat>(
+    (total, file) => {
+      for (const hunk of file.hunks) {
+        total.additions += hunk.additionLines;
+        total.deletions += hunk.deletionLines;
+      }
+
+      return total;
+    },
+    { additions: 0, deletions: 0 },
+  );
+}
+
 interface RenderablePatchOptions {
   /**
    * Pierre's partial-patch parser keeps hunk render starts in source-file
