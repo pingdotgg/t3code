@@ -8,8 +8,12 @@ import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { resolveSessionCookieName } from "./utils.ts";
 
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+
+/** Pinned so dev-mode cookie tests can assert the port-scoped name. */
+const TEST_SERVER_PORT = 13_773;
 
 const makeServerConfigLayer = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
@@ -19,6 +23,12 @@ const makeServerConfigLayer = (overrides?: Partial<ServerConfig.ServerConfig["Se
       return {
         ...config,
         ...overrides,
+        // Last, so the port cannot be overridden out from under
+        // makeCookieRequest — which builds the cookie name from this constant.
+        // An override that changed it would leave the server reading
+        // t3_session_<other> while every request still sent t3_session_13773,
+        // and the tests would fail for a reason unrelated to what they assert.
+        port: TEST_SERVER_PORT,
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-server-test-" })));
@@ -35,7 +45,11 @@ const makeCookieRequest = (
 ): Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]>[0] =>
   ({
     cookies: {
-      t3_session: sessionToken,
+      // Derived, not hardcoded: the name is port-scoped so concurrent servers
+      // on one hostname don't share a cookie. Mode and devUrl mirror
+      // ServerConfig.layerTest, so this resolves to whatever the server reads.
+      [resolveSessionCookieName({ mode: "web", port: TEST_SERVER_PORT, devUrl: undefined })]:
+        sessionToken,
     },
     headers: {},
   }) as unknown as Parameters<
