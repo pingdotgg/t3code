@@ -1716,16 +1716,18 @@ public final class AppModel {
 
     public func setExecutorModel(instanceID: String?, modelID: String?, maxSubAgents: Int? = nil) async {
         guard let threadID = selectedThreadID else { return }
+        // Resolved before the await: a provider reconnect or catalog refresh
+        // landing mid-flight would otherwise drop a switch the backend
+        // accepted out of the recents list. Nil ids are a clear, not a
+        // selection, so they record nothing.
+        let requested = ModelPickerCatalog.selectedOption(
+            in: models, instanceID: instanceID, modelID: modelID)
         do {
             try await backend.setExecutorModel(
                 threadID: threadID, instanceID: instanceID, modelID: modelID,
                 maxSubAgents: maxSubAgents)
-            if let instanceID, let modelID,
-                let option = models.first(where: {
-                    $0.instanceID == instanceID && $0.modelID == modelID
-                })
-            {
-                modelPickerPreferences.recordUsage(for: option)
+            if let requested {
+                modelPickerPreferences.recordUsage(for: requested)
             }
         } catch {
             lastError = String(describing: error)

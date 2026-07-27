@@ -78,6 +78,27 @@ struct AppModelModelRecencyTests {
 
         #expect(preferences.recents == ["codex/gpt-5"])
     }
+
+    @Test("a catalog refresh mid-switch cannot drop the accepted executor model")
+    func executorSwitchSurvivesCatalogChurn() async {
+        let preferences = makePreferences()
+        let backend = RecencyStubBackend()
+        let model = makeModel(backend: backend, preferences: preferences)
+        backend.modelsResult = [option]
+        await model.refreshAll()
+        model.selectedThreadID = "t-1"
+
+        // The provider drops off while the switch is in flight — the backend
+        // still accepted it, so the model belongs in Recent.
+        backend.duringSetExecutorModel = { [weak model] in
+            backend.modelsResult = []
+            await model?.refreshAll()
+        }
+        await model.setExecutorModel(instanceID: "codex-a", modelID: "gpt-5")
+
+        #expect(model.models.isEmpty)
+        #expect(preferences.recents == ["codex/gpt-5"])
+    }
 }
 
 private enum RecencyStubBackendError: Error, Sendable {
@@ -92,6 +113,9 @@ private final class RecencyStubBackend: BackendService, @unchecked Sendable {
     var setModelShouldFail = false
     var setExecutorModelShouldFail = false
     var modelsResult: [ModelOption] = []
+    /// Runs while the executor switch is in flight, so a test can land a
+    /// catalog refresh between the request and the recency write.
+    var duringSetExecutorModel: (@MainActor @Sendable () async -> Void)?
 
     func events() async -> AsyncStream<BackendEvent> { streamPair.stream }
 
@@ -134,6 +158,7 @@ private final class RecencyStubBackend: BackendService, @unchecked Sendable {
         threadID: String, instanceID: String?, modelID: String?, maxSubAgents: Int?
     ) async throws {
         if setExecutorModelShouldFail { throw RecencyStubBackendError.failed }
+        await duringSetExecutorModel?()
     }
     func setModel(threadID: String, model: ModelOption) async throws {
         if setModelShouldFail { throw RecencyStubBackendError.failed }
