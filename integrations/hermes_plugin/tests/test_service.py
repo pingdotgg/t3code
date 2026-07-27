@@ -452,9 +452,17 @@ class ServiceDefinitionTest(unittest.TestCase):
             json.dumps({"version": 1, "desired_state": "installed"}) + "\n",
             encoding="utf-8",
         )
-        for service_dir in (config.service_dir, config.watchdog_service_dir):
-            service_dir.mkdir(parents=True, exist_ok=True)
-            (service_dir / "run").touch()
+        config.service_dir.mkdir(parents=True)
+        (config.service_dir / "run").write_text(
+            "#!/bin/sh\n"
+            "  # t3-service-environment:begin\n"
+            f"  export HERMES_HOME='{config.hermes_home}'\n"
+            "  # t3-service-environment:end\n"
+            "exec t3 serve\n",
+            encoding="utf-8",
+        )
+        config.watchdog_service_dir.mkdir(parents=True)
+        (config.watchdog_service_dir / "run").touch()
 
         with (
             patch(
@@ -478,6 +486,94 @@ class ServiceDefinitionTest(unittest.TestCase):
             all(call.args[0][0] == "s6-svstat" for call in command.call_args_list)
         )
         watchdog.assert_not_called()
+        install_release.assert_not_called()
+
+    def test_reconcile_repairs_running_empty_environment_once(self) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            hermes_home=root / "hermes",
+            runtime_root=root / "hermes" / "t3code",
+            binary_path=root / "hermes" / "t3code" / "bin" / "t3",
+            data_dir=root / "hermes" / "t3code" / "data",
+            service_dir=root / "service" / "t3code",
+            watchdog_service_dir=root / "service" / "t3code-plugin-watchdog",
+        )
+        config.binary_path.parent.mkdir(parents=True)
+        config.binary_path.write_bytes(b"verified replacement binary")
+        _set_desired_state(config, "installed", version="1.2.4")
+        config.service_dir.mkdir(parents=True)
+        service_run = config.service_dir / "run"
+        service_run.write_text(
+            "#!/bin/sh\n"
+            "  # t3-service-environment:begin\n"
+            "  # t3-service-environment:end\n"
+            "s6-svperms -G hermes service\n"
+            "exec old-deleted-launcher serve\n",
+            encoding="utf-8",
+        )
+        service_run.chmod(0o700)
+        config.watchdog_service_dir.mkdir(parents=True)
+        (config.watchdog_service_dir / "run").touch()
+        updates = 0
+
+        def run_command(args, **_kwargs):
+            nonlocal updates
+            if args[0] == "s6-svstat":
+                return CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="up (pid 123) 1 seconds\n",
+                    stderr="",
+                )
+            if args[1:3] == ["service", "update"]:
+                updates += 1
+                service_run.write_text(
+                    "#!/bin/sh\n"
+                    "  # t3-service-environment:begin\n"
+                    f"  export HERMES_HOME='{config.hermes_home}'\n"
+                    "  # t3-service-environment:end\n"
+                    "s6-svperms -G hermes service\n"
+                    "exec current-launcher serve\n",
+                    encoding="utf-8",
+                )
+                service_run.chmod(0o700)
+                return CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="Updated T3 Code service.\n",
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected command: {args[0]}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value="1.2.4",
+            ),
+            patch(
+                "integrations.hermes_plugin.service._command",
+                side_effect=run_command,
+            ) as command,
+            patch(
+                "integrations.hermes_plugin.service.install_release"
+            ) as install_release,
+        ):
+            repaired = reconcile(config)
+            current = reconcile(config)
+
+        self.assertEqual(repaired["action"], "repaired")
+        self.assertEqual(current["action"], "not_needed")
+        self.assertEqual(updates, 1)
+        command.assert_any_call(_t3_service_args(config, "update"), timeout=45)
+        self.assertIn(
+            f"  export HERMES_HOME='{config.hermes_home}'\n",
+            service_run.read_text(encoding="utf-8"),
+        )
+        self.assertNotIn(
+            "s6-svperms ",
+            service_run.read_text(encoding="utf-8"),
+        )
         install_release.assert_not_called()
 
     def test_reconcile_adapts_complete_stopped_service_before_starting(
@@ -510,7 +606,12 @@ class ServiceDefinitionTest(unittest.TestCase):
         config.service_dir.mkdir(parents=True)
         service_run = config.service_dir / "run"
         service_run.write_text(
-            "#!/bin/sh\ns6-svperms -G hermes service\nexec t3 serve\n",
+            "#!/bin/sh\n"
+            "  # t3-service-environment:begin\n"
+            f"  export HERMES_HOME='{config.hermes_home}'\n"
+            "  # t3-service-environment:end\n"
+            "s6-svperms -G hermes service\n"
+            "exec t3 serve\n",
             encoding="utf-8",
         )
         service_run.chmod(0o751)
@@ -551,7 +652,11 @@ class ServiceDefinitionTest(unittest.TestCase):
         watchdog.assert_not_called()
         self.assertEqual(
             service_run.read_text(encoding="utf-8"),
-            "#!/bin/sh\nexec t3 serve\n",
+            "#!/bin/sh\n"
+            "  # t3-service-environment:begin\n"
+            f"  export HERMES_HOME='{config.hermes_home}'\n"
+            "  # t3-service-environment:end\n"
+            "exec t3 serve\n",
         )
         self.assertEqual(service_run.stat().st_mode & 0o777, 0o751)
 

@@ -82,8 +82,11 @@ backend starts a failure-isolated background reconciliation. If intent is `insta
 ephemeral `/run/service/t3code` or `/run/service/t3code-plugin-watchdog` slot is missing, it recreates
 only the missing slot using the configured host, port, service user/group, `HERMES_HOME`, data
 directory, and the existing service hardening. Reconciliation shares the lifecycle lock used by the
-dashboard actions and the watchdog, leaves running slots alone, starts complete stopped slots without
-rewriting them, and will not rewrite a partial or live supervise tree.
+dashboard actions and the watchdog, leaves current running slots alone, starts complete stopped slots
+without replacing their supervise tree, and will not rewrite a partial supervise tree. A running or
+stopped T3 definition whose native environment marker does not contain the configured `HERMES_HOME`
+is repaired once through the retained checksum-verified binary's local **Update** path. That refreshes
+stale launchers without a release lookup; the repaired marker makes later reconciliation a no-op.
 
 Hermes pre-seeds each dynamic service's supervision skeleton with the ownership required by its
 no-new-privileges container. After the native T3 service command writes an s6 run script, the plugin

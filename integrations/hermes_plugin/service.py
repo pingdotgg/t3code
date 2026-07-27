@@ -366,6 +366,48 @@ def _remove_redundant_s6_svperms(service_dir: Path) -> None:
         ) from error
 
 
+def _service_has_expected_hermes_home(config: PluginConfig) -> bool:
+    """Check the native T3 environment marker without exposing its contents."""
+
+    run_path = config.service_dir / "run"
+    try:
+        descriptor = os.open(run_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, encoding="utf-8") as source:
+            contents = source.read()
+    except (OSError, UnicodeError) as error:
+        raise ServiceError(
+            f"could not inspect the T3 s6 run script at {run_path}: {error}"
+        ) from error
+
+    begin = "  # t3-service-environment:begin\n"
+    end = "  # t3-service-environment:end\n"
+    block_start = contents.find(begin)
+    if block_start < 0:
+        return False
+    content_start = block_start + len(begin)
+    block_end = contents.find(end, content_start)
+    if block_end < 0:
+        return False
+
+    assignments: list[str] = []
+    for line in contents[content_start:block_end].splitlines():
+        try:
+            tokens = shlex.split(line.strip())
+        except ValueError:
+            if "HERMES_HOME" in line:
+                return False
+            continue
+        if (
+            len(tokens) == 2
+            and tokens[0] == "export"
+            and tokens[1].startswith("HERMES_HOME=")
+        ):
+            assignments.append(tokens[1].removeprefix("HERMES_HOME="))
+        elif "HERMES_HOME" in line:
+            return False
+    return assignments == [str(config.hermes_home)]
+
+
 def _t3_service_args(config: PluginConfig, action: str) -> list[str]:
     args = [
         str(config.binary_path),
@@ -665,9 +707,16 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
         watchdog_running = watchdog_installed and _service_running(
             config.watchdog_service_dir
         )
+        service_repaired = False
+        if service_installed and not _service_has_expected_hermes_home(config):
+            _validate_recovery_binary(config, state)
+            _write_t3_s6_service(config, "update", timeout=45)
+            service_running = True
+            service_repaired = True
         if service_running and watchdog_running:
-            _record_reconciliation(config, "not_needed")
-            return {"ok": True, "action": "not_needed"}
+            action = "repaired" if service_repaired else "not_needed"
+            _record_reconciliation(config, action)
+            return {"ok": True, "action": action}
 
         if service_installed and watchdog_installed:
             if not service_running:
@@ -681,8 +730,9 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
                     ["s6-svc", "-u", str(config.watchdog_service_dir)],
                     timeout=5,
                 )
-            _record_reconciliation(config, "started")
-            return {"ok": True, "action": "started"}
+            action = "repaired" if service_repaired else "started"
+            _record_reconciliation(config, action)
+            return {"ok": True, "action": action}
 
         _validate_recovery_binary(config, state)
         if not config.scan_dir.is_dir():
@@ -743,8 +793,9 @@ def _reconcile_locked(config: PluginConfig) -> dict[str, object]:
                 _remove_service_dir(config.service_dir)
             raise
 
-        _record_reconciliation(config, "recovered")
-        return {"ok": True, "action": "recovered"}
+        action = "repaired" if service_repaired else "recovered"
+        _record_reconciliation(config, action)
+        return {"ok": True, "action": action}
     except Exception as error:
         record_reconciliation_failure(config, error)
         raise
