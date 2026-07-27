@@ -84,6 +84,7 @@
             // inspector has content. Prefer thread-1: it's the one the mock
             // seeds with plan progress, so the plan strip is exercised too.
             try? await Task.sleep(for: .seconds(2))
+            probeWelcomeShell(multi: multi, dir: dir, failures: &probeFailures)
             if model.selectedThreadID == nil {
                 if let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
                     ?? model.threads.first?.id
@@ -91,6 +92,9 @@
                     multi.select(threadID: threadID, on: model.deviceID)
                 }
             }
+            // The inspector starts closed (nothing to inspect on the hero), so
+            // open it now that a thread is selected.
+            setSection("inspector", visible: true)
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
@@ -1431,13 +1435,16 @@
 
             log("after-select-thread")
 
-            toggleSection("inspector")
-            try? await Task.sleep(for: .seconds(1.5))
-            log("after-inspector-hide")
-
-            toggleSection("inspector")
+            // Explicit show/hide, not a blind toggle: the inspector starts
+            // closed, so a toggle pair would log each state under the other's
+            // tag and the measured minimums would read inverted.
+            setSection("inspector", visible: true)
             try? await Task.sleep(for: .seconds(1.5))
             log("after-inspector-show")
+
+            setSection("inspector", visible: false)
+            try? await Task.sleep(for: .seconds(1.5))
+            log("after-inspector-hide")
 
             toggleSection("sidebar")
             try? await Task.sleep(for: .seconds(1.5))
@@ -1896,6 +1903,65 @@
         }
 
 
+        /// The welcome hero must launch without the inspector column.
+        ///
+        /// Its toolbar toggle is disabled while no thread is selected, so an
+        /// inspector presented here is one the user cannot close — and the
+        /// column it takes pushes the hero off-centre.
+        ///
+        /// Counted off what is actually on screen, because neither the pane
+        /// count nor any single split view answers the question. AppKit backs
+        /// the shell with *nested* split views — sidebar | rest, and inside
+        /// "rest", detail | inspector — so every split view has two panes
+        /// whether the inspector is open or not, and a pane left behind by a
+        /// closed column is collapsed, hidden, or squeezed to nothing rather
+        /// than removed.
+        ///
+        /// So walk every split view and count the leaf panes: those wide
+        /// enough to see and not just wrapping another split view. Sidebar +
+        /// detail is two; the inspector makes a third.
+        private static func probeWelcomeShell(
+            multi: MultiDeviceModel, dir: String, failures: inout [String]
+        ) {
+            guard multi.selectedThread == nil else {
+                print("UIProbe: welcome-shell skipped (thread already selected)")
+                return
+            }
+            guard let root = NSApp.windows.first(where: { $0.isVisible })?.contentView else {
+                print("UIProbe: welcome-shell no window")
+                failures.append("welcome-shell-no-window")
+                return
+            }
+            // Below this a pane is a hairline or a column caught mid-collapse,
+            // not something the user can see or point at. The inspector's own
+            // minimum is 300pt, so the gap is wide.
+            let visibleColumnWidth: CGFloat = 8
+            func wrapsSplitView(_ view: NSView) -> Bool {
+                for sub in view.subviews {
+                    if sub is NSSplitView || wrapsSplitView(sub) { return true }
+                }
+                return false
+            }
+            var columns: [Int] = []
+            func walk(_ view: NSView) {
+                if let split = view as? NSSplitView {
+                    for pane in split.arrangedSubviews
+                    where !pane.isHidden && !split.isSubviewCollapsed(pane)
+                        && pane.frame.width >= visibleColumnWidth && !wrapsSplitView(pane) {
+                        columns.append(Int(pane.frame.width))
+                    }
+                }
+                for sub in view.subviews { walk(sub) }
+            }
+            walk(root)
+            print("UIProbe: welcome-shell columns=\(columns)")
+            if columns.count > 2 {
+                print("UIProbe: FAIL welcome-shell inspector column present")
+                failures.append("welcome-shell-inspector-open")
+            }
+            snapshot("0-welcome-shell", dir: dir)
+        }
+
         /// Dumps the AppKit split-view panes backing NavigationSplitView, so
         /// the window minimum can be attributed to individual columns.
         private static func logSplitViews(_ window: NSWindow) {
@@ -1954,6 +2020,16 @@
         private static func toggleSection(_ key: String) {
             NotificationCenter.default.post(name: .uiProbeToggleSection, object: key)
             print("UIProbe: toggled section '\(key)'")
+        }
+
+        /// Drives a structural column to a known state instead of flipping
+        /// whatever it happens to be showing — the inspector starts closed, so
+        /// a capture that needs it open has to ask for it.
+        static func setSection(_ key: String, visible: Bool) {
+            let action = visible ? "show" : "hide"
+            NotificationCenter.default.post(
+                name: .uiProbeToggleSection, object: "\(key).\(action)")
+            print("UIProbe: set section '\(key)' \(action)")
         }
 
         /// Polls `condition` until it holds, then returns true. A fixed sleep
