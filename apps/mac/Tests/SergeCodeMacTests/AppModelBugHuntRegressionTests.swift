@@ -211,7 +211,7 @@ private final class StubBackend: BackendService, @unchecked Sendable {
     }
     func cancelTurn(threadID: String) async throws {}
     func stopTask(threadID: String, taskId: String) async throws {}
-    func respondToApproval(id: String, approve: Bool) async throws {}
+    func respondToApproval(id: String, decision: ApprovalDecision) async throws {}
     func respondToUserInput(id: String, answers: [String: [String]]) async throws {}
     func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws {}
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws {}

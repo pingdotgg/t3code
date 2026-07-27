@@ -890,7 +890,27 @@ extension TimelineItem {
 }
 
 public enum ApprovalKind: String, Sendable {
-    case command, fileEdit, other
+    case command, fileEdit, fileRead, other
+
+    /// Manifest line naming what kind of authority the request asks for.
+    public var displayName: String {
+        switch self {
+        case .command: "Command"
+        case .fileEdit: "File change"
+        case .fileRead: "File read"
+        case .other: "Request"
+        }
+    }
+}
+
+/// User's answer to an approval request. `approveForSession` is the standing
+/// declaration: approve this request and stop asking for similar ones for
+/// the rest of the session — each provider maps it to its own session-scoped
+/// permission grant (the wire decision is `acceptForSession`).
+public enum ApprovalDecision: String, Sendable {
+    case approve, approveForSession, deny
+
+    public var isApproval: Bool { self != .deny }
 }
 
 public struct ApprovalRequest: Identifiable, Hashable, Sendable {

@@ -539,15 +539,7 @@ enum TranscriptTextBuilder {
     }
 
     private static func summaryLine(_ summary: ToolGroupSummary) -> String {
-        var parts = ["Ran \(summary.toolCount) tool\(summary.toolCount == 1 ? "" : "s")"]
-        if summary.editedFileCount > 0 {
-            parts.append(
-                "edited \(summary.editedFileCount) file\(summary.editedFileCount == 1 ? "" : "s")")
-        }
-        if summary.failedCount > 0 {
-            parts.append("\(summary.failedCount) failed")
-        }
-        return parts.joined(separator: " · ")
+        summary.headline
     }
 
     private static func toolStatusLabel(_ status: ToolEventStatus) -> String {

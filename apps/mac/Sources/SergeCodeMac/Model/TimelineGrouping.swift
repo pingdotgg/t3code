@@ -35,11 +35,35 @@ public struct ToolGroupSummary: Hashable, Sendable {
     public var toolCount: Int
     public var editedFileCount: Int
     public var failedCount: Int
+    /// Directories the run's file work happened in ("aisles"), first-touch
+    /// order, deduped — e.g. `["UI/Chat", "Model"]`. Lets a collapsed burst
+    /// say *where* it worked, which the counts alone cannot.
+    public var aisles: [String]
 
-    public init(toolCount: Int, editedFileCount: Int, failedCount: Int) {
+    public init(toolCount: Int, editedFileCount: Int, failedCount: Int, aisles: [String] = []) {
         self.toolCount = toolCount
         self.editedFileCount = editedFileCount
         self.failedCount = failedCount
+        self.aisles = aisles
+    }
+
+    /// Collapsed-row headline — "Ran 6 tools · edited 3 files · in UI/Chat,
+    /// Model". Shared by the live group row and the select-text transcript
+    /// so the two renderings never drift.
+    public var headline: String {
+        var parts = ["Ran \(toolCount) tool\(toolCount == 1 ? "" : "s")"]
+        if editedFileCount > 0 {
+            parts.append("edited \(editedFileCount) file\(editedFileCount == 1 ? "" : "s")")
+        }
+        if failedCount > 0 {
+            parts.append("\(failedCount) failed")
+        }
+        if !aisles.isEmpty {
+            let shown = aisles.prefix(2).joined(separator: ", ")
+            let overflow = aisles.count > 2 ? " +\(aisles.count - 2)" : ""
+            parts.append("in \(shown)\(overflow)")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -214,10 +238,7 @@ extension Array where Element == TimelineItem {
                     // row identity survive re-grouping.
                     id: "toolgroup:\(first.item.id)",
                     items: entries.map(\.item),
-                    summary: ToolGroupSummary(
-                        toolCount: tools.count,
-                        editedFileCount: Self.editedFileCount(of: tools),
-                        failedCount: tools.count { $0.status == .failed })))
+                    summary: Self.summary(of: tools)))
             ranges.append(first.index..<(last.index + 1))
         }
 
@@ -346,28 +367,57 @@ extension Array where Element == TimelineItem {
         var status: ToolEventStatus
     }
 
-    /// Distinct files touched by the run's file-change tools, keyed on the
-    /// path parsed out of the edit payload so repeated edits to one file
-    /// count once. Unparseable payloads (the server truncates long inputs)
-    /// fall back to the raw detail string as the dedup key.
+    /// One computation for both the initial grouping pass and in-place row
+    /// refreshes, so a succeeded→failed flip updates the headline numbers
+    /// instead of reusing a stale cache.
+    /// File changes dedup on the path parsed out of the edit payload so
+    /// repeated edits to one file count once; unparseable payloads (the
+    /// server truncates long inputs) fall back to the raw detail string as
+    /// the dedup key only — never as an aisle, which needs a real path.
+    /// File reads have no structured payload: a detail that looks like a
+    /// bare path is treated as one (same heuristic the timeline rows use).
     @MainActor
-    private static func editedFileCount(of tools: [ToolCall]) -> Int {
-        let keys = tools.lazy
-            .filter { $0.kind == .fileChange }
-            .map { tool -> String in
+    private static func summary(of tools: [ToolCall]) -> ToolGroupSummary {
+        var fileKeys: Set<String> = []
+        var editedFileCount = 0
+        var aisles: [String] = []
+        func noteAisle(_ path: String) {
+            if let aisle = ToolGroupAisles.label(forPath: path), !aisles.contains(aisle) {
+                aisles.append(aisle)
+            }
+        }
+        for tool in tools {
+            switch tool.kind {
+            case .fileChange:
+                let dedupKey: String
                 if case .fileChange(let path, _) = ToolDetailParseCache.parsed(
                     detail: tool.detail, itemType: "file_change")
                 {
-                    return path
+                    dedupKey = path
+                    noteAisle(path)
+                } else {
+                    dedupKey = tool.detail
                 }
-                return tool.detail
+                if fileKeys.insert(dedupKey).inserted { editedFileCount += 1 }
+            case .fileRead:
+                let detail = tool.detail
+                if detail.contains("/"),
+                    detail.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+                {
+                    noteAisle(detail)
+                }
+            default:
+                break
             }
-        return Set(keys).count
+        }
+        return ToolGroupSummary(
+            toolCount: tools.count,
+            editedFileCount: editedFileCount,
+            failedCount: tools.count { $0.status == .failed },
+            aisles: aisles)
     }
 
-    /// Summary for an existing tool group whose rows changed in place — the
-    /// same computation as the initial grouping pass, so a succeeded→failed
-    /// flip refreshes the headline numbers instead of reusing the stale cache.
+    /// Summary for an existing tool group whose rows changed in place.
     @MainActor
     static func toolGroupSummary(of items: [TimelineItem]) -> ToolGroupSummary {
         let tools = items.compactMap { item -> ToolCall? in
@@ -375,10 +425,23 @@ extension Array where Element == TimelineItem {
             else { return nil }
             return ToolCall(detail: detail, kind: kind, status: status)
         }
-        return ToolGroupSummary(
-            toolCount: tools.count,
-            editedFileCount: editedFileCount(of: tools),
-            failedCount: tools.count { $0.status == .failed })
+        return summary(of: tools)
+    }
+}
+
+/// Directory labels for tool-group summaries.
+public enum ToolGroupAisles {
+    /// Compact label for the directory containing `path`: the parent
+    /// directory's last two components ("UI/Chat"), one for shallow paths.
+    /// Root-level files have no useful aisle and return nil. Pure string
+    /// work so it stays testable and never touches the filesystem.
+    public static func label(forPath path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasSuffix("/") else { return nil }
+        let parent = (trimmed as NSString).deletingLastPathComponent
+        let components = (parent as NSString).pathComponents.filter { $0 != "/" }
+        guard !components.isEmpty else { return nil }
+        return components.suffix(2).joined(separator: "/")
     }
 }
 

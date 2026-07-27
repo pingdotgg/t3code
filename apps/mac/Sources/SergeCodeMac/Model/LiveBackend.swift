@@ -1051,7 +1051,8 @@ public actor LiveBackend: BackendService {
                     OrchestrationMapping.extractRequestId(from: activity.payload) ?? activity.id
                 approvalRoutes[requestID] = (threadID, requestID)
                 let request = ApprovalRequest(
-                    id: requestID, threadID: threadID, kind: approvalKind(activity.kind),
+                    id: requestID, threadID: threadID,
+                    kind: Self.approvalKind(payload: activity.payload),
                     title: activity.summary.isEmpty ? "Approval required" : activity.summary,
                     detail: approvalDetail(activity.payload), createdAt: at)
                 emitOrdered(threadID: threadID, event: .approvalRequested(request))
@@ -1874,7 +1875,7 @@ public actor LiveBackend: BackendService {
         _ = try await client.stopTask(threadId: threadID, taskId: taskId)
     }
 
-    public func respondToApproval(id: String, approve: Bool) async throws {
+    public func respondToApproval(id: String, decision: ApprovalDecision) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         guard let route = approvalRoutes[id] else {
             throw LiveBackendError.unresolvedApproval(id)
@@ -1883,15 +1884,27 @@ public actor LiveBackend: BackendService {
         // concurrent call would otherwise pass the guard above and fire a
         // duplicate response. Restore it if the RPC throws so a retry works.
         approvalRoutes[id] = nil
-        let decision = OrchestrationMapping.approvalDecision(approve: approve)
         do {
             _ = try await client.respondToApproval(
-                threadId: route.threadID, requestId: route.requestId, decision: decision)
+                threadId: route.threadID, requestId: route.requestId,
+                decision: Self.providerDecision(decision))
         } catch {
             approvalRoutes[id] = route
             throw error
         }
         emitOrdered(threadID: route.threadID, event: .approvalResolved(id: id))
+    }
+
+    /// Wire decision for a UI approval choice. `acceptForSession` is the
+    /// provider-side standing grant (Claude applies the SDK's suggested
+    /// permission updates, ACP providers map it to `allow_always`, Codex
+    /// passes it through natively).
+    static func providerDecision(_ decision: ApprovalDecision) -> ProviderApprovalDecision {
+        switch decision {
+        case .approve: .accept
+        case .approveForSession: .acceptForSession
+        case .deny: .decline
+        }
     }
 
     public func respondToUserInput(id: String, answers: [String: [String]]) async throws {
@@ -3116,7 +3129,8 @@ public actor LiveBackend: BackendService {
             }
             return .approval(
                 ApprovalRequest(
-                    id: id, threadID: threadID, kind: approvalKind(activity.kind),
+                    id: id, threadID: threadID,
+                    kind: Self.approvalKind(payload: activity.payload),
                     title: activity.summary.isEmpty ? "Approval required" : activity.summary,
                     detail: approvalDetail(activity.payload), createdAt: at))
         case let .checkpoint(summary, at):
@@ -3299,15 +3313,27 @@ public actor LiveBackend: BackendService {
         }
     }
 
-    private func approvalKind(_ kind: String) -> ApprovalKind {
-        let lowered = kind.lowercased()
-        if lowered.contains("command") || lowered.contains("exec") || lowered.contains("shell")
-            || lowered.contains("bash")
-        {
+    /// Classifies an approval from its activity payload. The server stamps
+    /// `requestKind` ("command" | "file-read" | "file-change") and the
+    /// canonical `requestType` (e.g. "exec_command_approval",
+    /// "apply_patch_approval") into `approval.requested` payloads
+    /// (ProviderRuntimeIngestion.ts); the activity's own `kind` field is
+    /// always the literal "approval.requested" and says nothing about what
+    /// is being approved.
+    static func approvalKind(payload: JSONValue) -> ApprovalKind {
+        let object = payload.objectValue
+        let hint = object?["requestKind"]?.stringValue
+            ?? object?["requestType"]?.stringValue
+            ?? ""
+        let lowered = hint.lowercased()
+        if lowered.contains("command") || lowered.contains("exec") {
             return .command
         }
-        if lowered.contains("edit") || lowered.contains("write") || lowered.contains("file")
-            || lowered.contains("patch") || lowered.contains("apply")
+        if lowered.contains("file-read") || lowered.contains("file_read") {
+            return .fileRead
+        }
+        if lowered.contains("file-change") || lowered.contains("file_change")
+            || lowered.contains("patch") || lowered.contains("edit")
         {
             return .fileEdit
         }
