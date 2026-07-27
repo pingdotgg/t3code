@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Starred models and most-recently-used models for the model picker.
 ///
@@ -13,10 +14,13 @@ import Foundation
 @MainActor
 @Observable
 final class ModelPickerPreferences {
-    static let shared = ModelPickerPreferences()
+    static let shared = ModelPickerPreferences(defaults: resolvedDefaults())
 
     static let favoritesDefaultsKey = "modelPicker.favorites"
     static let recentsDefaultsKey = "modelPicker.recents"
+
+    /// Scratch domain the UIProbe writes to instead of the user's profile.
+    static let probeSuiteName = "SergeCode.uiProbe.modelPicker"
 
     /// Enough to cover a working set without turning the Recent scope into a
     /// second copy of the whole catalog.
@@ -33,6 +37,29 @@ final class ModelPickerPreferences {
         self.favorites = Set(defaults.stringArray(forKey: Self.favoritesDefaultsKey) ?? [])
         self.recents = Array(
             (defaults.stringArray(forKey: Self.recentsDefaultsKey) ?? []).prefix(Self.recentLimit))
+    }
+
+    /// The UIProbe drives the real picker to capture it, so seeding a favorite
+    /// for a screenshot must not write into the user's profile — and a probe
+    /// that aborts mid-run cannot be relied on to clean up after itself. When
+    /// the probe is active the store is redirected to a scratch suite, wiped at
+    /// launch so each run starts from a known-empty state.
+    static func scratchSuiteName(environment: [String: String]) -> String? {
+        #if DEBUG
+            guard let dir = environment["SERGECODE_UI_PROBE"], !dir.isEmpty else { return nil }
+            return probeSuiteName
+        #else
+            return nil
+        #endif
+    }
+
+    private static func resolvedDefaults() -> UserDefaults {
+        guard
+            let suite = scratchSuiteName(environment: ProcessInfo.processInfo.environment),
+            let scratch = UserDefaults(suiteName: suite)
+        else { return .standard }
+        scratch.removePersistentDomain(forName: suite)
+        return scratch
     }
 
     func isFavorite(_ key: String) -> Bool {

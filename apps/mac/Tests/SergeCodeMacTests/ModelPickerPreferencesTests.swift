@@ -55,6 +55,21 @@ struct ModelPickerPreferencesTests {
                 == ModelPickerPreferences.recentLimit)
     }
 
+    @Test("a probe run is redirected to a scratch defaults suite")
+    func probeRunsAgainstScratchDefaults() {
+        // The probe seeds favorites to capture the picker; that must never
+        // reach the user's own preferences, and a run that aborts before any
+        // cleanup must not be able to strand one either.
+        #expect(
+            ModelPickerPreferences.scratchSuiteName(environment: [:]) == nil)
+        #expect(
+            ModelPickerPreferences.scratchSuiteName(environment: ["SERGECODE_UI_PROBE": ""]) == nil)
+        #expect(
+            ModelPickerPreferences.scratchSuiteName(
+                environment: ["SERGECODE_UI_PROBE": "/tmp/probe"])
+                == ModelPickerPreferences.probeSuiteName)
+    }
+
     @Test("clearing recents leaves favorites alone")
     func clearRecentsKeepsFavorites() {
         let preferences = ModelPickerPreferences(defaults: makeDefaults())

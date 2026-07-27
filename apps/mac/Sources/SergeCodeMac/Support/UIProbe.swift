@@ -331,7 +331,9 @@
             // Favorites and recents restructure the picker (an extra sidebar
             // scope, a lifted Favorites section), so seed them before the
             // popover mounts — state flipped on an already-rendered view does
-            // not reach the offscreen capture.
+            // not reach the offscreen capture. The seed lands in the probe's
+            // scratch defaults suite (see `ModelPickerPreferences`), never the
+            // user's profile, so an aborted run cannot strand it.
             let favoriteSeed = model.models.first.map(ModelPickerCatalog.key(for:))
             let recentSeed = model.models.dropFirst().first.map(ModelPickerCatalog.key(for:))
             if let favoriteSeed { ModelPickerPreferences.shared.toggleFavorite(favoriteSeed) }
@@ -344,9 +346,6 @@
             snapshotAllWindows("7c-model-picker-favorites", dir: dir)
             toggleSection("model-picker")
             try? await Task.sleep(for: .seconds(1))
-            // The probe shares the real defaults domain; leave it as found.
-            if let favoriteSeed { ModelPickerPreferences.shared.toggleFavorite(favoriteSeed) }
-            ModelPickerPreferences.shared.clearRecents()
 
             // Retry: resending an existing user message appends a new user
             // row to the timeline (mock backend echoes sends).
