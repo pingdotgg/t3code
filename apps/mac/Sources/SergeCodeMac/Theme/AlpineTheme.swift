@@ -112,14 +112,15 @@ enum AlpineTheme {
 
     // MARK: - Layout
 
-    /// Shared minimum height of the content-header bands: the chat identity
-    /// header (ChatHeaderView) and the inspector Activity header
-    /// (ChangesTimelineView). Both pin to this so the divider under each
-    /// header stays horizontally aligned across the chat/inspector boundary
-    /// instead of drifting with each header's content.
+    /// Shared minimum height of the content-header bands: the sidebar command
+    /// bar (SidebarView), the chat identity header (ChatHeaderView) and the
+    /// inspector Activity header (ChangesTimelineView). All three pin to this
+    /// so the divider under each header stays horizontally aligned across the
+    /// sidebar/chat/inspector boundaries instead of drifting with each
+    /// header's content.
     ///
     /// A floor rather than a fixed height: the bundled Geist faces render at
-    /// fixed point sizes on macOS (no Dynamic Type scaling), so both bands
+    /// fixed point sizes on macOS (no Dynamic Type scaling), so all three bands
     /// sit at exactly this height in practice — but if content ever grows
     /// (longer localized strings, taller controls) the header expands with
     /// it instead of clipping.
