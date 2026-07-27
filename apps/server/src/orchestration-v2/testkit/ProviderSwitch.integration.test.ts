@@ -17,20 +17,35 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
+import { layer as eventSinkLayer } from "../EventSink.ts";
+import { layer as eventStoreLayer } from "../EventStore.ts";
+import {
+  LegacyV1ThreadImporter,
+  layer as legacyV1ThreadImporterLayer,
+} from "../LegacyV1ThreadImporter.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
+import {
+  ProjectionMaintenanceV2,
+  layer as projectionMaintenanceLayer,
+} from "../ProjectionMaintenance.ts";
+import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import {
   type ProviderAdapterV2Event,
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Shape,
 } from "../ProviderAdapter.ts";
 import { makeLayer as makeProviderAdapterRegistryLayer } from "../ProviderAdapterRegistry.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
@@ -68,6 +83,7 @@ function makeTestAdapter(input: {
   readonly responseByThreadId?: Readonly<Record<string, Readonly<Record<number, string>>>>;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly failResume?: boolean;
+  readonly failedRunOrdinals?: ReadonlySet<number>;
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
@@ -143,6 +159,43 @@ function makeTestAdapter(input: {
               const providerTurnId = ProviderTurnId.make(
                 `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
               );
+              if (input.failedRunOrdinals?.has(turnInput.runOrdinal) === true) {
+                yield* PubSub.publish(events, {
+                  type: "provider_turn.updated",
+                  driver: input.driver,
+                  providerTurn: {
+                    id: providerTurnId,
+                    providerThreadId: turnInput.providerThread.id,
+                    nodeId: turnInput.rootNodeId,
+                    runAttemptId: turnInput.attemptId,
+                    nativeTurnRef: {
+                      driver: input.driver,
+                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
+                      strength: "strong",
+                    },
+                    ordinal: turnInput.runOrdinal,
+                    status: "failed",
+                    startedAt: eventTime,
+                    completedAt: eventTime,
+                  },
+                });
+                yield* PubSub.publish(events, {
+                  type: "turn.terminal",
+                  driver: input.driver,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId,
+                  runOrdinal: turnInput.runOrdinal,
+                  failureItemOrdinal: turnInput.runOrdinal * 100 + 1,
+                  status: "failed",
+                  failure: makeProviderFailure({
+                    message: "Simulated provider failure.",
+                    code: "simulated_failure",
+                    class: "provider_error",
+                  }),
+                  threadDisposition: "reusable",
+                });
+                return;
+              }
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
@@ -243,6 +296,231 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 });
 
 describe("orchestration v2 provider switching", () => {
+  it.live("reissues imported v1 context when switching after the first provider fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const importedThreadId = ThreadId.make("thread:provider-switch:legacy-import");
+        const importedProjectId = ProjectId.make("project:provider-switch:legacy-import");
+        const failedPrompt = "This first provider attempt should fail.";
+        const recoveryPrompt = "What was the imported release marker?";
+        const cwd = yield* checkpointWorkspace("provider-switch-legacy-import");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const registryLayer = makeProviderAdapterRegistryLayer([
+          makeTestAdapter({
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failedRunOrdinals: new Set([1]),
+          }),
+          makeTestAdapter({
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: "The imported release marker is violet." },
+            capturedTurns,
+          }),
+        ]);
+        const databaseLayer = SqlitePersistenceMemory;
+        const eventStoreProvided = eventStoreLayer.pipe(Layer.provideMerge(databaseLayer));
+        const projectionStoreProvided = projectionStoreLayer.pipe(
+          Layer.provideMerge(databaseLayer),
+        );
+        const storesProvided = Layer.mergeAll(
+          databaseLayer,
+          eventStoreProvided,
+          projectionStoreProvided,
+        );
+        const eventSinkProvided = eventSinkLayer.pipe(Layer.provide(storesProvided));
+        const importerProvided = legacyV1ThreadImporterLayer.pipe(
+          Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
+        );
+        const maintenanceProvided = projectionMaintenanceLayer.pipe(Layer.provide(storesProvided));
+        const orchestratorProvided = makeOrchestratorV2ReplayLayerWithRegistry(
+          {
+            name: "provider-switch-legacy-import",
+            runtimePolicyOverride: {
+              cwd,
+              approvalPolicy: "never",
+              sandboxPolicy: {
+                type: "readOnly",
+                access: { type: "fullAccess" },
+                networkAccess: false,
+              },
+            },
+          },
+          registryLayer,
+          { databaseLayer },
+        );
+        const testLayer = Layer.mergeAll(
+          storesProvided,
+          importerProvided,
+          maintenanceProvided,
+          orchestratorProvided,
+        );
+
+        const projection = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const importer = yield* LegacyV1ThreadImporter;
+          const maintenance = yield* ProjectionMaintenanceV2;
+          const orchestrator = yield* OrchestratorV2;
+
+          yield* sql`
+            INSERT INTO projection_projects (
+              project_id,
+              title,
+              workspace_root,
+              default_model_selection_json,
+              scripts_json,
+              created_at,
+              updated_at,
+              deleted_at
+            ) VALUES (
+              ${importedProjectId},
+              'Imported provider switch project',
+              ${cwd},
+              '{"instanceId":"codex","model":"gpt-5.4"}',
+              '[]',
+              '2026-01-01T00:00:00.000Z',
+              '2026-01-01T00:00:00.000Z',
+              NULL
+            )
+          `;
+          yield* sql`
+            INSERT INTO projection_threads (
+              thread_id,
+              project_id,
+              title,
+              model_selection_json,
+              runtime_mode,
+              interaction_mode,
+              branch,
+              worktree_path,
+              latest_turn_id,
+              created_at,
+              updated_at,
+              archived_at,
+              settled_override,
+              settled_at,
+              deleted_at
+            ) VALUES (
+              ${importedThreadId},
+              ${importedProjectId},
+              'Imported provider switch thread',
+              '{"instanceId":"codex","model":"gpt-5.4"}',
+              'full-access',
+              'default',
+              'main',
+              ${cwd},
+              NULL,
+              '2026-01-01T00:00:00.000Z',
+              '2026-01-01T00:00:00.000Z',
+              NULL,
+              NULL,
+              NULL,
+              NULL
+            )
+          `;
+          yield* sql`
+            INSERT INTO projection_thread_messages (
+              message_id,
+              thread_id,
+              turn_id,
+              role,
+              text,
+              attachments_json,
+              is_streaming,
+              created_at,
+              updated_at
+            ) VALUES
+              (
+                'message:provider-switch:legacy-import:user',
+                ${importedThreadId},
+                NULL,
+                'user',
+                'Remember that the imported release marker is violet.',
+                '[]',
+                0,
+                '2026-01-01T01:00:00.000Z',
+                '2026-01-01T01:00:00.000Z'
+              ),
+              (
+                'message:provider-switch:legacy-import:assistant',
+                ${importedThreadId},
+                NULL,
+                'assistant',
+                'I will remember violet.',
+                '[]',
+                0,
+                '2026-01-01T01:01:00.000Z',
+                '2026-01-01T01:01:00.000Z'
+              )
+          `;
+
+          yield* importer.reconcileShells;
+          yield* maintenance.rebuild;
+          yield* importer.ensureTranscript(importedThreadId);
+
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:provider-switch:legacy-import:failed"),
+            threadId: importedThreadId,
+            messageId: MessageId.make("message:provider-switch:legacy-import:failed"),
+            text: failedPrompt,
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* waitForIdle(importedThreadId);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:provider-switch:legacy-import:recovery"),
+            threadId: importedThreadId,
+            messageId: MessageId.make("message:provider-switch:legacy-import:recovery"),
+            text: recoveryPrompt,
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          return yield* waitForIdle(importedThreadId);
+        }).pipe(Effect.provide(testLayer));
+
+        const turns = yield* Ref.get(capturedTurns);
+        assert.deepEqual(
+          projection.runs.map((run) => [run.providerInstanceId, run.status]),
+          [
+            ["codex", "failed"],
+            ["claudeAgent", "completed"],
+          ],
+        );
+        assert.deepEqual(
+          projection.contextHandoffs.map((handoff) => [
+            handoff.targetRunId,
+            handoff.strategy,
+            handoff.status,
+          ]),
+          [
+            [projection.runs[0]?.id, "manual_context", "ready"],
+            [projection.runs[1]?.id, "manual_context", "ready"],
+          ],
+        );
+        assert.equal(projection.runs[1]?.contextHandoffId, projection.contextHandoffs[1]?.id);
+        assert.include(turns[1]?.text ?? "", "Context handoff (manual_context):");
+        assert.include(turns[1]?.text ?? "", "imported release marker is violet");
+        assert.include(turns[1]?.text ?? "", "I will remember violet.");
+        assert.include(turns[1]?.text ?? "", recoveryPrompt);
+        assert.notInclude(turns[1]?.text ?? "", failedPrompt);
+      }),
+    ),
+  );
+
   it.live("uses portable fallback when native resume fails after a provider switch", () =>
     Effect.scoped(
       Effect.gen(function* () {
