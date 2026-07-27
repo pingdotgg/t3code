@@ -428,6 +428,75 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    // HOST is Vite's bind address and gates the HMR pin in vite.config.ts. An
+    // inherited one would survive into browser dev and point HMR at the wrong
+    // interface — invisible over a shared origin, since the page still loads.
+    for (const mode of ["dev", "dev:web"] as const) {
+      it.effect(`drops an inherited HOST in ${mode} mode`, () =>
+        Effect.gen(function* () {
+          const env = yield* createDevRunnerEnv({
+            mode,
+            baseEnv: { HOST: "0.0.0.0" },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: undefined,
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          });
+
+          assert.equal(env.HOST, undefined);
+        }),
+      );
+    }
+
+    // --host configures the *backend* (T3CODE_HOST). It must not become Vite's
+    // bind address by way of an inherited HOST that happens to agree with it.
+    it.effect("drops an inherited HOST even when --host is given", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: { HOST: "0.0.0.0" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: "0.0.0.0",
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.HOST, undefined);
+        assert.equal(env.T3CODE_HOST, "0.0.0.0");
+      }),
+    );
+
+    // Desktop sets HOST itself, so the clearing must not reach it.
+    it.effect("still pins HOST for dev:desktop", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev:desktop",
+          baseEnv: { HOST: "0.0.0.0" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.HOST, "127.0.0.1");
+      }),
+    );
+
     it.effect("keeps explicit backend URLs for the desktop renderer", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({

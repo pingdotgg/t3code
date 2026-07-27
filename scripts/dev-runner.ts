@@ -295,6 +295,13 @@ export function createDevRunnerEnv({
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
+      // HOST is Vite's own bind address, and the desktop branch below is the
+      // only place we set it. An inherited one (an exported HOST, a container,
+      // a `HOST=0.0.0.0 npm start` habit) would otherwise reach Vite and pin
+      // its HMR socket to that address — see the `explicitHost` gate in
+      // apps/web/vite.config.ts. Over a shared origin that is invisible: the
+      // page loads and only HMR quietly dials the wrong machine.
+      delete output.HOST;
       if (mode === "dev" || mode === "dev:web") {
         // Browser dev is single-origin: everything (including /ws) is proxied
         // through Vite, so the client must resolve its backend from
