@@ -51,3 +51,4 @@ vp test run scripts/dev-runner.test.ts apps/desktop/src/preview/Manager.test.ts 
 
 - Web: `5744`
 - Server/WebSocket: `13784`
+- Start the dev runner with `T3CODE_PORT_OFFSET=11` to select these branch-fixed ports instead of upstream's worktree-path-derived starting offset. The runner can still advance when either port is unavailable, so confirm the printed ports before testing.
