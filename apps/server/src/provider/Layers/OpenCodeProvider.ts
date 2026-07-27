@@ -184,10 +184,15 @@ function openCodeCapabilitiesForModel(input: {
   // OpenCode's built-in `build` and `plan` agents are represented by the
   // provider interaction mode. Listing them as model traits creates two
   // independent controls for the same state. Keep only user-defined primary
-  // agents here; an absent selection lets OpenCode use its normal build agent.
-  const agentOptions = primaryAgents
+  // agents, with a synthetic Default choice that returns to the normal build
+  // agent after a custom agent has been selected.
+  const customAgentOptions = primaryAgents
     .filter((agent) => agent.name !== "build" && agent.name !== "plan")
     .map((agent) => ({ id: agent.name, label: titleCaseSlug(agent.name) }));
+  const agentOptions =
+    customAgentOptions.length > 0
+      ? [{ id: "build", label: "Default", isDefault: true as const }, ...customAgentOptions]
+      : [];
   return createModelCapabilities({
     optionDescriptors: [
       ...(variantOptions.length > 0

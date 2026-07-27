@@ -266,7 +266,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       );
 
       NodeAssert.ok(agentDescriptor && agentDescriptor.type === "select");
-      NodeAssert.deepEqual(agentDescriptor.options, [{ id: "reviewer", label: "Reviewer" }]);
+      NodeAssert.deepEqual(agentDescriptor.options, [
+        { id: "build", label: "Default", isDefault: true },
+        { id: "reviewer", label: "Reviewer" },
+      ]);
       NodeAssert.equal(agentDescriptor.currentValue, undefined);
     }),
   );
