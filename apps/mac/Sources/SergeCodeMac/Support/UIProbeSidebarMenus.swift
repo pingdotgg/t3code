@@ -70,7 +70,7 @@
                 finish(dir: dir)
                 return
             }
-            guard let table = sidebarTable(in: window) else {
+            guard let table = UIProbeSidebar.table(in: window) else {
                 UIProbeAssertions.fail("sidebar-menus", "no sidebar table view")
                 finish(dir: dir)
                 return
@@ -246,7 +246,7 @@
             }
             let rowsBefore = table.numberOfRows
             await model.settleThread(thread)
-            let landed = await waitUntil {
+            let landed = await UIProbeWait.until(tries: 20) {
                 model.threads.first(where: { $0.id == thread.id })?.status == .settled
             }
             guard landed else {
@@ -280,16 +280,6 @@
                 UIProbeAssertions.pass(
                     "sidebar-reveal-idempotent", "\(after) row(s) held across a second reveal")
             }
-        }
-
-        private static func waitUntil(
-            tries: Int = 20, _ condition: @MainActor () -> Bool
-        ) async -> Bool {
-            for _ in 0..<tries {
-                if condition() { return true }
-                try? await Task.sleep(for: .milliseconds(150))
-            }
-            return condition()
         }
 
         // MARK: - Driving the menu
@@ -335,7 +325,7 @@
         private static func revealSettledDisclosure(in table: NSTableView) async -> Bool {
             let before = table.numberOfRows
             NotificationCenter.default.post(name: .uiProbeToggleSection, object: "settled")
-            let grew = await waitUntil { table.numberOfRows > before }
+            let grew = await UIProbeWait.until(tries: 20) { table.numberOfRows > before }
             guard grew else {
                 print("UIProbe: sidebar-menus settled disclosure stayed at \(before) row(s)")
                 return false
@@ -414,22 +404,7 @@
             }
         }
 
-        // MARK: - Locating the sidebar
-
-        /// The sidebar list, taken as the leftmost table view in the window —
-        /// the inspector hosts lists of its own further right.
-        private static func sidebarTable(in window: NSWindow) -> NSTableView? {
-            guard let root = window.contentView else { return nil }
-            var found: [NSTableView] = []
-            func walk(_ view: NSView) {
-                if let table = view as? NSTableView { found.append(table) }
-                for subview in view.subviews { walk(subview) }
-            }
-            walk(root)
-            return found.min { lhs, rhs in
-                lhs.convert(lhs.bounds, to: nil).minX < rhs.convert(rhs.bounds, to: nil).minX
-            }
-        }
+        // MARK: - Locating rows
 
         /// Brings `row` on screen and returns its rect, or nil if it never got
         /// there. The rect is returned rather than re-read by the caller because

@@ -42,6 +42,13 @@ another's PNGs (or a crashed run's leftovers). The probe echoes
   as `menu-p<pass>-row<N>.png` plus a `-content` version; judge the
   `-content` one, since the window's theme frame carries the system glass rim
   that `cacheDisplay` turns into a saturated halo.
+  `sidebar-outline` captures the project outline itself — the default sweep
+  hides the sidebar while it drives the detail column, so every PNG it writes
+  shows chat and none of them show the sidebar. This scenario hosts
+  `SidebarView` in a window of its own (`sidebar-outline.png`, and
+  `sidebar-outline-settled.png` after settling a session and opening the
+  disclosure) and asserts that each project header's `SidebarProjectSummary`
+  accounts for every thread in its group and agrees with the ranked split.
 - Success is the final `UIProbe: done` line with no `FAIL=` suffix. Soft
   check failures and the watchdog timeout both report as
   `UIProbe: done FAIL=<reasons>`; a failed capture prints
