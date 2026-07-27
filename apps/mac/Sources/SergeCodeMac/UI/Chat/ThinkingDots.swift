@@ -2,7 +2,7 @@ import SwiftUI
 
 // The quiet half of the live-turn indicator: soft meadow/lavender dots and an
 // animated ellipsis, with no busy spinner. `AgentActivityDock` renders these
-// instead of its aurora orb under Reduce Motion and when playful motion is
+// instead of its aurora chip under Reduce Motion and when playful motion is
 // switched off, so the calm presentation the app shipped with survives both
 // opt-outs unchanged.
 

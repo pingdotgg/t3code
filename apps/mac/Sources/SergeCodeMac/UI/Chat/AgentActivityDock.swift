@@ -50,34 +50,34 @@ struct AgentActivityDock: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, TranscriptMetrics.cardPadH)
-        .padding(.vertical, 2)
         .accessibilityAddTraits(.updatesFrequently)
         .playfulMotionInvalidated($playfulRevision)
     }
 
     // MARK: - Playful dock
 
+    /// Deliberately built out of `transcriptCard` and nothing else: the dock
+    /// is the tail of a column of tool rows, and its own leading inset used
+    /// to push the card 12pt — and its badge 20pt — to the right of every
+    /// row above it, which is exactly where a misalignment is most visible.
+    /// The card hugs its content rather than filling the width; that is the
+    /// one thing it does not share with the rows, and it is what keeps a
+    /// transient status pill from reading as another entry in the transcript.
     private func dock(animated: Bool) -> some View {
         HStack(spacing: 10) {
-            AuroraOrb(tint: tint, symbolName: symbolName, animated: animated)
+            AuroraChip(tint: tint, symbolName: symbolName, animated: animated)
             phaseLabel(animated: animated)
             if let since = activity.since {
                 Text(since, style: .timer)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
             if !activity.recentToolKinds.isEmpty {
                 ToolTape(kinds: activity.recentToolKinds)
             }
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 12)
-        .padding(.vertical, 7)
-        .background(
-            tint.opacity(0.10),
-            in: RoundedRectangle(cornerRadius: TranscriptMetrics.cardRadius, style: .continuous))
+        .transcriptCard(fill: tint.opacity(0.08))
         .shimmerBorder(
             color: tint, isActive: animated, cornerRadius: TranscriptMetrics.cardRadius)
         .accessibilityElement(children: .ignore)
@@ -90,10 +90,15 @@ struct AgentActivityDock: View {
         }
     }
 
+    /// Cardless, so it carries the inset the card would otherwise supply —
+    /// without it the dots sit 12pt left of the icon column every row above
+    /// shares.
     private var quietRow: some View {
         tickingLabel { text in
             QuietActivityRow(label: text, accessibilityLabel: accessibilityLabel)
         }
+        .padding(.horizontal, TranscriptMetrics.cardPadH)
+        .padding(.vertical, TranscriptMetrics.cardPadV)
     }
 
     /// Both presentations ride this tick, and neither can go without it: the
@@ -125,88 +130,85 @@ struct AgentActivityDock: View {
     }
 }
 
-// MARK: - Aurora orb
+// MARK: - Aurora chip
 
-/// A small pool of drifting light: three palette lobes orbiting behind a
-/// rotating rim, with sparks thrown off the edge and the phase's glyph
-/// floating in the middle.
+/// The dock's leading badge: an `ActivityIconChip` whose fill is alive.
+///
+/// Same squircle, size, tint gradient and hairline as the static chip every
+/// transcript row leads with — three palette lobes drift *inside* that
+/// silhouette and a light travels the border, instead of the badge becoming
+/// a glowing disc of its own. A working row should read as the same object
+/// as a settled one, only breathing; the previous orb read as a foreign
+/// element parked at the end of a column of tiles.
 ///
 /// Everything is analytic — position from `context.date`, no simulation and
-/// no stored per-frame state — so the orb costs one `Canvas` fill pass per
+/// no stored per-frame state — so the chip costs one `Canvas` fill pass per
 /// frame and renders identically no matter when it mounted.
-private struct AuroraOrb: View {
+private struct AuroraChip: View {
     let tint: Color
     let symbolName: String
     let animated: Bool
-    var size: CGFloat = TranscriptMetrics.iconColumn
+    var size: CGFloat = ActivityChipMetrics.size
 
-    /// Sparks thrown off the rim. Coprime-ish speeds keep them from ever
-    /// lining up into a visible ring.
-    private static let sparks: [(speed: Double, phase: Double, radius: Double, dot: Double)] = [
-        (0.62, 0.0, 0.78, 2.4),
-        (-0.41, 2.1, 0.92, 1.7),
-        (0.83, 4.0, 0.70, 1.9),
-        (-0.55, 5.4, 0.99, 1.4),
-    ]
+    private var shape: RoundedRectangle { ActivityChipMetrics.shape(size: size) }
 
     var body: some View {
         let profile = Motion.playful
         ZStack {
+            // The static chip, unchanged, as the ground the light plays on.
+            // It is also the whole badge under Reduce Motion once the lobes
+            // park, which is why the animated layers only ever add.
+            ActivityChipMetrics.fill(tint: tint)
             TimelineView(
                 .animation(
                     minimumInterval: animated ? profile.decorativeFrameInterval : nil,
                     paused: !animated)
             ) { context in
                 // Parked on a fixed, pleasing phase when still, so the
-                // Reduce Motion orb is a composed image rather than whatever
+                // Reduce Motion chip is a composed image rather than whatever
                 // frame the clock happened to stop on.
                 let t = animated
                     ? context.date.timeIntervalSinceReferenceDate / profile.orbPeriod
                     : 0.18
                 ZStack {
-                    halo(t: t)
                     lobes(t: t)
                     rim(t: t)
                 }
-                .overlay { sparkField(t: t) }
             }
             glyph
         }
         .frame(width: size, height: size)
+        .clipShape(shape)
+        .overlay(
+            shape.strokeBorder(
+                tint.opacity(ActivityChipMetrics.strokeOpacity), lineWidth: 0.5)
+        )
         .accessibilityHidden(true)
     }
 
-    /// Soft bloom under the orb so it reads as emitting light rather than
-    /// being a filled circle.
-    private func halo(t: Double) -> some View {
-        let breath = 1 + 0.12 * sin(t * 2 * .pi)
-        return Circle()
-            .fill(
-                RadialGradient(
-                    colors: [tint.opacity(0.45), tint.opacity(0.05), .clear],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: size * 0.62)
-            )
-            .scaleEffect(breath)
-    }
-
-    /// The aurora itself: three additively blended, blurred lobes on slightly
-    /// elliptical orbits over a dark well. Blur plus `plusLighter` is what
-    /// turns three hard circles into one shifting wash — and the well is what
-    /// makes the lifting visible, since `plusLighter` over the transcript's
-    /// own dark background had nothing to lift and read as a flat smudge.
+    /// The aurora itself: three blurred palette lobes on slightly elliptical
+    /// orbits, drifting through the tile so its colour keeps shifting.
+    ///
+    /// Composited normally rather than additively, which is the change that
+    /// let the black well go. `plusLighter` only reads as light if there is
+    /// something dark under it, and the orb bought that with an opaque black
+    /// disc — the single detail that made it a foreign object in a column of
+    /// translucent tiles. Painting the palette straight onto the chip's own
+    /// gradient instead keeps the badge exactly as light as its siblings and
+    /// still varies, because what moves is the hue, not the brightness. It
+    /// also survives a bright scenery photo behind the transcript, where
+    /// additive light saturates to a flat wash.
     private func lobes(t: Double) -> some View {
         Canvas { canvas, canvasSize in
             let radius = canvasSize.width / 2
-            let well = Path(ellipseIn: CGRect(origin: .zero, size: canvasSize))
-            canvas.fill(well, with: .color(.black.opacity(0.55)))
-
-            canvas.addFilter(.blur(radius: radius * 0.26))
-            canvas.blendMode = .plusLighter
+            // Wide orbits, small lobes, restrained blur. The orb could merge
+            // its three into one wash because the black well gave the result
+            // somewhere to glow; painted flat, over-blurred lobes just
+            // average out to a single flat pastel and the chip stops moving.
+            canvas.addFilter(.blur(radius: radius * 0.20))
             let center = CGPoint(x: radius, y: radius)
-            let orbit = radius * 0.36
-            let base = radius * 0.78
+            let orbit = radius * 0.46
+            let base = radius * 0.62
             for (index, color) in lobeColors.enumerated() {
                 let angle = t * 2 * .pi + Double(index) * (2 * .pi / 3)
                 let wobble = 1 + 0.2 * sin(t * 2 * .pi * 1.7 + Double(index) * 1.3)
@@ -217,62 +219,45 @@ private struct AuroraOrb: View {
                 let rect = CGRect(
                     x: point.x - diameter / 2, y: point.y - diameter / 2,
                     width: diameter, height: diameter)
-                canvas.fill(Path(ellipseIn: rect), with: .color(color.opacity(0.9)))
+                canvas.fill(Path(ellipseIn: rect), with: .color(color.opacity(0.8)))
             }
         }
-        .clipShape(Circle())
     }
 
-    /// Two companions from the palette keep the orb from reading as a single
+    /// Two companions from the palette keep the chip from reading as a single
     /// flat tint while still belonging to the phase's colour.
+    ///
+    /// Sage and sky rather than the orb's accent-and-lavender pairing: those
+    /// two are near-identical greens, so on a lavender thinking chip the
+    /// three lobes averaged to one grey and the drift disappeared. These are
+    /// separated enough in hue to stay legible against any phase tint.
     private var lobeColors: [Color] {
-        [tint, AlpineTheme.accent, AlpineTheme.lavender]
+        [tint, AlpineTheme.accent, AlpineTheme.sky]
     }
 
-    /// Rotating rim: the same angular-gradient trick the running tool cards
-    /// use for their borders, at orb scale.
+    /// Travelling border light: the same angular-gradient trick
+    /// `shimmerBorder` runs on the card around it, at badge scale and on the
+    /// badge's own squircle, so the two sweeps read as one effect at two
+    /// sizes. It rides over the static hairline rather than replacing it, so
+    /// the chip keeps a visible edge at every point of the sweep.
     private func rim(t: Double) -> some View {
-        Circle()
-            .strokeBorder(
-                AngularGradient(
-                    colors: [
-                        tint.opacity(0.15), tint.opacity(0.95), tint.opacity(0.15),
-                    ],
-                    center: .center,
-                    startAngle: .degrees(t * 220),
-                    endAngle: .degrees(t * 220 + 360)),
-                lineWidth: 1.2)
-    }
-
-    /// Motes orbiting just outside the rim. Purely decorative, so Reduce
-    /// Motion drops them entirely rather than freezing them mid-flight where
-    /// they would read as smudges.
-    @ViewBuilder
-    private func sparkField(t: Double) -> some View {
-        if animated {
-            ZStack {
-                ForEach(Array(Self.sparks.enumerated()), id: \.offset) { _, spark in
-                    let angle = t * 2 * .pi * spark.speed + spark.phase
-                    let radius = size * 0.5 * spark.radius
-                    Circle()
-                        .fill(tint)
-                        .frame(width: spark.dot, height: spark.dot)
-                        .offset(x: cos(angle) * radius, y: sin(angle) * radius * 0.9)
-                        .opacity(0.35 + 0.45 * (0.5 + 0.5 * sin(angle * 2)))
-                }
-            }
-            .blendMode(.plusLighter)
-            .allowsHitTesting(false)
-        }
+        shape.strokeBorder(
+            AngularGradient(
+                colors: [
+                    tint.opacity(0), tint.opacity(0.85), tint.opacity(0),
+                ],
+                center: .center,
+                startAngle: .degrees(t * 220),
+                endAngle: .degrees(t * 220 + 360)),
+            lineWidth: 1)
     }
 
     /// Outside the `TimelineView` on purpose: inside, the 30fps rebuild would
     /// restart the symbol's replace transition every frame.
     private var glyph: some View {
         Image(systemName: symbolName)
-            .font(.system(size: size * 0.4, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.92))
-            .shadow(color: tint.opacity(0.8), radius: 3)
+            .font(ActivityChipMetrics.glyphFont(size: size))
+            .foregroundStyle(tint)
             .contentTransition(Motion.reduceMotion ? .identity : .symbolEffect(.replace))
             .animation(Motion.ambient, value: symbolName)
     }

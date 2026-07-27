@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 /// Local preference for the app's playful motion: the live activity dock's
-/// aurora orb and the auto-review pet, plus the ongoing loops that animate
+/// aurora chip and the auto-review pet, plus the ongoing loops that animate
 /// them.
 ///
 /// Default ON. Everything it gates mounts only while the agent is actually
@@ -103,7 +103,7 @@ struct PlayfulMotionProfile: Equatable, Sendable {
     /// where the extra 30 frames buy nothing visible.
     let decorativeFrameInterval = 1.0 / 30.0
 
-    /// Seconds per full revolution of the activity orb's lobes. Slow enough
+    /// Seconds per full revolution of the activity chip's lobes. Slow enough
     /// to read as a drift rather than a spinner.
     let orbPeriod = 5.2
 
