@@ -142,7 +142,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(resolved.stateDir, join(baseDir, "userdata-v2"));
+      assert.equal(resolved.stateDir, join(baseDir, "userdata"));
     }),
   );
 
@@ -212,7 +212,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
       });
-      assert.equal(resolved.dbPath, join(baseDir, "userdata-v2", "state.sqlite"));
+      assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
     }),
   );
 
@@ -366,7 +366,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(join(baseDir, "userdata-v2"), resolved.stateDir);
+      assert.equal(join(baseDir, "userdata"), resolved.stateDir);
     }),
   );
 
