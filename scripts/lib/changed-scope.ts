@@ -74,8 +74,23 @@ const relatedSourceExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
 const nativeMobileExtensions = new Set([".swift", ".kt", ".kts"]);
 
+/**
+ * Package whose tests cover the repo's shell scripts and git hooks.
+ *
+ * A `.sh` file or a hook is not in any module graph, so `vitest related` can
+ * never reach the tests that spawn it — `scripts/setup-worktree.test.ts` and
+ * `scripts/pre-commit-hook.test.ts` would silently not run for the change that
+ * needs them most. Attribute those files to the package that tests them.
+ */
+const shellHarnessPackage = "@t3tools/scripts";
+
+const shellScriptExtensions = new Set([".sh", ".bash", ".zsh"]);
+
+/** Git hooks: executable, extensionless, and covered by the same tests. */
+const gitHookPrefixes = [".vite-hooks/", ".githooks/"];
+
 /** Extensions `vp fmt`/`vp lint` actually handle; see `fmt`/`lint` in vite.config.ts. */
-const checkableExtensions = [
+const checkableExtensions = new Set([
   ...relatedSourceExtensions,
   ".css",
   ".html",
@@ -83,7 +98,7 @@ const checkableExtensions = [
   ".md",
   ".yaml",
   ".yml",
-];
+]);
 
 function extensionOf(filePath: string): string {
   const lastDot = filePath.lastIndexOf(".");
@@ -159,10 +174,20 @@ export function resolveChangedScope(
     if (owner !== null && relatedSourceExtensions.includes(extension)) {
       packageNames.add(owner.name);
     }
+    if (
+      shellScriptExtensions.has(extension) ||
+      gitHookPrefixes.some((prefix) => filePath.startsWith(prefix))
+    ) {
+      // Only when that package is actually in this workspace, so the rule
+      // cannot invent a filter that matches nothing.
+      if (packages.some((candidate) => candidate.name === shellHarnessPackage)) {
+        packageNames.add(shellHarnessPackage);
+      }
+    }
     if (relatedSourceExtensions.includes(extension)) {
       relatedSources.push(filePath);
     }
-    if (checkableExtensions.includes(extension)) {
+    if (checkableExtensions.has(extension)) {
       checkPaths.push(filePath);
     }
   }

@@ -100,6 +100,27 @@ describe("resolveChangedScope", () => {
     assert.deepStrictEqual(scope.packages, ["@t3tools/mobile-native"]);
   });
 
+  it("routes shell scripts and git hooks to the package whose tests spawn them", () => {
+    // Neither is in any module graph, so `vitest related` cannot reach
+    // scripts/setup-worktree.test.ts or scripts/pre-commit-hook.test.ts on its
+    // own — the change that most needs those tests would skip them.
+    for (const file of [
+      "scripts/setup-worktree.sh",
+      ".vite-hooks/pre-commit",
+      ".vite-hooks/post-checkout",
+      "apps/mac/scripts/swift-test.sh",
+    ]) {
+      const scope = resolveChangedScope([file], packages);
+      assert.include(scope.packages, "@t3tools/scripts", `${file} should re-run the shell tests`);
+    }
+  });
+
+  it("does not invent a package filter when the shell harness is absent", () => {
+    const withoutScripts = packages.filter((candidate) => candidate.name !== "@t3tools/scripts");
+    const scope = resolveChangedScope(["scripts/setup-worktree.sh"], withoutScripts);
+    assert.deepStrictEqual(scope.packages, []);
+  });
+
   it("keeps deleted files in scope so their package still re-runs", () => {
     const scope = resolveChangedScope(["packages/shared/src/gone.ts"], packages);
     assert.deepStrictEqual(scope.packages, ["@t3tools/shared"]);
