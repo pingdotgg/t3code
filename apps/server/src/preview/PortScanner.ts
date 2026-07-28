@@ -21,6 +21,7 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -60,21 +61,16 @@ const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
-type ListenerNotification =
-  | {
-      readonly _tag: "Snapshot";
-      readonly servers: ReadonlyArray<DiscoveredLocalServer>;
-      readonly deliveryResult: Deferred.Deferred<Exit.Exit<void>>;
-      readonly isReplay: boolean;
-    }
-  | {
-      readonly _tag: "Stop";
-      readonly stopped: Deferred.Deferred<void>;
-    };
+interface ListenerNotification {
+  readonly servers: ReadonlyArray<DiscoveredLocalServer>;
+  readonly deliveryResult: Deferred.Deferred<Exit.Exit<void>>;
+  readonly isReplay: boolean;
+}
 
 interface ListenerRegistration {
   readonly listener: Listener;
   readonly notifications: Queue.Queue<ListenerNotification>;
+  readonly stoppedRef: Ref.Ref<boolean>;
 }
 
 class CurrentListenerRegistration extends Context.Reference<ListenerRegistration | undefined>(
@@ -358,7 +354,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                 const deliveryResult = yield* Deferred.make<Exit.Exit<void>>();
                 deliveries.push(deliveryResult);
                 yield* Queue.offer(registration.notifications, {
-                  _tag: "Snapshot",
                   servers: next,
                   deliveryResult,
                   isReplay: false,
@@ -473,15 +468,25 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const stopListener = Effect.fn("PortDiscovery.stopListener")(function* (
     registration: ListenerRegistration,
+    worker: Fiber.Fiber<void>,
   ) {
-    const stopped = yield* Deferred.make<void>();
-    yield* notificationLock.withPermit(
+    const shouldStop = yield* Ref.modify(registration.stoppedRef, (stopped) =>
+      stopped ? [false, true] : [true, true],
+    );
+    if (!shouldStop) return;
+    const pending = yield* notificationLock.withPermit(
       Effect.gen(function* () {
         yield* removeListener(registration);
-        yield* Queue.offer(registration.notifications, { _tag: "Stop", stopped });
+        return yield* Queue.clear(registration.notifications);
       }),
     );
-    yield* Deferred.await(stopped);
+    yield* Effect.forEach(
+      pending,
+      (notification) =>
+        Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore),
+      { discard: true },
+    );
+    yield* Fiber.interrupt(worker);
     yield* Queue.shutdown(registration.notifications);
   });
 
@@ -491,17 +496,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     let replayFailed = false;
     while (true) {
       const notification = yield* Queue.take(registration.notifications);
-      if (notification._tag === "Stop") {
-        yield* Deferred.succeed(notification.stopped, undefined).pipe(Effect.ignore);
-        return;
-      }
       if (replayFailed) {
         yield* Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore);
         continue;
       }
-      const delivery = yield* registration
-        .listener(notification.servers)
-        .pipe(Effect.provideService(CurrentListenerRegistration, registration), Effect.exit);
+      const delivery = yield* registration.listener(notification.servers).pipe(
+        Effect.provideService(CurrentListenerRegistration, registration),
+        Effect.onInterrupt(() =>
+          Deferred.succeed(notification.deliveryResult, Exit.interrupt()).pipe(Effect.asVoid),
+        ),
+        Effect.exit,
+      );
       yield* Deferred.succeed(notification.deliveryResult, delivery).pipe(Effect.ignore);
       if (notification.isReplay) {
         replayFailed = Exit.isFailure(delivery);
@@ -516,11 +521,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const subscribe: PortDiscovery["Service"]["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
     function* (listener) {
-      yield* Effect.acquireRelease(
+      const { registration, replayResult, worker } = yield* Effect.uninterruptible(
         Effect.gen(function* () {
           const notifications = yield* Queue.unbounded<ListenerNotification>();
           const replayResult = yield* Deferred.make<Exit.Exit<void>>();
-          const registration = { listener, notifications };
+          const stoppedRef = yield* Ref.make(false);
+          const registration = { listener, notifications, stoppedRef };
           yield* notificationLock.withPermit(
             Effect.gen(function* () {
               const snapshot = yield* Ref.modify(stateRef, (state) => [
@@ -531,23 +537,22 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                 },
               ]);
               yield* Queue.offer(notifications, {
-                _tag: "Snapshot",
                 servers: snapshot,
                 deliveryResult: replayResult,
                 isReplay: true,
               });
             }),
           );
-          yield* Effect.forkScoped(runListenerNotifications(registration));
-          const replayExit = yield* Deferred.await(replayResult);
-          if (Exit.isFailure(replayExit)) {
-            yield* stopListener(registration);
-            return yield* Effect.failCause(replayExit.cause);
-          }
-          return registration;
+          const worker = yield* Effect.forkScoped(runListenerNotifications(registration));
+          yield* Effect.addFinalizer(() => stopListener(registration, worker));
+          return { registration, worker, replayResult };
         }),
-        stopListener,
       );
+      const replayExit = yield* Deferred.await(replayResult);
+      if (Exit.isFailure(replayExit)) {
+        yield* stopListener(registration, worker);
+        return yield* Effect.failCause(replayExit.cause);
+      }
     },
   );
 

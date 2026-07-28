@@ -10,6 +10,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
@@ -463,6 +464,93 @@ effectIt("removes listeners when initial snapshot replay fails", () => {
 
     expect(failedListenerCalls).toBe(1);
     expect(healthyDeliveries).toEqual([[3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("removes listeners when initial snapshot replay is interrupted", () => {
+  const replayStarted = Deferred.makeUnsafe<void>();
+  const healthyDeliveries: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: probeCount === 1 ? "p100\ncnode\nn*:3000\n" : "p101\ncnode\nn*:3001\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain;
+    const subscriptionScope = yield* Scope.make();
+    const interruptedSubscription = yield* scanner
+      .subscribe(() =>
+        Deferred.succeed(replayStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      )
+      .pipe(Effect.provideService(Scope.Scope, subscriptionScope), Effect.forkScoped);
+    yield* Deferred.await(replayStarted);
+
+    yield* Scope.close(subscriptionScope, Exit.void);
+    yield* Fiber.await(interruptedSubscription);
+
+    yield* scanner.subscribe((servers) =>
+      Effect.sync(() => {
+        healthyDeliveries.push(servers.map((server) => server.port));
+      }),
+    );
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      processIds: [101],
+    });
+
+    expect(healthyDeliveries).toEqual([[3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt("interrupts blocked listeners when their subscription scope closes", () => {
+  const broadcastStarted = Deferred.makeUnsafe<void>();
+  let deliveryCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.succeed({
+      stdout: "p100\ncnode\nn*:3000\n",
+      stderr: "",
+      code: null,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const subscriptionScope = yield* Scope.make();
+    yield* scanner
+      .subscribe(() =>
+        Effect.gen(function* () {
+          deliveryCount += 1;
+          if (deliveryCount === 2) {
+            yield* Deferred.succeed(broadcastStarted, undefined).pipe(Effect.ignore);
+            return yield* Effect.never;
+          }
+        }),
+      )
+      .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
+
+    const retainFiber = yield* scanner.retain.pipe(Effect.forkScoped);
+    yield* Deferred.await(broadcastStarted);
+    const closeFiber = yield* Scope.close(subscriptionScope, Exit.void).pipe(Effect.forkScoped);
+    yield* Effect.yieldNow;
+
+    expect(closeFiber.pollUnsafe()).toBeDefined();
+    yield* Fiber.join(retainFiber);
+    expect(deliveryCount).toBe(2);
   }).pipe(Effect.provide(layer));
 });
 
