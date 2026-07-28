@@ -1,10 +1,70 @@
 import { Undo2Icon } from "lucide-react";
-import { useLocation } from "@tanstack/react-router";
-import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import {
+  createContext,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+interface SettingsSearchTargetContextValue {
+  readonly targetId: string | null;
+  readonly onTargetHandled: () => void;
+}
+
+const noop = () => undefined;
+const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextValue>({
+  targetId: null,
+  onTargetHandled: noop,
+});
+
+export function SettingsSearchTargetProvider({
+  targetId,
+  onTargetHandled = noop,
+  children,
+}: {
+  targetId: string | null;
+  onTargetHandled?: () => void;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => ({ targetId, onTargetHandled }), [onTargetHandled, targetId]);
+  return <SettingsSearchTargetContext value={value}>{children}</SettingsSearchTargetContext>;
+}
+
+function scrollAndFocusSettingsTarget(target: HTMLElement): void {
+  target.scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    block: "center",
+  });
+  target.focus({ preventScroll: true });
+  target.classList.remove("settings-search-target-pulse");
+  void target.offsetWidth;
+  target.classList.add("settings-search-target-pulse");
+}
+
+function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
+  const { targetId, onTargetHandled } = useContext(SettingsSearchTargetContext);
+  const isSearchTarget = id !== undefined && id === targetId;
+  const targetRef = useCallback(
+    (target: T | null) => {
+      if (target && isSearchTarget) {
+        scrollAndFocusSettingsTarget(target);
+        onTargetHandled();
+      }
+    },
+    [isSearchTarget, onTargetHandled],
+  );
+
+  return targetRef;
+}
 
 /** Re-render every `intervalMs`; return a stable timestamp snapshot for render-time relative labels. */
 export function useRelativeTimeTick(intervalMs = 1_000) {
@@ -29,9 +89,12 @@ export function SettingsSection({
   headerAction?: ReactNode;
   children: ReactNode;
 }) {
+  const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+
   return (
     <section
       {...sectionProps}
+      ref={targetRef}
       tabIndex={sectionProps.id ? -1 : sectionProps.tabIndex}
       className={cn("space-y-3", className)}
     >
@@ -64,9 +127,12 @@ export function SettingsRow({
   control?: ReactNode;
   children?: ReactNode;
 }) {
+  const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+
   return (
     <div
       {...rowProps}
+      ref={targetRef}
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       className={cn("rounded-xl px-3 sm:px-4", children ? "pt-3 pb-1" : "py-3", className)}
     >
@@ -125,39 +191,27 @@ export function SettingsPageContainer({
   children: ReactNode;
   className?: string;
 }) {
-  // Scroll to the row or section a settings-search result navigated to; `:target` keeps it lit.
+  const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
-
-  useEffect(() => {
-    if (hash.length === 0) return;
-    return scrollToSettingsTarget(hash.replace(/^#/, ""));
-  }, [hash]);
+  const targetId = hash.replace(/^#/, "") || null;
+  const clearTargetHash = useCallback(() => {
+    void navigate({ hash: "", replace: true, resetScroll: false });
+  }, [navigate]);
 
   return (
-    <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
-      <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
-        {children}
+    <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
+      <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
+        <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
+          {children}
+        </div>
       </div>
-    </div>
+    </SettingsSearchTargetProvider>
   );
 }
 
-export function scrollToSettingsTarget(targetId: string, attemptsRemaining = 180): () => void {
-  let frame = 0;
-  const tryScroll = () => {
-    const target = document.getElementById(targetId);
-    if (target) {
-      target.scrollIntoView({
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-        block: "center",
-      });
-      target.focus({ preventScroll: true });
-      return;
-    }
-    if (attemptsRemaining <= 1) return;
-    attemptsRemaining -= 1;
-    frame = requestAnimationFrame(tryScroll);
-  };
-  frame = requestAnimationFrame(tryScroll);
-  return () => cancelAnimationFrame(frame);
+export function scrollToSettingsTarget(targetId: string): boolean {
+  const target = document.getElementById(targetId);
+  if (!target) return false;
+  scrollAndFocusSettingsTarget(target);
+  return true;
 }

@@ -358,6 +358,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       var(--app-scrollbar-width) 100%;
   }
 
+<<<<<<< HEAD
   /* Persistent highlight for the row or section a settings-search result points at. */
   .settings-page-scroll-fade div:target,
   .settings-page-scroll-fade section:target > div:first-child {
@@ -367,6 +368,25 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .settings-page-scroll-fade :target:focus {
+=======
+  @keyframes settings-search-target-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+    50% {
+      box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 70%, transparent);
+    }
+  }
+
+  .settings-page-scroll-fade div.settings-search-target-pulse,
+  .settings-page-scroll-fade section.settings-search-target-pulse > div:first-child {
+    animation: settings-search-target-pulse 650ms ease-in-out 2;
+    border-radius: 0.75rem;
+  }
+
+  .settings-page-scroll-fade .settings-search-target-pulse:focus {
+>>>>>>> 172942271 (Pulse settings search destinations)
     outline: none;
   }
 
