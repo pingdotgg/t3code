@@ -45,9 +45,8 @@ class ArchiveCodecError extends Data.TaggedError("ArchiveCodecError")<{
   readonly cause: unknown;
 }> {}
 
-const THREAD_TABLES = [
+const ARCHIVED_THREAD_TABLES = [
   ["orchestration_events", "stream_id"],
-  ["orchestration_command_receipts", "aggregate_id"],
   ["checkpoint_diff_blobs", "thread_id"],
   ["provider_session_runtime", "thread_id"],
   ["projection_thread_messages", "thread_id"],
@@ -56,6 +55,11 @@ const THREAD_TABLES = [
   ["projection_turns", "thread_id"],
   ["projection_pending_approvals", "thread_id"],
   ["projection_thread_proposed_plans", "thread_id"],
+] as const;
+
+const THREAD_TABLES = [
+  ...ARCHIVED_THREAD_TABLES,
+  ["orchestration_command_receipts", "aggregate_id"] as const,
 ] as const;
 
 function storageError(operation: string, threadId: string, cause: unknown) {
@@ -398,7 +402,7 @@ const make = Effect.gen(function* () {
     let chunkIndex = 0;
     let originalBytes = 0;
     let compressedBytes = 0;
-    for (const [table, keyColumn] of THREAD_TABLES) {
+    for (const [table, keyColumn] of ARCHIVED_THREAD_TABLES) {
       let lastRowId = 0;
       while (true) {
         const rows = (yield* sql.unsafe(
@@ -479,7 +483,7 @@ const make = Effect.gen(function* () {
            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
           [threadId, rootThreadId, ARCHIVE_VERSION, archivedAt, originalBytes, compressedBytes],
         );
-        for (const [table, keyColumn] of [...THREAD_TABLES].toReversed()) {
+        for (const [table, keyColumn] of [...ARCHIVED_THREAD_TABLES].toReversed()) {
           yield* sql.unsafe(`DELETE FROM ${table} WHERE ${keyColumn} = ?`, [threadId]);
         }
         yield* sql.unsafe(
@@ -634,6 +638,7 @@ const make = Effect.gen(function* () {
     )) as ReadonlyArray<SqlRow>;
     let restored = false;
     for (const row of rows) {
+      if (row.status === "restored") continue;
       restored = (yield* restoreThread(ThreadId.make(String(row.thread_id)))) || restored;
     }
     if (restored || rows.some((row) => row.status === "restored")) {
@@ -868,7 +873,18 @@ const make = Effect.gen(function* () {
       "list-pending-archives",
     ),
     listPendingDeleteThreadIds: listIds(
-      `SELECT thread_id FROM thread_cleanup_queue WHERE reason = 'deleted' ORDER BY created_at ASC, thread_id ASC`,
+      `SELECT thread_id
+       FROM (
+         SELECT thread_id, created_at
+         FROM thread_cleanup_queue
+         WHERE reason = 'deleted'
+         UNION ALL
+         SELECT thread_id, deleted_at AS created_at
+         FROM projection_threads
+         WHERE deleted_at IS NOT NULL
+       )
+       GROUP BY thread_id
+       ORDER BY MIN(created_at) ASC, thread_id ASC`,
       "list-pending-deletes",
     ),
   } satisfies ThreadColdStorage["Service"];

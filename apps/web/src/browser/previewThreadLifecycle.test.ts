@@ -78,6 +78,20 @@ describe("reconcilePreviewThreadRefs", () => {
     });
   });
 
+  it("refreshes live baselines while the environment catalog is unavailable", () => {
+    expect(
+      reconcilePreviewThreadRefs({
+        previousActiveThreadRefs: [archivedRef],
+        activeThreadRefs: [activeRef],
+        catalogEnvironmentIds: null,
+        liveEnvironmentIds: new Set([environmentOne]),
+      }),
+    ).toEqual({
+      removedThreadRefs: [archivedRef],
+      nextActiveThreadRefs: [activeRef],
+    });
+  });
+
   it("does not report unchanged reordered thread references", () => {
     expect(
       reconcilePreviewThreadRefs({

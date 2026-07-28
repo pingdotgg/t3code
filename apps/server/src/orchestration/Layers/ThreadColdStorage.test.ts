@@ -53,6 +53,23 @@ layer("ThreadColdStorage", (it) => {
     }),
   );
 
+  it.effect("discovers deleted shells before a cleanup queue entry exists", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-delete-queue-fallback");
+
+      yield* insertArchivedThread(threadId, "Delete queue fallback thread");
+      yield* sql`
+        UPDATE projection_threads
+        SET deleted_at = '2026-07-03T00:00:00.000Z'
+        WHERE thread_id = ${threadId}
+      `;
+
+      assert.deepInclude(yield* storage.listPendingDeleteThreadIds, threadId);
+    }),
+  );
+
   it.effect("reserves hot archived rows while an unarchive command is pending", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -143,6 +160,107 @@ layer("ThreadColdStorage", (it) => {
       assert.deepStrictEqual(manifest, [
         { status: "cold", archivedAt: "2026-07-04T00:00:00.000Z" },
       ]);
+    }),
+  );
+
+  it.effect("does not replay a restored bundle over active thread data", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const threadId = ThreadId.make("thread-stale-restored-bundle");
+      const attachmentName =
+        "thread-stale-restored-bundle-00000000-0000-4000-8000-000000000001.txt";
+      const attachmentPath = path.join(config.attachmentsDir, attachmentName);
+
+      yield* insertArchivedThread(threadId, "Stale restored bundle");
+      yield* sql.unsafe(
+        `INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (?, ?, NULL, 'user', 'cold value', ?, 0, ?, ?)`,
+        [
+          "message-stale-restored-bundle",
+          threadId,
+          encodeUnknownJsonString([
+            {
+              type: "text",
+              id: attachmentName.slice(0, -4),
+              name: "content.txt",
+              mimeType: "text/plain",
+            },
+          ]),
+          "2026-07-01T00:00:00.000Z",
+          "2026-07-01T00:00:00.000Z",
+        ],
+      );
+      yield* fs.writeFileString(attachmentPath, "cold attachment");
+
+      yield* storage.archiveThread(threadId);
+      assert.isTrue(yield* storage.restoreTree(threadId));
+
+      yield* sql`
+        UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}
+      `;
+      yield* sql`
+        UPDATE projection_thread_messages
+        SET text = 'active value'
+        WHERE thread_id = ${threadId}
+      `;
+      yield* fs.writeFileString(attachmentPath, "active attachment");
+
+      assert.isTrue(yield* storage.restoreTree(threadId));
+
+      const messages = yield* sql<{ readonly text: string }>`
+        SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(messages, [{ text: "active value" }]);
+      assert.strictEqual(yield* fs.readFileString(attachmentPath), "active attachment");
+    }),
+  );
+
+  it.effect("keeps command receipts hot while conversation data is cold", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-hot-command-receipt");
+
+      yield* insertArchivedThread(threadId, "Hot command receipt");
+      yield* sql`
+        INSERT INTO orchestration_command_receipts (
+          command_id, aggregate_kind, aggregate_id, accepted_at,
+          result_sequence, status, error
+        ) VALUES (
+          'command-hot-receipt', 'thread', ${threadId},
+          '2026-07-02T00:00:00.000Z', 42, 'accepted', NULL
+        )
+      `;
+
+      yield* storage.archiveThread(threadId);
+
+      const hotReceipts = yield* sql<{ readonly commandId: string }>`
+        SELECT command_id AS "commandId"
+        FROM orchestration_command_receipts
+        WHERE aggregate_id = ${threadId}
+      `;
+      const receiptChunks = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM cold_archive.archive_thread_chunks
+        WHERE thread_id = ${threadId}
+          AND kind = 'table:orchestration_command_receipts'
+      `;
+      assert.deepStrictEqual(hotReceipts, [{ commandId: "command-hot-receipt" }]);
+      assert.deepStrictEqual(receiptChunks, [{ count: 0 }]);
+
+      yield* storage.deleteThread(threadId);
+      const deletedReceipts = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM orchestration_command_receipts
+        WHERE aggregate_id = ${threadId}
+      `;
+      assert.deepStrictEqual(deletedReceipts, [{ count: 0 }]);
     }),
   );
 

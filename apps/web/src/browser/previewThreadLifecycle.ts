@@ -33,7 +33,8 @@ export function reconcilePreviewThreadRefs(
     ),
     ...input.activeThreadRefs.filter(
       (threadRef) =>
-        input.catalogEnvironmentIds?.has(threadRef.environmentId) &&
+        (input.catalogEnvironmentIds === null ||
+          input.catalogEnvironmentIds.has(threadRef.environmentId)) &&
         input.liveEnvironmentIds.has(threadRef.environmentId),
     ),
   ];
