@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  extractMarkdownLinkDestinationAtOffsets,
+  normalizeMarkdownFileLinkHref,
+  preserveMarkdownFileLinkHref,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
@@ -125,5 +128,66 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   it("does not treat app routes as file links", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+  });
+});
+
+describe("markdown file href compatibility", () => {
+  it("recovers a raw Windows destination from a parsed link node range", () => {
+    const markdown = "Created [markdown-links.ts](C:\\Users\\aydri\\repo\\src\\markdown-links.ts).";
+    const startOffset = markdown.indexOf("[");
+    const endOffset = markdown.indexOf(").") + 1;
+
+    expect(extractMarkdownLinkDestinationAtOffsets(markdown, startOffset, endOffset)).toBe(
+      "C:\\Users\\aydri\\repo\\src\\markdown-links.ts",
+    );
+  });
+
+  it("recovers an angle-wrapped destination containing spaces", () => {
+    const markdown = 'See [report](<C:/Users/Test User/repo/report.md> "Report").';
+    const startOffset = markdown.indexOf("[");
+    const endOffset = markdown.indexOf(").") + 1;
+
+    expect(extractMarkdownLinkDestinationAtOffsets(markdown, startOffset, endOffset)).toBe(
+      "<C:/Users/Test User/repo/report.md>",
+    );
+  });
+
+  it("preserves windows file destinations that React Markdown would otherwise sanitize", () => {
+    const href = String.raw`C:\Users\aydri\Documents\GitHub\t3code\AVA_HANDOFF.md`;
+
+    expect(preserveMarkdownFileLinkHref(href)).toBe(href);
+  });
+
+  it("preserves workspace file destinations containing spaces", () => {
+    expect(
+      preserveMarkdownFileLinkHref(
+        "C:/Users/Test User/repo/AVA_HANDOFF.md",
+        "C:/Users/Test User/repo",
+      ),
+    ).toBe("C:/Users/Test User/repo/AVA_HANDOFF.md");
+  });
+
+  it("does not bypass normal URL sanitization for external schemes", () => {
+    expect(preserveMarkdownFileLinkHref("javascript:report.md", "/repo")).toBeNull();
+  });
+
+  it("resolves the encoded href received by the rendered anchor", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "C:%5CUsers%5Caydri%5CDocuments%5CGitHub%5Ct3code%5CAVA_HANDOFF.md",
+        String.raw`C:\Users\aydri\Documents\GitHub\t3code`,
+      ),
+    ).toMatchObject({
+      basename: "AVA_HANDOFF.md",
+      workspaceRelativePath: "AVA_HANDOFF.md",
+    });
+  });
+
+  it("normalizes file URI aliases before matching known file metadata", () => {
+    expect(
+      normalizeMarkdownFileLinkHref(
+        "file:///C:/Users/aydri/Documents/GitHub/t3code/AVA_HANDOFF.md#L12",
+      ),
+    ).toBe("C:/Users/aydri/Documents/GitHub/t3code/AVA_HANDOFF.md#L12");
   });
 });

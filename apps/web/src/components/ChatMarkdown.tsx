@@ -66,7 +66,9 @@ import {
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
-  normalizeMarkdownLinkDestination,
+  extractMarkdownLinkDestinationAtOffsets,
+  normalizeMarkdownFileLinkHref,
+  preserveMarkdownFileLinkHref,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
 } from "../markdown-links";
@@ -826,11 +828,6 @@ function extractMarkdownLinkHrefs(text: string): string[] {
   return hrefs;
 }
 
-function normalizeMarkdownLinkHrefKey(href: string): string {
-  const normalizedHref = normalizeMarkdownLinkDestination(href);
-  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
-}
-
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
 /** Hosts whose favicon request already failed this session — skip straight to the globe. */
@@ -1272,7 +1269,7 @@ function ChatMarkdown({
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
     for (const href of extractMarkdownLinkHrefs(text)) {
-      const normalizedHref = normalizeMarkdownLinkHrefKey(href);
+      const normalizedHref = normalizeMarkdownFileLinkHref(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
       if (meta) {
@@ -1285,9 +1282,13 @@ function ChatMarkdown({
     const filePaths = [...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath);
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [markdownFileLinkMetaByHref]);
-  const markdownUrlTransform = useCallback((href: string) => {
-    return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
-  }, []);
+  const markdownUrlTransform = useCallback(
+    (href: string) =>
+      rewriteMarkdownFileUriHref(href) ??
+      preserveMarkdownFileLinkHref(href, cwd) ??
+      defaultUrlTransform(href),
+    [cwd],
+  );
   // Re-emit highlighted content as markdown so copying out of the rendered
   // view keeps links, emphasis, lists, and code fences intact.
   const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -1384,8 +1385,22 @@ function ChatMarkdown({
         );
       },
       a({ node, href, children, ...props }) {
-        const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const normalizedHref = href ? normalizeMarkdownFileLinkHref(href) : "";
+        const sourceHref = extractMarkdownLinkDestinationAtOffsets(
+          text,
+          node?.position?.start.offset,
+          node?.position?.end.offset,
+        );
+        const normalizedSourceHref = sourceHref ? normalizeMarkdownFileLinkHref(sourceHref) : "";
+        const fileLinkMeta =
+          (normalizedHref
+            ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
+              resolveMarkdownFileLinkMeta(normalizedHref, cwd))
+            : null) ??
+          (normalizedSourceHref
+            ? (markdownFileLinkMetaByHref.get(normalizedSourceHref) ??
+              resolveMarkdownFileLinkMeta(normalizedSourceHref, cwd))
+            : null);
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1475,7 +1490,7 @@ function ChatMarkdown({
             workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
             line={fileLinkMeta.line}
             label={labelParts.join(" · ")}
-            copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
+            copyMarkdown={`[${fileLinkMeta.basename}](${normalizedSourceHref || normalizedHref})`}
             theme={resolvedTheme}
             threadRef={threadRef}
             onOpen={openInPreferredEditor}
@@ -1527,6 +1542,7 @@ function ChatMarkdown({
     }),
     [
       diffThemeName,
+      cwd,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,

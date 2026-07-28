@@ -92,6 +92,62 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   return `${target.path}${target.hash}`;
 }
 
+export function normalizeMarkdownFileLinkHref(href: string): string {
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+}
+
+export function extractMarkdownLinkDestinationAtOffsets(
+  markdown: string,
+  startOffset: number | undefined,
+  endOffset: number | undefined,
+): string | null {
+  if (
+    !Number.isSafeInteger(startOffset) ||
+    !Number.isSafeInteger(endOffset) ||
+    startOffset === undefined ||
+    endOffset === undefined ||
+    startOffset < 0 ||
+    endOffset <= startOffset ||
+    endOffset > markdown.length
+  ) {
+    return null;
+  }
+
+  const source = markdown.slice(startOffset, endOffset);
+  const destinationMarker = source.lastIndexOf("](");
+  if (destinationMarker < 0 || !source.endsWith(")")) return null;
+
+  const destinationSource = source.slice(destinationMarker + 2, -1).trimStart();
+  if (destinationSource.startsWith("<")) {
+    const closingBracket = destinationSource.indexOf(">");
+    return closingBracket > 0 ? destinationSource.slice(0, closingBracket + 1) : null;
+  }
+
+  let nestedParentheses = 0;
+  for (let index = 0; index < destinationSource.length; index += 1) {
+    const character = destinationSource[index];
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (character === "(") {
+      nestedParentheses += 1;
+      continue;
+    }
+    if (character === ")") {
+      if (nestedParentheses === 0) return destinationSource.slice(0, index);
+      nestedParentheses -= 1;
+      continue;
+    }
+    if (/\s/.test(character ?? "") && nestedParentheses === 0) {
+      return destinationSource.slice(0, index);
+    }
+  }
+
+  return destinationSource || null;
+}
+
 function looksLikePosixFilesystemPath(path: string): boolean {
   if (!path.startsWith("/")) return false;
   if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
@@ -168,6 +224,11 @@ export function resolveMarkdownFileLinkTarget(
 
   if (!cwd) return null;
   return resolvePathLinkTarget(pathWithPosition, cwd);
+}
+
+export function preserveMarkdownFileLinkHref(href: string, cwd?: string): string | null {
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  return resolveMarkdownFileLinkTarget(normalizedHref, cwd) ? normalizedHref : null;
 }
 
 function basenameOfPath(path: string): string {
