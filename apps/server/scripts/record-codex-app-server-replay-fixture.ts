@@ -51,6 +51,7 @@ import {
   TURN_INTERRUPT_MID_TOOL_PROMPT,
   TURN_INTERRUPT_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+import { makeReplayRecorderDeferredRegistry } from "./replayRecorderDeferredRegistry.ts";
 
 const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
   process.env.T3_CODEX_REPLAY_PLAN_DEVELOPER_INSTRUCTIONS ??
@@ -169,11 +170,11 @@ function readArgValues(name: string): ReadonlyArray<string> {
   return args.flatMap((arg, index) => (arg === name && args[index + 1] ? [args[index + 1]!] : []));
 }
 
-function defaultTranscriptPath(scenario: ReplayScenario): string {
+function defaultTranscriptUrl(scenario: ReplayScenario): URL {
   return new URL(
     `../src/orchestration-v2/testkit/fixtures/${scenario.name}/codex_transcript.ndjson`,
     import.meta.url,
-  ).pathname;
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1158,45 +1159,16 @@ function runReplaySession({
   readonly recorder: Recorder;
 }) {
   return Effect.gen(function* () {
-    const startedTurns = new Map<string, Deferred.Deferred<void>>();
-    const completedTurns = new Map<string, Deferred.Deferred<void>>();
-    const startedCommandExecutions = new Map<string, Deferred.Deferred<void>>();
+    const startedTurns = yield* makeReplayRecorderDeferredRegistry();
+    const completedTurns = yield* makeReplayRecorderDeferredRegistry();
+    const startedCommandExecutions = yield* makeReplayRecorderDeferredRegistry();
     let approvalGate: Deferred.Deferred<void> | undefined;
-    const getStarted = (turnId: string) => {
-      const existing = startedTurns.get(turnId);
-      if (existing) {
-        return Effect.succeed(existing);
-      }
-      return Deferred.make<void>().pipe(
-        Effect.tap((deferred) => Effect.sync(() => startedTurns.set(turnId, deferred))),
-      );
-    };
-    const getCompletion = (turnId: string) => {
-      const existing = completedTurns.get(turnId);
-      if (existing) {
-        return Effect.succeed(existing);
-      }
-      return Deferred.make<void>().pipe(
-        Effect.tap((deferred) => Effect.sync(() => completedTurns.set(turnId, deferred))),
-      );
-    };
-    const getCommandExecutionStarted = (turnId: string) => {
-      const existing = startedCommandExecutions.get(turnId);
-      if (existing) {
-        return Effect.succeed(existing);
-      }
-      return Deferred.make<void>().pipe(
-        Effect.tap((deferred) => Effect.sync(() => startedCommandExecutions.set(turnId, deferred))),
-      );
-    };
-    const startTurn = (turnId: string) =>
-      getStarted(turnId).pipe(Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)));
-    const completeTurn = (turnId: string) =>
-      getCompletion(turnId).pipe(Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)));
-    const startCommandExecution = (turnId: string) =>
-      getCommandExecutionStarted(turnId).pipe(
-        Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)),
-      );
+    const getStarted = startedTurns.getOrCreate;
+    const getCompletion = completedTurns.getOrCreate;
+    const getCommandExecutionStarted = startedCommandExecutions.getOrCreate;
+    const startTurn = startedTurns.succeed;
+    const completeTurn = completedTurns.succeed;
+    const startCommandExecution = startedCommandExecutions.succeed;
     const beforeApprovalResponse = () =>
       approvalGate ? Deferred.await(approvalGate) : Effect.void;
 
@@ -1415,11 +1387,13 @@ const program = Effect.gen(function* () {
   yield* Effect.forEach(
     selected,
     (scenario) =>
-      runScenario({
-        scenario,
-        outPath:
-          singleOutPath ??
-          (outDir ? path.join(outDir, scenario.fileName) : defaultTranscriptPath(scenario)),
+      Effect.gen(function* () {
+        const defaultOutPath = yield* path.fromFileUrl(defaultTranscriptUrl(scenario));
+        yield* runScenario({
+          scenario,
+          outPath:
+            singleOutPath ?? (outDir ? path.join(outDir, scenario.fileName) : defaultOutPath),
+        });
       }),
     { concurrency: 1 },
   );
