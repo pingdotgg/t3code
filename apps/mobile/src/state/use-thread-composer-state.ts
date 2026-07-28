@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
-  deriveLatestThreadRun,
+  deriveThreadActivityRun,
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { useCallback, useEffect, useMemo } from "react";
@@ -119,10 +119,10 @@ export function useThreadComposerState() {
         : (selectedThreadShell?.runtime ?? null),
     [selectedThreadProjection, selectedThreadShell?.runtime],
   );
-  const selectedThreadLatestRun = useMemo(
+  const selectedThreadActivityRun = useMemo(
     () =>
       selectedThreadProjection
-        ? deriveLatestThreadRun(selectedThreadProjection.projection)
+        ? deriveThreadActivityRun(selectedThreadProjection.projection)
         : (selectedThreadShell?.latestRun ?? null),
     [selectedThreadProjection, selectedThreadShell?.latestRun],
   );
@@ -142,10 +142,15 @@ export function useThreadComposerState() {
     if (!selectedThreadShell) {
       return null;
     }
-    return deriveActiveWorkStartedAt(selectedThreadLatestRun, selectedThreadSessionActivity, null);
-  }, [selectedThreadLatestRun, selectedThreadSessionActivity, selectedThreadShell]);
+    return deriveActiveWorkStartedAt(
+      selectedThreadActivityRun,
+      selectedThreadSessionActivity,
+      null,
+    );
+  }, [selectedThreadActivityRun, selectedThreadSessionActivity, selectedThreadShell]);
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
+  const interruptibleRunId = selectedThreadRuntime?.activeRunId ?? null;
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {
@@ -315,6 +320,7 @@ export function useThreadComposerState() {
 
   return {
     selectedThreadFeed,
+    selectedThreadActivityRun,
     selectedThreadQueueCount,
     activeWorkStartedAt,
     draftMessage,
@@ -323,6 +329,7 @@ export function useThreadComposerState() {
     runtimeMode,
     interactionMode,
     activeThreadBusy,
+    interruptibleRunId,
     onChangeDraftMessage,
     onPickDraftImages,
     onPasteIntoDraft,

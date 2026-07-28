@@ -386,6 +386,7 @@ type ShellThreadRow = {
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
   readonly active_run_id: string | null;
+  readonly last_error: string | null;
   readonly pending_request_payload_json: string | null;
   readonly latest_message_payload_json: string | null;
   readonly latest_user_message_at: string | null;
@@ -763,6 +764,13 @@ export function threadShellFromProjection(
         (left, right) =>
           DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
       )[0] ?? null;
+  const providerSession =
+    projection.providerSessions
+      .filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0] ?? null;
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -784,6 +792,7 @@ export function threadShellFromProjection(
     latestRunId: latestRun?.id ?? null,
     activeRunId: activeRun?.id ?? null,
     status: latestRun?.status ?? "idle",
+    lastError: providerSession?.lastError ?? null,
     pendingRuntimeRequest:
       pendingRuntimeRequest === null
         ? null
@@ -828,6 +837,7 @@ type ShellThreadState = {
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
   readonly activeRunId: RunId | null;
+  readonly lastError: string | null;
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
   readonly latestVisibleMessage: OrchestrationV2ConversationMessage | null;
   readonly latestUserMessageAt: DateTime.Utc | null;
@@ -945,6 +955,7 @@ function shellFromState(input: {
     latestRunId: input.state.latestRunId,
     activeRunId: input.state.activeRunId,
     status: input.state.latestRunStatus,
+    lastError: input.state.lastError,
     pendingRuntimeRequest:
       input.state.pendingRuntimeRequest === null
         ? null
@@ -2080,6 +2091,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS active_run_id,
               (
+                SELECT json_extract(session.payload_json, '$.lastError')
+                FROM orchestration_v2_projection_provider_sessions session
+                INNER JOIN orchestration_v2_projection_provider_session_bindings binding
+                  ON binding.provider_session_id = session.provider_session_id
+                WHERE binding.thread_id = t.thread_id
+                  AND session.provider_instance_id = t.provider_instance_id
+                ORDER BY session.updated_at DESC, session.provider_session_id DESC
+                LIMIT 1
+              ) AS last_error,
+              (
                 SELECT request.payload_json
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
@@ -2173,6 +2194,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   latestRunId: row.latest_run_id === null ? null : RunId.make(row.latest_run_id),
                   latestRunStatus: shellStatusFromStoredRunStatus(row.latest_run_status),
                   activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
+                  lastError: row.last_error,
                   pendingRuntimeRequest,
                   latestVisibleMessage,
                   latestUserMessageAt:

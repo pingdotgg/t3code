@@ -1165,6 +1165,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunId: Schema.NullOr(RunId),
   activeRunId: Schema.NullOr(RunId),
   status: OrchestrationV2ShellThreadStatus,
+  lastError: Schema.optional(Schema.NullOr(Schema.String)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),

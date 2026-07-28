@@ -30,6 +30,7 @@ import type {
   PendingUserInput,
   PendingUserInputDraftAnswer,
   ThreadFeedEntry,
+  ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -50,6 +51,7 @@ export interface ThreadDetailScreenProps {
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: RuntimeRequestId | null;
@@ -63,6 +65,7 @@ export interface ThreadDetailScreenProps {
   /** Message sync status for the selected thread (drives the composer status pill). */
   readonly threadSyncStatus?: EnvironmentThreadStatus;
   readonly activeThreadBusy: boolean;
+  readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
@@ -342,56 +345,48 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, []);
 
   return (
-    <GestureDetector gesture={headerDrawerGesture}>
-      <View className="flex-1">
-        {showContent ? (
-          <View
-            style={{ flex: 1 }}
-            onTouchStart={handleFeedTouchStart}
-            onTouchMove={handleFeedTouchMove}
-            onTouchEnd={handleFeedTouchEnd}
-            onTouchCancel={handleFeedTouchCancel}
-          >
-            <ThreadFeed
-              key={props.selectedThread.id}
-              environmentId={props.environmentId}
-              threadId={props.selectedThread.id}
-              threadTitle={props.selectedThread.title}
-              workspaceRoot={props.threadCwd}
-              feed={props.selectedThreadFeed}
-              contentPresentation={props.contentPresentation}
-              agentLabel={agentLabel}
-              latestRun={props.selectedThread.latestRun}
-              listRef={listRef}
-              freeze={freeze}
-              anchorMessageId={anchorMessageId}
-              contentInsetEndAdjustment={contentInsetEndAdjustment}
-              contentTopInset={headerHeight}
-              contentBottomInset={estimatedOverlayHeight}
-              topAccessory={
-                <ThreadRelationshipsBanner
-                  environmentId={props.environmentId}
-                  threadId={props.selectedThread.id}
-                />
-              }
-              layoutVariant={layoutVariant}
-              skills={selectedProviderSkills}
-            />
-          </View>
-        ) : (
-          <View style={{ flex: 1 }} />
-        )}
-
-        {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
-        {showContent ? (
-          <KeyboardStickyView
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-            offset={{ closed: 0, opened: 0 }}
-          >
-            <View ref={composerOverlayRef} onLayout={onComposerLayout} style={{ paddingTop: 8 }}>
-              {props.activeWorkStartedAt ? (
-                <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
-              ) : null}
+    <View className="flex-1">
+      {showContent ? (
+        <View
+          className="flex-1"
+          onTouchStart={handleFeedTouchStart}
+          onTouchMove={handleFeedTouchMove}
+          onTouchEnd={handleFeedTouchEnd}
+          onTouchCancel={handleFeedTouchCancel}
+        >
+          <ThreadFeed
+            key={props.selectedThread.id}
+            environmentId={props.environmentId}
+            threadId={props.selectedThread.id}
+            workspaceRoot={props.threadCwd}
+            feed={props.selectedThreadFeed}
+            contentPresentation={props.contentPresentation}
+            agentLabel={agentLabel}
+            threadTitle={props.selectedThread.title}
+            latestRun={props.activityRun}
+            activeWorkStartedAt={props.activeWorkStartedAt}
+            listRef={listRef}
+            freeze={freeze}
+            anchorMessageId={anchorMessageId}
+            contentInsetEndAdjustment={contentInsetEndAdjustment}
+            contentTopInset={0}
+            contentBottomInset={estimatedOverlayHeight}
+            contentMaxWidth={contentMaxWidth}
+            topAccessory={
+              <ThreadRelationshipsBanner
+                environmentId={props.environmentId}
+                threadId={props.selectedThread.id}
+              />
+            }
+            layoutVariant={layoutVariant}
+            usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+            onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
+            skills={selectedProviderSkills}
+          />
+        </View>
+      ) : (
+        <View className="flex-1" />
+      )}
 
               <ThreadQueueControl
                 environmentId={props.environmentId}
@@ -440,6 +435,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               serverConfig={props.serverConfig}
               queueCount={props.selectedThreadQueueCount}
               activeThreadBusy={props.activeThreadBusy}
+              canStopThread={props.canStopThread}
               environmentId={props.environmentId}
               projectCwd={props.projectWorkspaceRoot}
               bottomInset={composerBottomInset}
