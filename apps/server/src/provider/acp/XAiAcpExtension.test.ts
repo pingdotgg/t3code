@@ -339,6 +339,29 @@ describe("XAiAcpExtension", () => {
     expect(extractXAiMonitorTaskId(toolCall)).toBe("019f44a5-87d1-7640-8e35-6a4667ffc873");
   });
 
+  it("tracks text Monitor ACKs with generic titles and description-only input", () => {
+    const toolCall = {
+      toolCallId: "call-mon-generic-text",
+      title: "Tool",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          command: "echo mon_line_1",
+          description: "Demo monitor without variant",
+        },
+        rawOutput: {
+          type: "Text",
+          text: "Monitor started (task 019f44a5-87d1-7640-8e35-6a4667ffc873, timeout 36000000ms).\nYou will be notified on each event.",
+        },
+      },
+    };
+
+    const normalized = normalizeXAiAcpToolCallState(toolCall);
+    expect(isXAiMonitorTool(normalized)).toBe(true);
+    expect(normalized.status).toBe("inProgress");
+    expect(extractXAiMonitorTaskId(normalized)).toBe("019f44a5-87d1-7640-8e35-6a4667ffc873");
+  });
+
   it("completes Monitor variant tools from structured Bash exit codes", () => {
     const toolCall = {
       toolCallId: "call-mon-2",
@@ -1515,6 +1538,46 @@ describe("XAiAcpExtension", () => {
         promptId: capturedMeta?.promptId,
         requestId: capturedMeta?.promptId,
       });
+    }),
+  );
+
+  it.effect("cancels pending completions without restarting a stalled runtime", () =>
+    Effect.gen(function* () {
+      const hungStart = yield* Deferred.make<never>();
+      const hungPrompt = yield* Deferred.make<never>();
+      let startCount = 0;
+      let cancelCalled = false;
+      const baseRuntime = {
+        start: () => {
+          startCount += 1;
+          return startCount === 1
+            ? Effect.succeed({
+                sessionId: "root-session",
+                initializeResult: {},
+                sessionSetupResult: {},
+                modelConfigId: undefined,
+              })
+            : Deferred.await(hungStart);
+        },
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.sync(() => {
+          cancelCalled = true;
+        }),
+        handleExtNotification: () => Effect.void,
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      yield* runtime.cancel;
+
+      expect(cancelCalled).toBe(true);
+      expect(startCount).toBe(1);
+      expect((yield* Fiber.join(promptFiber)).stopReason).toBe("cancelled");
     }),
   );
 });
