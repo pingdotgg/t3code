@@ -121,8 +121,12 @@ import {
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
+  nextThreadChangeRequestSnapshot,
   prStatusIndicator,
-  resolveThreadPr,
+  resolveDisplayedThreadPr,
+  resolveDisplayedThreadPrProvider,
+  threadChangeRequestSnapshotsEqual,
+  type ThreadChangeRequestSnapshot,
   settledPrHoverColorClass,
 } from "./ThreadStatusIndicators";
 import {
@@ -391,11 +395,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
-  onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  changeRequestSnapshot: ThreadChangeRequestSnapshot | null;
+  onChangeRequestSnapshot: (
+    threadKey: string,
+    snapshot: ThreadChangeRequestSnapshot | null,
+  ) => void;
 }) {
   const {
     isRenaming,
-    onChangeRequestState,
+    changeRequestSnapshot,
+    onChangeRequestSnapshot,
     onCancelRename,
     onCommitRename,
     onContextMenu,
@@ -502,18 +511,28 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     activeThreadBranch: thread.branch,
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
-  const pr = resolveThreadPr({
+  const pr = resolveDisplayedThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
+    snapshot: changeRequestSnapshot,
   });
-  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const prProvider = resolveDisplayedThreadPrProvider({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
+    snapshot: changeRequestSnapshot,
+  });
+  const prStatus = prStatusIndicator(pr, prProvider);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
-  // Report the PR state up: the parent partitions rows with effectiveSettled,
-  // and a merged/closed PR auto-settles a thread — data only rows have.
-  const prState = pr?.state ?? null;
+  // Authoritative VCS updates only: a checkout on another branch must not
+  // clear a previously verified terminal PR for this thread.
   useEffect(() => {
-    onChangeRequestState(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+    const nextSnapshot = nextThreadChangeRequestSnapshot({
+      threadBranch: thread.branch,
+      gitStatus: gitStatus.data,
+    });
+    if (nextSnapshot === undefined) return;
+    onChangeRequestSnapshot(threadKey, nextSnapshot);
+  }, [gitStatus.data, onChangeRequestSnapshot, thread.branch, threadKey]);
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
@@ -1157,21 +1176,27 @@ export default function SidebarV2() {
   // fresh clock whenever it recomputes.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
 
-  // PR states stream in per-row (rows own the VCS subscriptions); a merged or
-  // closed PR auto-settles its thread on the next partition.
-  const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+  // Full PR snapshots stream in per-row (rows own the VCS subscriptions). A
+  // merged/closed PR auto-settles its thread; the snapshot retains badge
+  // metadata when the shared checkout later switches away from the thread branch.
+  const [changeRequestSnapshotByKey, setChangeRequestSnapshotByKey] = useState<
+    ReadonlyMap<string, ThreadChangeRequestSnapshot>
   >(() => new Map());
-  const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
-        const next = new Map(current);
-        if (state === null) {
+  const handleChangeRequestSnapshot = useCallback(
+    (threadKey: string, snapshot: ThreadChangeRequestSnapshot | null) => {
+      setChangeRequestSnapshotByKey((current) => {
+        const existing = current.get(threadKey);
+        if (snapshot === null) {
+          if (existing === undefined) return current;
+          const next = new Map(current);
           next.delete(threadKey);
-        } else {
-          next.set(threadKey, state);
+          return next;
         }
+        if (existing !== undefined && threadChangeRequestSnapshotsEqual(existing, snapshot)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(threadKey, snapshot);
         return next;
       });
     },
@@ -1394,7 +1419,11 @@ export default function SidebarV2() {
       const supportsSnooze =
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
+      const snapshot = changeRequestSnapshotByKey.get(threadKey);
+      // Same resolved terminal PR the row displays: retain merged/closed for
+      // this thread's branch even after the shared checkout switches away.
+      const changeRequestState =
+        snapshot != null && snapshot.branch === thread.branch ? snapshot.pr.state : null;
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
@@ -1422,7 +1451,7 @@ export default function SidebarV2() {
     };
   }, [
     autoSettleAfterDays,
-    changeRequestStateByKey,
+    changeRequestSnapshotByKey,
     nowMinute,
     scopedProjectKeys,
     serverConfigs,
@@ -2460,7 +2489,8 @@ export default function SidebarV2() {
                       onUnsettle={attemptUnsettle}
                       onSnooze={attemptSnooze}
                       onUnsnooze={attemptUnsnooze}
-                      onChangeRequestState={handleChangeRequestState}
+                      changeRequestSnapshot={changeRequestSnapshotByKey.get(threadKey) ?? null}
+                      onChangeRequestSnapshot={handleChangeRequestSnapshot}
                     />
                   );
                 };
