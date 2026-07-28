@@ -3,7 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
-import { getOnlySelectableProject } from "./new-task-project-selection";
+import {
+  getOnlySelectableProject,
+  resolveDraftProjectSelection,
+} from "./new-task-project-selection";
 
 function makeProject(id: string): EnvironmentProject {
   return {
@@ -41,5 +44,27 @@ describe("getOnlySelectableProject", () => {
   it("does not auto-select a representative when one group has multiple clones", () => {
     const projects = [makeProject("t3code"), makeProject("t3code-2"), makeProject("t3code-3")];
     expect(getOnlySelectableProject([makeScope(projects)])).toBeNull();
+  });
+});
+
+describe("resolveDraftProjectSelection", () => {
+  it("preserves an explicit project selection", () => {
+    const project = makeProject("t3code");
+    expect(resolveDraftProjectSelection("environment:t3code", [makeScope([project])])).toEqual({
+      kind: "preserve",
+    });
+  });
+
+  it("selects the only physical project when no project was explicitly selected", () => {
+    const project = makeProject("t3code");
+    expect(resolveDraftProjectSelection(null, [makeScope([project])])).toEqual({
+      kind: "select",
+      project,
+    });
+  });
+
+  it("opens the picker for multiple physical projects in one logical group", () => {
+    const projects = [makeProject("t3code"), makeProject("t3code-2"), makeProject("t3code-3")];
+    expect(resolveDraftProjectSelection(null, [makeScope(projects)])).toEqual({ kind: "pick" });
   });
 });
