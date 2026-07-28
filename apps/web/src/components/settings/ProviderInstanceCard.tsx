@@ -142,7 +142,7 @@ export function nextProviderEnvironmentWithFieldValue(
       next.push({
         name: variable.name,
         value: trimmed,
-        sensitive: field.sensitive ?? variable.sensitive,
+        sensitive: field.sensitive ?? true,
       });
     }
   }

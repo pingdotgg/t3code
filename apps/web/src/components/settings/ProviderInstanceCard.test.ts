@@ -77,6 +77,19 @@ describe("provider environment helpers", () => {
     ).toEqual([{ name: "CURSOR_API_KEY", value: "new-key", sensitive: true }]);
   });
 
+  it("applies the secure field default when replacing an existing non-sensitive value", () => {
+    expect(
+      nextProviderEnvironmentWithFieldValue(
+        [{ name: "OPENAI_API_KEY", value: "old-key", sensitive: false }],
+        {
+          name: "OPENAI_API_KEY",
+          label: "OpenAI API key",
+        },
+        "new-key",
+      ),
+    ).toEqual([{ name: "OPENAI_API_KEY", value: "new-key", sensitive: true }]);
+  });
+
   it("separates dedicated provider secrets from the generic environment table", () => {
     const environment = [
       { name: "CURSOR_API_KEY", value: "cursor-key", sensitive: true },
