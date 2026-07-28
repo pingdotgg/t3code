@@ -316,7 +316,14 @@ struct ModelPickerPopoverContent: View {
                 shortcutLegend
             }
         }
-        .onAppear {
+        .task {
+            // Do not install AppKit's remote completion view while SwiftUI is
+            // still ordering the containing NSPopover window. On macOS 27
+            // that race raises NSInternalInconsistencyException from
+            // NSRemoteView and terminates the app. The view-bound task is
+            // cancelled if the popover closes before it becomes stable.
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
             searchFocused = true
             highlightedKey = initialHighlightKey
         }
@@ -343,6 +350,10 @@ struct ModelPickerPopoverContent: View {
                 .foregroundStyle(.secondary)
             TextField(searchPlaceholder, text: $searchText)
                 .textFieldStyle(.plain)
+                // Search terms do not benefit from spelling completions, and
+                // disabling them keeps SafariPlatformSupport's remote
+                // completion view out of this transient popover entirely.
+                .autocorrectionDisabled()
                 .focused($searchFocused)
                 .onSubmit { activateHighlightedRow() }
                 // Arrow keys walk the list while the caret stays in the field,
