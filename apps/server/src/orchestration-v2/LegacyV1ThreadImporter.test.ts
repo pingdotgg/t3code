@@ -1,11 +1,12 @@
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { EventId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { layer as eventSinkLayer } from "./EventSink.ts";
+import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
 import { layer as eventStoreLayer } from "./EventStore.ts";
 import {
   LegacyV1ThreadImporter,
@@ -42,6 +43,7 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       const importer = yield* LegacyV1ThreadImporter;
       const maintenance = yield* ProjectionMaintenanceV2;
       const projections = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSinkV2;
       const threadId = ThreadId.make("thread:legacy-import");
 
       yield* sql`
@@ -186,12 +188,41 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
         ["message:legacy:3", "message:legacy:4"],
       );
 
+      const renamedAt = DateTime.makeUnsafe("2026-01-05T00:00:00.000Z");
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:legacy-import:metadata-after-shell"),
+            type: "thread.metadata-updated",
+            threadId,
+            providerInstanceId: shellProjection.thread.providerInstanceId,
+            occurredAt: renamedAt,
+            payload: {
+              ...shellProjection.thread,
+              title: "Renamed after shell import",
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              archivedAt: renamedAt,
+              settledOverride: "settled",
+              settledAt: renamedAt,
+              updatedAt: renamedAt,
+            },
+          },
+        ],
+      });
+
       const transcriptImport = yield* importer.ensureTranscript(threadId);
       assert.deepStrictEqual(transcriptImport, {
         importedThreadCount: 1,
         importedMessageCount: 2,
       });
       const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(projection.thread.title, "Renamed after shell import");
+      assert.equal(projection.thread.runtimeMode, "approval-required");
+      assert.equal(projection.thread.interactionMode, "plan");
+      assert.deepEqual(projection.thread.archivedAt, renamedAt);
+      assert.equal(projection.thread.settledOverride, "settled");
+      assert.deepEqual(projection.thread.settledAt, renamedAt);
       assert.deepStrictEqual(
         projection.messages.map((message) => message.id),
         ["message:legacy:1", "message:legacy:2", "message:legacy:3", "message:legacy:4"],
