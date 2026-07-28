@@ -202,27 +202,31 @@ export function projectActivityPayload(
 }
 
 /**
- * Drops all but the last context-window activity from a snapshot. Clients only
- * ever read the latest usage value (walking the array backwards), so shipping
- * the full history — often thousands of rows on long threads — buys nothing.
- * Live `thread.activity-appended` events are untouched: newer updates still
- * stream through and supersede the retained row on the client.
+ * Drops all but the last context-window activity per turn from a snapshot.
+ * Clients only ever read the latest usage value (walking the array backwards),
+ * so shipping the full history — often thousands of rows on long threads —
+ * buys nothing. Retention is per turn rather than per thread because a live
+ * `thread.reverted` makes the client discard whole turns; keeping each turn's
+ * latest row means the meter can still resolve a value from the turns that
+ * survive. Live `thread.activity-appended` events are untouched: newer updates
+ * still stream through and supersede the retained rows on the client.
  */
 function dropStaleContextWindowActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
-  let latestIndex = -1;
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
+  const latestIndexByTurn = new Map<string | null, number>();
+  for (let index = 0; index < activities.length; index += 1) {
     if (activities[index]?.kind === "context-window.updated") {
-      latestIndex = index;
-      break;
+      latestIndexByTurn.set(activities[index]!.turnId, index);
     }
   }
-  if (latestIndex === -1) {
+  if (latestIndexByTurn.size === 0) {
     return activities;
   }
   return activities.filter(
-    (activity, index) => activity.kind !== "context-window.updated" || index === latestIndex,
+    (activity, index) =>
+      activity.kind !== "context-window.updated" ||
+      latestIndexByTurn.get(activity.turnId) === index,
   );
 }
 

@@ -234,36 +234,60 @@ describe("projectActivityPayload", () => {
 });
 
 describe("context-window snapshot dedup", () => {
-  function makeContextWindowActivity(id: string, usedTokens: number): OrchestrationThreadActivity {
+  function makeContextWindowActivity(
+    id: string,
+    usedTokens: number,
+    turn = `turn-${id}`,
+  ): OrchestrationThreadActivity {
     return {
       id: EventId.make(id),
       tone: "info",
       kind: "context-window.updated",
       summary: "Context window updated",
       payload: { usedTokens, maxTokens: 200_000 },
-      turnId: TurnId.make(`turn-${id}`),
+      turnId: TurnId.make(turn),
       createdAt: "2026-07-27T00:00:00.000Z",
     };
   }
 
-  it("keeps only the latest context-window activity in snapshots", () => {
-    const stale1 = makeContextWindowActivity("ctx-1", 1_000);
-    const stale2 = makeContextWindowActivity("ctx-2", 2_000);
-    const latest = makeContextWindowActivity("ctx-3", 3_000);
+  it("keeps only the latest context-window activity per turn in snapshots", () => {
+    const stale1 = makeContextWindowActivity("ctx-1", 1_000, "turn-a");
+    const latestA = makeContextWindowActivity("ctx-2", 2_000, "turn-a");
+    const latestB = makeContextWindowActivity("ctx-3", 3_000, "turn-b");
     const tool = fixtures[0]!;
 
     const projected = projectThreadDetailSnapshot({
       snapshotSequence: 7,
-      thread: makeThread([stale1, tool, stale2, latest]),
+      thread: makeThread([stale1, tool, latestA, latestB]),
     });
 
     expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
       tool.id,
-      latest.id,
+      latestA.id,
+      latestB.id,
     ]);
-    // The retained row keeps its payload untouched — the tool-data projection
-    // only rewrites payloads with a `data` record.
-    expect(projected.thread.activities[1]?.payload).toEqual(latest.payload);
+    // The retained rows keep their payloads untouched — the tool-data
+    // projection only rewrites payloads with a `data` record.
+    expect(projected.thread.activities[2]?.payload).toEqual(latestB.payload);
+  });
+
+  it("still resolves a meter value after the client reverts the newest turn", () => {
+    // A live thread.reverted makes the client drop all activities from
+    // discarded turns; each surviving turn must keep a usable row.
+    const olderTurn = makeContextWindowActivity("ctx-old", 1_500, "turn-kept");
+    const revertedTurn = makeContextWindowActivity("ctx-new", 9_000, "turn-reverted");
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([olderTurn, revertedTurn]),
+    });
+    const afterRevert = projected.thread.activities.filter(
+      (activity) => activity.turnId === TurnId.make("turn-kept"),
+    );
+
+    expect(deriveLatestContextWindowSnapshot(afterRevert)).toEqual(
+      deriveLatestContextWindowSnapshot([olderTurn]),
+    );
   });
 
   it("matches what the web client derives from the full history", () => {
