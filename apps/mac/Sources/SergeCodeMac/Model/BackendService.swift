@@ -225,30 +225,35 @@ public extension BackendService {
         try await mintMobilePairing(label: "iPhone")
     }
 
-    /// Default for conformers without tailnet awareness (test fakes): the
-    /// LAN bind state only, no tailnet hostname.
+    /// Default for conformers without managed remote awareness.
     func remoteAccessStatus() async -> ServerRemoteAccessStatus {
         ServerRemoteAccessStatus(
-            lanReachable: await isServerLanReachable(), tailnetHostname: nil)
+            lanReachable: await isServerLanReachable(),
+            internetHostname: nil,
+            internetProvider: nil)
     }
 }
 
-/// How remote devices can reach this Mac's server right now. `lanReachable`
-/// reflects the sidecar's launch-captured bind host; `tailnetHostname` is
-/// the MagicDNS name (`<machine>.<tailnet>.ts.net`) when `tailscale serve`
-/// is active, i.e. the address pairing URLs will actually use.
+/// How remote devices can reach this Mac's server right now. Internet fields
+/// are populated only after the preferred tunnel answers as this environment.
 public struct ServerRemoteAccessStatus: Sendable, Equatable {
     public var lanReachable: Bool
-    public var tailnetHostname: String?
+    public var internetHostname: String?
+    public var internetProvider: String?
 
-    public init(lanReachable: Bool, tailnetHostname: String?) {
+    public init(
+        lanReachable: Bool,
+        internetHostname: String?,
+        internetProvider: String?
+    ) {
         self.lanReachable = lanReachable
-        self.tailnetHostname = tailnetHostname
+        self.internetHostname = internetHostname
+        self.internetProvider = internetProvider
     }
 }
 
 /// One freshly-minted mobile pairing handshake: the URL the iPhone scans
-/// (`https://<magicdns>/pair#token=<code>` when Tailscale serve is active,
+/// (`https://<managed-endpoint>/pair#token=<code>` when remote access is active,
 /// otherwise `http://<lan-ip>:<port>/pair#token=<code>` — the same shape the
 /// server's headless `serve` prints, apps/server/src/startupAccess.ts
 /// `buildPairingUrl`), the raw code for manual entry, and its expiry.

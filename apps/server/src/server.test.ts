@@ -2226,6 +2226,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const appliedRuntimeConfigs: Array<unknown> = [];
       yield* buildAppUnderTest({
         layers: {
+          relayClient: {
+            resolve: Effect.succeed({
+              status: "available",
+              executablePath: "/tmp/cloudflared",
+              source: "managed",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            }),
+          },
           cloudManagedEndpointRuntime: {
             applyConfig: (config) => {
               appliedRuntimeConfigs.push(config);
@@ -2265,6 +2273,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           cloudUserId: "user_123",
           environmentCredential: "t3env_test_credential",
           cloudMintPublicKey: cloudKeyPair.publicKey,
+          endpoint: {
+            httpBaseUrl: "https://environment.example.test/",
+            wsBaseUrl: "wss://environment.example.test/ws",
+            providerKind: "cloudflare_tunnel",
+          },
           endpointRuntime: {
             providerKind: "cloudflare_tunnel",
             connectorToken: "connector-token",
@@ -2314,6 +2327,116 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
         null,
       ]);
+
+      const descriptorUrl = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const descriptorResponse = yield* fetchEffect(descriptorUrl);
+      const descriptor = yield* responseJsonEffect<{
+        readonly advertisedEndpoints?: ReadonlyArray<{ readonly id?: string }>;
+      }>(descriptorResponse);
+      assert.equal(descriptorResponse.status, 200);
+      assert.deepEqual(
+        descriptor.advertisedEndpoints?.map((endpoint) => endpoint.id),
+        ["direct"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("installs a missing relay client before enabling a managed endpoint", () =>
+    Effect.gen(function* () {
+      const appliedRuntimeConfigs: Array<unknown> = [];
+      let installed = false;
+      yield* buildAppUnderTest({
+        layers: {
+          relayClient: {
+            resolve: Effect.succeed({
+              status: "missing",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            }),
+            install: Effect.sync(() => {
+              installed = true;
+              return {
+                status: "available" as const,
+                executablePath: "/tmp/cloudflared",
+                source: "managed" as const,
+                version: RelayClient.CLOUDFLARED_VERSION,
+              };
+            }),
+          },
+          cloudManagedEndpointRuntime: {
+            applyConfig: (config) => {
+              appliedRuntimeConfigs.push(config);
+              return Effect.succeed({
+                status: "running",
+                providerKind: "cloudflare_tunnel",
+                pid: 123,
+              });
+            },
+          },
+        },
+      });
+
+      const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+        privateKeyEncoding: { format: "pem", type: "pkcs8" },
+        publicKeyEncoding: { format: "pem", type: "spki" },
+      });
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
+      const runtimeConfig = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "connector-token",
+        tunnelId: "tunnel-id",
+      };
+      const response = yield* fetchEffect(relayConfigUrl, {
+        method: "POST",
+        headers: {
+          cookie: ownerCookie,
+          "content-type": "application/json",
+        },
+        body: jsonRequestBody({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user_123",
+          environmentCredential: "t3env_test_credential",
+          cloudMintPublicKey: cloudKeyPair.publicKey,
+          endpoint: {
+            httpBaseUrl: "https://environment.example.test/",
+            wsBaseUrl: "wss://environment.example.test/ws",
+            providerKind: "cloudflare_tunnel",
+          },
+          endpointRuntime: runtimeConfig,
+        }),
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(installed, true);
+      assert.deepEqual(appliedRuntimeConfigs, [runtimeConfig]);
+
+      const descriptorUrl = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const descriptorResponse = yield* fetchEffect(descriptorUrl);
+      const descriptor = yield* responseJsonEffect<{
+        readonly advertisedEndpoints?: ReadonlyArray<unknown>;
+      }>(descriptorResponse);
+      assert.equal(descriptorResponse.status, 200);
+      assert.deepEqual(descriptor.advertisedEndpoints?.[0], {
+        id: "managed-tunnel",
+        label: "SurgeCode Cloud",
+        provider: {
+          id: "cloudflare_tunnel",
+          label: "SurgeCode Cloud",
+          kind: "tunnel",
+          isAddon: false,
+        },
+        httpBaseUrl: "https://environment.example.test/",
+        wsBaseUrl: "wss://environment.example.test/",
+        reachability: "public",
+        compatibility: {
+          hostedHttpsApp: "unknown",
+          desktopApp: "compatible",
+        },
+        source: "server",
+        status: "available",
+        isDefault: true,
+        description: "Stable encrypted tunnel managed by SurgeCode Cloud.",
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -2628,6 +2751,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest({
         layers: {
+          relayClient: {
+            resolve: Effect.succeed({
+              status: "available",
+              executablePath: "/tmp/cloudflared",
+              source: "managed",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            }),
+          },
           cloudManagedEndpointRuntime: {
             applyConfig: () =>
               Effect.succeed({

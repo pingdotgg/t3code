@@ -18,12 +18,27 @@ export interface AdoptableEndpoint {
   readonly wsBaseUrl: string;
 }
 
-function validateWsBaseUrl(rawValue: string): string {
-  const url = new URL(rawValue);
-  if (url.protocol !== "ws:" && url.protocol !== "wss:") {
-    throw new Error(`Endpoint must use WebSocket or secure WebSocket. Received ${url.protocol}`);
+function validateRemoteEndpointUrls(input: {
+  readonly httpBaseUrl: string;
+  readonly wsBaseUrl: string;
+}): AdoptableEndpoint {
+  const normalizedHttpBaseUrl = normalizeHttpBaseUrl(input.httpBaseUrl);
+  const httpUrl = new URL(normalizedHttpBaseUrl);
+  if (httpUrl.protocol !== "https:" || httpUrl.username !== "" || httpUrl.password !== "") {
+    throw new Error("Remote advertised endpoints must use HTTPS without URL credentials.");
   }
-  return rawValue;
+
+  const rawValue = input.wsBaseUrl;
+  const url = new URL(rawValue);
+  if (
+    url.protocol !== "wss:" ||
+    url.host !== httpUrl.host ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    throw new Error("Remote advertised WebSocket endpoints must use WSS on the HTTPS host.");
+  }
+  return { httpBaseUrl: normalizedHttpBaseUrl, wsBaseUrl: rawValue };
 }
 
 /**
@@ -38,14 +53,17 @@ export function advertisedDefaultEndpoint(input: {
   readonly currentHttpBaseUrl: string;
 }): Option.Option<AdoptableEndpoint> {
   const candidate = input.advertisedEndpoints?.find(
-    (endpoint) => endpoint.isDefault === true && endpoint.status !== "unavailable",
+    (endpoint) =>
+      endpoint.isDefault === true &&
+      endpoint.status === "available" &&
+      (endpoint.reachability === "public" || endpoint.reachability === "private-network") &&
+      endpoint.compatibility.desktopApp === "compatible",
   );
   if (candidate === undefined) {
     return Option.none();
   }
   try {
-    const httpBaseUrl = normalizeHttpBaseUrl(candidate.httpBaseUrl);
-    const wsBaseUrl = validateWsBaseUrl(candidate.wsBaseUrl);
+    const { httpBaseUrl, wsBaseUrl } = validateRemoteEndpointUrls(candidate);
     if (httpBaseUrl === normalizeHttpBaseUrl(input.currentHttpBaseUrl)) {
       return Option.none();
     }

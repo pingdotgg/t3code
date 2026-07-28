@@ -13,6 +13,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { consumeCloudReplayGuards, reconcileDesiredCloudLink } from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as RelayClient from "@t3tools/shared/relayClient";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
@@ -183,6 +184,14 @@ describe("reconcileDesiredCloudLink", () => {
         ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
           applyConfig: unusedSecretStoreOperation,
         } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
+      ),
+      Effect.provideService(
+        RelayClient.RelayClient,
+        RelayClient.RelayClient.of({
+          resolve: Effect.die("unused"),
+          install: Effect.die("unused"),
+          installWithProgress: () => Effect.die("unused"),
+        }),
       ),
       Effect.provideService(
         EnvironmentAuth.EnvironmentAuth,

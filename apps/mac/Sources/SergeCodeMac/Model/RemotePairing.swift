@@ -13,11 +13,18 @@ public enum RemotePairing {
             target: target,
             clientLabel: localClientLabel())
 
-        guard let host = target.httpBaseURL.host else {
+        // A link copied while both devices share a LAN may still advertise a
+        // stable managed tunnel. Adopt it only after it independently answers
+        // as the same environment, matching the mobile client's healing rule.
+        let persistedBaseURL = await preferredReachableBaseURL(
+            descriptor: redemption.descriptor,
+            fallback: target.httpBaseURL)
+
+        guard let host = persistedBaseURL.host else {
             throw PairingClientError.invalidURL(pairingURL)
         }
-        let port = target.httpBaseURL.port
-            ?? (target.httpBaseURL.scheme == "https" ? 443 : 80)
+        let port = persistedBaseURL.port
+            ?? (persistedBaseURL.scheme == "https" ? 443 : 80)
         let device = RemoteDevice(
             id: redemption.descriptor.environmentId,
             name: redemption.descriptor.label,
@@ -25,7 +32,7 @@ public enum RemotePairing {
             port: port,
             pairedAt: Date(),
             sessionExpiresAt: Date().addingTimeInterval(TimeInterval(redemption.expiresIn)),
-            scheme: target.httpBaseURL.scheme ?? "http")
+            scheme: persistedBaseURL.scheme ?? "http")
 
         try keychain.writeToken(
             redemption.accessToken,
@@ -50,5 +57,21 @@ public enum RemotePairing {
         let label = host.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? host.name?.trimmingCharacters(in: .whitespacesAndNewlines)
         return label.flatMap { $0.isEmpty ? nil : $0 } ?? "SergeCode"
+    }
+
+    private static func preferredReachableBaseURL(
+        descriptor: EnvironmentDescriptor,
+        fallback: URL
+    ) async -> URL {
+        guard let endpoint = PairingEndpointSelection.preferredRemoteEndpoint(
+            descriptor.advertisedEndpoints),
+            let candidate = URL(string: endpoint.httpBaseUrl),
+            candidate != fallback,
+            let candidateDescriptor = try? await PairingClient.fetchDescriptor(
+                httpBaseURL: candidate,
+                requestTimeout: 3),
+            candidateDescriptor.environmentId == descriptor.environmentId
+        else { return fallback }
+        return candidate
     }
 }

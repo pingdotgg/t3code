@@ -2,28 +2,45 @@ import Foundation
 import T3Kit
 
 /// Pure selection + URL-building rules for mobile/Mac pairing, extracted from
-/// `LiveBackend.mintMobilePairing` so the tailnet-vs-LAN decision is unit
+/// `LiveBackend.mintMobilePairing` so the remote-vs-LAN decision is unit
 /// testable without a running sidecar.
 ///
 /// Preference order (mirrors the server's `buildServerAdvertisedEndpoints`
 /// contract in apps/server/src/advertisedEndpoints.ts):
-/// 1. The default `private-network` endpoint (Tailscale serve) when the
-///    server advertises one — reachable from anywhere on the tailnet, no LAN
-///    bind required because `tailscale serve` proxies to loopback.
+/// 1. The default public managed tunnel, or the optional private-network
+///    fallback when the server advertises one.
 /// 2. The LAN address fallback (`http://<lan-ip>:<port>/`), which still
 ///    requires the beyond-loopback bind gated by `MobileAccessPreference`.
 enum PairingEndpointSelection {
-    /// The advertised endpoint pairing should prefer: the server marks the
-    /// Tailscale entry — and only it — `isDefault: true`, with provider kind
-    /// `private-network`. Requires `status == "available"` so a stale or
-    /// degraded advertisement never produces an unreachable QR code.
-    static func preferredTailnetEndpoint(
+    /// The server marks exactly one cross-network route as default: SurgeCode
+    /// Cloud when linked, otherwise the optional Tailscale fallback.
+    static func preferredRemoteEndpoint(
         _ endpoints: [AdvertisedEndpoint]?
     ) -> AdvertisedEndpoint? {
         endpoints?.first { endpoint in
-            endpoint.isDefault == true
-                && endpoint.provider.kind == "private-network"
-                && endpoint.status == "available"
+            guard endpoint.isDefault == true, endpoint.status == "available" else {
+                return false
+            }
+            guard endpoint.reachability == "public"
+                || endpoint.reachability == "private-network"
+            else {
+                return false
+            }
+            guard endpoint.compatibility?.desktopApp != "incompatible",
+                let httpURL = URL(string: endpoint.httpBaseUrl),
+                let wsURL = URL(string: endpoint.wsBaseUrl),
+                httpURL.scheme == "https",
+                wsURL.scheme == "wss",
+                httpURL.host == wsURL.host,
+                httpURL.port == wsURL.port,
+                httpURL.user == nil,
+                httpURL.password == nil,
+                wsURL.user == nil,
+                wsURL.password == nil
+            else {
+                return false
+            }
+            return true
         }
     }
 

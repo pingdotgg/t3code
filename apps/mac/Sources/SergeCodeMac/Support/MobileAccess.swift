@@ -17,18 +17,15 @@ public enum MobileAccessPreference {
     }
 }
 
-/// User preference gating whether the sidecar attempts `tailscale serve` so
-/// paired devices can reach this Mac over the internet at
-/// `https://<magicdns>/` (proxied to the loopback port — no LAN bind
-/// required). Default ON: the serve attempt is a no-op when Tailscale isn't
-/// installed or signed in. Like `MobileAccessPreference`, the value is read
-/// once at backend construction (App.swift) and sent in the bootstrap
-/// envelope, so flipping the toggle takes effect on next launch.
+/// Optional compatibility fallback for installations that still use
+/// `tailscale serve`. SurgeCode Cloud's managed tunnel is the preferred
+/// cross-network route, so fresh installs leave this off. Like
+/// `MobileAccessPreference`, the value is read once at backend construction.
 public enum TailscaleAccessPreference {
     static let defaultsKey = "allowTailscaleAccess"
 
     public static var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
     }
 
     public static func setEnabled(_ enabled: Bool) {

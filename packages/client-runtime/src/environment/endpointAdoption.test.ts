@@ -28,6 +28,20 @@ const DIRECT_ENDPOINT = createAdvertisedEndpoint({
   reachability: "lan",
   source: "server",
 });
+const MANAGED_ENDPOINT = createAdvertisedEndpoint({
+  id: "managed-tunnel",
+  label: "SurgeCode Cloud",
+  provider: {
+    id: "cloudflare_tunnel",
+    label: "SurgeCode Cloud",
+    kind: "tunnel",
+    isAddon: false,
+  },
+  httpBaseUrl: "https://managed.example/",
+  reachability: "public",
+  source: "server",
+  isDefault: true,
+});
 
 describe("advertisedDefaultEndpoint", () => {
   it("returns none when the descriptor advertises nothing", () => {
@@ -58,7 +72,7 @@ describe("advertisedDefaultEndpoint", () => {
   });
 
   it("preserves the advertised websocket URL", () => {
-    const endpoint = { ...TAILNET_ENDPOINT, wsBaseUrl: "wss://socket.tailnet.example:4443/ws" };
+    const endpoint = { ...TAILNET_ENDPOINT, wsBaseUrl: "wss://magic.tailnet.example/ws" };
     expect(
       advertisedDefaultEndpoint({
         advertisedEndpoints: [endpoint, DIRECT_ENDPOINT],
@@ -67,7 +81,21 @@ describe("advertisedDefaultEndpoint", () => {
     ).toEqual(
       Option.some({
         httpBaseUrl: "https://magic.tailnet.example/",
-        wsBaseUrl: "wss://socket.tailnet.example:4443/ws",
+        wsBaseUrl: "wss://magic.tailnet.example/ws",
+      }),
+    );
+  });
+
+  it("accepts a secure public managed endpoint", () => {
+    expect(
+      advertisedDefaultEndpoint({
+        advertisedEndpoints: [MANAGED_ENDPOINT, DIRECT_ENDPOINT],
+        currentHttpBaseUrl: "http://192.168.1.10:3773/",
+      }),
+    ).toEqual(
+      Option.some({
+        httpBaseUrl: "https://managed.example/",
+        wsBaseUrl: "wss://managed.example/",
       }),
     );
   });
@@ -85,6 +113,40 @@ describe("advertisedDefaultEndpoint", () => {
     expect(
       advertisedDefaultEndpoint({
         advertisedEndpoints: [{ ...TAILNET_ENDPOINT, status: "unavailable" }],
+        currentHttpBaseUrl: "http://192.168.1.10:3773/",
+      }),
+    ).toEqual(Option.none());
+  });
+
+  it("rejects insecure or cross-origin remote transports", () => {
+    const insecure = {
+      ...MANAGED_ENDPOINT,
+      httpBaseUrl: "http://managed.example/",
+      wsBaseUrl: "ws://managed.example/",
+    };
+    const crossOriginSocket = {
+      ...MANAGED_ENDPOINT,
+      wsBaseUrl: "wss://other.example/ws",
+    };
+    const credentialed = {
+      ...MANAGED_ENDPOINT,
+      httpBaseUrl: "https://user:secret@managed.example/",
+    };
+
+    for (const endpoint of [insecure, crossOriginSocket, credentialed]) {
+      expect(
+        advertisedDefaultEndpoint({
+          advertisedEndpoints: [endpoint],
+          currentHttpBaseUrl: "http://192.168.1.10:3773/",
+        }),
+      ).toEqual(Option.none());
+    }
+  });
+
+  it("skips remote endpoints whose availability is not confirmed", () => {
+    expect(
+      advertisedDefaultEndpoint({
+        advertisedEndpoints: [{ ...MANAGED_ENDPOINT, status: "unknown" }],
         currentHttpBaseUrl: "http://192.168.1.10:3773/",
       }),
     ).toEqual(Option.none());

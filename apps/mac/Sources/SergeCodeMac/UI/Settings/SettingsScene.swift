@@ -1052,9 +1052,10 @@ private struct PhoneSettingsTab: View {
     @UIState private var allowConnections = MobileAccessPreference.isEnabled
     @UIState private var tailscaleEnabled = TailscaleAccessPreference.isEnabled
     @UIState private var lanReachable = false
-    /// MagicDNS hostname while `tailscale serve` is active on the running
-    /// sidecar; nil when serve is off, unavailable, or not recorded yet.
-    @UIState private var tailnetHostname: String?
+    /// Verified default cross-network endpoint (managed cloud first, optional
+    /// Tailscale fallback second).
+    @UIState private var internetHostname: String?
+    @UIState private var internetProvider: String?
     @UIState private var checkedReachability = false
     @UIState private var pairing: MobilePairingInfo?
     @UIState private var pairingError: String?
@@ -1063,25 +1064,23 @@ private struct PhoneSettingsTab: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingsSection(header: "Tailscale") {
+            SettingsSection(header: "Remote access") {
+                SettingsValueRow(title: "Internet endpoint") {
+                    Text(remoteAddressText)
+                        .font(SurgeTypography.technicalMetadata)
+                        .textSelection(.enabled)
+                }
+                SettingsDivider()
                 SettingsToggleRow(
-                    title: "Remote access over Tailscale",
+                    title: "Use Tailscale fallback",
                     description:
-                        "Reach this Mac from anywhere your Tailscale network extends. When active, pairing links use this Mac's tailnet address (\(tailnetHostname ?? "your MagicDNS name")) instead of a local-network IP.",
+                        "Optional compatibility route when SurgeCode Cloud is not linked. A linked Mac uses its managed tunnel and does not require Tailscale.",
                     isOn: Binding(
                         get: { tailscaleEnabled },
                         set: { newValue in
                             tailscaleEnabled = newValue
                             TailscaleAccessPreference.setEnabled(newValue)
                         }))
-                if checkedReachability {
-                    SettingsDivider()
-                    SettingsValueRow(title: "Remote address") {
-                        Text(remoteAddressText)
-                            .font(SurgeTypography.technicalMetadata)
-                            .textSelection(.enabled)
-                    }
-                }
             }
 
             SettingsSection(header: "Local network") {
@@ -1100,12 +1099,12 @@ private struct PhoneSettingsTab: View {
             // The sidecar's bind host and Tailscale-serve flag are captured
             // at launch and can't change for the life of the process (see
             // MobileAccessPreference / TailscaleAccessPreference doc
-            // comments); `lanReachable`/`tailnetHostname` reflect that frozen
+            // comments); `lanReachable`/the internet endpoint reflect that frozen
             // state, while the toggles are the live preferences. Whenever
             // they disagree — in EITHER direction — a toggle's current
             // position is not what the server is actually doing, and that's
             // security-relevant when it disagrees by still being open.
-            if checkedReachability && !tailscaleEnabled && tailnetHostname != nil {
+            if checkedReachability && !tailscaleEnabled && internetProvider == "Tailscale" {
                 SettingsSection {
                     SettingsCardRow {
                         Label(
@@ -1118,7 +1117,7 @@ private struct PhoneSettingsTab: View {
                     }
                 }
             }
-            if checkedReachability && tailscaleEnabled && tailnetHostname == nil {
+            if checkedReachability && tailscaleEnabled && internetHostname == nil {
                 SettingsSection {
                     SettingsCardRow {
                         Label(
@@ -1165,23 +1164,25 @@ private struct PhoneSettingsTab: View {
             await refreshRemoteAccess()
         }
         .task(
-            id: "\(allowConnections)-\(lanReachable)-\(tailnetHostname ?? "no-tailnet")-\(mintGeneration)"
+            id: "\(allowConnections)-\(lanReachable)-\(internetHostname ?? "no-internet")-\(mintGeneration)"
         ) {
             await runMintLoop()
         }
     }
 
     /// Pairing works whenever the server is reachable beyond this process:
-    /// over the tailnet (serve proxies loopback — no LAN bind needed), or
+    /// over a managed/tailnet tunnel (which proxies loopback), or
     /// over the LAN when the mobile-access bind is active.
     private var pairingAvailable: Bool {
-        checkedReachability && (tailnetHostname != nil || (allowConnections && lanReachable))
+        checkedReachability && (internetHostname != nil || (allowConnections && lanReachable))
     }
 
     /// The address remote devices will actually use, in preference order:
-    /// tailnet hostname, LAN IP, loopback (nothing reachable).
+    /// managed/tailnet hostname, LAN IP, loopback (nothing reachable).
     private var remoteAddressText: String {
-        if let tailnetHostname { return tailnetHostname }
+        if let internetHostname {
+            return internetProvider.map { "\(internetHostname) (\($0))" } ?? internetHostname
+        }
         if lanReachable, let lanAddress = LanAddressResolver.primaryIPv4() {
             return "\(lanAddress) (local network)"
         }
@@ -1191,17 +1192,19 @@ private struct PhoneSettingsTab: View {
     private func refreshRemoteAccess() async {
         let status = await model.remoteAccessStatus()
         lanReachable = status.lanReachable
-        tailnetHostname = status.tailnetHostname
+        internetHostname = status.internetHostname
+        internetProvider = status.internetProvider
         checkedReachability = true
         // The serve record can land a few seconds after sidecar boot;
         // re-poll briefly so the tailnet address appears without having to
         // reopen Settings.
         var attempts = 0
-        while tailscaleEnabled, tailnetHostname == nil, attempts < 5, !Task.isCancelled {
+        while internetHostname == nil, attempts < 5, !Task.isCancelled {
             try? await Task.sleep(for: .seconds(2))
             let refreshed = await model.remoteAccessStatus()
             lanReachable = refreshed.lanReachable
-            tailnetHostname = refreshed.tailnetHostname
+            internetHostname = refreshed.internetHostname
+            internetProvider = refreshed.internetProvider
             attempts += 1
         }
     }
@@ -1283,7 +1286,7 @@ private struct PhoneSettingsTab: View {
     /// the QR on screen is always redeemable. Cancelled (via `.task(id:)`)
     /// whenever the toggles, reachability, or generation change.
     private func runMintLoop() async {
-        guard tailnetHostname != nil || (allowConnections && lanReachable) else { return }
+        guard internetHostname != nil || (allowConnections && lanReachable) else { return }
         while !Task.isCancelled {
             do {
                 pairingError = nil
@@ -1564,7 +1567,7 @@ private struct ConnectionSettingsTab: View {
     let model: AppModel
     let multi: MultiDeviceModel
     @UIState private var access = ServerRemoteAccessStatus(
-        lanReachable: false, tailnetHostname: nil)
+        lanReachable: false, internetHostname: nil, internetProvider: nil)
     @UIState private var isRetrying = false
 
     var body: some View {
@@ -1599,12 +1602,16 @@ private struct ConnectionSettingsTab: View {
                 SettingsDivider()
                 SettingsValueRow(
                     title: "Mode",
-                    value: access.lanReachable || access.tailnetHostname != nil
+                    value: access.lanReachable || access.internetHostname != nil
                         ? "remote-reachable" : "desktop-managed-local",
                     technical: true)
                 SettingsDivider()
-                SettingsValueRow(title: "Tailscale") {
-                    Text(access.tailnetHostname ?? "Off")
+                SettingsValueRow(title: "Remote endpoint") {
+                    Text(
+                        access.internetHostname.map { hostname in
+                            access.internetProvider.map { "\(hostname) (\($0))" } ?? hostname
+                        } ?? "Off"
+                    )
                         .font(SurgeTypography.technicalMetadata)
                         .textSelection(.enabled)
                 }
@@ -1630,8 +1637,7 @@ private struct ConnectionSettingsTab: View {
     private func refreshRemoteAccess() async {
         access = await model.remoteAccessStatus()
         var attempts = 0
-        while TailscaleAccessPreference.isEnabled,
-            access.tailnetHostname == nil,
+        while access.internetHostname == nil,
             attempts < 5,
             !Task.isCancelled
         {
@@ -1642,11 +1648,11 @@ private struct ConnectionSettingsTab: View {
     }
 
     private var serverCaption: String {
-        if access.tailnetHostname != nil {
-            return "The t3 server runs as a supervised local child process; Tailscale serve makes it reachable at its tailnet address for paired devices (Settings ▸ Devices)."
+        if access.internetHostname != nil {
+            return "The t3 server runs as a supervised local child process; its verified remote endpoint makes it reachable to paired devices on any network (Settings ▸ Devices)."
         }
         return access.lanReachable
             ? "The t3 server runs as a supervised local child process and accepts paired devices from your local network (Settings ▸ Devices)."
-            : "The t3 server runs as a supervised local child process; no remote or cloud connection is used."
+            : "The t3 server runs as a supervised local child process; no remote endpoint is currently reachable."
     }
 }

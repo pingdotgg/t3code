@@ -5,6 +5,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
+  CLOUD_MANAGED_ENDPOINT,
   CLOUD_MINT_PUBLIC_KEY,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -42,6 +43,7 @@ export const clearPersistedCloudLink = Effect.gen(function* () {
       secrets.remove(RELAY_ISSUER_SECRET),
       secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
       secrets.remove(CLOUD_MINT_PUBLIC_KEY),
+      secrets.remove(CLOUD_MANAGED_ENDPOINT),
       secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
     ],

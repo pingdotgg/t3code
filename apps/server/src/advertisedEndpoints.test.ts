@@ -4,6 +4,7 @@ import { buildServerAdvertisedEndpoints } from "./advertisedEndpoints.ts";
 
 it("advertises the tailscale endpoint as default ahead of the direct endpoint", () => {
   const endpoints = buildServerAdvertisedEndpoints({
+    managedEndpoint: null,
     tailnetHttpsBaseUrl: "https://machine.tailnet.ts.net/",
     directHttpBaseUrl: "http://192.168.1.42:3773",
     directReachability: "lan",
@@ -38,6 +39,7 @@ it("advertises the tailscale endpoint as default ahead of the direct endpoint", 
 
 it("advertises only the direct endpoint when no tailnet base URL is recorded", () => {
   const endpoints = buildServerAdvertisedEndpoints({
+    managedEndpoint: null,
     tailnetHttpsBaseUrl: null,
     directHttpBaseUrl: "http://localhost:3773",
     directReachability: "loopback",
@@ -50,4 +52,32 @@ it("advertises only the direct endpoint when no tailnet base URL is recorded", (
     reachability: "loopback",
   });
   expect(endpoints[0]).not.toHaveProperty("isDefault");
+});
+
+it("prefers the managed cloud tunnel without removing tailscale or LAN fallbacks", () => {
+  const endpoints = buildServerAdvertisedEndpoints({
+    managedEndpoint: {
+      httpBaseUrl: "https://environment.surgecode.dev/",
+      wsBaseUrl: "wss://environment.surgecode.dev/ws",
+      providerKind: "cloudflare_tunnel",
+    },
+    tailnetHttpsBaseUrl: "https://machine.tailnet.ts.net/",
+    directHttpBaseUrl: "http://192.168.1.42:3773",
+    directReachability: "lan",
+  });
+
+  expect(endpoints.map((endpoint) => endpoint.id)).toEqual([
+    "managed-tunnel",
+    "tailscale-serve",
+    "direct",
+  ]);
+  expect(endpoints[0]).toMatchObject({
+    provider: { kind: "tunnel" },
+    reachability: "public",
+    isDefault: true,
+  });
+  expect(endpoints[1]).toMatchObject({
+    provider: { kind: "private-network" },
+    isDefault: false,
+  });
 });

@@ -1,4 +1,5 @@
 import type { AdvertisedEndpoint } from "@t3tools/contracts";
+import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 
 /**
@@ -7,10 +8,31 @@ import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
  * the desktop and mobile clients — change them in lockstep.
  */
 export const buildServerAdvertisedEndpoints = (input: {
+  readonly managedEndpoint: RelayManagedEndpoint | null;
   readonly tailnetHttpsBaseUrl: string | null;
   readonly directHttpBaseUrl: string;
   readonly directReachability: "loopback" | "lan";
 }): ReadonlyArray<AdvertisedEndpoint> => {
+  const managedEndpoints = input.managedEndpoint
+    ? [
+        createAdvertisedEndpoint({
+          id: "managed-tunnel",
+          label: "SurgeCode Cloud",
+          provider: {
+            id: input.managedEndpoint.providerKind,
+            label: "SurgeCode Cloud",
+            kind: "tunnel",
+            isAddon: false,
+          },
+          httpBaseUrl: input.managedEndpoint.httpBaseUrl,
+          reachability: "public",
+          source: "server",
+          status: "available",
+          isDefault: true,
+          description: "Stable encrypted tunnel managed by SurgeCode Cloud.",
+        }),
+      ]
+    : [];
   const tailscaleEndpoints = input.tailnetHttpsBaseUrl
     ? [
         createAdvertisedEndpoint({
@@ -26,12 +48,13 @@ export const buildServerAdvertisedEndpoints = (input: {
           reachability: "private-network",
           source: "server",
           status: "available",
-          isDefault: true,
+          isDefault: input.managedEndpoint === null,
         }),
       ]
     : [];
 
   return [
+    ...managedEndpoints,
     ...tailscaleEndpoints,
     createAdvertisedEndpoint({
       id: "direct",

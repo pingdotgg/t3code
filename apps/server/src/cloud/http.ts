@@ -30,6 +30,7 @@ import {
   RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
@@ -60,7 +61,9 @@ import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
+  CLOUD_MANAGED_ENDPOINT,
   CLOUD_MINT_PUBLIC_KEY,
+  encodeManagedEndpointJson,
   encodeEndpointRuntimeConfigJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -201,6 +204,44 @@ function validateRelayConfigPayload(
       }),
     );
   }
+  if (payload.endpoint !== undefined) {
+    let httpUrl: URL;
+    let wsUrl: URL;
+    try {
+      httpUrl = new URL(payload.endpoint.httpBaseUrl);
+      wsUrl = new URL(payload.endpoint.wsBaseUrl);
+    } catch {
+      return Effect.fail(
+        new EnvironmentHttpBadRequestError({
+          message: "Managed endpoint URLs must be valid absolute URLs.",
+        }),
+      );
+    }
+    const expectedWsProtocol = httpUrl.protocol === "https:" ? "wss:" : "ws:";
+    if (
+      httpUrl.protocol !== "https:" ||
+      wsUrl.protocol !== expectedWsProtocol ||
+      httpUrl.host !== wsUrl.host ||
+      httpUrl.username !== "" ||
+      httpUrl.password !== "" ||
+      wsUrl.username !== "" ||
+      wsUrl.password !== "" ||
+      httpUrl.pathname !== "/" ||
+      httpUrl.search !== "" ||
+      httpUrl.hash !== "" ||
+      wsUrl.pathname !== "/ws" ||
+      wsUrl.search !== "" ||
+      wsUrl.hash !== "" ||
+      payload.endpoint.providerKind !== "cloudflare_tunnel" ||
+      payload.endpointRuntime?.providerKind !== payload.endpoint.providerKind
+    ) {
+      return Effect.fail(
+        new EnvironmentHttpBadRequestError({
+          message: "Managed endpoint must be the secure endpoint backed by its tunnel runtime.",
+        }),
+      );
+    }
+  }
   return Effect.void;
 }
 
@@ -329,6 +370,7 @@ interface CloudHttpDependencies {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly environment: ServerEnvironment.ServerEnvironment["Service"];
   readonly endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"];
+  readonly relayClient: RelayClient.RelayClient["Service"];
   readonly environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"];
   readonly cliTokenManager: CliTokenManager.CloudCliTokenManager["Service"];
   readonly httpClient: HttpClient.HttpClient;
@@ -339,6 +381,7 @@ const cloudHttpDependencies = Effect.gen(function* () {
     secrets: yield* ServerSecretStore.ServerSecretStore,
     environment: yield* ServerEnvironment.ServerEnvironment,
     endpointRuntime: yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+    relayClient: yield* RelayClient.RelayClient,
     environmentAuth: yield* EnvironmentAuth.EnvironmentAuth,
     cliTokenManager: yield* CliTokenManager.CloudCliTokenManager,
     httpClient: yield* HttpClient.HttpClient,
@@ -432,6 +475,34 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     cloudUserId: payload.cloudUserId,
   });
   yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
+  if (payload.endpointRuntime) {
+    const relayClientStatus = yield* dependencies.relayClient.resolve;
+    if (relayClientStatus.status === "missing") {
+      yield* dependencies.relayClient.install.pipe(
+        Effect.mapError(
+          (error) =>
+            new EnvironmentCloudEndpointUnavailableError({
+              message: "Managed endpoint relay client could not be installed.",
+              endpointRuntimeStatus: {
+                status: "failed",
+                providerKind: payload.endpointRuntime?.providerKind,
+                reason: error.message,
+              },
+            }),
+        ),
+      );
+    } else if (relayClientStatus.status === "unsupported") {
+      return yield* new EnvironmentCloudEndpointUnavailableError({
+        message: "Managed endpoint relay client is unsupported on this device.",
+        endpointRuntimeStatus: {
+          status: "unsupported",
+          providerKind: payload.endpointRuntime.providerKind,
+          platform: relayClientStatus.platform,
+          arch: relayClientStatus.arch,
+        },
+      });
+    }
+  }
   const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
     payload.endpointRuntime,
   );
@@ -455,6 +526,12 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     stringToBytes(payload.environmentCredential),
   );
   yield* dependencies.secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
+  if (payload.endpoint) {
+    const managedEndpointJson = yield* encodeManagedEndpointJson(payload.endpoint);
+    yield* dependencies.secrets.set(CLOUD_MANAGED_ENDPOINT, stringToBytes(managedEndpointJson));
+  } else {
+    yield* dependencies.secrets.remove(CLOUD_MANAGED_ENDPOINT);
+  }
   if (payload.endpointRuntime) {
     const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
     yield* dependencies.secrets.set(
@@ -583,6 +660,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       cloudUserId: link.cloudUserId,
       environmentCredential: link.environmentCredential,
       cloudMintPublicKey: link.cloudMintPublicKey,
+      endpoint: link.endpoint,
       endpointRuntime: link.endpointRuntime,
     });
   },
@@ -650,10 +728,11 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
         dependencies.secrets.remove(RELAY_ISSUER_SECRET),
         dependencies.secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
         dependencies.secrets.remove(CLOUD_MINT_PUBLIC_KEY),
+        dependencies.secrets.remove(CLOUD_MANAGED_ENDPOINT),
         dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
         dependencies.secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
       ],
-      { concurrency: 7 },
+      { concurrency: 8 },
     );
     yield* setCliDesiredCloudLink(false);
     return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;

@@ -164,6 +164,11 @@ export const RelayEnvironmentConfigRequest = Schema.Struct({
   cloudUserId: Schema.String,
   environmentCredential: Schema.String,
   cloudMintPublicKey: Schema.String,
+  /**
+   * Stable public endpoint allocated by the relay. Optional for compatibility
+   * with clients released before environments advertised managed tunnels.
+   */
+  endpoint: Schema.optional(RelayManagedEndpoint),
   endpointRuntime: Schema.NullOr(RelayManagedEndpointRuntimeConfig),
 });
 export type RelayEnvironmentConfigRequest = typeof RelayEnvironmentConfigRequest.Type;
