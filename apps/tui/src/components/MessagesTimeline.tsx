@@ -166,7 +166,8 @@ function CollapsibleUserMessage({
     <box flexDirection="column" width="100%">
       <box
         width="100%"
-        {...(collapsed ? { height: COLLAPSED_USER_MESSAGE_ROWS, overflow: "hidden" as const } : {})}
+        height={collapsed ? COLLAPSED_USER_MESSAGE_ROWS : "auto"}
+        overflow={collapsed ? "hidden" : "visible"}
       >
         <markdown content={body} syntaxStyle={syntaxStyle} streaming={streaming} {...mdClient} />
       </box>

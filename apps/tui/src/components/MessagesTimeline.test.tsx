@@ -660,8 +660,9 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
-  it("Given a user message beyond the web UI line limit, then it starts collapsed", async () => {
-    const frame = await bodyFrame({
+  it("Given a collapsed user message, when its expander is clicked, then the full message opens", async () => {
+    const full = {
+      ...detail("default"),
       messages: [
         {
           id: "u-long",
@@ -675,9 +676,53 @@ describe("MessagesTimeline body", () => {
           attachments: [],
         },
       ] as never,
-    });
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const mock = new MockTreeSitterClient({ autoResolveTimeout: 0 });
+    mock.setMockResult({ highlights: [] });
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        treeSitterClient={mock}
+      />,
+      { width: 92, height: 24 },
+    );
+    await t.renderOnce();
+    await t.flush();
+    const frame = t.captureCharFrame();
     expect(frame).toContain("Show full message");
     expect(frame).not.toContain("TAIL MUST STAY HIDDEN");
+
+    const lines = frame.split("\n");
+    const row = lines.findIndex((line) => line.includes("Show full message"));
+    const column = row >= 0 ? (lines[row]?.indexOf("Show full message") ?? -1) : -1;
+    expect(row).toBeGreaterThanOrEqual(0);
+    expect(column).toBeGreaterThanOrEqual(0);
+    await React.act(() => t.mockMouse.click(column, row));
+    await t.flush();
+
+    const expanded = t.captureCharFrame();
+    expect(expanded).toContain("Show less");
+    expect(expanded).toContain("TAIL MUST STAY HIDDEN");
+
+    const expandedLines = expanded.split("\n");
+    const collapseRow = expandedLines.findIndex((line) => line.includes("Show less"));
+    const collapseColumn =
+      collapseRow >= 0 ? (expandedLines[collapseRow]?.indexOf("Show less") ?? -1) : -1;
+    expect(collapseRow).toBeGreaterThanOrEqual(0);
+    expect(collapseColumn).toBeGreaterThanOrEqual(0);
+    await React.act(() => t.mockMouse.click(collapseColumn, collapseRow));
+    await t.flush();
+    expect(t.captureCharFrame()).toContain("Show full message");
+    expect(t.captureCharFrame()).not.toContain("TAIL MUST STAY HIDDEN");
+    t.renderer.destroy();
   });
 
   it("Given mixed wide messages, when the timeline is scrolled, then assistant text keeps its left edge", async () => {
