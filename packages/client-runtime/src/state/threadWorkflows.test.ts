@@ -4,6 +4,7 @@ import {
   canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  resolveLatestMergeBackRun,
 } from "./threadWorkflows.ts";
 
 const capabilities = (input?: {
@@ -129,5 +130,17 @@ describe("thread workflows", () => {
         } as never,
       }),
     ).toBe(false);
+  });
+
+  it("merges the newest provider-finished run while checkpoint capture is pending", () => {
+    const projection = {
+      runs: [
+        { id: "newest-queued", status: "queued", ordinal: 3 },
+        { id: "older-completed", status: "completed", ordinal: 1 },
+        { id: "newest-finished", status: "waiting", ordinal: 2 },
+      ],
+    } as never;
+
+    expect(resolveLatestMergeBackRun(projection)?.id).toBe("newest-finished");
   });
 });

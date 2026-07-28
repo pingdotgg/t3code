@@ -3,7 +3,8 @@ import * as DateTime from "effect/DateTime";
 
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "./models.ts";
 
-const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
+const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
+const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
 
 function latestMatchingRun(
   projection: OrchestrationV2ThreadProjection,
@@ -52,9 +53,8 @@ export function deriveThreadActivityRun(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRunSummary | null {
   const run =
-    latestMatchingRun(projection, (candidate) =>
-      INTERRUPTIBLE_RUN_STATUSES.has(candidate.status),
-    ) ?? latestMatchingRun(projection, () => true);
+    latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
+    latestMatchingRun(projection, () => true);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
