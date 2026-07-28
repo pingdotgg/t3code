@@ -68,7 +68,9 @@ _SERVICE_START_TIMEOUT_SECONDS = 10.0
 _SERVICE_START_POLL_SECONDS = 0.1
 _SERVICE_STABLE_SECONDS = 0.5
 _PROCESS_EXIT_TIMEOUT_SECONDS = 10.0
-_SVSTAT_PID = re.compile(r"^\s*up \(pid ([1-9][0-9]*)\)")
+_SVSTAT_PID = re.compile(
+    r"^\s*up \(pid ([1-9][0-9]*)(?: pgid [1-9][0-9]*)?\)(?=\s|$)"
+)
 
 
 @dataclass(frozen=True)
@@ -502,13 +504,19 @@ def _find_stale_service_processes(
         if (
             parent_status is None
             or parent_status[0] != 0
+            or parent_status[1] != 1
             or parent_command is None
             or len(parent_command) != 2
             or Path(parent_command[0]).name != "s6-supervise"
             or parent_command[1] != config.service_dir.name
-            or parent_executable is None
-            or Path(parent_executable[0]).name != "s6-supervise"
-            or parent_working_dir != (str(config.service_dir), True)
+            or (
+                parent_executable is not None
+                and Path(parent_executable[0]).name != "s6-supervise"
+            )
+            or (
+                parent_working_dir is not None
+                and parent_working_dir != (str(config.service_dir), True)
+            )
         ):
             continue
         matches.append(
@@ -559,12 +567,30 @@ def _terminate_exact_stale_service(config: PluginConfig) -> None:
             raise ServiceError(
                 f"could not terminate exact stale T3 process {stale.child_pid}: {error}"
             ) from error
+        try:
+            _wait_for_process_exit(
+                stale.child_pid,
+                timeout=_PROCESS_EXIT_TIMEOUT_SECONDS,
+            )
+        except ServiceError as term_timeout:
+            if _find_stale_service_processes(config) != [stale]:
+                raise ServiceError(
+                    "refusing forced stale T3 cleanup because process identity "
+                    "changed after SIGTERM"
+                ) from term_timeout
+            try:
+                signal.pidfd_send_signal(pid_descriptor, signal.SIGKILL)
+            except OSError as error:
+                raise ServiceError(
+                    f"could not force terminate exact stale T3 process "
+                    f"{stale.child_pid}: {error}"
+                ) from error
+            _wait_for_process_exit(
+                stale.child_pid,
+                timeout=_PROCESS_EXIT_TIMEOUT_SECONDS,
+            )
     finally:
         os.close(pid_descriptor)
-    _wait_for_process_exit(
-        stale.child_pid,
-        timeout=_PROCESS_EXIT_TIMEOUT_SECONDS,
-    )
     _wait_for_process_exit(
         stale.supervisor_pid,
         timeout=_PROCESS_EXIT_TIMEOUT_SECONDS,
