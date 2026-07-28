@@ -18,6 +18,8 @@ const SANITIZED_HTML_SELECTOR = [
   ...SKIPPED_CLASS_NAMES.map((className) => `.${className}`),
 ].join(", ");
 
+const PARTIAL_CODE_BLOCK_ATTRIBUTE = "data-markdown-partial-code";
+
 export interface MarkdownClipboardPayload {
   text: string;
   html: string;
@@ -65,6 +67,9 @@ function resolveCodeBlockLanguage(pre: Element): string | null {
 
 function serializeCodeBlock(pre: Element): string {
   const code = (pre.textContent ?? "").replace(/\n$/, "");
+  // A block the selection only cut into is not a code block the user copied;
+  // fencing it would paste delimiters they never highlighted.
+  if (pre.hasAttribute(PARTIAL_CODE_BLOCK_ATTRIBUTE)) return `${code}\n\n`;
   const fence = codeFenceFor(code);
   return `${fence}${resolveCodeBlockLanguage(pre) ?? ""}\n${code}\n${fence}\n\n`;
 }
@@ -291,6 +296,25 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+function isInsideCodeBlock(node: Node): boolean {
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  return element?.closest("pre") != null;
+}
+
+/**
+ * `cloneContents` clones whole nodes except at the range's own boundaries, so a
+ * code block the selection cuts through is the fragment's first or last `<pre>`.
+ */
+function markPartialCodeBlocks(range: Range, container: Element): void {
+  const blocks = container.querySelectorAll("pre");
+  if (isInsideCodeBlock(range.startContainer)) {
+    blocks[0]?.setAttribute(PARTIAL_CODE_BLOCK_ATTRIBUTE, "");
+  }
+  if (isInsideCodeBlock(range.endContainer)) {
+    blocks[blocks.length - 1]?.setAttribute(PARTIAL_CODE_BLOCK_ATTRIBUTE, "");
+  }
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -301,6 +325,7 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    markPartialCodeBlocks(range, container);
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
