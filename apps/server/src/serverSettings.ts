@@ -270,6 +270,10 @@ const resolveClientFacingModelSelections = (settings: ServerSettings): ServerSet
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "automaticGitFetchInterval",
   "textGenerationModelSelection",
+  // ModelSelection has required instanceId + model fields. Stripping an
+  // unchanged default instanceId while retaining a changed model produces an
+  // object that the persistence encoder cannot write back.
+  "modelSelection",
   "workflowModelRouting",
   "customInstructions",
 ]);

@@ -570,6 +570,36 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists a changed auto-review model on the default provider", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const defaultSelection = DEFAULT_SERVER_SETTINGS.autoReview.modelSelection;
+
+      const next = yield* serverSettings.updateSettings({
+        autoReview: {
+          modelSelection: {
+            instanceId: defaultSelection.instanceId,
+            model: "review-model",
+          },
+        },
+      });
+
+      assert.deepEqual(next.autoReview.modelSelection, {
+        instanceId: defaultSelection.instanceId,
+        model: "review-model",
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepEqual(JSON.parse(raw).autoReview.modelSelection, {
+        instanceId: defaultSelection.instanceId,
+        model: "review-model",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
