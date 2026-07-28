@@ -67,7 +67,7 @@ function varyByAcceptEncoding(value: string | undefined): string {
   return values.has("*") || values.has("accept-encoding") ? value : `${value}, Accept-Encoding`;
 }
 
-export const compressHttpResponse = Effect.fnUntraced(function* (
+const compressHttpResponse = Effect.fnUntraced(function* (
   response: HttpServerResponse.HttpServerResponse,
   acceptEncoding: string | undefined,
 ) {

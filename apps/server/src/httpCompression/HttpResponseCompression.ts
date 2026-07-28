@@ -16,27 +16,21 @@ export class HttpResponseCompression extends Context.Service<
 export const layerNode = Layer.effect(
   HttpResponseCompression,
   Effect.gen(function* () {
-    const [NodeStream, NodeZlib] = yield* Effect.all([
-      Effect.promise(() => import("node:stream")),
-      Effect.promise(() => import("node:zlib")),
-    ]);
-    return HttpResponseCompression.of({
-      gzip: (body, options) =>
-        HttpServerResponse.raw(
-          NodeStream.Readable.from([body]).pipe(NodeZlib.createGzip()),
-          options,
-        ),
-    });
+    const NodeZlib = yield* Effect.promise(() => import("node:zlib"));
+    return {
+      gzip: (body, options) => {
+        const stream = NodeZlib.createGzip();
+        stream.end(body);
+        return HttpServerResponse.raw(stream, options);
+      },
+    };
   }),
 );
 
-export const layerBun = Layer.succeed(
-  HttpResponseCompression,
-  HttpResponseCompression.of({
-    gzip: (body, options) =>
-      HttpServerResponse.raw(
-        new Response(body).body!.pipeThrough(new CompressionStream("gzip")),
-        options,
-      ),
-  }),
-);
+export const layerBun = Layer.succeed(HttpResponseCompression, {
+  gzip: (body, options) =>
+    HttpServerResponse.raw(
+      new Response(body).body!.pipeThrough(new CompressionStream("gzip")),
+      options,
+    ),
+});
