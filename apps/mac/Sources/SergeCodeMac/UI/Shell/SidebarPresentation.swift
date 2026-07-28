@@ -117,14 +117,13 @@ struct SidebarProjectGroup: Identifiable {
     let name: String
     let members: [SidebarProjectMember]
     let threads: [SidebarThreadItem]
+    /// Cached while the group is projected. Reading this from a sort
+    /// comparator must stay O(1): computing it from `threads` there turns a
+    /// group sort into repeated scans of every thread in the sidebar.
+    let lastActivityAt: Date?
 
     var preferredMember: SidebarProjectMember {
         members.first(where: { $0.location.isLocal }) ?? members[0]
-    }
-
-    /// Most recent thread activity across the group; groups sort by this.
-    var lastActivityAt: Date? {
-        threads.map(\.thread.updatedAt).max()
     }
 
     var activeThreadCount: Int {
@@ -230,7 +229,8 @@ enum SidebarProjection {
                 id: id,
                 name: preferred.project.name,
                 members: sortedMembers,
-                threads: pinnedFirst)
+                threads: pinnedFirst,
+                lastActivityAt: pinnedFirst.lazy.map(\.thread.updatedAt).max())
         }
         .sorted { lhs, rhs in
             let left = lhs.lastActivityAt ?? .distantPast

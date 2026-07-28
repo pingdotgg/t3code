@@ -69,6 +69,10 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import {
+  projectActivityEvent,
+  projectThreadDetailSnapshot,
+} from "./orchestration/ActivityPayloadProjection.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -1109,6 +1113,7 @@ const makeWsRpcLayer = (
             ).pipe(
               Effect.map((events) => Array.from(events)),
               Effect.flatMap(enrichOrchestrationEvents),
+              Effect.map((events) => events.map(projectActivityEvent)),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationReplayEventsError({
@@ -1213,7 +1218,10 @@ const makeWsRpcLayer = (
                 isThreadDetailEvent(event);
               const liveStream = orchestrationEngine.streamThreadEvents(input.threadId).pipe(
                 Stream.filter(isThreadDetailEvent),
-                Stream.map((event) => ({ kind: "event" as const, event })),
+                Stream.map((event) => ({
+                  kind: "event" as const,
+                  event: projectActivityEvent(event),
+                })),
               );
 
               // Attach before any replay or snapshot read so events emitted
@@ -1229,7 +1237,10 @@ const makeWsRpcLayer = (
                   .readEvents(input.afterSequence, Number.MAX_SAFE_INTEGER)
                   .pipe(
                     Stream.filter(isThisThreadDetailEvent),
-                    Stream.map((event) => ({ kind: "event" as const, event })),
+                    Stream.map((event) => ({
+                      kind: "event" as const,
+                      event: projectActivityEvent(event),
+                    })),
                     Stream.mapError(
                       (cause) =>
                         new OrchestrationGetSnapshotError({
@@ -1278,7 +1289,10 @@ const makeWsRpcLayer = (
                     )
                   : bufferedLiveStream;
               return Stream.concat(
-                Stream.make({ kind: "snapshot" as const, snapshot: snapshot.value }),
+                Stream.make({
+                  kind: "snapshot" as const,
+                  snapshot: projectThreadDetailSnapshot(snapshot.value),
+                }),
                 afterSnapshot,
               );
             }),
