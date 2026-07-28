@@ -1874,6 +1874,15 @@ public final class AppModel {
 
     public func cancelCurrentTurn() async {
         guard let threadID = selectedThreadID else { return }
+        await cancelCurrentTurn(threadID: threadID)
+    }
+
+    /// Cancels the active turn for an explicit thread.
+    ///
+    /// Timeline rows use this overload so an action remains anchored to the
+    /// conversation that rendered it even if selection changes before the
+    /// asynchronous work runs.
+    public func cancelCurrentTurn(threadID: String) async {
         noteCancelRequested(threadID: threadID)
         do {
             try await backend.cancelTurn(threadID: threadID)
@@ -2015,12 +2024,6 @@ public final class AppModel {
             scenery: scenery)
     }
 
-    /// Every session of a project, archived included — the delete cascade
-    /// removes archived threads too, so the confirmation must count them.
-    public func sessionCount(for project: Project) -> Int {
-        threads.count { $0.projectID == project.id }
-    }
-
     public func renameProject(_ project: Project, to name: String) async {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != project.name else { return }
@@ -2046,6 +2049,10 @@ public final class AppModel {
             threads.removeAll { $0.projectID == project.id }
             projects.removeAll { $0.id == project.id }
             rebuildProjectPathIndex()
+            // The shell snapshot contains active sessions only, while Archive
+            // is paged independently. Refresh it after the server cascade so a
+            // deleted project's archived sessions do not remain visible.
+            await refreshArchivedThreads()
         } catch {
             report(error)
         }
@@ -2356,11 +2363,17 @@ public final class AppModel {
         }
     }
 
-    public func settleThread(_ thread: ChatThread) async {
+    /// Returns whether the backend accepted the settle. Callers that navigate
+    /// away after settling must stay put on failure so the inline error remains
+    /// attached to the session that produced it.
+    @discardableResult
+    public func settleThread(_ thread: ChatThread) async -> Bool {
         do {
             try await backend.settleThread(id: thread.id)
+            return true
         } catch {
             report(error)
+            return false
         }
     }
 

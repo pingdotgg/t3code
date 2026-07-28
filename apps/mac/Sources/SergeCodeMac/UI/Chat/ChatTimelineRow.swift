@@ -157,7 +157,10 @@ struct ChatTimelineRowView: View, Equatable {
                     task: task,
                     stopError: model.subagentStopErrors[task.taskId],
                     onStop: {
-                        Task { await model.stopSubagentTask(taskId: task.taskId) }
+                        Task {
+                            await model.stopSubagentTask(
+                                taskId: task.taskId, threadID: threadID)
+                        }
                     },
                     onClearStopError: {
                         model.clearSubagentStopError(taskId: task.taskId)
@@ -169,10 +172,13 @@ struct ChatTimelineRowView: View, Equatable {
                     modelDisplayNames: model.modelDisplayNames,
                     stopError: model.subagentStopErrors[task.taskId],
                     onStopAgent: {
-                        Task { await model.stopSubagentTask(taskId: task.taskId) }
+                        Task {
+                            await model.stopSubagentTask(
+                                taskId: task.taskId, threadID: threadID)
+                        }
                     },
                     onStopTurn: {
-                        Task { await model.cancelCurrentTurn() }
+                        Task { await model.cancelCurrentTurn(threadID: threadID) }
                     },
                     onClearStopError: {
                         model.clearSubagentStopError(taskId: task.taskId)
@@ -404,10 +410,9 @@ private struct UserMessageBubble: View {
     private func resend() {
         guard canResend else { return }
         isResending = true
-        let threadID = model.selectedThreadID
         Task {
             await model.send(
-                text: text,
+                threadID: threadID, text: text,
                 replacingMessageID: messageID,
                 replacingMessageThreadID: threadID)
             isResending = false

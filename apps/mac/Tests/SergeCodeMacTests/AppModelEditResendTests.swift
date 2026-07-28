@@ -171,6 +171,43 @@ struct AppModelEditResendTests {
         #expect(aItems.count == seededA.count)
     }
 
+    @Test("explicit resend target ignores a later selection change")
+    func explicitResendTargetWinsOverSelection() async throws {
+        let now = Date()
+        let origin = ChatThread(
+            id: "t-origin", projectID: "p1", title: "Origin", provider: .codex,
+            status: .idle, updatedAt: now)
+        let selected = ChatThread(
+            id: "t-selected", projectID: "p1", title: "Selected", provider: .codex,
+            status: .idle, updatedAt: now)
+        let seeded: [TimelineItem] = [
+            .userMessage(id: "u-origin", text: "old text", attachments: [], at: now),
+            .assistantMessage(id: "a-origin", markdown: "old reply", isStreaming: false, at: now),
+        ]
+        let backend = RecordingBackend(
+            thread: origin,
+            initialTimeline: seeded,
+            extraThreads: [selected])
+        let model = makeModel(backend: backend)
+        model.enqueue(.threadUpserted(origin))
+        model.enqueue(.timelineReset(threadID: origin.id, items: seeded))
+        model.enqueue(.threadUpserted(selected))
+        model.enqueue(.timelineReset(threadID: selected.id, items: []))
+        model.flushPendingEvents()
+        model.selectedThreadID = selected.id
+
+        await model.send(
+            threadID: origin.id,
+            text: "retried text",
+            replacingMessageID: "u-origin",
+            replacingMessageThreadID: origin.id)
+
+        #expect(backend.revertCalls.map(\.threadID) == [origin.id])
+        #expect(backend.sentThreadIDs == [origin.id])
+        #expect(backend.sentTexts == ["retried text"])
+        #expect(try await backend.timeline(threadID: selected.id).isEmpty)
+    }
+
     @Test("composer prefill carries edited message identity")
     func prefillCarriesEditIdentity() {
         let model = makeModel()
