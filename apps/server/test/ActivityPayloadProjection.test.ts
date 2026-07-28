@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildThreadFeed, type ThreadFeedActivity } from "../../mobile/src/lib/threadActivity.ts";
+import { deriveLatestContextWindowSnapshot } from "../../web/src/lib/contextWindow.ts";
 import { deriveWorkLogEntries } from "../../web/src/session-logic.ts";
 import {
   projectActivityEvent,
@@ -229,5 +230,87 @@ describe("projectActivityPayload", () => {
         : undefined,
     ).toEqual(projectActivityPayload(activity));
     expect(event.payload.activity).toBe(activity);
+  });
+});
+
+describe("context-window snapshot dedup", () => {
+  function makeContextWindowActivity(id: string, usedTokens: number): OrchestrationThreadActivity {
+    return {
+      id: EventId.make(id),
+      tone: "info",
+      kind: "context-window.updated",
+      summary: "Context window updated",
+      payload: { usedTokens, maxTokens: 200_000 },
+      turnId: TurnId.make(`turn-${id}`),
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+  }
+
+  it("keeps only the latest context-window activity in snapshots", () => {
+    const stale1 = makeContextWindowActivity("ctx-1", 1_000);
+    const stale2 = makeContextWindowActivity("ctx-2", 2_000);
+    const latest = makeContextWindowActivity("ctx-3", 3_000);
+    const tool = fixtures[0]!;
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([stale1, tool, stale2, latest]),
+    });
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      tool.id,
+      latest.id,
+    ]);
+    // The retained row keeps its payload untouched — the tool-data projection
+    // only rewrites payloads with a `data` record.
+    expect(projected.thread.activities[1]?.payload).toEqual(latest.payload);
+  });
+
+  it("matches what the web client derives from the full history", () => {
+    const activities = [
+      makeContextWindowActivity("ctx-1", 1_000),
+      makeContextWindowActivity("ctx-2", 2_000),
+    ];
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread(activities),
+    });
+
+    expect(deriveLatestContextWindowSnapshot(projected.thread.activities)).toEqual(
+      deriveLatestContextWindowSnapshot(activities),
+    );
+  });
+
+  it("leaves snapshots without context-window activities untouched", () => {
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([fixtures[4]!]),
+    });
+    expect(projected.thread.activities).toEqual([fixtures[4]]);
+  });
+
+  it("does not filter live activity-appended events", () => {
+    const activity = makeContextWindowActivity("ctx-live", 4_000);
+    const event = {
+      sequence: 9,
+      eventId: EventId.make("event-ctx"),
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-projection"),
+      occurredAt: "2026-07-27T00:00:02.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "thread.activity-appended",
+      payload: {
+        threadId: ThreadId.make("thread-projection"),
+        activity,
+      },
+    } satisfies Extract<OrchestrationEvent, { type: "thread.activity-appended" }>;
+
+    const projected = projectActivityEvent(event);
+    expect(
+      projected.type === "thread.activity-appended" ? projected.payload.activity : undefined,
+    ).toEqual(activity);
   });
 });

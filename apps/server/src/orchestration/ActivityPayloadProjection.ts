@@ -201,6 +201,31 @@ export function projectActivityPayload(
   };
 }
 
+/**
+ * Drops all but the last context-window activity from a snapshot. Clients only
+ * ever read the latest usage value (walking the array backwards), so shipping
+ * the full history — often thousands of rows on long threads — buys nothing.
+ * Live `thread.activity-appended` events are untouched: newer updates still
+ * stream through and supersede the retained row on the client.
+ */
+function dropStaleContextWindowActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  let latestIndex = -1;
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    if (activities[index]?.kind === "context-window.updated") {
+      latestIndex = index;
+      break;
+    }
+  }
+  if (latestIndex === -1) {
+    return activities;
+  }
+  return activities.filter(
+    (activity, index) => activity.kind !== "context-window.updated" || index === latestIndex,
+  );
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
 ): OrchestrationThreadDetailSnapshot {
@@ -208,7 +233,9 @@ export function projectThreadDetailSnapshot(
     ...snapshot,
     thread: {
       ...snapshot.thread,
-      activities: snapshot.thread.activities.map(projectActivityPayload),
+      activities: dropStaleContextWindowActivities(snapshot.thread.activities).map(
+        projectActivityPayload,
+      ),
     },
   };
 }
