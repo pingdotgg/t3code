@@ -194,7 +194,6 @@ function fakeClient({
     getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
     listRefs,
     switchRef,
-    getThreadActivities: async () => ({ activities: [], hasMore: false }),
     getAttachmentUrl,
     getAttachmentImage,
     runGitStackedAction: async () => {},

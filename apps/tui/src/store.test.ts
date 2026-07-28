@@ -49,34 +49,33 @@ describe("createStore", () => {
     expect(state.status).toBe("1 project(s) · 2 thread(s)");
   });
 
-  it("Given collapsed projects, when a snapshot arrives, then the selection lands on the first project", () => {
+  it("Given a shell snapshot, when it arrives, then the flat list selects the first thread", () => {
     const f = fakeClient();
     const store = createStore(f.client);
     store.start();
     f.pushShell(oneProjectTwoThreads);
-    expect(store.getState().selection).toEqual({ kind: "project", id: "p1" });
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
   });
 
-  it("Given a collapsed project, when toggled, then it expands and selects it", () => {
+  it("Given a project filter, when selected, then it scopes the flat list", () => {
     const f = fakeClient();
     const store = createStore(f.client);
     store.start();
     f.pushShell(oneProjectTwoThreads);
     store.toggleProject("p1");
-    expect(store.getState().expanded.has("p1")).toBe(true);
-    expect(store.getState().selection).toEqual({ kind: "project", id: "p1" });
+    expect(store.getState().projectScopeId).toBe("p1");
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
   });
 
-  it("Given an expanded project, when moving the selection down, then it selects the first thread and subscribes to it", () => {
+  it("Given a flat list, when moving the selection down, then it selects the next thread", () => {
     const f = fakeClient();
     const store = createStore(f.client);
     store.start();
     f.pushShell(oneProjectTwoThreads);
     store.toggleProject("p1");
     store.moveSelection(1);
-    // threads are sorted by updatedAt desc → t1 first.
-    expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
-    expect(f.threadSubs).toContain("t1");
+    expect(store.getState().selection).toEqual({ kind: "thread", id: "t2" });
+    expect(f.threadSubs).toContain("t2");
   });
 
   it("Given an expanded project, when jumping to thread index 2, then it selects the second visible thread", () => {
@@ -108,7 +107,7 @@ describe("createStore", () => {
     const store = createStore(f.client);
     store.start();
     f.pushShell(oneProjectTwoThreads);
-    store.toggleProject("p1"); // selection sits on the project header
+    store.select({ kind: "project", id: "p1" });
     store.moveThreadSelection(1);
     expect(store.getState().selection).toEqual({ kind: "thread", id: "t1" });
   });

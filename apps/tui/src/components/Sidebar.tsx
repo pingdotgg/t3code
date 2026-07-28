@@ -3,87 +3,87 @@ import * as React from "react";
 import { padClip } from "../format.ts";
 import type { Store } from "../store.ts";
 import { relativeTime, resolveThreadStatus, usePalette } from "../theme.ts";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import { type Row, type Selection, selectionEquals } from "./Sidebar.logic.ts";
 import { StatusDot } from "./ThreadStatusIndicators.tsx";
 
-// The project/thread list pane (mirrors apps/web/src/components/Sidebar.tsx). Row
-// components are memoized and take the stable `store` (not per-render onClick
-// closures) so conversation streaming — which only updates the detail pane —
-// never re-renders the list. Mirrors SidebarProjectItem / SidebarThreadRow /
-// SidebarProjectThreadList from the web.
-
-const SidebarProjectItem = React.memo(function SidebarProjectItem({
+const SidebarThreadRow = React.memo(function SidebarThreadRow({
   row,
   selected,
   innerWidth,
   store,
 }: {
-  readonly row: Extract<Row, { kind: "project" }>;
+  readonly row: Extract<Row, { kind: "thread" }>;
   readonly selected: boolean;
   readonly innerWidth: number;
   readonly store: Store;
 }): React.ReactNode {
   const palette = usePalette();
-  const caret = row.expanded ? "▾" : "▸";
-  const count = ` (${row.count})`;
-  const dotWidth = row.status ? 2 : 0;
-  const titleBudget = innerWidth - 3 - count.length - dotWidth;
+  const status = resolveThreadStatus(row.thread);
+  const time = relativeTime(row.timestamp);
+  const active = row.section === "active";
+  const titleBudget = Math.max(1, innerWidth - (active ? 5 : 4) - (active ? 0 : time.length + 1));
   return (
-    <box onMouseDown={() => store.toggleProject(row.id)} {...(selected ? { backgroundColor: palette.selectedBg } : {})}>
+    <box
+      flexDirection="column"
+      height={active ? 2 : 1}
+      onMouseDown={() => store.select({ kind: "thread", id: row.id })}
+      {...(selected ? { backgroundColor: palette.selectedBg } : {})}
+    >
       <text>
-        <span fg={selected ? palette.accent : palette.text}>
-          {`${selected ? "▌" : " "}${caret} ${padClip(row.title, titleBudget)}${count}${row.status ? " " : ""}`}
-        </span>
-        {row.status ? <StatusDot status={row.status} /> : null}
+        <span fg={palette.accent}>{selected ? "▌ " : "  "}</span>
+        <StatusDot status={status} />
+        <span fg={palette.text}>{` ${padClip(row.thread.title, titleBudget)}`}</span>
+        {!active ? <span fg={palette.dim}>{` ${time}`}</span> : null}
+        {active ? (
+          <span fg={palette.dim}>
+            {`\n    ${padClip(row.projectTitle, Math.max(1, innerWidth - time.length - 7))} · ${time}`}
+          </span>
+        ) : null}
       </text>
     </box>
   );
 });
 
-const SidebarThreadRow = React.memo(function SidebarThreadRow({
-  thread,
+const SidebarSectionRow = React.memo(function SidebarSectionRow({
+  row,
   selected,
-  innerWidth,
   store,
 }: {
-  readonly thread: OrchestrationThreadShell;
+  readonly row: Extract<Row, { kind: "section" }>;
   readonly selected: boolean;
-  readonly innerWidth: number;
   readonly store: Store;
 }): React.ReactNode {
   const palette = usePalette();
-  const status = resolveThreadStatus(thread);
-  const time = ` ${relativeTime(thread.updatedAt)}`;
-  const titleBudget = innerWidth - 4 - time.length;
+  const color = row.section === "snoozed" ? palette.accent : palette.dim;
   return (
-    <box onMouseDown={() => store.select({ kind: "thread", id: thread.id })} {...(selected ? { backgroundColor: palette.selectedBg } : {})}>
-      <text>
-        <span fg={palette.accent}>{selected ? "▌ " : "  "}</span>
-        <StatusDot status={status} />
-        <span fg={palette.text}>{` ${padClip(thread.title, titleBudget)}`}</span>
-        <span fg={palette.dim}>{time}</span>
+    <box
+      onMouseDown={() => store.toggleSection(row.section)}
+      {...(selected ? { backgroundColor: palette.selectedBg } : {})}
+    >
+      <text fg={color}>
+        {`${selected ? "▌" : " "} ${row.expanded ? "▾" : "▸"} ${row.title}${row.expanded ? "" : ` (${row.count})`} ─`}
       </text>
     </box>
   );
 });
 
 const SidebarMoreRow = React.memo(function SidebarMoreRow({
-  projectId,
-  hiddenCount,
+  row,
   selected,
   store,
 }: {
-  readonly projectId: string;
-  readonly hiddenCount: number;
+  readonly row: Extract<Row, { kind: "more" }>;
   readonly selected: boolean;
   readonly store: Store;
 }): React.ReactNode {
   const palette = usePalette();
   return (
-    <box onMouseDown={() => store.loadMore(projectId)} {...(selected ? { backgroundColor: palette.selectedBg } : {})}>
+    <box
+      onMouseDown={() => store.loadMore(row.id)}
+      {...(selected ? { backgroundColor: palette.selectedBg } : {})}
+    >
       <text fg={selected ? palette.accent : palette.dim}>
-        {`   ${selected ? "▶" : " "}… show ${hiddenCount} more`}
+        {`  ${selected ? "▶" : "+"} Show ${Math.min(row.hiddenCount, 25)} more`}
       </text>
     </box>
   );
@@ -98,9 +98,11 @@ export const Sidebar = React.memo(function Sidebar({
   height,
   store,
   filter,
+  projectScopeLabel,
   searchFocused,
   onSearchInput,
   onFocusSearch,
+  onChooseProjectScope,
 }: {
   readonly rows: ReadonlyArray<Row>;
   readonly selection: Selection | null;
@@ -109,13 +111,12 @@ export const Sidebar = React.memo(function Sidebar({
   readonly width: number;
   readonly height: number;
   readonly store: Store;
-  /** Current project/thread search query (mirrors the store filter). */
   readonly filter: string;
-  /** True while the search box owns keyboard focus (filter mode). */
+  readonly projectScopeLabel: string;
   readonly searchFocused: boolean;
   readonly onSearchInput: (value: string) => void;
-  /** Focus the search box (e.g. clicked) — enters filter mode. */
   readonly onFocusSearch: () => void;
+  readonly onChooseProjectScope: () => void;
 }): React.ReactNode {
   const palette = usePalette();
   const innerWidth = Math.max(8, width - 4);
@@ -138,7 +139,6 @@ export const Sidebar = React.memo(function Sidebar({
       <box
         flexDirection="row"
         marginTop={1}
-        marginBottom={1}
         border
         borderStyle="rounded"
         borderColor={searchFocused ? palette.accent : palette.dim}
@@ -156,7 +156,7 @@ export const Sidebar = React.memo(function Sidebar({
             onInput={onSearchInput}
             focused
             flexGrow={1}
-            placeholder="Search projects…"
+            placeholder="Search threads…"
             textColor={palette.text}
             cursorColor={palette.accent}
             placeholderColor={palette.dim}
@@ -166,46 +166,48 @@ export const Sidebar = React.memo(function Sidebar({
             {filter.length > 0 ? (
               <span fg={palette.text}>{filter}</span>
             ) : (
-              <span fg={palette.dim}>Search projects…</span>
+              <span fg={palette.dim}>Search threads…</span>
             )}
           </text>
         )}
       </box>
+      <box
+        marginTop={1}
+        marginBottom={1}
+        onMouseDown={onChooseProjectScope}
+        {...(projectScopeLabel !== "All projects" ? { backgroundColor: palette.selectedBg } : {})}
+      >
+        <text>
+          <span fg={palette.dim}>Project </span>
+          <span fg={projectScopeLabel === "All projects" ? palette.text : palette.accent}>
+            {padClip(projectScopeLabel, Math.max(1, innerWidth - 11))}
+          </span>
+          <span fg={palette.dim}> ▾</span>
+        </text>
+      </box>
       <text>
-        <span fg={palette.accent}>Projects</span>
+        <span fg={palette.accent}>Threads</span>
         {moreAbove ? <span fg={palette.dim}>{"  ↑ more"}</span> : null}
       </text>
       {rows.length === 0 ? (
-        <text fg={palette.dim}>No projects yet. Press ^N.</text>
+        <text fg={palette.dim}>No threads here. Press ^N.</text>
       ) : (
         rows.map((row) => {
           const selected = selectionEquals(selection, row);
-          if (row.kind === "project") {
+          if (row.kind === "section") {
             return (
-              <SidebarProjectItem
-                key={`p:${row.id}`}
-                row={row}
-                selected={selected}
-                innerWidth={innerWidth}
-                store={store}
-              />
+              <SidebarSectionRow key={`s:${row.id}`} row={row} selected={selected} store={store} />
             );
           }
           if (row.kind === "more") {
             return (
-              <SidebarMoreRow
-                key={`m:${row.id}`}
-                projectId={row.id}
-                hiddenCount={row.hiddenCount}
-                selected={selected}
-                store={store}
-              />
+              <SidebarMoreRow key={`m:${row.id}`} row={row} selected={selected} store={store} />
             );
           }
           return (
             <SidebarThreadRow
               key={`t:${row.id}`}
-              thread={row.thread}
+              row={row}
               selected={selected}
               innerWidth={innerWidth}
               store={store}

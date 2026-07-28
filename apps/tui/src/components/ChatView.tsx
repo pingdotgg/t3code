@@ -57,7 +57,7 @@ import {
 } from "../models.ts";
 import { isWorking, revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
-import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
+import { buildRows, windowRows } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import {
   CHAT_CONTENT_MAX_WIDTH,
@@ -222,8 +222,14 @@ export function ChatView({
   const settingsScrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Shared popover picker for composer controls and new-thread checkout context.
   const [picker, setPicker] = React.useState<{
-    readonly kind: "model" | "runtime" | "reasoning" | "workspace" | "branch";
-    readonly target: "thread" | "new";
+    readonly kind:
+      | "model"
+      | "runtime"
+      | "reasoning"
+      | "workspace"
+      | "branch"
+      | "project-scope";
+    readonly target: "thread" | "new" | "sidebar";
     readonly title: string;
     readonly status: SelectStatus;
     readonly options: ReadonlyArray<SelectOption>;
@@ -332,13 +338,28 @@ export function ChatView({
   // list can't leave it pointing past the end (projects[projectIndex] = undefined).
   const activeProjectIndex = projects.length > 0 ? Math.min(projectIndex, projects.length - 1) : 0;
   const activeNewThreadProject = projects[activeProjectIndex] ?? null;
-  const selectedProjectId = state.selection?.kind === "project" ? state.selection.id : null;
+  const selectedProjectId =
+    state.selection?.kind === "project" ? state.selection.id : state.projectScopeId;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
   const selectionKey = state.selection ? `${state.selection.kind}:${state.selection.id}` : "none";
   const rows = React.useMemo(
     () =>
-      buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter),
-    [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
+      buildRows(
+        state.shell,
+        state.expanded,
+        state.loadedInFull,
+        selectedThreadId,
+        state.filter,
+        state.projectScopeId,
+      ),
+    [
+      state.shell,
+      state.expanded,
+      state.loadedInFull,
+      selectedThreadId,
+      state.filter,
+      state.projectScopeId,
+    ],
   );
   const detail = state.detail;
   const threadInteractionMode = detail
@@ -749,6 +770,34 @@ export function ChatView({
     });
   };
 
+  const openProjectScopePicker = () => {
+    const options: SelectOption[] = [
+      {
+        name: "All projects",
+        description: "Show threads from every project.",
+        value: "__all__",
+      },
+      ...projects.map((project) => ({
+        name: project.title,
+        description: project.workspaceRoot,
+        value: project.id as string,
+      })),
+    ];
+    setPicker({
+      kind: "project-scope",
+      target: "sidebar",
+      title: "project",
+      status: "ready",
+      options,
+      selectedIndex: Math.max(
+        0,
+        state.projectScopeId === null
+          ? 0
+          : options.findIndex((option) => option.value === state.projectScopeId),
+      ),
+    });
+  };
+
   const openBranchPicker = () => {
     if (focus !== "new") return;
     const options = branchPickerOptions(newBranchRefs);
@@ -940,7 +989,20 @@ export function ChatView({
       return;
     }
     setPicker(null);
-    if (kind === "workspace") {
+    if (kind === "project-scope") {
+      const projectScopeId = value === "__all__" ? null : value;
+      store.setProjectScope(projectScopeId);
+      if (projectScopeId !== null) {
+        const index = projects.findIndex((project) => project.id === projectScopeId);
+        if (index >= 0) setProjectIndex(index);
+      }
+      store.setStatus(
+        projectScopeId === null
+          ? "Showing all projects."
+          : `Project → ${projects.find((project) => project.id === projectScopeId)?.title ?? projectScopeId}`,
+        "success",
+      );
+    } else if (kind === "workspace") {
       const mode = value as NewThreadWorkspaceMode;
       setNewWorkspaceMode(mode);
       if (mode === "current") {
@@ -1143,26 +1205,15 @@ export function ChatView({
   // header + tab bar + frame + border(2) = frame rows + 4.
   const termRows = Math.max(2, terminalDrawerHeight - 4);
 
-  // Window the list around the selection so the highlighted row stays on screen.
-  const selectedIndex = Math.max(
-    0,
-    rows.findIndex((row) => selectionEquals(state.selection, row)),
+  // Active cards use two terminal rows while shelf rows use one. Window by
+  // rendered height so selection never disappears or overflows the pane.
+  const listWindow = React.useMemo(
+    () => windowRows(rows, state.selection, listViewport),
+    [rows, state.selection, listViewport],
   );
-  const listStart =
-    rows.length <= listViewport
-      ? 0
-      : Math.min(
-          Math.max(0, selectedIndex - Math.floor(listViewport / 2)),
-          rows.length - listViewport,
-        );
-  // Memoized so the (memoized) Sidebar doesn't re-render while the conversation
-  // streams — listRows is stable unless the shell/selection/window actually moves.
-  const listRows = React.useMemo(
-    () => rows.slice(listStart, listStart + listViewport),
-    [rows, listStart, listViewport],
-  );
-  const moreAbove = listStart > 0;
-  const moreBelow = listStart + listViewport < rows.length;
+  const listRows = listWindow.rows;
+  const moreAbove = listWindow.moreAbove;
+  const moreBelow = listWindow.moreBelow;
 
   const clearReply = () => {
     setReply("");
@@ -1176,6 +1227,9 @@ export function ChatView({
     if (typedText.length === 0 && composerImages.length === 0) {
       // Empty prompt → Enter activates the highlighted row.
       if (state.selection?.kind === "project") store.toggleProject(state.selection.id);
+      else if (state.selection?.kind === "section") {
+        store.toggleSection(state.selection.id.includes("snoozed") ? "snoozed" : "settled");
+      }
       else if (state.selection?.kind === "more") store.loadMore(state.selection.id);
       return;
     }
@@ -2334,9 +2388,16 @@ export function ChatView({
           height={height}
           store={store}
           filter={state.filter}
+          projectScopeLabel={
+            state.projectScopeId === null
+              ? "All projects"
+              : (projects.find((project) => project.id === state.projectScopeId)?.title ??
+                state.projectScopeId)
+          }
           searchFocused={focus === "filter" && !terminalFocused && !diffOpen && !picker}
           onSearchInput={store.setFilter}
           onFocusSearch={() => setFocus("filter")}
+          onChooseProjectScope={openProjectScopePicker}
         />
       ) : null}
 
