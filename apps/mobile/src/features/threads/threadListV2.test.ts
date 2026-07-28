@@ -40,43 +40,21 @@ function makeThread(
 const NOW = "2026-06-02T00:00:00.000Z";
 
 describe("resolveThreadListV2Enabled", () => {
-  it.each(["development", "preview"])("defaults on for the %s variant", (appVariant) => {
-    expect(
-      resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: true, appVariant }),
-    ).toBe(true);
+  it("defaults on when the device has never chosen", () => {
+    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: true })).toBe(
+      true,
+    );
   });
 
-  it.each(["production", undefined])("defaults off for the %s variant", (appVariant) => {
-    expect(
-      resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: true, appVariant }),
-    ).toBe(false);
+  it("honors an explicit device opt-out", () => {
+    expect(resolveThreadListV2Enabled({ preference: false, preferencesLoaded: true })).toBe(false);
+    expect(resolveThreadListV2Enabled({ preference: true, preferencesLoaded: true })).toBe(true);
   });
 
-  it("prefers an explicit device choice over the variant default", () => {
-    expect(
-      resolveThreadListV2Enabled({
-        preference: false,
-        preferencesLoaded: true,
-        appVariant: "preview",
-      }),
-    ).toBe(false);
-    expect(
-      resolveThreadListV2Enabled({
-        preference: true,
-        preferencesLoaded: true,
-        appVariant: "production",
-      }),
-    ).toBe(true);
-  });
-
-  it("holds v1 while preferences are still loading so the list does not remount", () => {
-    expect(
-      resolveThreadListV2Enabled({
-        preference: undefined,
-        preferencesLoaded: false,
-        appVariant: "development",
-      }),
-    ).toBe(false);
+  it("holds the default while preferences are still loading so the list does not remount", () => {
+    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: false })).toBe(
+      true,
+    );
   });
 });
 
