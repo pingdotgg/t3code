@@ -139,7 +139,11 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         );
       }}
     >
-      <div ref={listRef} className="dropdown-glass relative w-full overflow-hidden rounded-[20px]">
+      <div
+        ref={listRef}
+        data-composer-command-menu={props.items.length > 0 ? "" : undefined}
+        className="dropdown-glass relative w-full overflow-hidden rounded-[20px]"
+      >
         {props.items.length > 0 ? (
           <CommandList className="max-h-72">
             {groups.map((group, groupIndex) => (
