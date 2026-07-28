@@ -375,6 +375,44 @@ describe("environment grouping", () => {
     });
   });
 
+  it("uses manual project order for a remote-only group's fallback target", () => {
+    const firstRemote = makeProject({
+      id: ProjectId.make("project-remote-first"),
+      environmentId: EnvironmentId.make("env-remote-first"),
+      repositoryIdentity,
+    });
+    const preferredRemote = makeProject({
+      id: ProjectId.make("project-remote-preferred"),
+      environmentId: EnvironmentId.make("env-remote-preferred"),
+      repositoryIdentity,
+    });
+    const orderedProjects = orderItemsByPreferredIds({
+      items: [firstRemote, preferredRemote],
+      preferredIds: [getProjectOrderKey(preferredRemote)],
+      getId: getProjectOrderKey,
+      getPreferenceIds: (project) => [
+        getProjectOrderKey(project),
+        legacyProjectCwdPreferenceKey(project.workspaceRoot),
+      ],
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: orderedProjects,
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(
+      resolveSidebarProjectTargetRef({
+        group: group!,
+        preferredProjectRef: null,
+      }),
+    ).toEqual({
+      environmentId: preferredRemote.environmentId,
+      projectId: preferredRemote.id,
+    });
+  });
+
   it("keeps manual project order when building grouped sidebar entries", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({
