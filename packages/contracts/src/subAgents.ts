@@ -2,12 +2,11 @@
  * Delegation contracts for the product-native MCP "agents" toolkit.
  *
  * A running provider session can delegate a self-contained task to a child
- * thread through `delegate_task`, then observe it through
- * `wait_for_delegate`. The child always runs on
- * the caller's own provider instance, model, effort, runtime mode, project,
- * and worktree — nothing is selectable — which keeps delegation
- * deterministic and token-cheap. Depth is capped at 1 and concurrency at a
- * small constant, so fan-out is bounded by construction.
+ * thread through `delegate_task`, then observe it through `wait_for_delegate`.
+ * The child inherits the caller's runtime mode, project, and worktree, while
+ * its task role can select a configured workflow provider/model route.
+ * Depth is capped at 1 and concurrency at a small constant, so fan-out is
+ * bounded by construction.
  *
  * Keep this module schema-only; the runtime lives in
  * `apps/server/src/mcp/toolkits/agents/`.
@@ -17,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { WorkflowTaskRole } from "./settings.ts";
 
 /**
  * Maximum delegation nesting: user-created threads sit at depth 0 and their
@@ -57,6 +57,12 @@ export const SubAgentName = Schema.String.pipe(
 export type SubAgentName = typeof SubAgentName.Type;
 
 export const DelegateTaskInput = Schema.Struct({
+  role: Schema.optional(
+    WorkflowTaskRole.annotate({
+      description:
+        "Task category used to apply the user's configured workflow model route. Use explore for codebase research, implement for changes, and verify for review or tests.",
+    }),
+  ),
   prompt: TrimmedNonEmptyString.annotate({
     description:
       "Complete, self-contained task for the delegated agent. It does not see this conversation, so include all context it needs.",

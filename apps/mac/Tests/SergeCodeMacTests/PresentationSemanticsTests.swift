@@ -19,7 +19,7 @@ struct PresentationSemanticsTests {
     @Test("settings destinations have unique visible labels")
     func settingsDestinations() {
         let tabs = SettingsTab.allCases
-        #expect(tabs.count == 9)
+        #expect(tabs.count == 10)
         #expect(Set(tabs.map(\.title)).count == tabs.count)
         #expect(tabs.allSatisfy { !$0.symbolName.isEmpty })
     }

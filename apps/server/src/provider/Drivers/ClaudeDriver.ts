@@ -158,6 +158,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         instanceId,
         driverKind: DRIVER_KIND,
         environment: processEnv,
+        getWorkflowModelRouting: serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.workflowModelRouting),
+          Effect.orElseSucceed(() => ({ explore: null, implement: null, verify: null })),
+        ),
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
