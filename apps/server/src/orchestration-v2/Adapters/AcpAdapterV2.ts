@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import {
   type ChatAttachment,
   type ModelSelection,
@@ -835,6 +838,57 @@ function selectAutoApprovedPermissionOption(
 
 export type AcpPermissionDisposition = "allow" | "ask" | "deny";
 
+function resolveAcpPermissionPath(path: string, cwd: string | null): string | undefined {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) return undefined;
+  if (NodePath.isAbsolute(trimmed)) return NodePath.resolve(trimmed);
+  if (cwd === null || cwd.trim().length === 0) return undefined;
+  return NodePath.resolve(cwd, trimmed);
+}
+
+function acpPathIsWithinRoot(path: string, root: string): boolean {
+  const relative = NodePath.relative(root, path);
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${NodePath.sep}`) &&
+      !NodePath.isAbsolute(relative))
+  );
+}
+
+function acpWorkspaceWriteAllowsMutation(
+  runtimePolicy: ProviderAdapterV2RuntimePolicy,
+  sandboxPolicy: Record<string, unknown>,
+  request: EffectAcpSchema.RequestPermissionRequest,
+): boolean {
+  const cwd =
+    typeof runtimePolicy.cwd === "string" && runtimePolicy.cwd.trim().length > 0
+      ? NodePath.resolve(runtimePolicy.cwd)
+      : null;
+  const roots = cwd === null ? [] : [cwd];
+  const writableRoots = sandboxPolicy.writableRoots;
+  if (Array.isArray(writableRoots)) {
+    for (const writableRoot of writableRoots) {
+      if (typeof writableRoot !== "string") continue;
+      const resolved = resolveAcpPermissionPath(writableRoot, cwd);
+      if (resolved !== undefined) roots.push(resolved);
+    }
+  }
+  if (roots.length === 0) return false;
+
+  const locations = request.toolCall.locations;
+  if (locations === undefined || locations === null || locations.length === 0) {
+    return false;
+  }
+  for (const location of locations) {
+    const resolved = resolveAcpPermissionPath(location.path, cwd);
+    if (resolved === undefined || !roots.some((root) => acpPathIsWithinRoot(resolved, root))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function acpPermissionDisposition(
   runtimePolicy: ProviderAdapterV2RuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
@@ -857,14 +911,15 @@ export function acpPermissionDisposition(
         ? "allow"
         : "deny";
     case "workspaceWrite":
-      return toolKind === "read" ||
-        toolKind === "search" ||
-        toolKind === "think" ||
-        toolKind === "edit" ||
-        toolKind === "delete" ||
-        toolKind === "move"
-        ? "allow"
-        : "deny";
+      if (toolKind === "read" || toolKind === "search" || toolKind === "think") {
+        return "allow";
+      }
+      if (toolKind === "edit" || toolKind === "delete" || toolKind === "move") {
+        return acpWorkspaceWriteAllowsMutation(runtimePolicy, sandboxPolicy ?? {}, request)
+          ? "allow"
+          : "deny";
+      }
+      return "deny";
     case "dangerFullAccess":
     case "externalSandbox":
       return "allow";
@@ -935,6 +990,12 @@ interface ActiveAcpTurn {
    * the safety timeout elapses.
    */
   readonly pendingInjectedReport: Set<string>;
+  /**
+   * An injected assistant report can race ahead of its monitor end notice.
+   * Remember that unmatched report so the later notice consumes, rather than
+   * re-arming, the task's pre-settle completion marker.
+   */
+  earlyInjectedReportObserved: boolean;
   plan: {
     readonly id: OrchestrationV2PlanArtifact["id"];
     readonly startedAt: DateTime.Utc;
@@ -2270,6 +2331,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           });
 
+        const clearMidTurnUnreportedTaskIds = (taskIds: ReadonlyArray<string>) =>
+          Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
+            let next: Set<string> | null = null;
+            for (const taskId of taskIds) {
+              if (!current.has(taskId)) continue;
+              if (next === null) next = new Set(current);
+              next.delete(taskId);
+            }
+            return next ?? current;
+          });
+
         emitTool = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
@@ -3073,6 +3145,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           switch (update.sessionUpdate) {
             case "agent_message_chunk":
               if (update.content.type === "text") {
+                const startsNewAssistantSegment = context.assistant.current === null;
                 // The injected-turn report is streaming; the normal debounce
                 // after the last chunk takes over from here. Drop matching
                 // mid-turn armed ids so finalize does not open a duplicate
@@ -3080,15 +3153,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 if (context.pendingInjectedReport.size > 0) {
                   const reportedTaskIds = [...context.pendingInjectedReport];
                   context.pendingInjectedReport.clear();
-                  yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
-                    let next: Set<string> | null = null;
-                    for (const taskId of reportedTaskIds) {
-                      if (!current.has(taskId)) continue;
-                      if (next === null) next = new Set(current);
-                      next.delete(taskId);
-                    }
-                    return next ?? current;
-                  });
+                  yield* clearMidTurnUnreportedTaskIds(reportedTaskIds);
+                } else if (
+                  startsNewAssistantSegment &&
+                  context.promptSettled &&
+                  (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0
+                ) {
+                  // Some ACP implementations deliver the injected assistant
+                  // report before the synthetic monitor end notice. Correlation
+                  // arrives with that notice, so remember the unmatched report
+                  // and consume its task id when the notice follows.
+                  context.earlyInjectedReportObserved = true;
                 }
                 yield* appendText(context, "assistant", update.content.text);
               }
@@ -3100,7 +3175,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               break;
             case "user_message_chunk":
               if (update.content.type === "text" && flavor.extractBackgroundToolMutation) {
-                for (const mutation of flavor.extractBackgroundToolMutation(update.content.text)) {
+                const mutations = flavor.extractBackgroundToolMutation(update.content.text);
+                const terminalTaskIds = mutations
+                  .filter((mutation) => mutation.status !== "running")
+                  .map((mutation) => mutation.taskId);
+                const reportArrivedBeforeNotice =
+                  context.earlyInjectedReportObserved && terminalTaskIds.length > 0;
+                if (reportArrivedBeforeNotice) {
+                  context.earlyInjectedReportObserved = false;
+                  yield* clearMidTurnUnreportedTaskIds(terminalTaskIds);
+                }
+                for (const mutation of mutations) {
                   const toolCallId = context.toolCallIdsByBackgroundTaskId.get(mutation.taskId);
                   const previous =
                     toolCallId !== undefined ? context.tools.get(toolCallId) : undefined;
@@ -3131,7 +3216,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   // the mutation's semantic status. Also tracks monitors that
                   // never surfaced a tool_call row at all.
                   yield* applyBackgroundTaskMutationRunning(mutation);
-                  if (mutation.status !== "running") {
+                  if (mutation.status !== "running" && !reportArrivedBeforeNotice) {
                     yield* markPendingInjectedReport(context, mutation.taskId);
                   }
                 }
@@ -4527,6 +4612,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               persistentBackgroundTaskIds: new Set(),
               awaitingBackgroundHydration: new Set(),
               pendingInjectedReport: new Set(),
+              earlyInjectedReportObserved: false,
               plan: null,
               interrupted: false,
               finalized: false,
