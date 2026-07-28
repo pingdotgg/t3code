@@ -148,9 +148,9 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
 }
 
 /**
- * Local drafts have a client-generated thread id before `thread.created` adds
- * the server shell. Waiting for that shell prevents the expected pre-creation
- * HTTP 404 from being treated as an authoritative deletion.
+ * Returns the detail ref unless the caller is waiting for a server shell that
+ * has not appeared yet. This is the canonical detail-subscription gate; local
+ * draft callers adapt their draft and shell readiness into these options.
  */
 export function resolveThreadDetailRef(
   ref: ScopedThreadRef | null,
@@ -162,19 +162,26 @@ export function resolveThreadDetailRef(
   return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
 }
 
+type ThreadDetailReadiness = {
+  readonly hasLocalDraft: boolean;
+  readonly hasServerShell: boolean;
+};
+
+function resolveReadyThreadDetailRef(
+  ref: ScopedThreadRef | null,
+  input: ThreadDetailReadiness,
+): ScopedThreadRef | null {
+  return resolveThreadDetailRef(ref, {
+    shellExists: input.hasServerShell,
+    waitForShell: input.hasLocalDraft,
+  });
+}
+
 export function useThreadDetailWhenReady(
   ref: ScopedThreadRef | null,
-  input: {
-    readonly hasLocalDraft: boolean;
-    readonly hasServerShell: boolean;
-  },
+  input: ThreadDetailReadiness,
 ): EnvironmentThread | null {
-  return useThreadDetail(
-    resolveThreadDetailRef(ref, {
-      shellExists: input.hasServerShell,
-      waitForShell: input.hasLocalDraft,
-    }),
-  );
+  return useThreadDetail(resolveReadyThreadDetailRef(ref, input));
 }
 
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
@@ -185,17 +192,9 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
 
 export function useThreadStatusWhenReady(
   ref: ScopedThreadRef | null,
-  input: {
-    readonly hasLocalDraft: boolean;
-    readonly hasServerShell: boolean;
-  },
+  input: ThreadDetailReadiness,
 ): EnvironmentThreadStatus {
-  return useThreadStatus(
-    resolveThreadDetailRef(ref, {
-      shellExists: input.hasServerShell,
-      waitForShell: input.hasLocalDraft,
-    }),
-  );
+  return useThreadStatus(resolveReadyThreadDetailRef(ref, input));
 }
 
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */

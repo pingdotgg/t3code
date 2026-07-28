@@ -66,6 +66,17 @@ beforeEach(() => {
 });
 
 describe("thread detail subscription", () => {
+  it("starts the actual detail hook immediately for an ordinary thread", () => {
+    function Probe() {
+      useThread(THREAD_REF);
+      return null;
+    }
+
+    renderToStaticMarkup(createElement(Probe));
+    expect(mocks.detailAtom).toHaveBeenCalledOnce();
+    expect(mocks.detailAtom).toHaveBeenCalledWith(THREAD_REF);
+  });
+
   it("starts the actual detail hook only after a local draft receives its shell", () => {
     mocks.hasLocalDraft = true;
 
