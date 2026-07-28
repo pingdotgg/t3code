@@ -22,6 +22,10 @@ describe("ScheduledTaskSchedule", () => {
       everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS - 1,
     });
   });
+
+  it("still rejects corrupt non-positive persisted intervals", () => {
+    expect(() => decodeSchedule({ type: "interval", everyMs: 0 })).toThrow();
+  });
 });
 
 describe("ScheduledTaskUpsertSchedule", () => {
