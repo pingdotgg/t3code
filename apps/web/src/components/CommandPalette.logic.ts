@@ -15,6 +15,17 @@ export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
 
+export function shouldHandleCommandPaletteShortcut(input: {
+  command: KeybindingCommand | null;
+  paletteOpen: boolean;
+  editableTarget: boolean;
+}): boolean {
+  if (input.command === "commandPalette.toggle") {
+    return true;
+  }
+  return input.command === "project.add" && (!input.editableTarget || input.paletteOpen);
+}
+
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
   readonly value: string;
@@ -66,6 +77,33 @@ export function enumerateCommandPaletteItems(
     const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
     return itemWithoutShortcut;
   });
+}
+
+export function shouldResetPaletteFlowOnPop(
+  flowBaseDepth: number | null,
+  currentDepth: number,
+): boolean {
+  return flowBaseDepth !== null && Math.max(0, currentDepth - 1) <= flowBaseDepth;
+}
+
+export function resetAddProjectFlowState(input: {
+  flowBaseDepthRef: { current: number | null };
+  clearEnvironment: () => void;
+  clearCloneFlow: () => void;
+}): void {
+  input.clearCloneFlow();
+  input.clearEnvironment();
+  input.flowBaseDepthRef.current = null;
+}
+
+export function buildNewThreadInGroups(input: {
+  projectItems: ReadonlyArray<CommandPaletteActionItem>;
+  addProjectAction: CommandPaletteActionItem;
+}): CommandPaletteGroup[] {
+  return [
+    { value: "projects", label: "Projects", items: input.projectItems },
+    { value: "actions", label: "Actions", items: [input.addProjectAction] },
+  ];
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";

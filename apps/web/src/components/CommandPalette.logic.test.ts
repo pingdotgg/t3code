@@ -2,11 +2,45 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
+  buildNewThreadInGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  resetAddProjectFlowState,
+  shouldHandleCommandPaletteShortcut,
+  shouldResetPaletteFlowOnPop,
+  type CommandPaletteActionItem,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("shouldHandleCommandPaletteShortcut", () => {
+  it("does not capture the add-project shortcut from an editable target", () => {
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "project.add",
+        paletteOpen: false,
+        editableTarget: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("still handles add-project outside editors and the palette toggle everywhere", () => {
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "project.add",
+        paletteOpen: false,
+        editableTarget: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "commandPalette.toggle",
+        paletteOpen: false,
+        editableTarget: true,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("enumerateCommandPaletteItems", () => {
   it("assigns positional jump shortcuts to the first nine displayed items", () => {
@@ -37,6 +71,88 @@ describe("enumerateCommandPaletteItems", () => {
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
+
+describe("shouldHandleCommandPaletteShortcut in an open palette", () => {
+  it("allows Alt+A from the editable search input while the new-task palette is open", () => {
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "project.add",
+        paletteOpen: true,
+        editableTarget: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("continues to ignore Alt+A from editors outside the palette", () => {
+    expect(
+      shouldHandleCommandPaletteShortcut({
+        command: "project.add",
+        paletteOpen: false,
+        editableTarget: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldResetPaletteFlowOnPop", () => {
+  it("resets a flow opened from a nested parent when its first view is popped", () => {
+    expect(shouldResetPaletteFlowOnPop(1, 2)).toBe(true);
+  });
+
+  it("keeps a flow active while popping between its own nested views", () => {
+    expect(shouldResetPaletteFlowOnPop(1, 3)).toBe(false);
+  });
+});
+
+describe("resetAddProjectFlowState", () => {
+  it("clears every piece of add-project state before opening another palette flow", () => {
+    const flowBaseDepthRef = { current: 2 as number | null };
+    const clearEnvironment = vi.fn();
+    const clearCloneFlow = vi.fn();
+
+    resetAddProjectFlowState({
+      flowBaseDepthRef,
+      clearEnvironment,
+      clearCloneFlow,
+    });
+
+    expect(clearEnvironment).toHaveBeenCalledOnce();
+    expect(clearCloneFlow).toHaveBeenCalledOnce();
+    expect(flowBaseDepthRef.current).toBeNull();
+  });
+});
+
+describe("buildNewThreadInGroups", () => {
+  it("includes Add project alongside projects for every new-thread picker entry point", () => {
+    const projectItem: CommandPaletteActionItem = {
+      kind: "action",
+      value: "new-thread-in:environment-1:project-1",
+      searchTerms: ["Project"],
+      title: "Project",
+      icon: null,
+      run: async () => undefined,
+    };
+    const addProjectAction: CommandPaletteActionItem = {
+      kind: "action",
+      value: "action:add-project",
+      searchTerms: ["Add project"],
+      title: "Add project",
+      icon: null,
+      shortcutCommand: "project.add",
+      run: async () => undefined,
+    };
+
+    const groups = buildNewThreadInGroups({
+      projectItems: [projectItem],
+      addProjectAction,
+    });
+
+    expect(groups.map((group) => group.value)).toEqual(["projects", "actions"]);
+    expect(groups[0]?.items).toEqual([projectItem]);
+    expect(groups[1]?.items).toEqual([addProjectAction]);
+    expect(groups[1]?.items[0]?.shortcutCommand).toBe("project.add");
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
