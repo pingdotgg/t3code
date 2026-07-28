@@ -1,27 +1,23 @@
-import {
-  threadRuntimeIsActive,
-  type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSettle } from "@t3tools/client-runtime/state/thread-settled";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
-import { Alert, Platform } from "react-native";
+import { Alert } from "react-native";
 
-import { withThreadDismissal } from "./thread-dismissal";
-import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
+import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
-import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  pinOrderKeyBetween,
+  planPinnedMove,
+  sortPinnedThreadsByOrderKey,
+} from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
-import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { beginPendingThreadOrder, getPendingThreadOrder } from "../../state/thread-order";
-import { createPendingThreadOrder, createThreadMovePlanner } from "../threads/threadOrder";
-import { getThreadListV2OrderedSection } from "../threads/threadListV2";
-import { resolveThreadTitleRename } from "../threads/thread-title-rename";
+import { threadCanArchive } from "./threadArchive";
 
 /** Version skew: never send settle/unsettle to a server that predates them
     (capability defaults false on decode for older servers). */
@@ -123,39 +119,45 @@ function useThreadActionExecutor(
           );
           return false;
         }
-        // Archive keeps its original, narrower guard: never interrupt a
-        // thread mid-turn.
-        if (action === "archive" && threadRuntimeIsActive(thread.runtime)) {
+        // Settle may only target what effectiveSettled could classify as
+        // settled: not starting/running sessions, not threads waiting on
+        // approvals or user input. Anything else would hide live work.
+        if (action === "settle" && !canSettle(thread, { now: new Date().toISOString() })) {
+          Alert.alert(
+            actionFailureTitle(action),
+            "This thread still needs attention. Resolve or interrupt it first, then try again.",
+          );
+          return false;
+        }
+        // The server cancels queued runs on archive. Only an actual provider
+        // turn still needs the user to interrupt it first.
+        if (action === "archive" && !threadCanArchive(thread.runtime)) {
           Alert.alert(
             actionFailureTitle(action),
             "This thread is working. Interrupt it first, then try again.",
           );
           return false;
         }
-        const result = await withThreadDismissal(
-          key,
-          async () =>
-            action === "unsettle"
-              ? // reason "user" pins the thread active: auto-settle stays
-                // suppressed until real activity clears the pin server-side.
-                await unsettleMutation({
-                  environmentId: thread.environmentId,
-                  input: { threadId: thread.id, reason: "user" },
-                })
-              : await (
-                  action === "settle"
-                    ? settleMutation
-                    : action === "archive"
-                      ? archiveMutation
-                      : action === "unarchive"
-                        ? unarchiveMutation
-                        : deleteMutation
-                )({
-                  environmentId: thread.environmentId,
-                  input: { threadId: thread.id },
-                }),
-          (result) => result._tag === "Success",
-        );
+        const result =
+          action === "unsettle"
+            ? // reason "user" pins the thread active: auto-settle stays
+              // suppressed until real activity clears the pin server-side.
+              await unsettleMutation({
+                environmentId: thread.environmentId,
+                input: { threadId: thread.id, reason: "user" },
+              })
+            : await (
+                action === "settle"
+                  ? settleMutation
+                  : action === "archive"
+                    ? archiveMutation
+                    : action === "unarchive"
+                      ? unarchiveMutation
+                      : deleteMutation
+              )({
+                environmentId: thread.environmentId,
+                input: { threadId: thread.id },
+              });
         if (result._tag === "Failure") {
           Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return false;
@@ -227,11 +229,10 @@ export function useThreadListActions(): {
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly moveThread: (
+  readonly movePinnedThread: (
     thread: EnvironmentThreadShell,
     direction: "up" | "down",
   ) => Promise<boolean>;
-  readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
@@ -281,18 +282,13 @@ export function useThreadListActions(): {
         }
 
         selectionHaptic();
-        const result = await withThreadDismissal(
-          key,
-          () =>
-            snoozeMutation({
-              environmentId: thread.environmentId,
-              input: {
-                threadId: thread.id,
-                snoozedUntil,
-              },
-            }),
-          (result) => result._tag === "Success",
-        );
+        const result = await snoozeMutation({
+          environmentId: thread.environmentId,
+          input: {
+            threadId: thread.id,
+            snoozedUntil,
+          },
+        });
         if (result._tag === "Failure") {
           const error = Cause.squash(result.cause);
           Alert.alert(
@@ -327,15 +323,10 @@ export function useThreadListActions(): {
         }
 
         selectionHaptic();
-        const result = await withThreadDismissal(
-          key,
-          () =>
-            unsnoozeMutation({
-              environmentId: thread.environmentId,
-              input: { threadId: thread.id, reason: "user" },
-            }),
-          (result) => result._tag === "Success",
-        );
+        const result = await unsnoozeMutation({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id, reason: "user" },
+        });
         if (result._tag === "Failure") {
           const error = Cause.squash(result.cause);
           Alert.alert(
@@ -466,121 +457,61 @@ export function useThreadListActions(): {
     },
     [updateThreadMetadata],
   );
-  const renameThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      const commit = (title: string) => {
-        const resolution = resolveThreadTitleRename({ title, originalTitle: thread.title });
-        if (resolution.action === "reject-empty") {
-          Alert.alert("Could not rename thread", "Thread title cannot be empty.");
-          return;
-        }
-        if (resolution.action === "noop") return;
-        selectionHaptic();
-        void updateThreadMetadata({
-          environmentId: thread.environmentId,
-          input: { threadId: thread.id, title: resolution.title },
-        }).then((result) => {
-          if (result._tag === "Success") return;
-          const error = Cause.squash(result.cause);
-          Alert.alert(
-            "Could not rename thread",
-            error instanceof Error && error.message.trim().length > 0
-              ? error.message
-              : "The thread could not be renamed.",
-          );
-        });
-      };
 
-      if (Platform.OS === "ios") {
-        Alert.prompt(
-          "Rename thread",
-          undefined,
-          (title) => commit(title ?? ""),
-          "plain-text",
-          thread.title,
-        );
-        return;
-      }
-      showTextInputDialog({
-        title: "Rename thread",
-        initialValue: thread.title,
-        confirmText: "Rename",
-        onConfirm: commit,
-      });
-    },
-    [updateThreadMetadata],
-  );
-
-  // Plan against the complete section so filtering does not change a move.
+  // Move up / Move down for the pinned block. Computed against the CANONICAL
+  // keyed pinned order (not the rendered list), so the move is valid even
+  // while search or a project scope filters rows: the same fractional-key
+  // scheme web dragging uses, one write to one thread per move (plus a
+  // one-time section materialization when legacy keyless pins are involved).
   const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
   });
-  const reorderActiveMutation = useAtomCommand(threadEnvironment.reorderActive, {
-    reportFailure: false,
-  });
-  const moveThread = useCallback(
+  // One move at a time: a second tap before the first write's event lands
+  // would plan from the same stale snapshot and silently collapse two moves
+  // into one — same double-dispatch guard as snoozeThread.
+  const movePinnedInFlightRef = useRef(false);
+  const movePinnedThread = useCallback(
     async (thread: EnvironmentThreadShell, direction: "up" | "down") => {
-      if (getPendingThreadOrder() !== null) return false;
-      const section = thread.pinnedAt != null ? "pinned" : "active";
-      const configs = appAtomRegistry.get(environmentServerConfigsAtom);
-      const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
-        const capabilities = configs.get(environmentId)?.environment.capabilities;
-        return section === "pinned"
-          ? capabilities?.threadPinReorder === true
-          : capabilities?.threadActiveReorder === true;
-      };
-      if (!supportsReorder(thread.environmentId)) {
+      if (movePinnedInFlightRef.current) return false;
+      if (!environmentSupportsPinReorder(thread.environmentId)) {
         Alert.alert(
           "Could not move thread",
-          "This environment's server does not support reordering these threads. Update the server to arrange them.",
+          "This environment's server does not support pinned reordering yet. Update the server to reorder pins.",
         );
         return false;
       }
       const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-      const ordered = getThreadListV2OrderedSection({
-        threads: shells,
-        section,
-        now: new Date().toISOString(),
-        queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
-        settlementEnvironmentIds: new Set(
-          [...configs].flatMap(([id, config]) =>
-            config.environment.capabilities.threadSettlement === true ? [id] : [],
-          ),
+      const pinned = sortPinnedThreadsByOrderKey(
+        shells.filter(
+          (shell) =>
+            shell.pinnedAt != null &&
+            shell.archivedAt === null &&
+            environmentSupportsPinReorder(shell.environmentId),
         ),
-        snoozeEnvironmentIds: new Set(
-          [...configs].flatMap(([id, config]) =>
-            config.environment.capabilities.threadSnooze === true ? [id] : [],
-          ),
+      );
+      const orderedIds = pinned.map((shell) => scopedThreadKey(shell.environmentId, shell.id));
+      const assignments = planPinnedMove({
+        orderedIds,
+        keysById: new Map(
+          pinned.map((shell) => [
+            scopedThreadKey(shell.environmentId, shell.id),
+            shell.pinOrderKey ?? null,
+          ]),
         ),
+        movedId: scopedThreadKey(thread.environmentId, thread.id),
+        direction,
       });
-      const assignments = createThreadMovePlanner({
-        allThreads: shells,
-        ordered,
-        section,
-        reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
-      })(scopedThreadKey(thread.environmentId, thread.id), direction);
-      if (assignments === null) return false;
+      if (assignments === null || assignments.length === 0) return false;
       const shellByKey = new Map(
-        ordered.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
+        pinned.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
       );
       selectionHaptic();
-      const pending = beginPendingThreadOrder(
-        createPendingThreadOrder({
-          section,
-          ordered,
-          movedId: scopedThreadKey(thread.environmentId, thread.id),
-          direction,
-          assignments,
-        }),
-      );
-      let succeeded = false;
-      const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
+      movePinnedInFlightRef.current = true;
       try {
         for (const assignment of assignments) {
-          if (!pending.isPending()) return false;
           const target = shellByKey.get(assignment.id);
           if (target === undefined) continue;
-          const result = await reorder({
+          const result = await reorderPinnedMutation({
             environmentId: target.environmentId,
             input: { threadId: target.id, orderKey: assignment.orderKey },
           });
@@ -590,20 +521,20 @@ export function useThreadListActions(): {
               "Could not move thread",
               error instanceof Error && error.message.trim().length > 0
                 ? error.message
-                : "The thread could not be moved.",
+                : "The pinned thread could not be moved.",
             );
-            // Keep confirmed keys when a later environment rejects its write.
+            // No rollback: keys already written are valid orderings on their
+            // own (each write is a complete, consistent placement), so a
+            // partial materialization leaves the list sensible, not corrupt.
             return false;
           }
         }
-        succeeded = true;
-        pending.complete();
         return true;
       } finally {
-        if (!succeeded) pending.cancel();
+        movePinnedInFlightRef.current = false;
       }
     },
-    [reorderActiveMutation, reorderPinnedMutation],
+    [reorderPinnedMutation],
   );
 
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
@@ -617,8 +548,7 @@ export function useThreadListActions(): {
     unsettleThread,
     pinThread,
     unpinThread,
-    moveThread,
-    renameThread,
+    movePinnedThread,
     regenerateThreadTitle,
   };
 }

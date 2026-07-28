@@ -682,6 +682,141 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(retry._tag, "OrchestratorCommandPreviouslyRejectedError");
     }),
   );
+
+  it.effect("rejects settling a thread while a run is active", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-active-settle-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-active-settle-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-active-settle-project"),
+        title: "Active settle",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-active-settle",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-active-settle-initial"),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-active-settle-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-active-settle-message"),
+        text: "Keep this run active.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+
+      const error = yield* orchestrator
+        .dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("runtime-layer-active-settle"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.isNull(projection.thread.settledOverride);
+      assert.isNull(projection.thread.settledAt);
+    }),
+  );
+
+  it.effect("cancels queued work when a thread is archived", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-archive-queued-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-archive-queued-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-archive-queued-project"),
+        title: "Archive queued work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-archive-queued",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-archive-queued-active-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-archive-queued-active-message"),
+        text: "Keep the provider occupied.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-archive-queued-next-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-archive-queued-next-message"),
+        text: "Do not run this after archive.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+
+      const beforeArchive = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = beforeArchive.runs.find((run) => run.status === "starting");
+      const queuedRun = beforeArchive.runs.find((run) => run.status === "queued");
+      assert.isDefined(activeRun);
+      assert.isDefined(queuedRun);
+
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-archive-queued-archive"),
+        threadId,
+      });
+
+      const archived = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNotNull(archived.thread.archivedAt);
+      assert.equal(archived.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
+      assert.equal(
+        archived.attempts.find((attempt) => attempt.runId === queuedRun.id)?.status,
+        "cancelled",
+      );
+      assert.equal(archived.nodes.find((node) => node.runId === queuedRun.id)?.status, "cancelled");
+      assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+
+      const promoteError = yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("runtime-layer-archive-queued-promote"),
+          threadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: activeRun.id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(promoteError._tag, "OrchestratorDispatchError");
+
+      const afterPromotion = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(afterPromotion.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
+    }),
+  );
 });
 
 it.layer(SharedApplicationDataPlaneTestLayer)("pending provider interruption", (it) => {
