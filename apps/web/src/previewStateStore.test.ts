@@ -480,6 +480,48 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.serverRevision).toBe(0);
   });
 
+  it("does not carry raw-tab state across a server restart", () => {
+    const previous = makeSnapshot({
+      navStatus: { _tag: "Success", url: "https://old.example", title: "Old" },
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    });
+    applyPreviewServerEventImpl(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: previous.tabId,
+      createdAt: previous.updatedAt,
+      serverEpoch,
+      revision: 12,
+      snapshot: previous,
+    });
+    beginPreviewSessionClose(ref, previous.tabId);
+    applyPreviewDesktopState(ref, previous.tabId, {
+      hasWebContents: true,
+      canGoBack: false,
+      canGoForward: false,
+      loading: false,
+      zoomFactor: 1,
+      pictureInPicture: false,
+      colorScheme: "system",
+      controller: "none",
+    });
+    const restarted = makeSnapshot({
+      navStatus: { _tag: "Success", url: "https://new.example", title: "New" },
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    });
+    reconcilePreviewServerSessions(ref, {
+      sessions: [restarted],
+      serverEpoch: "server-b",
+      revision: 0,
+    });
+
+    const state = readThreadPreviewState(ref);
+    expect(state.sessions[restarted.tabId]).toEqual(restarted);
+    expect(state.suppressedTabIds).toEqual(new Set());
+    expect(state.desktopByTabId).toEqual({});
+    expect(state.desktopOverlay).toBeNull();
+  });
+
   it("applyServerSnapshot null clears snapshot for a thread that had one", () => {
     const snapshot = makeSnapshot();
     applyPreviewServerSnapshot(ref, snapshot);

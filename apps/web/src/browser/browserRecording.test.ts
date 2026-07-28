@@ -89,10 +89,13 @@ import {
   BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS,
   BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS,
   BrowserRecordingConflictError,
+  findActiveBrowserRecordingRuntimeTabId,
   readActiveBrowserRecordingTabIds,
+  readActiveBrowserRecordingTargets,
   startBrowserRecording,
   stopBrowserRecording,
 } from "./browserRecording";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 class FakeMediaRecorder {
   static isTypeSupported(): boolean {
@@ -361,6 +364,46 @@ describe("browser recording", () => {
     await stopBrowserRecording("recording-tab-2");
     expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
     expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a recording reachable through its runtime id after a server epoch changes", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("environment-recording"),
+      threadId: ThreadId.make("thread-recording-scoped"),
+    };
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-a", "tab_1");
+    surfaceState.byTabId = {
+      [runtimeTabId]: {
+        visible: false,
+        rect: { x: 0, y: 0, width: 1280, height: 800 },
+        content: {
+          x: 0,
+          y: 0,
+          width: 1280,
+          height: 800,
+          scale: 1,
+          scrollLeft: 0,
+          scrollTop: 0,
+        },
+      },
+    };
+
+    await startBrowserRecording(runtimeTabId, threadRef, "tab_1");
+
+    expect(startScreencast).toHaveBeenCalledWith(runtimeTabId);
+    expect(readActiveBrowserRecordingTabIds(threadRef)).toEqual(new Set([runtimeTabId]));
+    expect(readActiveBrowserRecordingTargets(threadRef)).toEqual([
+      { runtimeTabId, serverTabId: "tab_1" },
+    ]);
+    expect(findActiveBrowserRecordingRuntimeTabId(threadRef, "tab_1")).toBe(runtimeTabId);
+
+    const replacementRuntimeTabId = previewRuntimeTabId(threadRef, "epoch-b", "tab_1");
+    await expect(
+      startBrowserRecording(replacementRuntimeTabId, threadRef, "tab_1"),
+    ).rejects.toBeInstanceOf(BrowserRecordingConflictError);
+    expect(startScreencast).toHaveBeenCalledTimes(1);
+
+    await stopBrowserRecording(runtimeTabId);
   });
 
   it("does not report success for a second start while the first is still starting", async () => {

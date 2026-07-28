@@ -1,3 +1,4 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { closeTab, createTab, stopBrowserRecording } = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ vi.mock("./browserRecording", () => ({
 }));
 
 import { acquireDesktopTab } from "./desktopTabLifetime";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 describe("desktopTabLifetime", () => {
   beforeEach(() => {
@@ -53,6 +55,39 @@ describe("desktopTabLifetime", () => {
     resolveCreation?.();
     await first.ready;
     expect(ready).toBe(true);
+  });
+
+  it("keeps identical server tab ids from two environments in separate desktop slots", async () => {
+    vi.useFakeTimers();
+    createTab.mockResolvedValue(undefined);
+    const tabA = previewRuntimeTabId(
+      {
+        environmentId: EnvironmentId.make("environment-a"),
+        threadId: ThreadId.make("thread-a"),
+      },
+      "epoch-a",
+      "tab_1",
+    );
+    const tabB = previewRuntimeTabId(
+      {
+        environmentId: EnvironmentId.make("environment-b"),
+        threadId: ThreadId.make("thread-b"),
+      },
+      "epoch-b",
+      "tab_1",
+    );
+
+    const first = acquireDesktopTab(tabA);
+    const second = acquireDesktopTab(tabB);
+    await Promise.all([first.ready, second.ready]);
+
+    expect(createTab).toHaveBeenCalledWith(tabA);
+    expect(createTab).toHaveBeenCalledWith(tabB);
+    expect(createTab).toHaveBeenCalledTimes(2);
+
+    first.release();
+    second.release();
+    await vi.advanceTimersByTimeAsync(0);
   });
 
   it("stops recording before closing the final desktop tab lease", async () => {
