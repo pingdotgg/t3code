@@ -3,6 +3,7 @@ import {
   type FilesystemBrowseEntry,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -14,6 +15,39 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
+
+export interface BrowseNavigationCoordinator {
+  readonly invalidate: () => void;
+  readonly run: (input: {
+    readonly load: () => Promise<void>;
+    readonly commit: () => void;
+  }) => Promise<boolean>;
+}
+
+export function createBrowseNavigationCoordinator(): BrowseNavigationCoordinator {
+  let generation = 0;
+
+  return {
+    invalidate: () => {
+      generation += 1;
+    },
+    run: async (input) => {
+      const navigationGeneration = ++generation;
+      await input.load();
+      if (navigationGeneration !== generation) {
+        return false;
+      }
+      input.commit();
+      return true;
+    },
+  };
+}
+
+export function canPreloadBrowsePath(
+  connectionPhase: EnvironmentConnectionPhase | null | undefined,
+): boolean {
+  return connectionPhase === "connected";
+}
 
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
@@ -73,10 +107,8 @@ export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-b
 export function filterBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   browseFilterQuery: string;
-  highlightedItemValue: string | null;
 }): {
   filteredEntries: FilesystemBrowseEntry[];
-  highlightedEntry: FilesystemBrowseEntry | null;
   exactEntry: FilesystemBrowseEntry | null;
 } {
   const lowerFilter = input.browseFilterQuery.toLowerCase();
@@ -88,18 +120,12 @@ export function filterBrowseEntries(input: {
       (showHidden || !entry.name.startsWith(".")),
   );
 
-  let highlightedEntry: FilesystemBrowseEntry | null = null;
-  if (input.highlightedItemValue?.startsWith("browse:")) {
-    const highlightedPath = input.highlightedItemValue.slice("browse:".length);
-    highlightedEntry = filteredEntries.find((entry) => entry.fullPath === highlightedPath) ?? null;
-  }
-
   const exactEntry =
     input.browseFilterQuery.length > 0
       ? (filteredEntries.find((entry) => entry.name === input.browseFilterQuery) ?? null)
       : null;
 
-  return { filteredEntries, highlightedEntry, exactEntry };
+  return { filteredEntries, exactEntry };
 }
 
 export function normalizeSearchText(value: string): string {
@@ -302,8 +328,8 @@ export function buildBrowseGroups(input: {
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
-  browseUp: () => void;
-  browseTo: (name: string) => void;
+  browseUp: () => void | Promise<void>;
+  browseTo: (name: string) => void | Promise<void>;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -316,7 +342,7 @@ export function buildBrowseGroups(input: {
       icon: input.upIcon,
       keepOpen: true,
       run: async () => {
-        input.browseUp();
+        await input.browseUp();
       },
     });
   }
@@ -330,7 +356,7 @@ export function buildBrowseGroups(input: {
       icon: input.directoryIcon,
       keepOpen: true,
       run: async () => {
-        input.browseTo(entry.name);
+        await input.browseTo(entry.name);
       },
     });
   }
