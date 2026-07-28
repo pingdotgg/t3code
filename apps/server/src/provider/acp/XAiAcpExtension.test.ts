@@ -241,6 +241,42 @@ describe("XAiAcpExtension", () => {
     });
   });
 
+  it("does not treat a subagent_id mentioned in result text as the completed identity", () => {
+    const requestedTaskId = "019f44a6-4820-7402-925d-bc862ee711dd";
+    const mentionedTaskId = "019f44b0-1b73-7f32-bb1b-1ff696f536e3";
+    const toolCall = {
+      toolCallId: "call-get-mentioned-id",
+      title: "get_command_or_subagent_output",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: [requestedTaskId],
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            status: "completed",
+            exit_code: 0,
+            output: `Audited subagent_id: ${mentionedTaskId}; no issues found.`,
+          },
+        },
+      },
+    };
+
+    expect(extractXAiAcpSubagentUpdate(toolCall)).toMatchObject({
+      childSessionId: requestedTaskId,
+      status: "completed",
+    });
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      {
+        taskId: requestedTaskId,
+        status: "completed",
+        appendOutput: `Audited subagent_id: ${mentionedTaskId}; no issues found.`,
+      },
+    ]);
+  });
+
   it("hydrates structured ACP TaskOutput tool envelopes", () => {
     expect(
       extractXAiAcpSubagentUpdate({
@@ -624,6 +660,42 @@ describe("XAiAcpExtension", () => {
         taskId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
         status: "completed",
         appendOutput: "BOTH_DONE",
+      },
+    ]);
+  });
+
+  it("keeps every requested monitor running when a completed poll has no terminal task status", () => {
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-get-running-monitors",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "TaskOutput",
+            task_ids: [
+              "019f44a6-4820-7402-925d-bc862ee711dd",
+              "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+            ],
+          },
+          rawOutput: {
+            type: "TaskOutput",
+            Result: {
+              output: "No task has reached a terminal state.",
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "019f44a6-4820-7402-925d-bc862ee711dd",
+        status: "running",
+        appendOutput: "No task has reached a terminal state.",
+      },
+      {
+        taskId: "019f44b0-1b73-7f32-bb1b-1ff696f536e3",
+        status: "running",
+        appendOutput: "No task has reached a terminal state.",
       },
     ]);
   });
