@@ -2,29 +2,22 @@
 
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 
 import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
-import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { removePreviewThread, useActivePreviewSessions } from "~/previewStateStore";
-import { useLiveEnvironmentIds, useThreadRefs } from "~/state/entities";
-import { useEnvironments } from "~/state/environments";
+import { useActivePreviewSessions } from "~/previewStateStore";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
-import { reconcilePreviewThreadRefs } from "./previewThreadLifecycle";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
+import { usePreviewThreadLifecycleCleanup } from "./usePreviewThreadLifecycleCleanup";
 
 export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
-  const activeThreadRefs = useThreadRefs();
-  const liveEnvironmentIds = useLiveEnvironmentIds();
-  const { environmentIds: catalogEnvironmentIds, isReady: environmentCatalogReady } =
-    useEnvironments();
-  const previousActiveThreadRefs = useRef(activeThreadRefs);
+  usePreviewThreadLifecycleCleanup();
   const sessions = useMemo(
     () =>
       Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
@@ -44,20 +37,6 @@ export function ElectronBrowserHost() {
       }),
     [previewByThreadKey],
   );
-
-  useEffect(() => {
-    const reconciliation = reconcilePreviewThreadRefs({
-      previousActiveThreadRefs: previousActiveThreadRefs.current,
-      activeThreadRefs,
-      catalogEnvironmentIds: environmentCatalogReady ? catalogEnvironmentIds : null,
-      liveEnvironmentIds,
-    });
-    previousActiveThreadRefs.current = reconciliation.nextActiveThreadRefs;
-    for (const threadRef of reconciliation.removedThreadRefs) {
-      removePreviewThread(threadRef);
-      usePreviewMiniPlayerStore.getState().removeThread(threadRef);
-    }
-  }, [activeThreadRefs, catalogEnvironmentIds, environmentCatalogReady, liveEnvironmentIds]);
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
