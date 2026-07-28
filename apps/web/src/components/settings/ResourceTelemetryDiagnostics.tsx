@@ -163,31 +163,40 @@ function sourceStatusTone(status: ResourceTelemetrySourceStatus): "default" | "w
 function SourceStatusBadge({
   label,
   status,
+  presentation,
 }: {
   label: string;
   status: ResourceTelemetrySourceStatus;
+  presentation?:
+    | {
+        readonly label: string;
+        readonly tone: "neutral";
+      }
+    | undefined;
 }) {
-  const tone = sourceStatusTone(status);
+  const tone = presentation?.tone ?? sourceStatusTone(status);
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em]",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em]",
+        tone === "neutral" && "border-border/70 bg-muted/45 text-muted-foreground",
         tone === "default" &&
-          "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300",
+          "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
         tone === "warning" &&
-          "border-amber-500/25 bg-amber-500/8 text-amber-700 dark:text-amber-300",
-        tone === "danger" && "border-destructive/25 bg-destructive/8 text-destructive",
+          "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        tone === "danger" && "border-destructive/30 bg-destructive/10 text-destructive",
       )}
     >
       <span
         className={cn(
           "size-1.5 rounded-full",
+          tone === "neutral" && "bg-muted-foreground/55",
           tone === "default" && "bg-emerald-500",
           tone === "warning" && "bg-amber-500",
           tone === "danger" && "bg-destructive",
         )}
       />
-      {label} {status}
+      {label} {presentation?.label ?? status}
     </span>
   );
 }
@@ -223,14 +232,16 @@ function IconStat({
   tone?: "default" | "warning" | "danger";
 }) {
   return (
-    <div className="min-w-0 border-border/60 px-4 py-3.5 sm:px-5">
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/65">
-        <span className="text-muted-foreground/50">{icon}</span>
+    <div className="group min-w-0 px-4 py-4 sm:px-5">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.11em] text-muted-foreground/70">
+        <span className="text-muted-foreground/55 transition-colors group-hover:text-foreground/65">
+          {icon}
+        </span>
         <span className="truncate">{label}</span>
       </div>
       <div
         className={cn(
-          "mt-2 truncate font-mono text-xl font-semibold tracking-[-0.04em] tabular-nums text-foreground",
+          "mt-2.5 truncate font-mono text-2xl font-semibold tracking-[-0.05em] tabular-nums text-foreground",
           tone === "warning" && "text-amber-600 dark:text-amber-300",
           tone === "danger" && "text-destructive",
         )}
@@ -238,7 +249,7 @@ function IconStat({
         {value}
       </div>
       {detail ? (
-        <div className="mt-1 truncate text-[10px] text-muted-foreground/55">{detail}</div>
+        <div className="mt-1.5 truncate text-[10px] text-muted-foreground/60">{detail}</div>
       ) : null}
     </div>
   );
@@ -254,17 +265,17 @@ function AggregateCard({
   aggregate: ResourceTelemetryAggregate;
 }) {
   return (
-    <div className="relative overflow-hidden border-t border-border/60 px-4 py-3.5 first:border-t-0 md:border-t-0 md:border-l md:first:border-l-0 sm:px-5">
-      <span className={cn("absolute inset-x-0 top-0 h-px opacity-80", accentClass)} />
+    <div className="relative overflow-hidden border-t border-border/60 px-4 py-4 first:border-t-0 md:border-t-0 md:border-l md:first:border-l-0 sm:px-5">
+      <span className={cn("absolute inset-x-5 top-0 h-0.5 rounded-full opacity-75", accentClass)} />
       <div className="flex items-center justify-between gap-3">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/65">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.11em] text-muted-foreground/75">
           {label}
         </div>
-        <div className="font-mono text-[10px] tabular-nums text-muted-foreground/55">
-          {aggregate.processCount} proc
+        <div className="rounded-md bg-muted/55 px-1.5 py-0.5 font-mono text-[9px] tabular-nums text-muted-foreground/70">
+          {aggregate.processCount} {aggregate.processCount === 1 ? "process" : "processes"}
         </div>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+      <div className="mt-3.5 grid grid-cols-2 gap-x-4 gap-y-2.5">
         <MetricPair label="CPU" value={`${aggregate.currentCpuPercent.toFixed(1)}%`} />
         <MetricPair label="Memory" value={formatBytes(aggregate.currentRssBytes)} />
         <MetricPair label="Read" value={formatRate(aggregate.ioReadBytesPerSecond)} />
@@ -288,18 +299,34 @@ function MetricPair({ label, value }: { label: string; value: string }) {
 }
 
 function HealthSource({ label, health }: { label: string; health: ResourceTelemetrySourceHealth }) {
+  const expectedInBrowser =
+    health.status === "unavailable" &&
+    Option.exists(health.lastError, (error) => error.includes("'web' mode"));
   return (
-    <div className="flex items-start justify-between gap-4 border-t border-border/50 py-2.5 first:border-t-0">
+    <div className="flex items-start justify-between gap-4 border-t border-border/50 py-3 first:border-t-0">
       <div className="min-w-0">
-        <div className="text-xs font-medium text-foreground">{label}</div>
-        <div className="mt-0.5 truncate text-[10px] text-muted-foreground/60">
-          {Option.match(health.lastError, {
-            onNone: () => "No reported errors",
-            onSome: (error) => error,
-          })}
+        <div className="text-[13px] font-medium text-foreground">{label}</div>
+        <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground/65">
+          {expectedInBrowser
+            ? "Available when this page runs inside the desktop app."
+            : Option.match(health.lastError, {
+                onNone: () => "No reported errors",
+                onSome: (error) => error,
+              })}
         </div>
       </div>
-      <SourceStatusBadge label="" status={health.status} />
+      <SourceStatusBadge
+        label=""
+        status={health.status}
+        presentation={
+          expectedInBrowser
+            ? {
+                label: "Desktop only",
+                tone: "neutral",
+              }
+            : undefined
+        }
+      />
     </div>
   );
 }
@@ -314,8 +341,8 @@ function DetailRow({
   valueClassName?: string | undefined;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-t border-border/50 py-2 first:border-t-0">
-      <span className="text-[11px] text-muted-foreground/70">{label}</span>
+    <div className="flex items-center justify-between gap-4 border-t border-border/50 py-2.5 first:border-t-0">
+      <span className="text-[11px] text-muted-foreground/75">{label}</span>
       <span
         className={cn(
           "min-w-0 truncate text-right font-mono text-[11px] tabular-nums text-foreground/85",
@@ -877,11 +904,19 @@ export function ResourceTelemetryDiagnostics() {
     snapshot?.health.native.status === "degraded" ||
     snapshot?.health.native.status === "unavailable" ||
     snapshot?.health.native.status === "stopped";
+  const hasHostPowerSignal =
+    snapshot !== null &&
+    (snapshot.power.onBattery !== "unknown" ||
+      snapshot.power.lowPowerMode !== "unknown" ||
+      snapshot.power.idle !== "unknown" ||
+      snapshot.power.locked !== "unknown" ||
+      snapshot.power.thermalState !== "unknown");
 
   return (
     <>
       <SettingsSection
-        title="Resource Overview"
+        title="Resource monitor"
+        icon={<ActivityIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <div className="flex items-center gap-2">
             {snapshot ? (
@@ -910,85 +945,105 @@ export function ResourceTelemetryDiagnostics() {
           </div>
         }
       >
-        <div className="grid grid-cols-2 divide-x divide-y divide-border/60 md:grid-cols-3">
-          <IconStat
-            icon={<CpuIcon className="size-3.5" />}
-            label="Current CPU"
-            value={allT3 ? `${allT3.currentCpuPercent.toFixed(1)}%` : "..."}
-            detail={allT3 ? `${formatCpuTime(allT3.cpuTimeMs)} observed CPU time` : undefined}
-          />
-          <IconStat
-            icon={<MemoryStickIcon className="size-3.5" />}
-            label="Resident Memory"
-            value={allT3 ? formatBytes(allT3.currentRssBytes) : "..."}
-            detail={allT3 ? `${formatBytes(allT3.peakRssBytes)} process peaks` : undefined}
-          />
-          <IconStat
-            icon={<HardDriveIcon className="size-3.5" />}
-            label="I/O Reads"
-            value={allT3 ? formatRate(allT3.ioReadBytesPerSecond) : "..."}
-            detail={allT3 ? `${formatBytes(allT3.ioReadBytes)} observed` : undefined}
-          />
-          <IconStat
-            icon={<DatabaseIcon className="size-3.5" />}
-            label="I/O Writes"
-            value={allT3 ? formatRate(allT3.ioWriteBytesPerSecond) : "..."}
-            detail={allT3 ? `${formatBytes(allT3.ioWriteBytes)} observed` : undefined}
-            tone={
-              allT3 && allT3.ioWriteBytesPerSecond >= 10 * 1_024 * 1_024
-                ? "danger"
-                : allT3 && allT3.ioWriteBytesPerSecond >= 1_024 * 1_024
-                  ? "warning"
-                  : "default"
-            }
-          />
-          <IconStat
-            icon={<ActivityIcon className="size-3.5" />}
-            label="Processes"
-            value={allT3 ? String(allT3.processCount) : "..."}
-            detail={
-              allT3 ? `${allT3.processStarts} starts · ${allT3.processExits} exits` : undefined
-            }
-          />
-          <IconStat
-            icon={<GaugeIcon className="size-3.5" />}
-            label="CPU Speed Limit"
-            value={
-              snapshot ? (speedLimit === null ? "Unknown" : `${speedLimit.toFixed(0)}%`) : "..."
-            }
-            detail={snapshot ? `${snapshot.power.thermalState} thermal state` : undefined}
-            tone={speedLimit !== null && speedLimit < 80 ? "warning" : "default"}
-          />
+        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03),0_8px_30px_rgb(0_0_0/0.035)]">
+          <div className="flex flex-col gap-3 border-b border-border/60 bg-linear-to-r from-muted/45 via-muted/20 to-transparent px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+                T3 system footprint
+              </div>
+              <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
+                Live native counters for the server, providers, terminals, desktop processes, and
+                the monitor itself.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/65">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              Sampling every 5 seconds
+            </div>
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-y divide-border/55 md:grid-cols-3">
+            <IconStat
+              icon={<CpuIcon className="size-3.5" />}
+              label="Current CPU"
+              value={allT3 ? `${allT3.currentCpuPercent.toFixed(1)}%` : "..."}
+              detail={allT3 ? `${formatCpuTime(allT3.cpuTimeMs)} observed CPU time` : undefined}
+            />
+            <IconStat
+              icon={<MemoryStickIcon className="size-3.5" />}
+              label="Resident memory"
+              value={allT3 ? formatBytes(allT3.currentRssBytes) : "..."}
+              detail={
+                allT3 ? `${formatBytes(allT3.peakRssBytes)} combined process peaks` : undefined
+              }
+            />
+            <IconStat
+              icon={<ActivityIcon className="size-3.5" />}
+              label="Process count"
+              value={allT3 ? String(allT3.processCount) : "..."}
+              detail={
+                allT3 ? `${allT3.processStarts} starts · ${allT3.processExits} exits` : undefined
+              }
+            />
+            <IconStat
+              icon={<HardDriveIcon className="size-3.5" />}
+              label="Read throughput"
+              value={allT3 ? formatRate(allT3.ioReadBytesPerSecond) : "..."}
+              detail={allT3 ? `${formatBytes(allT3.ioReadBytes)} observed` : undefined}
+            />
+            <IconStat
+              icon={<DatabaseIcon className="size-3.5" />}
+              label="Write throughput"
+              value={allT3 ? formatRate(allT3.ioWriteBytesPerSecond) : "..."}
+              detail={allT3 ? `${formatBytes(allT3.ioWriteBytes)} observed` : undefined}
+              tone={
+                allT3 && allT3.ioWriteBytesPerSecond >= 10 * 1_024 * 1_024
+                  ? "danger"
+                  : allT3 && allT3.ioWriteBytesPerSecond >= 1_024 * 1_024
+                    ? "warning"
+                    : "default"
+              }
+            />
+            <IconStat
+              icon={<GaugeIcon className="size-3.5" />}
+              label="CPU speed limit"
+              value={
+                snapshot ? (speedLimit === null ? "Unknown" : `${speedLimit.toFixed(0)}%`) : "..."
+              }
+              detail={snapshot ? `${snapshot.power.thermalState} thermal state` : undefined}
+              tone={speedLimit !== null && speedLimit < 80 ? "warning" : "default"}
+            />
+          </div>
+          {telemetry.error ? (
+            <div className="flex items-start gap-2 border-t border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive sm:px-5">
+              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span>{telemetry.error}</span>
+            </div>
+          ) : null}
+          {snapshot ? (
+            <div className="grid border-t border-border/60 bg-muted/10 md:grid-cols-3">
+              <AggregateCard
+                label="Backend + agents"
+                accentClass="bg-emerald-500/80"
+                aggregate={snapshot.groups.backend}
+              />
+              <AggregateCard
+                label="Desktop"
+                accentClass="bg-sky-500/80"
+                aggregate={snapshot.groups.electron}
+              />
+              <AggregateCard
+                label="Monitor overhead"
+                accentClass="bg-amber-500/80"
+                aggregate={snapshot.groups.monitor}
+              />
+            </div>
+          ) : null}
         </div>
-        {telemetry.error ? (
-          <div className="flex items-start gap-2 border-t border-border/60 px-4 py-3 text-xs text-destructive sm:px-5">
-            <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
-            <span>{telemetry.error}</span>
-          </div>
-        ) : null}
-        {snapshot ? (
-          <div className="grid md:grid-cols-3">
-            <AggregateCard
-              label="Backend + Agents"
-              accentClass="bg-emerald-500/80"
-              aggregate={snapshot.groups.backend}
-            />
-            <AggregateCard
-              label="Electron"
-              accentClass="bg-sky-500/80"
-              aggregate={snapshot.groups.electron}
-            />
-            <AggregateCard
-              label="Monitor Overhead"
-              accentClass="bg-amber-500/80"
-              aggregate={snapshot.groups.monitor}
-            />
-          </div>
-        ) : null}
       </SettingsSection>
 
       <SettingsSection
-        title="Power & Collector"
+        title="Host & collection"
+        icon={<GaugeIcon className="size-4 text-muted-foreground" />}
         headerAction={
           collectorNeedsRetry ? (
             <Button size="xs" variant="outline" disabled={isRetrying} onClick={retryCollector}>
@@ -998,75 +1053,81 @@ export function ResourceTelemetryDiagnostics() {
           ) : null
         }
       >
-        <div className="grid md:grid-cols-2 md:divide-x md:divide-border/60">
-          <div className="px-4 py-3.5 sm:px-5">
-            <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60">
-              <BatteryIcon className="size-3.5" /> Host state
+        <div className="grid overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03)] md:grid-cols-2 md:divide-x md:divide-border/60">
+          <div className="px-4 py-4 sm:px-5">
+            <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+              <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
+                <BatteryIcon className="size-3.5" />
+              </span>
+              Host state
             </div>
-            <DetailRow
-              label="Power source"
-              value={
-                snapshot
-                  ? booleanStateLabel(snapshot.power.onBattery, {
-                      true: "Battery",
-                      false: "External power",
-                    })
-                  : "Unknown"
-              }
-            />
-            <DetailRow
-              label="Low power mode"
-              value={
-                snapshot
-                  ? booleanStateLabel(snapshot.power.lowPowerMode, {
-                      true: "Enabled",
-                      false: "Disabled",
-                    })
-                  : "Unknown"
-              }
-            />
-            <DetailRow
-              label="Idle"
-              value={
-                snapshot
-                  ? `${booleanStateLabel(snapshot.power.idle, {
-                      true: "Idle",
-                      false: "Active",
-                    })}${
-                      snapshot.power.idleSeconds === null
-                        ? ""
-                        : ` · ${Math.round(snapshot.power.idleSeconds)}s`
-                    }`
-                  : "Unknown"
-              }
-            />
-            <DetailRow
-              label="Session"
-              value={
-                snapshot
-                  ? snapshot.power.suspended
-                    ? "Suspended"
-                    : booleanStateLabel(snapshot.power.locked, {
-                        true: "Locked",
-                        false: "Unlocked",
-                      })
-                  : "Unknown"
-              }
-            />
-            <DetailRow
-              label="Thermal"
-              value={snapshot?.power.thermalState ?? "unknown"}
-              valueClassName={
-                snapshot?.power.thermalState === "serious" ||
-                snapshot?.power.thermalState === "critical"
-                  ? "text-destructive"
-                  : undefined
-              }
-            />
+            {hasHostPowerSignal && snapshot ? (
+              <>
+                <DetailRow
+                  label="Power source"
+                  value={booleanStateLabel(snapshot.power.onBattery, {
+                    true: "Battery",
+                    false: "External power",
+                  })}
+                />
+                <DetailRow
+                  label="Low power mode"
+                  value={booleanStateLabel(snapshot.power.lowPowerMode, {
+                    true: "Enabled",
+                    false: "Disabled",
+                  })}
+                />
+                <DetailRow
+                  label="Idle"
+                  value={`${booleanStateLabel(snapshot.power.idle, {
+                    true: "Idle",
+                    false: "Active",
+                  })}${
+                    snapshot.power.idleSeconds === null
+                      ? ""
+                      : ` · ${Math.round(snapshot.power.idleSeconds)}s`
+                  }`}
+                />
+                <DetailRow
+                  label="Session"
+                  value={
+                    snapshot.power.suspended
+                      ? "Suspended"
+                      : booleanStateLabel(snapshot.power.locked, {
+                          true: "Locked",
+                          false: "Unlocked",
+                        })
+                  }
+                />
+                <DetailRow
+                  label="Thermal"
+                  value={snapshot.power.thermalState}
+                  valueClassName={
+                    snapshot.power.thermalState === "serious" ||
+                    snapshot.power.thermalState === "critical"
+                      ? "text-destructive"
+                      : undefined
+                  }
+                />
+              </>
+            ) : (
+              <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-5">
+                <div className="text-[13px] font-medium text-foreground">
+                  Desktop host signals not connected
+                </div>
+                <p className="mt-1.5 max-w-sm text-[11px] leading-relaxed text-muted-foreground/70">
+                  Power, idle, lock, and thermal state are supplied by the desktop host. Process
+                  telemetry remains fully active in this browser session.
+                </p>
+              </div>
+            )}
           </div>
-          <div className="border-t border-border/60 px-4 py-3.5 md:border-t-0 sm:px-5">
-            <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60">
-              <GaugeIcon className="size-3.5" /> Collection health
+          <div className="border-t border-border/60 px-4 py-4 md:border-t-0 sm:px-5">
+            <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+              <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
+                <GaugeIcon className="size-3.5" />
+              </span>
+              Collection health
             </div>
             {snapshot ? (
               <>
@@ -1112,7 +1173,8 @@ export function ResourceTelemetryDiagnostics() {
       </SettingsSection>
 
       <SettingsSection
-        title="Resource Timeline"
+        title="Resource timeline"
+        icon={<HardDriveIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <div className="flex items-center gap-2">
             <HistoryWindowSelector selectedWindowMs={windowMs} onSelect={setWindowMs} />
@@ -1129,18 +1191,21 @@ export function ResourceTelemetryDiagnostics() {
           </div>
         }
       >
-        {history.error ? (
-          <div className="flex items-start gap-2 px-4 py-3 text-xs text-destructive sm:px-5">
-            <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
-            <span>{history.error}</span>
-          </div>
-        ) : null}
-        <ResourceHistoryChart buckets={history.data?.buckets ?? []} />
-        <HistoryProcessTable processes={history.data?.topProcesses ?? []} />
+        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03)]">
+          {history.error ? (
+            <div className="flex items-start gap-2 border-b border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive sm:px-5">
+              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span>{history.error}</span>
+            </div>
+          ) : null}
+          <ResourceHistoryChart buckets={history.data?.buckets ?? []} />
+          <HistoryProcessTable processes={history.data?.topProcesses ?? []} />
+        </div>
       </SettingsSection>
 
       <SettingsSection
-        title="Live Process Tree"
+        title="Live process tree"
+        icon={<CpuIcon className="size-4 text-muted-foreground" />}
         headerAction={
           snapshot ? (
             <span className="text-[10px] text-muted-foreground/55">
@@ -1149,25 +1214,30 @@ export function ResourceTelemetryDiagnostics() {
           ) : null
         }
       >
-        <ProcessTable
-          processes={snapshot?.processes ?? []}
-          signalingKey={signalingKey}
-          onSignal={signalProcess}
-        />
+        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03)]">
+          <ProcessTable
+            processes={snapshot?.processes ?? []}
+            signalingKey={signalingKey}
+            onSignal={signalProcess}
+          />
+        </div>
       </SettingsSection>
 
       <SettingsSection
-        title="Instrumented Application I/O"
+        title="Instrumented application I/O"
+        icon={<DatabaseIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <span className="text-[10px] text-muted-foreground/55">Logical bytes by operation</span>
         }
       >
-        <div className="px-4 py-3 text-[11px] leading-relaxed text-muted-foreground sm:px-5">
-          Native counters identify which process is reading or writing. These application-level
-          counters identify known T3 operations so process spikes can be correlated with specific
-          persistence and logging paths.
+        <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03)]">
+          <div className="bg-muted/15 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground sm:px-5">
+            Native counters identify which process is reading or writing. These application-level
+            counters identify known T3 operations so process spikes can be correlated with specific
+            persistence and logging paths.
+          </div>
+          <AttributionTable entries={snapshot?.attribution.entries ?? []} />
         </div>
-        <AttributionTable entries={snapshot?.attribution.entries ?? []} />
       </SettingsSection>
     </>
   );

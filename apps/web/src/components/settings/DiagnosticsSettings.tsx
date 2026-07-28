@@ -962,7 +962,7 @@ export function DiagnosticsSettingsPanel() {
     : false;
 
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-6xl gap-10">
       <ResourceTelemetryDiagnostics />
 
       <SettingsSection
