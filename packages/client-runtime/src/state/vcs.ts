@@ -6,9 +6,11 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/unstable/reactivity";
@@ -24,6 +26,11 @@ import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandSchedule
 
 const OFFLINE_BRANCH_LIST_LIMIT = 100;
 const VCS_REFS_IDLE_TTL_MS = 30_000;
+const VCS_REFS_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
 
 function canUseVcsRefsCache(input: VcsListRefsInput): boolean {
   return (
@@ -96,30 +103,22 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
   ).pipe(
     Stream.map((connection) => (connection.phase === "connected" ? connection.generation : null)),
     Stream.changes,
-    Stream.mapEffect(
-      (generation) =>
-        generation === null
-          ? Effect.succeed(Option.none<VcsListRefsResult>())
-          : refresh().pipe(
-              Effect.map(Option.some),
-              Effect.catch((error) =>
+    Stream.switchMap((generation) =>
+      generation === null
+        ? Stream.empty
+        : Stream.fromEffect(
+            refresh().pipe(
+              Effect.tapError((error) =>
                 Effect.logWarning("Could not refresh Git refs.").pipe(
                   Effect.annotateLogs({
                     environmentId,
                     cwd: input.cwd,
                     ...safeErrorLogAttributes(error),
                   }),
-                  Effect.as(Option.none<VcsListRefsResult>()),
                 ),
               ),
             ),
-      { concurrency: 1 },
-    ),
-    Stream.filterMap((refs) =>
-      Option.match(refs, {
-        onNone: () => Result.failVoid,
-        onSome: Result.succeed,
-      }),
+          ).pipe(Stream.retry(VCS_REFS_RETRY_SCHEDULE)),
     ),
   );
 

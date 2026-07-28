@@ -59,6 +59,7 @@ const NON_REPOSITORY_PATHS_CACHE_TTL = Duration.seconds(1);
 const LIST_REFS_SNAPSHOT_CACHE_CAPACITY = 64;
 const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
+const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -117,6 +118,7 @@ class GitRefsSnapshotCacheKey extends Data.Class<{
 interface GitRepositoryPaths {
   readonly gitCommonDir: string;
   readonly worktreeRoot: string | null;
+  readonly currentBranch: string | null;
 }
 
 interface GitRefsSnapshot {
@@ -983,8 +985,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       fetchCwd,
       ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
       {
-        allowNonZeroExit: true,
         env: STATUS_UPSTREAM_REFRESH_ENV,
+        fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
         timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
       },
     ).pipe(Effect.asVoid);
@@ -1027,14 +1029,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const gitCommonDir = yield* fileSystem
       .realPath(resolvedGitCommonDir)
       .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
-    const worktreeRootResult = yield* executeGit(
-      "GitVcsDriver.resolveRepositoryPaths.worktreeRoot",
-      cwd,
-      ["rev-parse", "--show-toplevel"],
-      {
-        timeoutMs: 5_000,
-        allowNonZeroExit: true,
-      },
+    const [worktreeRootResult, currentBranchResult] = yield* Effect.all(
+      [
+        executeGit(
+          "GitVcsDriver.resolveRepositoryPaths.worktreeRoot",
+          cwd,
+          ["rev-parse", "--show-toplevel"],
+          {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          },
+        ),
+        executeGit(
+          "GitVcsDriver.resolveRepositoryPaths.currentBranch",
+          cwd,
+          ["symbolic-ref", "--quiet", "--short", "HEAD"],
+          {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          },
+        ),
+      ],
+      { concurrency: 2 },
     );
     const worktreeRootOutput = worktreeRootResult.stdout.trim();
     const worktreeRoot =
@@ -1045,10 +1061,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               : path.resolve(cwd, worktreeRootOutput),
           )
         : null;
+    const currentBranchOutput = currentBranchResult.stdout.trim();
+    const currentBranch =
+      currentBranchResult.exitCode === 0 && currentBranchOutput.length > 0
+        ? currentBranchOutput
+        : null;
 
     return {
       gitCommonDir,
       worktreeRoot,
+      currentBranch,
     } satisfies GitRepositoryPaths;
   });
 
@@ -2126,6 +2148,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           {
             timeoutMs: 30_000,
             maxOutputBytes: 16 * 1024 * 1024,
+            fallbackErrorDetail: "Git ref snapshot enumeration failed.",
           },
         ),
         executeGit(
@@ -2264,7 +2287,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     {
       capacity: LIST_REFS_SNAPSHOT_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? LIST_REFS_REFRESH_COALESCE_TTL : Duration.zero),
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) ? LIST_REFS_REFRESH_COALESCE_TTL : LIST_REFS_REFRESH_FAILURE_COOLDOWN,
     },
   );
   const resolveListRefsSnapshot = (gitCommonDir: string, refresh: boolean) => {
@@ -2284,10 +2308,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const invalidateListRefsSnapshot = Effect.fn("invalidateListRefsSnapshot")(function* (
     cwd: string,
   ) {
-    const repositoryPaths = yield* resolveRepositoryPaths(cwd);
+    const repositoryPathsCacheKey = normalizeRepositoryPathsCacheKey(cwd);
+    const repositoryPaths = yield* Cache.get(repositoryPathsCache, repositoryPathsCacheKey);
     if (repositoryPaths === null) return;
     yield* Cache.invalidate(listRefsRefreshSnapshotCache, repositoryPaths.gitCommonDir);
     bumpListRefsEpoch(repositoryPaths.gitCommonDir);
+    yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
 
   const listRefs: GitVcsDriver.GitVcsDriver["Service"]["listRefs"] = Effect.fn("listRefs")(
@@ -2312,11 +2338,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         repositoryPaths.gitCommonDir,
         input.refresh === true,
       );
+      const hasCurrentWorktreeBranch =
+        repositoryPaths.worktreeRoot !== null &&
+        snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
       const localBranches = snapshot.localBranches.map((ref) => ({
         ...ref,
-        current:
-          repositoryPaths.worktreeRoot !== null &&
-          ref.worktreePath === repositoryPaths.worktreeRoot,
+        current: hasCurrentWorktreeBranch
+          ? ref.worktreePath === repositoryPaths.worktreeRoot
+          : ref.name === repositoryPaths.currentBranch,
       }));
       const combinedBranches = input.includeMatchingRemoteRefs
         ? [...localBranches, ...snapshot.remoteBranches]

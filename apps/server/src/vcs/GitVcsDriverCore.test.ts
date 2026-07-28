@@ -250,6 +250,77 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("fails a ref snapshot when for-each-ref exits unsuccessfully", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const snapshotAttempts = yield* Ref.make(0);
+      const failingSnapshotSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("for-each-ref")) {
+            yield* Ref.update(snapshotAttempts, (count) => count + 1);
+            return makeNonRepositoryHandle();
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingSnapshotSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+
+      const error = yield* driver.listRefs({ cwd, refresh: true }).pipe(Effect.flip);
+
+      assert.deepInclude(error, {
+        _tag: "GitCommandError",
+        operation: "GitVcsDriver.listRefs.snapshotRefs",
+        detail: "Git ref snapshot enumeration failed.",
+        exitCode: 128,
+      });
+      assert.equal(yield* Ref.get(snapshotAttempts), 1);
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("marks the current branch when worktree metadata is unavailable", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const incompleteMetadataSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          const isWorktreeRoot =
+            command.args.includes("rev-parse") && command.args.includes("--show-toplevel");
+          const isWorktreeList =
+            command.args.includes("worktree") && command.args.includes("--porcelain");
+          if (isWorktreeRoot || isWorktreeList) {
+            return makeNonRepositoryHandle();
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, incompleteMetadataSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+
+      const refs = yield* driver.listRefs({ cwd, refresh: true });
+
+      assert.isTrue(refs.isRepo);
+      assert.isTrue(refs.refs.find((ref) => ref.name === initialBranch)?.current);
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect("backs off failed upstream refreshes across linked worktrees", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -262,12 +333,7 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
           }
           if (command.args.includes("fetch") && command.args.includes("--quiet")) {
             yield* Ref.update(fetchAttempts, (count) => count + 1);
-            return yield* PlatformError.systemError({
-              _tag: "PermissionDenied",
-              module: "ChildProcessSpawner",
-              method: "spawn",
-              pathOrDescriptor: command.command,
-            });
+            return makeNonRepositoryHandle();
           }
           return yield* delegate.spawn(command);
         }),
