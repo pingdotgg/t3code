@@ -7,6 +7,7 @@
  * @module ClaudeAdapterLive
  */
 import {
+  type AgentDefinition,
   type CanUseTool,
   query,
   type Options as ClaudeQueryOptions,
@@ -39,6 +40,7 @@ import {
   type ProviderSendTurnInput,
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
+  type WorkflowModelRouting,
   type ProviderUserInputAnswers,
   type RuntimeUsageLimitDetail,
   type RuntimeContentStreamKind,
@@ -80,6 +82,10 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  EMPTY_WORKFLOW_MODEL_ROUTING,
+  workflowModelRoutingInstructions,
+} from "../workflowModelRouting.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -308,12 +314,57 @@ export interface ClaudeAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly getModelCapabilities?: ClaudeModelCapabilitiesLookup;
   readonly normalizeEffort?: ClaudeEffortNormalizer;
+  readonly getWorkflowModelRouting?: Effect.Effect<WorkflowModelRouting>;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+}
+
+function claudeWorkflowAgents(
+  routing: WorkflowModelRouting,
+  instanceId: ProviderInstanceId,
+): {
+  readonly agents: Record<string, AgentDefinition>;
+  readonly names: Partial<Record<keyof WorkflowModelRouting, string>>;
+} {
+  const agents: Record<string, AgentDefinition> = {};
+  const names: Partial<Record<keyof WorkflowModelRouting, string>> = {};
+  const definitions = {
+    explore: {
+      name: "surge-explorer",
+      description: "Explore and scope the codebase without implementing changes.",
+      prompt:
+        "Inspect the codebase, trace relevant behavior, and return concise evidence and implementation guidance. Do not modify files.",
+    },
+    implement: {
+      name: "surge-implementer",
+      description: "Implement a well-scoped code change and report the result.",
+      prompt:
+        "Implement the assigned change in the current workspace. Keep the work focused, preserve unrelated changes, and report files changed plus validation performed.",
+    },
+    verify: {
+      name: "surge-verifier",
+      description: "Independently verify an implementation with review and tests.",
+      prompt:
+        "Review the assigned implementation independently. Run focused checks, identify correctness or regression risks, and report concrete findings. Do not modify files unless the task explicitly requests a fix.",
+    },
+  } as const;
+
+  for (const role of ["explore", "implement", "verify"] as const) {
+    const route = routing[role];
+    if (!route || route.instanceId !== instanceId) continue;
+    const definition = definitions[role];
+    agents[definition.name] = {
+      description: definition.description,
+      prompt: definition.prompt,
+      model: route.model,
+    };
+    names[role] = definition.name;
+  }
+  return { agents, names };
 }
 
 function isUuid(value: string): boolean {
@@ -4819,6 +4870,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? getModelSelectionBooleanOptionValue(modelSelection, "thinking")
         : undefined;
       const ultracode = isClaudeUltracodeEffort(effort);
+      const workflowRouting =
+        ultracode && options?.getWorkflowModelRouting
+          ? yield* options.getWorkflowModelRouting
+          : EMPTY_WORKFLOW_MODEL_ROUTING;
+      const workflowAgents = claudeWorkflowAgents(workflowRouting, boundInstanceId);
+      const workflowInstructions = workflowModelRoutingInstructions(workflowRouting, {
+        nativeAgentNames: workflowAgents.names,
+      });
       const effectiveEffort = getEffectiveClaudeAgentEffort(
         effort,
         modelSelection?.model,
@@ -4843,6 +4902,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
+          ...(workflowInstructions ? { append: workflowInstructions } : {}),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
@@ -4857,6 +4917,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { allowDangerouslySkipPermissions: true }
           : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
+        ...(Object.keys(workflowAgents.agents).length > 0 ? { agents: workflowAgents.agents } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,

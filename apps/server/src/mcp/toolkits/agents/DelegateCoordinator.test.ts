@@ -11,6 +11,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadShell,
   type ServerProvider,
+  type WorkflowModelRouting,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
@@ -29,6 +30,7 @@ import {
   type ProviderServiceShape,
 } from "../../../provider/Services/ProviderService.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import { ServerSettingsService } from "../../../serverSettings.ts";
 import { __testing, DelegateCoordinator } from "./DelegateCoordinator.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
@@ -161,6 +163,8 @@ interface Harness {
 const makeCoordinator = (options?: {
   readonly parentShell?: (threadId: ThreadId) => OrchestrationThreadShell;
   readonly noteSessionActivity?: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly workflowModelRouting?: WorkflowModelRouting;
 }): Effect.Effect<readonly [DelegateCoordinator["Service"], Harness], never, never> => {
   const dispatched: Array<OrchestrationCommand> = [];
   let threadDetailLookup: (threadId: ThreadId) => Option.Option<OrchestrationThread> = () =>
@@ -198,7 +202,7 @@ const makeCoordinator = (options?: {
   });
 
   const providerRegistry = ProviderRegistry.of({
-    getProviders: Effect.succeed([makeProvider("claude", "claudeAgent")]),
+    getProviders: Effect.succeed(options?.providers ?? [makeProvider("claude", "claudeAgent")]),
     refresh: unused,
     refreshInstance: unused,
     getProviderMaintenanceCapabilitiesForInstance: unused,
@@ -211,6 +215,9 @@ const makeCoordinator = (options?: {
         noteSessionActivity: options.noteSessionActivity,
       } as unknown as ProviderServiceShape)
     : Layer.empty;
+  const serverSettingsLayer = options?.workflowModelRouting
+    ? ServerSettingsService.layerTest({ workflowModelRouting: options.workflowModelRouting })
+    : Layer.empty;
 
   const layer = Layer.effect(DelegateCoordinator, __testing.make).pipe(
     Layer.provide(
@@ -219,6 +226,7 @@ const makeCoordinator = (options?: {
         Layer.succeed(ProjectionSnapshotQuery, snapshotQuery),
         Layer.succeed(ProviderRegistry, providerRegistry),
         providerServiceLayer,
+        serverSettingsLayer,
       ),
     ),
     Layer.provideMerge(NodeServices.layer),
@@ -347,6 +355,36 @@ it.effect("advisor parent with an executor model delegates on the executor selec
       interactionMode: "default",
       runtimeMode: "approval-required",
       parentThreadId,
+    });
+  }),
+);
+
+it.effect("task roles use an available configured workflow model", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      providers: [makeProvider("claude", "claudeAgent"), makeProvider("codex", "codex")],
+      workflowModelRouting: {
+        explore: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "default-model",
+        },
+        implement: null,
+        verify: null,
+      },
+    });
+    harness.setThreadDetail((threadId) => Option.some(completedChildDetail(threadId)));
+
+    yield* coordinator.delegate(makeScope(), {
+      role: "explore",
+      prompt: "Map the relevant code",
+    });
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create).toMatchObject({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "default-model",
+      },
     });
   }),
 );

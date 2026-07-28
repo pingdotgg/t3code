@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -171,6 +171,31 @@ describe("buildTurnStartParams", () => {
         },
       },
     });
+  });
+
+  it("injects configured routing only for Ultra turns", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Run the workflow",
+        model: "gpt-5.6-sol",
+        effort: "ultra",
+        interactionMode: "default",
+        workflowModelRouting: {
+          explore: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6-luna",
+          },
+          implement: null,
+          verify: null,
+        },
+      }),
+    );
+
+    const instructions = params.collaborationMode?.settings.developer_instructions;
+    NodeAssert.match(instructions ?? "", /codex\/gpt-5\.6-luna/);
+    NodeAssert.match(instructions ?? "", /delegate_task/);
   });
 
   it("upgrades auto-accept sandbox policy inside a worktree", () => {
