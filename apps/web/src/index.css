@@ -251,7 +251,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 48rem) {
-    @container sidebar-header (min-width: 13.5rem) {
+    @container sidebar-header (min-width: 12.75rem) {
       .sidebar-brand {
         display: flex;
       }
