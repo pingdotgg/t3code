@@ -14,6 +14,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  isSidebarV2ThreadWoke,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -735,6 +736,52 @@ describe("sortThreadsForSidebarV2", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("puts woke threads first, then manually un-settled threads", () => {
+    const threads = [
+      sortable({ id: "ordinary-new", createdAt: "2026-03-09T12:00:00.000Z" }),
+      sortable({ id: "unsettled-old", createdAt: "2026-03-09T08:00:00.000Z" }),
+      sortable({ id: "woke-old", createdAt: "2026-03-09T07:00:00.000Z" }),
+      sortable({ id: "woke-new", createdAt: "2026-03-09T09:00:00.000Z" }),
+    ];
+    const priorities: ReadonlyMap<string, "unsettled" | "woke"> = new Map([
+      ["unsettled-old", "unsettled"],
+      ["woke-old", "woke"],
+      ["woke-new", "woke"],
+    ] as const);
+
+    const sorted = sortThreadsForSidebarV2(
+      threads,
+      (thread) => priorities.get(thread.id) ?? "default",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "woke-new",
+      "woke-old",
+      "unsettled-old",
+      "ordinary-new",
+    ]);
+  });
+});
+
+describe("isSidebarV2ThreadWoke", () => {
+  const wokeAt = "2026-03-09T10:00:00.000Z";
+
+  it("stays woke until a visit at or after the wake", () => {
+    expect(isSidebarV2ThreadWoke({ wokeAt, lastVisitedAt: undefined })).toBe(true);
+    expect(
+      isSidebarV2ThreadWoke({
+        wokeAt,
+        lastVisitedAt: "2026-03-09T09:59:59.999Z",
+      }),
+    ).toBe(true);
+    expect(isSidebarV2ThreadWoke({ wokeAt, lastVisitedAt: wokeAt })).toBe(false);
+  });
+
+  it("keeps a valid wake visible when local visit data is malformed", () => {
+    expect(isSidebarV2ThreadWoke({ wokeAt, lastVisitedAt: "not-a-date" })).toBe(true);
+    expect(isSidebarV2ThreadWoke({ wokeAt: "not-a-date", lastVisitedAt: undefined })).toBe(false);
   });
 });
 

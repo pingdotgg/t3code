@@ -103,7 +103,7 @@ import {
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
@@ -111,6 +111,7 @@ import {
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  isSidebarV2ThreadWoke,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
@@ -460,23 +461,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // flag must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarV2Status(thread);
-  // A woken thread reappears at its original position (the sort is
-  // deliberately static), so the pill has to carry the weight. Snoozing is
-  // an explicit act, so unlike Done, a never-visited woke thread still
-  // shows the pill; visiting clears it. An unparseable visit timestamp
-  // counts as never-visited — corrupt local data must not eat the wake
-  // signal.
-  const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
-  const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
-  const isWoke = wokeAtDate !== null && (lastVisitedDate === null || lastVisitedDate < wokeAtDate);
-  // In-flight rows (working, or waiting on approval/input) fade as a whole:
-  // there is nothing for the user to do yet, so prominence is reserved for
-  // rows that need a human — done (unread), read-but-unsettled, failed, and
-  // freshly woken. The status label keeps its hue, so waiting rows stay
-  // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
-  // working threads aren't your problem yet) — only the colored status label
-  // stands out.
-  const isInFlight = status === "working" || status === "approval" || status === "input";
+  // Snoozing is explicit, so unlike Done, a never-visited wake still counts.
+  // Visiting clears both the pill and the wake's ordering/settlement guard.
+  const isWoke = isSidebarV2ThreadWoke({ wokeAt: props.wokeAt, lastVisitedAt });
+  // Background work fades as a whole. Input requests stay fully prominent
+  // because the agent cannot continue without the user; approval retains its
+  // established compact status treatment.
+  const isInFlight = status === "working" || status === "approval";
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
@@ -498,9 +489,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           }
         : status === "input"
           ? {
-              label: "Input",
-              icon: null,
-              className: "text-indigo-600 dark:text-indigo-300",
+              label: "Input needed",
+              icon: "input" as const,
+              className:
+                "rounded-full bg-indigo-500/10 px-1.5 py-0.5 text-indigo-700 ring-1 ring-inset ring-indigo-500/25 dark:bg-indigo-400/10 dark:text-indigo-200 dark:ring-indigo-400/25",
             }
           : status === "failed"
             ? {
@@ -705,6 +697,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       !props.isActive &&
       !isSelected &&
       "opacity-70 transition-opacity hover:opacity-100",
+    status === "input" &&
+      !props.isActive &&
+      !isSelected &&
+      "bg-indigo-500/[0.055] ring-1 ring-inset ring-indigo-500/20 hover:bg-indigo-500/[0.09] dark:bg-indigo-400/[0.055] dark:ring-indigo-400/20 dark:hover:bg-indigo-400/[0.09]",
   );
 
   const title = isRenaming ? (
@@ -964,6 +960,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                         <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
                       ) : topStatus.icon === "woke" ? (
                         <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                      ) : topStatus.icon === "input" ? (
+                        <MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />
                       ) : null}
                       {/* The label alone is the live region: a role="status"
                           wrapper around the ticking duration would make
@@ -1176,6 +1174,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
 export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1579,6 +1578,7 @@ export default function SidebarV2() {
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
+    const wokeThreadKeys = new Set<string>();
     for (const thread of visible) {
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
@@ -1590,6 +1590,12 @@ export default function SidebarV2() {
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
+      const wokeAt = supportsSnooze ? threadWokeAt(thread, { now: preciseNow }) : null;
+      const isWoke = isSidebarV2ThreadWoke({
+        wokeAt,
+        lastVisitedAt: threadLastVisitedAtById[threadKey],
+      });
+      if (isWoke) wokeThreadKeys.add(threadKey);
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
@@ -1597,7 +1603,12 @@ export default function SidebarV2() {
         snoozed.push(thread);
       } else if (
         supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+        effectiveSettled(thread, {
+          now,
+          autoSettleAfterDays,
+          changeRequestState,
+          suppressAutoSettle: isWoke,
+        })
       ) {
         settled.push(thread);
       } else {
@@ -1605,7 +1616,12 @@ export default function SidebarV2() {
       }
     }
     return {
-      activeThreads: sortThreadsForSidebarV2(active),
+      activeThreads: sortThreadsForSidebarV2(active, (thread) => {
+        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        if (wokeThreadKeys.has(threadKey)) return "woke";
+        if (thread.settledOverride === "active") return "unsettled";
+        return "default";
+      }),
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
@@ -1622,6 +1638,7 @@ export default function SidebarV2() {
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
+    threadLastVisitedAtById,
     threads,
   ]);
 

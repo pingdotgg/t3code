@@ -480,15 +480,41 @@ export function firstValidTimestamp(
   return null;
 }
 
-// v2 sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
-// the screen only moves at lifecycle transitions. Status (including pending
-// approval) is carried by each card's edge strip, not by position.
+export type SidebarV2ThreadPriority = "woke" | "unsettled" | "default";
+
+const SIDEBAR_V2_THREAD_PRIORITY_RANK: Record<SidebarV2ThreadPriority, number> = {
+  woke: 0,
+  unsettled: 1,
+  default: 2,
+};
+
+/** A wake remains attention-bearing until the user visits it. Invalid local
+    visit data must not silently clear a valid server-backed wake. */
+export function isSidebarV2ThreadWoke(input: {
+  readonly wokeAt: string | null;
+  readonly lastVisitedAt: string | undefined;
+}): boolean {
+  if (input.wokeAt === null) return false;
+  const wokeAtMs = Date.parse(input.wokeAt);
+  if (Number.isNaN(wokeAtMs)) return false;
+  if (input.lastVisitedAt === undefined) return true;
+  const lastVisitedAtMs = Date.parse(input.lastVisitedAt);
+  return Number.isNaN(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs;
+}
+
+// v2 sort: attention transitions come first (woke, then manually
+// un-settled), with static creation order inside each group. Ordinary
+// activity never reorders the list.
 export function sortThreadsForSidebarV2<
   T extends { readonly id: string; readonly createdAt: string },
->(threads: readonly T[]): T[] {
+>(
+  threads: readonly T[],
+  getPriority: (thread: T) => SidebarV2ThreadPriority = () => "default",
+): T[] {
   return [...threads].toSorted(
     (left, right) =>
+      SIDEBAR_V2_THREAD_PRIORITY_RANK[getPriority(left)] -
+        SIDEBAR_V2_THREAD_PRIORITY_RANK[getPriority(right)] ||
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
   );

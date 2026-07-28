@@ -281,6 +281,23 @@ describe("effectiveSettled", () => {
     expect(effectiveSettled(boundary, { now: NOW, autoSettleAfterDays: 3 })).toBe(false);
     expect(effectiveSettled(stale, { now: NOW, autoSettleAfterDays: null })).toBe(false);
   });
+
+  it("suppresses automatic settlement while still honoring an explicit settle", () => {
+    const stale = makeShell({ activityAt: STALE });
+    const explicitlySettled = makeShell({
+      activityAt: STALE,
+      settledOverride: "settled",
+    });
+    const options = {
+      now: NOW,
+      autoSettleAfterDays: 3,
+      changeRequestState: "merged" as const,
+      suppressAutoSettle: true,
+    };
+
+    expect(effectiveSettled(stale, options)).toBe(false);
+    expect(effectiveSettled(explicitlySettled, options)).toBe(true);
+  });
 });
 
 describe("hasQueuedTurnStart", () => {

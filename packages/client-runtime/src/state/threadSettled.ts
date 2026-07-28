@@ -233,6 +233,9 @@ export function effectiveSettled(
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
     readonly changeRequestState?: ChangeRequestStateLike | null;
+    /** Keep an attention-bearing thread active while still honoring an
+        explicit user settle. Used by the sidebar while a wake is unvisited. */
+    readonly suppressAutoSettle?: boolean;
   },
 ): boolean {
   // Blocked work must remain visible even when a user explicitly settled it.
@@ -258,6 +261,7 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
+  if (options.suppressAutoSettle === true) return false;
   if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
     return true;
   }
