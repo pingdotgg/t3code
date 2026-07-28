@@ -1548,6 +1548,42 @@ it.layer(
     }),
   );
 
+  it.effect("publishes removal when closing a persisted terminal without a live session", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager();
+      yield* manager.open(openInput({ threadId: "persisted-thread" }));
+      yield* manager.close({
+        threadId: "persisted-thread",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+
+      const metadataEvents = yield* Ref.make<ReadonlyArray<TerminalMetadataStreamEvent>>([]);
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Ref.update(metadataEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* Ref.set(metadataEvents, []);
+
+      yield* manager.close({
+        threadId: "persisted-thread",
+        terminalId: DEFAULT_TERMINAL_ID,
+        deleteHistory: true,
+      });
+
+      yield* waitFor(
+        Effect.map(Ref.get(metadataEvents), (events) =>
+          events.some(
+            (event) =>
+              event.type === "remove" &&
+              event.threadId === "persisted-thread" &&
+              event.terminalId === DEFAULT_TERMINAL_ID,
+          ),
+        ),
+        "1200 millis",
+      );
+    }),
+  );
+
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager();
