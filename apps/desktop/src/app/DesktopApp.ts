@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
@@ -21,6 +22,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -129,7 +131,9 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
-const bootstrap = Effect.gen(function* () {
+const bootstrap = Effect.fn("desktop.bootstrap")(function* (
+  shellEnvironmentInstalled: Fiber.Fiber<void>,
+) {
   const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -177,11 +181,14 @@ const bootstrap = Effect.gen(function* () {
   yield* installDesktopIpcHandlers;
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
 
+  // The backend child inherits the hydrated PATH, so it must be ready before spawning.
+  yield* Fiber.join(shellEnvironmentInstalled);
+
   if (!(yield* Ref.get(state.quitting))) {
     yield* backendManager.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
   }
-}).pipe(Effect.withSpan("desktop.bootstrap"));
+});
 
 const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
@@ -193,8 +200,9 @@ const startup = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-  yield* shellEnvironment.installIntoProcess;
+  const shellEnvironmentInstalled = yield* Effect.forkScoped(shellEnvironment.installIntoProcess);
   const userDataPath = yield* appIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
@@ -215,8 +223,14 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
   yield* electronProtocol.registerDesktopFileProtocol;
+  yield* desktopWindow.ensureMain.pipe(
+    Effect.catchCause((cause) => fatalStartupCause("window", cause)),
+  );
+  yield* logStartupInfo("startup window created");
   yield* updates.configure;
-  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
+  yield* bootstrap(shellEnvironmentInstalled).pipe(
+    Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
+  );
 }).pipe(Effect.withSpan("desktop.startup"));
 
 const scopedProgram = Effect.scoped(

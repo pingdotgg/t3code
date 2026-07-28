@@ -18,6 +18,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import { STARTUP_SPLASH_MESSAGE } from "./startupSplash.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -48,7 +49,7 @@ function makeFakeBrowserWindow() {
     isDestroyed: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     on: vi.fn(),
     once: vi.fn(),
     restore: vi.fn(),
@@ -154,7 +155,7 @@ function makeTestLayer(input: {
 }
 
 describe("DesktopWindow", () => {
-  it.effect("does not open a development window until the backend is ready", () =>
+  it.effect("shows the startup splash before the backend is ready", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -167,13 +168,42 @@ describe("DesktopWindow", () => {
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.activate;
-        assert.equal(yield* Ref.get(createCount), 0);
+        yield* desktopWindow.ensureMain;
+        assert.equal(yield* Ref.get(createCount), 1);
+        const splashUrl = fakeWindow.loadURL.mock.calls[0]?.[0] ?? "";
+        assert.isTrue(splashUrl.startsWith("data:text/html;charset=utf-8,"));
+        assert.include(decodeURIComponent(splashUrl), STARTUP_SPLASH_MESSAGE);
+        assert.equal(fakeWindow.openDevTools.mock.calls.length, 0);
 
         yield* desktopWindow.handleBackendReady;
         assert.equal(yield* Ref.get(createCount), 1);
-        assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["http://127.0.0.1:5733/"]);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls[1], ["http://127.0.0.1:5733/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("loads the app directly when the backend is already ready", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady;
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls[1], ["http://127.0.0.1:5733/"]);
+
+        yield* Ref.set(mainWindow, Option.none());
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 2);
+        assert.deepEqual(fakeWindow.loadURL.mock.calls[3], ["http://127.0.0.1:5733/"]);
       }).pipe(Effect.provide(layer));
     }),
   );

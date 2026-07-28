@@ -17,6 +17,11 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
+import {
+  renderStartupSplashHtml,
+  STARTUP_SPLASH_MESSAGE,
+  toStartupSplashUrl,
+} from "./startupSplash.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -55,7 +60,6 @@ export interface DesktopWindowShape {
   readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
   readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
   readonly activate: Effect.Effect<void, DesktopWindowError>;
-  readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
   readonly handleBackendReady: Effect.Effect<void, DesktopWindowError>;
   readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
   readonly syncAppearance: Effect.Effect<void>;
@@ -156,9 +160,31 @@ const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
-    backendHttpUrl: URL,
-  ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
+  const resolveAppUrl = Effect.gen(function* () {
+    if (environment.isDevelopment) {
+      return yield* resolveDesktopDevServerUrl(environment);
+    }
+    const backendConfig = yield* serverExposure.backendConfig;
+    return backendConfig.httpBaseUrl.href;
+  });
+
+  const loadApp = Effect.fn("desktop.window.loadApp")(function* (
+    window: Electron.BrowserWindow,
+  ): Effect.fn.Return<void, DesktopWindowError> {
+    if (window.isDestroyed()) {
+      return;
+    }
+    const appUrl = yield* resolveAppUrl;
+    void window.loadURL(appUrl);
+    if (environment.isDevelopment) {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
+  });
+
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
+    Electron.BrowserWindow,
+    DesktopWindowError
+  > {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -275,13 +301,15 @@ const make = Effect.gen(function* () {
       void runPromise(electronWindow.reveal(window));
     });
 
-    if (environment.isDevelopment) {
-      const devServerUrl = yield* resolveDesktopDevServerUrl(environment);
-      void window.loadURL(devServerUrl);
-      window.webContents.openDevTools({ mode: "detach" });
-    } else {
-      void window.loadURL(backendHttpUrl.href);
-    }
+    void window.loadURL(
+      toStartupSplashUrl(
+        renderStartupSplashHtml({
+          displayName: environment.displayName,
+          shouldUseDarkColors,
+          message: STARTUP_SPLASH_MESSAGE,
+        }),
+      ),
+    );
 
     window.on("closed", () => {
       void runPromise(electronWindow.clearMain(Option.some(window)));
@@ -291,10 +319,12 @@ const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
-    const backendConfig = yield* serverExposure.backendConfig;
-    const window = yield* createWindow(backendConfig.httpBaseUrl);
+    const window = yield* createWindow();
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
+    if (yield* Ref.get(state.backendReady)) {
+      yield* loadApp(window);
+    }
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
 
@@ -312,31 +342,20 @@ const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
-  const createMainIfBackendReady = Effect.gen(function* () {
-    const backendReady = yield* Ref.get(state.backendReady);
-    if (!backendReady) return;
-    const existingWindow = yield* electronWindow.currentMainOrFirst;
-    if (Option.isSome(existingWindow)) return;
-    yield* createMain;
-  }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
-
   return DesktopWindow.of({
     createMain,
     ensureMain,
     revealOrCreateMain,
-    activate: Effect.gen(function* () {
-      const existingWindow = yield* electronWindow.currentMainOrFirst;
-      if (Option.isSome(existingWindow)) {
-        yield* electronWindow.reveal(existingWindow.value);
-      } else {
-        yield* createMainIfBackendReady;
-      }
-    }).pipe(Effect.withSpan("desktop.window.activate")),
-    createMainIfBackendReady,
+    activate: revealOrCreateMain.pipe(Effect.asVoid, Effect.withSpan("desktop.window.activate")),
     handleBackendReady: Effect.gen(function* () {
       yield* Ref.set(state.backendReady, true);
       yield* logWindowInfo("backend ready", { source: "http" });
-      yield* createMainIfBackendReady;
+      const existingWindow = yield* electronWindow.currentMainOrFirst;
+      if (Option.isNone(existingWindow)) {
+        yield* createMain;
+        return;
+      }
+      yield* loadApp(existingWindow.value);
     }).pipe(Effect.withSpan("desktop.window.handleBackendReady")),
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
@@ -348,6 +367,12 @@ const make = Effect.gen(function* () {
         targetWindow.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
         void runPromise(electronWindow.reveal(targetWindow));
       };
+
+      // The splash document cannot handle menu actions; wait for the app to load.
+      if (!(yield* Ref.get(state.backendReady))) {
+        targetWindow.webContents.once("did-finish-load", send);
+        return;
+      }
 
       if (targetWindow.webContents.isLoadingMainFrame()) {
         targetWindow.webContents.once("did-finish-load", send);

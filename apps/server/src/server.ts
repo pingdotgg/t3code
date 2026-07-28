@@ -316,7 +316,11 @@ export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
 
-    fixPath();
+    // The desktop app hydrates the login-shell environment before spawning this process,
+    // so probing a second login shell here would only block startup.
+    if (config.mode !== "desktop") {
+      fixPath();
+    }
 
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {

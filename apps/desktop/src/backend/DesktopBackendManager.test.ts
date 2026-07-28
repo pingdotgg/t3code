@@ -133,7 +133,6 @@ function makeManagerLayer(input: {
           ensureMain: Effect.die("unexpected ensureMain"),
           revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
           activate: Effect.void,
-          createMainIfBackendReady: Effect.void,
           handleBackendReady: Effect.void,
           dispatchMenuAction: () => Effect.void,
           syncAppearance: Effect.void,
