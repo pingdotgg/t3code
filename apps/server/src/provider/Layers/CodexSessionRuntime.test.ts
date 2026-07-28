@@ -21,6 +21,7 @@ import {
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -85,7 +86,7 @@ describe("buildTurnStartParams", () => {
       NodeAssert.ok((error.maximumPathDepth ?? 0) > 0);
       NodeAssert.ok(Schema.isSchemaError(cause));
       NodeAssert.doesNotMatch(error.message, new RegExp(secret));
-      NodeAssert.doesNotMatch(JSON.stringify(directDiagnostics), new RegExp(secret));
+      NodeAssert.doesNotMatch(encodeUnknownJson(directDiagnostics), new RegExp(secret));
     }),
   );
 

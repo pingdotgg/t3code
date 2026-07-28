@@ -11,6 +11,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadShell,
   type ServerProvider,
+  type ServerSettingsError,
   type WorkflowModelRouting,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -165,7 +166,11 @@ const makeCoordinator = (options?: {
   readonly noteSessionActivity?: (threadId: ThreadId) => Effect.Effect<void>;
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly workflowModelRouting?: WorkflowModelRouting;
-}): Effect.Effect<readonly [DelegateCoordinator["Service"], Harness], never, never> => {
+}): Effect.Effect<
+  readonly [DelegateCoordinator["Service"], Harness],
+  ServerSettingsError,
+  never
+> => {
   const dispatched: Array<OrchestrationCommand> = [];
   let threadDetailLookup: (threadId: ThreadId) => Option.Option<OrchestrationThread> = () =>
     Option.none();
@@ -216,7 +221,9 @@ const makeCoordinator = (options?: {
       } as unknown as ProviderServiceShape)
     : Layer.empty;
   const serverSettingsLayer = options?.workflowModelRouting
-    ? ServerSettingsService.layerTest({ workflowModelRouting: options.workflowModelRouting })
+    ? ServerSettingsService.layerTest({
+        workflowModelRouting: options.workflowModelRouting,
+      }).pipe(Layer.orDie)
     : Layer.empty;
 
   const layer = Layer.effect(DelegateCoordinator, __testing.make).pipe(

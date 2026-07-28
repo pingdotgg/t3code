@@ -1,3 +1,4 @@
+import { ProviderInstanceId, type WorkflowModelRouting } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,9 +7,12 @@ import {
   workflowRouteFor,
 } from "./workflowModelRouting.ts";
 
-const routing = {
-  explore: { instanceId: "codex", model: "gpt-5.6-luna" },
-  implement: { instanceId: "claudeAgent", model: "claude-fable-5" },
+const routing: WorkflowModelRouting = {
+  explore: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-luna" },
+  implement: {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-fable-5",
+  },
   verify: null,
 } as const;
 
