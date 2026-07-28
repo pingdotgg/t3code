@@ -94,19 +94,24 @@ run_bounded() {
   local timed_out_marker="$state_dir/timed-out"
   local finished_marker="$state_dir/finished"
 
-  # Job control puts the command in its own process group, so the watchdog can
-  # signal the whole tree. Signalling only the direct child leaves pnpm's
-  # grandchildren alive holding this script's stdout, and a caller capturing
-  # that output then blocks on EOF long after the timeout fired.
-  set -m
-  # Launch the command itself as the job leader. A wrapper subshell that exits
-  # on TERM can be reaped before a TERM-ignoring grandchild, causing this
-  # function to cancel the watchdog while that grandchild still holds the
-  # caller's output pipe open. CI then eventually kills the whole setup script
-  # with 137 instead of receiving the intentional timeout status and message.
-  "$@" &
-  local command_pid=$!
-  set +m
+  # Put the command in its own process group so the watchdog can signal the
+  # whole tree. Signalling only the direct child leaves pnpm's grandchildren
+  # alive holding this script's stdout, and a caller capturing that output then
+  # blocks on EOF long after the timeout fired.
+  #
+  # Linux CI has setsid(1), which creates a group that is reliably isolated
+  # from this non-interactive shell. macOS has no setsid(1), so use job control
+  # there to make the background command its own group leader.
+  local command_pid
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" &
+    command_pid=$!
+  else
+    set -m
+    "$@" &
+    command_pid=$!
+    set +m
+  fi
 
   # Detached from this script's stdout/stderr on purpose. A watchdog that
   # inherits them keeps the pipe open after the install is done, so anything
