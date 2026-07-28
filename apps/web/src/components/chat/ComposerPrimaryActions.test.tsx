@@ -1,6 +1,29 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import { ComposerPrimaryActions, formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+
+const renderPrimaryActions = (
+  overrides: Partial<Parameters<typeof ComposerPrimaryActions>[0]> = {},
+) =>
+  renderToStaticMarkup(
+    <ComposerPrimaryActions
+      compact={false}
+      pendingAction={null}
+      isRunning={false}
+      showPlanFollowUpPrompt={false}
+      promptHasText={false}
+      isSendBusy={false}
+      isConnecting={false}
+      isEnvironmentUnavailable={false}
+      isPreparingWorktree={false}
+      hasSendableContent={false}
+      onPreviousPendingQuestion={() => {}}
+      onInterrupt={() => {}}
+      onImplementPlanInNewThread={() => {}}
+      {...overrides}
+    />,
+  );
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +112,37 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("ComposerPrimaryActions send-while-running", () => {
+  it("only renders stop while running when Enter-to-send is available", () => {
+    const markup = renderPrimaryActions({ isRunning: true, hasSendableContent: true });
+
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain('aria-label="Send message"');
+  });
+
+  it("renders send alongside stop while running when Enter-to-send is unavailable", () => {
+    const markup = renderPrimaryActions({
+      isRunning: true,
+      hasSendableContent: true,
+      showSendWhileRunning: true,
+    });
+
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).toContain('type="submit"');
+  });
+
+  it("keeps stop as the only action while running with an empty composer", () => {
+    const markup = renderPrimaryActions({
+      isRunning: true,
+      hasSendableContent: false,
+      showSendWhileRunning: true,
+    });
+
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).not.toContain('aria-label="Send message"');
   });
 });
