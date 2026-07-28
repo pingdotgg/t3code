@@ -200,6 +200,7 @@
   --font-sans: "DMSans-Regular";
   --font-medium: "DMSans-Medium";
   --font-bold: "DMSans-Bold";
+  --radius-project-icon: 0.1875rem;
 
   /* Keep this scale aligned with src/lib/typography.ts for native style props. */
   --text-3xs: 11px;

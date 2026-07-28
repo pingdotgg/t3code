@@ -64,7 +64,7 @@ function ProjectFaviconImage({
       <img
         src={src}
         alt=""
-        className={`size-3.5 shrink-0 rounded-sm object-contain ${status === "loaded" ? "" : "hidden"} ${className ?? ""}`}
+        className={`size-3.5 shrink-0 rounded-project-icon object-contain ${status === "loaded" ? "" : "hidden"} ${className ?? ""}`}
         onLoad={() => {
           loadedProjectFaviconSrcs.add(src);
           setStatus("loaded");

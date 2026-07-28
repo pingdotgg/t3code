@@ -77,11 +77,11 @@ function ProjectFaviconImage(props: {
           source={{
             uri: props.faviconUrl,
           }}
+          className="rounded-project-icon"
           accessibilityLabel={`${props.projectTitle} favicon`}
           style={{
             width: props.size,
             height: props.size,
-            borderRadius: props.size * 0.16,
             ...(showImage ? {} : { position: "absolute" as const, opacity: 0 }),
           }}
           contentFit="contain"

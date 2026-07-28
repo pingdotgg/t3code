@@ -161,6 +161,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-sidebar-row-active: var(--sidebar-row-active);
   --color-sidebar-row-selected: var(--sidebar-row-selected);
   --color-sidebar-border: var(--sidebar-border);
+  --radius-project-icon: 0.1875rem;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

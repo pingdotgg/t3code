@@ -72,6 +72,7 @@ import {
   buildSidebarProjectSnapshots,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
