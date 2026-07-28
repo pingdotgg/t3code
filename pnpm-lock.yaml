@@ -69,6 +69,8 @@ overrides:
 packageExtensionsChecksum: sha256-CUzzeefpj3gNFrCKNBhV9FOaniNbrLdKyIhWQyXuaiE=
 
 patchedDependencies:
+  '@effect/platform-bun@4.0.0-beta.102': 9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23
+  '@effect/platform-node@4.0.0-beta.102': cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0
   '@effect/vitest@4.0.0-beta.102': a607339aab944136a084a05f159aa0f5a69776934d4b835dab8f9992f1c13425
   '@expo/metro-config@56.0.14': 8cb08b5bb7051ed9d2dbe46a2c293c5a1e17f1bd6ddf30de27909e18c921ff46
   '@ff-labs/fff-node@0.9.4': 2b16019ce7ab61aec6478dd02f79ef468cc1d5c51e9d00764f7d2ab8167210c8
@@ -116,7 +118,7 @@ importers:
         version: 0.0.3
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -446,10 +448,10 @@ importers:
         version: 0.3.170(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@effect/platform-bun':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
@@ -619,7 +621,7 @@ importers:
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(patch_hash=a607339aab944136a084a05f159aa0f5a69776934d4b835dab8f9992f1c13425)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
@@ -688,7 +690,7 @@ importers:
         version: link:../../packages/shared
       alchemy:
         specifier: 2.0.0-beta.65
-        version: 2.0.0-beta.65(72bf61d418b0d4ce14e14ce6833d7182)
+        version: 2.0.0-beta.65(249551d75ad3792c0b22cd2754b25266)
       drizzle-orm:
         specifier: 1.0.0-rc.4
         version: 1.0.0-rc.4(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.0.0-beta.101(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/sql-pg@4.0.0-beta.102(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/sql-sqlite-bun@4.0.0-beta.102(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bun-types@1.3.14)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(expo-sqlite@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6))(react@19.2.6))(mysql2@3.22.4(@types/node@24.12.4))(pg@8.21.0)(zod@4.4.3)
@@ -701,7 +703,7 @@ importers:
         version: 4.20260604.1
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(patch_hash=a607339aab944136a084a05f159aa0f5a69776934d4b835dab8f9992f1c13425)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
@@ -722,7 +724,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@oxlint/plugins':
         specifier: ^1.63.0
         version: 1.68.0
@@ -777,10 +779,10 @@ importers:
     devDependencies:
       '@effect/openapi-generator':
         specifier: 'catalog:'
-        version: 4.0.0-beta.102(@effect/platform-node@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
+        version: 4.0.0-beta.102(@effect/platform-node@4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(patch_hash=a607339aab944136a084a05f159aa0f5a69776934d4b835dab8f9992f1c13425)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
@@ -799,10 +801,10 @@ importers:
     devDependencies:
       '@effect/openapi-generator':
         specifier: 'catalog:'
-        version: 4.0.0-beta.102(@effect/platform-node@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
+        version: 4.0.0-beta.102(@effect/platform-node@4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(patch_hash=a607339aab944136a084a05f159aa0f5a69776934d4b835dab8f9992f1c13425)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
@@ -836,7 +838,7 @@ importers:
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(patch_hash=a607339aab944136a084a05f159aa0f5a69776934d4b835dab8f9992f1c13425)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
@@ -861,7 +863,7 @@ importers:
     devDependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/vitest':
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(patch_hash=a607339aab944136a084a05f159aa0f5a69776934d4b835dab8f9992f1c13425)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
@@ -876,7 +878,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
@@ -898,7 +900,7 @@ importers:
     dependencies:
       '@effect/platform-node':
         specifier: 4.0.0-beta.102
-        version: 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+        version: 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
@@ -11681,26 +11683,26 @@ snapshots:
     transitivePeerDependencies:
       - workerd
 
-  '@distilled.cloud/cloudflare-runtime@0.13.10(@distilled.cloud/cloudflare@0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/platform-bun@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6))(@effect/platform-node@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))':
+  '@distilled.cloud/cloudflare-runtime@0.13.10(@distilled.cloud/cloudflare@0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/platform-bun@4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6))(@effect/platform-node@4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))':
     dependencies:
       '@alchemy.run/node-utils': 0.0.5
       '@distilled.cloud/cloudflare': 0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       effect: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
       workerd: 1.20260704.1
     optionalDependencies:
-      '@effect/platform-bun': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
-      '@effect/platform-node': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@effect/platform-bun': 4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
+      '@effect/platform-node': 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
 
-  '@distilled.cloud/cloudflare-vite-plugin@0.13.10(762dc011829f23250083219601626dca)':
+  '@distilled.cloud/cloudflare-vite-plugin@0.13.10(554b80dcfb9268a9eeb72fedc0ae62a5)':
     dependencies:
       '@distilled.cloud/cloudflare': 0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       '@distilled.cloud/cloudflare-rolldown-plugin': 0.13.10(@voidzero-dev/vite-plus-core@0.2.2(@types/node@24.12.4)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(rolldown@1.1.5)(workerd@1.20260704.1)
-      '@distilled.cloud/cloudflare-runtime': 0.13.10(@distilled.cloud/cloudflare@0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/platform-bun@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6))(@effect/platform-node@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
+      '@distilled.cloud/cloudflare-runtime': 0.13.10(@distilled.cloud/cloudflare@0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/platform-bun@4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6))(@effect/platform-node@4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       effect: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
       vite: '@voidzero-dev/vite-plus-core@0.2.2(@types/node@24.12.4)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
     optionalDependencies:
-      '@effect/platform-bun': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
-      '@effect/platform-node': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@effect/platform-bun': 4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
+      '@effect/platform-node': 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
       - rolldown
       - workerd
@@ -11770,15 +11772,15 @@ snapshots:
       react: 19.2.6
       scheduler: 0.27.0
 
-  '@effect/openapi-generator@4.0.0-beta.102(@effect/platform-node@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))':
+  '@effect/openapi-generator@4.0.0-beta.102(@effect/platform-node@4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))':
     dependencies:
-      '@effect/platform-node': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@effect/platform-node': 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       effect: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
       swagger2openapi: 7.0.8
     transitivePeerDependencies:
       - encoding
 
-  '@effect/platform-bun@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)':
+  '@effect/platform-bun@4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)':
     dependencies:
       '@effect/platform-node-shared': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
       effect: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
@@ -11795,7 +11797,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)':
+  '@effect/platform-node@4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)':
     dependencies:
       '@effect/platform-node-shared': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
       effect: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
@@ -15369,7 +15371,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@2.0.0-beta.65(72bf61d418b0d4ce14e14ce6833d7182):
+  alchemy@2.0.0-beta.65(249551d75ad3792c0b22cd2754b25266):
     dependencies:
       '@alchemy.run/node-utils': 0.0.5
       '@aws-sdk/credential-providers': 3.1062.0
@@ -15378,8 +15380,8 @@ snapshots:
       '@distilled.cloud/axiom': 0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       '@distilled.cloud/cloudflare': 0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       '@distilled.cloud/cloudflare-rolldown-plugin': 0.13.10(@voidzero-dev/vite-plus-core@0.2.2(@types/node@24.12.4)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(rolldown@1.1.5)(workerd@1.20260704.1)
-      '@distilled.cloud/cloudflare-runtime': 0.13.10(@distilled.cloud/cloudflare@0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/platform-bun@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6))(@effect/platform-node@4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
-      '@distilled.cloud/cloudflare-vite-plugin': 0.13.10(762dc011829f23250083219601626dca)
+      '@distilled.cloud/cloudflare-runtime': 0.13.10(@distilled.cloud/cloudflare@0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/platform-bun@4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6))(@effect/platform-node@4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6))(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
+      '@distilled.cloud/cloudflare-vite-plugin': 0.13.10(554b80dcfb9268a9eeb72fedc0ae62a5)
       '@distilled.cloud/core': 0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       '@distilled.cloud/neon': 0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       '@distilled.cloud/planetscale': 0.30.2(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
@@ -15410,8 +15412,8 @@ snapshots:
       undici: 7.27.1
       yaml: 2.9.0
     optionalDependencies:
-      '@effect/platform-bun': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
-      '@effect/platform-node': 4.0.0-beta.102(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
+      '@effect/platform-bun': 4.0.0-beta.102(patch_hash=9f7cfa69ef19b624ac7704fe505a6775dc272d734208883f3decc7e5201a3d23)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(utf-8-validate@6.0.6)
+      '@effect/platform-node': 4.0.0-beta.102(patch_hash=cae7efcda6fd29f4db2efd357cb7dc6c41cb6adc957901d437e13ed1f3c017f0)(bufferutil@4.1.0)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(ioredis@5.11.0)(utf-8-validate@6.0.6)
       '@effect/sql-pg': 4.0.0-beta.102(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))
       drizzle-kit: 1.0.0-rc.4
       drizzle-orm: 1.0.0-rc.4(@cloudflare/workers-types@4.20260604.1)(@effect/sql-d1@4.0.0-beta.101(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/sql-pg@4.0.0-beta.102(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@effect/sql-sqlite-bun@4.0.0-beta.102(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)))(@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(bun-types@1.3.14)(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(expo-sqlite@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6))(react@19.2.6))(mysql2@3.22.4(@types/node@24.12.4))(pg@8.21.0)(zod@4.4.3)

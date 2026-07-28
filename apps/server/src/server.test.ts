@@ -3081,6 +3081,34 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("negotiates permessage-deflate with clients that offer it", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { cookie, url } = parseSessionCookieFromWsUrl(yield* getWsServerUrl("/ws"));
+      const openSocket = (perMessageDeflate: boolean) =>
+        Effect.acquireRelease(
+          Effect.callback<NodeSocket.NodeWS.WebSocket, Error>((resume) => {
+            const socket = new NodeSocket.NodeWS.WebSocket(url, {
+              perMessageDeflate,
+              ...(cookie ? { headers: { cookie } } : {}),
+            });
+            socket.on("open", () => resume(Effect.succeed(socket)));
+            socket.on("error", (error) => resume(Effect.fail(error)));
+          }),
+          (socket) => Effect.sync(() => socket.close()),
+        );
+
+      const compressed = yield* openSocket(true);
+      // The ws client records the negotiated extension only when the server's
+      // 101 response accepted the offer.
+      assert.include(compressed.extensions, "permessage-deflate");
+
+      const plain = yield* openSocket(false);
+      assert.notInclude(plain.extensions, "permessage-deflate");
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("issues short-lived websocket tickets for authenticated bearer sessions", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
