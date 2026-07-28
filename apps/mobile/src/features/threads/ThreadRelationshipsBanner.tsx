@@ -6,7 +6,10 @@ import {
   resolveMergeBackTargetThreadId,
   type ThreadRelationshipEdge,
 } from "@t3tools/client-runtime/state/thread-relationships";
-import { canDetachThreadProviderSession } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  canDetachThreadProviderSession,
+  resolveLatestMergeBackRun,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 import { useNavigation } from "@react-navigation/native";
@@ -88,8 +91,8 @@ export function ThreadRelationshipsBanner(props: {
       ),
     [graph, mergeTargetThreadId, props.threadId],
   );
-  const latestCompletedRun = projection?.runs.findLast((run) => run.status === "completed") ?? null;
-  const canMerge = mergeTargetThreadId !== null && latestCompletedRun !== null;
+  const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
+  const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
   const [visible, setVisible] = useState(false);
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
@@ -120,14 +123,14 @@ export function ThreadRelationshipsBanner(props: {
   };
 
   const merge = async () => {
-    if (!canMerge || mergeTargetThreadId === null || latestCompletedRun === null) return;
+    if (!canMerge || mergeTargetThreadId === null || latestMergeBackRun === null) return;
     setBusyAction("merge");
     const result = await mergeBack({
       environmentId: props.environmentId,
       input: {
         sourceThreadId: props.threadId,
         targetThreadId: mergeTargetThreadId,
-        runId: latestCompletedRun.id,
+        runId: latestMergeBackRun.id,
         creationSource: "mobile",
       },
     });
