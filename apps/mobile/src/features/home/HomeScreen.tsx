@@ -592,8 +592,10 @@ export function HomeScreen(props: HomeScreenProps) {
             project={projectByKey.get(pendingScopeKey) ?? null}
             projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
             environmentLabel={
-              props.savedConnectionsById[item.pendingTask.message.environmentId]
-                ?.environmentLabel ?? null
+              Object.keys(props.savedConnectionsById).length > 1
+                ? (props.savedConnectionsById[item.pendingTask.message.environmentId]
+                    ?.environmentLabel ?? null)
+                : null
             }
             showPendingDivider={item.showPendingDivider}
             onSelectPendingTask={props.onSelectPendingTask}
@@ -900,6 +902,8 @@ export function HomeScreen(props: HomeScreenProps) {
             keyExtractor={v2KeyExtractor}
             extraData={{
               projectByKey,
+              projectCwdByKey,
+              projectTitleByProjectKey: v2ProjectTitleByProjectKey,
               serverConfigs,
               savedConnectionsById: props.savedConnectionsById,
             }}

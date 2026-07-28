@@ -676,13 +676,26 @@ function ThreadNavigationSidebarPane(
     onScroll: handleScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
+  // Project shells load after the first rows draw, so the maps they feed have
+  // to bust the recycler's memoization — otherwise a row keeps the blank
+  // favicon and fallback title it was first rendered with.
   const listExtraData = useMemo(
     () => ({
       selectedThreadKey: props.selectedThreadKey ?? "",
+      projectByKey,
+      projectCwdByKey,
+      projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
     }),
-    [props.selectedThreadKey, savedConnectionsById, serverConfigs],
+    [
+      props.selectedThreadKey,
+      projectByKey,
+      projectCwdByKey,
+      projectTitleByProjectKey,
+      savedConnectionsById,
+      serverConfigs,
+    ],
   );
   const sidebarItemsAreEqual = useCallback(
     (previous: SidebarListItem, item: SidebarListItem): boolean => {
@@ -748,8 +761,10 @@ function ThreadNavigationSidebarPane(
               project={projectByKey.get(pendingScopeKey) ?? null}
               projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
               environmentLabel={
-                savedConnectionsById[item.pendingTask.message.environmentId]?.environmentLabel ??
-                null
+                Object.keys(savedConnectionsById).length > 1
+                  ? (savedConnectionsById[item.pendingTask.message.environmentId]
+                      ?.environmentLabel ?? null)
+                  : null
               }
               pane="sidebar"
               showPendingDivider={item.showPendingDivider}
