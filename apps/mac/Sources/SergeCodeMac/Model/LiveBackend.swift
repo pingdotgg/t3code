@@ -160,6 +160,13 @@ public actor LiveBackend: BackendService {
 
     /// Threads the UI has opened; re-subscribed on every reconnect.
     private var activeThreadIDs: Set<String> = []
+    /// Last authoritative orchestration sequence observed by each thread-detail
+    /// subscription. The server attaches the live tail before loading the
+    /// snapshot, so an event already folded into `snapshot.thread` can also be
+    /// replayed immediately after it. Sequence-gating that overlap is required
+    /// before applying deltas: message-id dedup alone cannot distinguish a new
+    /// assistant delta from the same delta replayed out of the snapshot buffer.
+    private var lastThreadSequence: [String: Int] = [:]
     /// Latest mapped timeline per opened thread (returned by `timeline`).
     private var latestTimeline: [String: [TimelineItem]] = [:]
     /// Callers awaiting a thread's first snapshot before `timeline` can return.
@@ -863,8 +870,15 @@ public actor LiveBackend: BackendService {
             // `requestCompletionMarker`, so this is a forward-compat no-op.
             break
         case .snapshot(let snapshot):
+            lastThreadSequence[threadID] = snapshot.snapshotSequence
             applyThreadSnapshot(threadID: threadID, thread: snapshot.thread)
         case .event(let event):
+            if let lastSequence = lastThreadSequence[threadID],
+                event.sequence <= lastSequence
+            {
+                return
+            }
+            lastThreadSequence[threadID] = event.sequence
             applyThreadEvent(threadID: threadID, event: event)
         }
     }
@@ -1511,6 +1525,7 @@ public actor LiveBackend: BackendService {
         // Drop per-thread projection/dedup caches so a later timeline() load
         // re-subscribes cleanly and treats the next snapshot as authoritative.
         latestTimeline[threadID] = nil
+        lastThreadSequence[threadID] = nil
         seenMessageIDs[threadID] = nil
         assistantTextByMessage[threadID] = nil
         seenActivityIDs[threadID] = nil
@@ -1800,19 +1815,18 @@ public actor LiveBackend: BackendService {
 
     /// Eager worktree creation at session-create time (vcs.createWorktree).
     /// startFromOrigin uses the base's origin tracking ref as the start point;
-    /// the server fetches that ref from the remote right before creating the
-    /// worktree (best-effort — on fetch failure it uses the ref as-is), so new
-    /// threads branch off the latest upstream state. Falls back to the local
-    /// base when the origin ref doesn't resolve.
+    /// the server must fetch that ref and resolve the fetched commit immediately
+    /// before creating the worktree. A fetch failure aborts this attempt rather
+    /// than silently creating a new thread checkout from stale code. The local
+    /// base is used only when startFromOrigin is disabled.
     private func createEagerWorktree(plan: WorktreePlan) async -> VcsWorktree? {
         guard let client = currentClient else { return nil }
         let branch = Self.temporaryWorktreeBranchName()
-        if plan.startFromOrigin,
+        if plan.startFromOrigin {
             let result = try? await client.createWorktree(
                 cwd: plan.projectCwd, refName: "origin/\(plan.baseBranch)",
                 newRefName: branch, baseRefName: plan.baseBranch)
-        {
-            return result.worktree
+            return result?.worktree
         }
         let result = try? await client.createWorktree(
             cwd: plan.projectCwd, refName: plan.baseBranch,
@@ -3693,6 +3707,16 @@ public actor LiveBackend: BackendService {
 
         func debugRestartVcsWatchIfStale(threadID: String) {
             restartVcsWatchIfStale(threadID: threadID)
+        }
+
+        func debugHandleThreadItem(
+            threadID: String, item: OrchestrationThreadStreamItem
+        ) {
+            handleThreadItem(threadID: threadID, item: item)
+        }
+
+        func debugAssistantText(threadID: String, messageID: String) -> String? {
+            assistantTextByMessage[threadID]?[messageID]
         }
     #endif
 }

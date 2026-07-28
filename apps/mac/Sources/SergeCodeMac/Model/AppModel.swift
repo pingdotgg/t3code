@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import T3Kit
 
 public enum SidebarMoveDirection: Sendable {
     case up, down
@@ -218,6 +219,11 @@ public final class AppModel {
     /// Monotonic settings-save counter: only the latest save's response may
     /// commit, so overlapping keystroke-driven saves can't land out of order.
     @ObservationIgnored private var settingsSaveToken = 0
+    /// Settings edits are optimistic and arrive from independent SwiftUI
+    /// controls. Serialize their server writes in invocation order: guarding
+    /// only the response assignment still allowed an older full-settings
+    /// snapshot to reach the server last and restore the previous model.
+    @ObservationIgnored private var settingsSaveTail: Task<Void, Never>?
     @ObservationIgnored private var archivedThreadsRefreshToken = UUID()
     /// Serializes `loadMoreArchivedThreads` so double-taps can't interleave
     /// pages or duplicate entries.
@@ -1880,6 +1886,15 @@ public final class AppModel {
 
     public func cancelCurrentTurn() async {
         guard let threadID = selectedThreadID else { return }
+        await cancelCurrentTurn(threadID: threadID)
+    }
+
+    /// Cancels the active turn for an explicit thread.
+    ///
+    /// Timeline rows use this overload so an action remains anchored to the
+    /// conversation that rendered it even if selection changes before the
+    /// asynchronous work runs.
+    public func cancelCurrentTurn(threadID: String) async {
         noteCancelRequested(threadID: threadID)
         do {
             try await backend.cancelTurn(threadID: threadID)
@@ -2021,12 +2036,6 @@ public final class AppModel {
             scenery: scenery)
     }
 
-    /// Every session of a project, archived included — the delete cascade
-    /// removes archived threads too, so the confirmation must count them.
-    public func sessionCount(for project: Project) -> Int {
-        threads.count { $0.projectID == project.id }
-    }
-
     public func renameProject(_ project: Project, to name: String) async {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != project.name else { return }
@@ -2052,6 +2061,17 @@ public final class AppModel {
             threads.removeAll { $0.projectID == project.id }
             projects.removeAll { $0.id == project.id }
             rebuildProjectPathIndex()
+            let removedArchivedCount = archivedThreads.count { $0.projectID == project.id }
+            archivedThreads.removeAll { $0.projectID == project.id }
+            archivedThreadsTotal = max(0, archivedThreadsTotal - removedArchivedCount)
+            // The old cursor was calculated against rows that no longer exist.
+            // Disable pagination until the authoritative first page reloads.
+            archivedThreadsNextCursor = nil
+            // The shell snapshot contains active sessions only, while Archive
+            // is paged independently. Refresh it after the server cascade so a
+            // successful reload restores the exact total and cursor. The local
+            // removal above keeps deleted rows gone if that reload fails.
+            await refreshArchivedThreads()
         } catch {
             report(error)
         }
@@ -2100,22 +2120,42 @@ public final class AppModel {
     /// "unused". `SettingsSaveHandlingTests` covers that shape by scanning the
     /// call sites directly.
     public func saveSettings(_ new: AppSettings) async -> Bool {
-        // The settings UI can fire one unawaited save per keystroke; whichever
-        // RESPONSE lands last would otherwise win regardless of order. Gate the
-        // `settings =` assignment on a monotonic token so only the latest
-        // in-flight save commits, independent of caller debouncing.
         settingsSaveToken += 1
         let token = settingsSaveToken
-        do {
-            let updated = try await backend.updateSettings(new)
+        let previous = settingsSaveTail
+        let operation = Task { @MainActor [backend] () -> Result<AppSettings, Error> in
+            await previous?.value
+            do {
+                return .success(try await backend.updateSettings(new))
+            } catch {
+                return .failure(error)
+            }
+        }
+        settingsSaveTail = Task {
+            _ = await operation.value
+        }
+
+        switch await operation.value {
+        case .success(let updated):
             guard token == settingsSaveToken else { return true }
             settings = updated
             return true
-        } catch {
+        case .failure(let error):
             guard token == settingsSaveToken else { return true }
-            report(error)
+            lastError = Self.settingsErrorMessage(error)
             return false
         }
+    }
+
+    /// RPC failures are Effect cause trees. `String(describing:)` expands the
+    /// entire tree (including schema ASTs) into the "massive error" users saw
+    /// after a rejected picker change. Keep the useful tag/message and leave
+    /// the transport detail in logs.
+    private static func settingsErrorMessage(_ error: Error) -> String {
+        guard let t3Error = error as? T3Error, case .rpc(let failure) = t3Error else {
+            return "Couldn’t save settings: \(error.localizedDescription)"
+        }
+        return failure.userFacingMessage ?? "The server rejected the settings change."
     }
 
     public private(set) var autoReviewJobs: [AppAutoReviewJob] = []
@@ -2362,11 +2402,17 @@ public final class AppModel {
         }
     }
 
-    public func settleThread(_ thread: ChatThread) async {
+    /// Returns whether the backend accepted the settle. Callers that navigate
+    /// away after settling must stay put on failure so the inline error remains
+    /// attached to the session that produced it.
+    @discardableResult
+    public func settleThread(_ thread: ChatThread) async -> Bool {
         do {
             try await backend.settleThread(id: thread.id)
+            return true
         } catch {
             report(error)
+            return false
         }
     }
 

@@ -43,7 +43,14 @@ export interface AutoReviewOriginContext {
     readonly prompt: string;
     /** null keeps the origin thread on its own model. */
     readonly modelSelection: ModelSelection | null;
-  }) => Effect.Effect<"dispatched" | "queued">;
+    readonly projectId: string;
+    readonly prNumber: number;
+  }) => Effect.Effect<{ readonly outcome: "dispatched" | "queued"; readonly threadId: string }>;
+  /** Archives a PR's dedicated fixer after a clean review. */
+  readonly settleFixThread?: (input: {
+    readonly projectId: string;
+    readonly prNumber: number;
+  }) => Effect.Effect<void>;
   readonly existingReviewBodies?: ReadonlyArray<string>;
 }
 
@@ -238,21 +245,41 @@ export const make = Effect.gen(function* () {
       const actionable = shouldAutoFixOriginThread(findings);
       let autoFixEnqueued = false;
       if (originThreadId && actionable && context.queueOrDispatchFix) {
+        // Record the origin before a dedicated target reserves a concurrency
+        // slot, so the store can distinguish origin and fixer identities.
+        yield* store.update(job.id, { originThreadId: originThreadId as ThreadId });
         const prompt = buildOriginFixPrompt({
           prNumber: job.prNumber,
           prUrl: prMeta.url,
           headSha: job.headSha,
           findings,
         });
-        const outcome = yield* context
+        const fix = yield* context
           .queueOrDispatchFix({
             jobId: job.id,
             threadId: originThreadId,
             prompt,
             modelSelection: job.fixModelSelection,
+            projectId: String(job.projectId),
+            prNumber: job.prNumber,
           })
-          .pipe(Effect.orElseSucceed(() => "queued" as const));
-        autoFixEnqueued = outcome === "dispatched";
+          .pipe(
+            Effect.orElseSucceed(() => ({
+              outcome: "queued" as const,
+              threadId: originThreadId,
+            })),
+          );
+        autoFixEnqueued = fix.outcome === "dispatched";
+        yield* store.update(job.id, {
+          fixThreadId: fix.threadId === originThreadId ? null : (fix.threadId as ThreadId),
+        });
+      } else if (!actionable && context.settleFixThread) {
+        yield* context
+          .settleFixThread({
+            projectId: String(job.projectId),
+            prNumber: job.prNumber,
+          })
+          .pipe(Effect.orElseSucceed(() => undefined));
       }
 
       yield* store.update(job.id, {

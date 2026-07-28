@@ -88,9 +88,10 @@ final class AudioRecorder: @unchecked Sendable {
             let buffer = AVAudioPCMBuffer(
                 pcmFormat: format, frameCapacity: AVAudioFrameCount(captured.count))
         else { return nil }
+        guard let destination = buffer.floatChannelData?.pointee else { return nil }
         captured.withUnsafeBufferPointer { source in
-            buffer.floatChannelData![0].update(
-                from: source.baseAddress!, count: captured.count)
+            guard let sourceAddress = source.baseAddress else { return }
+            destination.update(from: sourceAddress, count: source.count)
         }
         buffer.frameLength = AVAudioFrameCount(captured.count)
         return buffer

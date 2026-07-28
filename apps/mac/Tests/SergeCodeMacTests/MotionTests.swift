@@ -81,9 +81,5 @@ struct PlayfulMotionTests {
         #expect(profile.decorativeFrameInterval == 1.0 / 30.0)
         // Slow enough to read as a drift rather than a spinner.
         #expect(profile.orbPeriod >= 4)
-        #expect(profile.petBreathPeriod >= 2)
-        // Long enough to read the caption twice, short enough that a settled
-        // thread does not keep a character parked over it.
-        #expect(profile.petVictoryDwell >= 4 && profile.petVictoryDwell <= 10)
     }
 }

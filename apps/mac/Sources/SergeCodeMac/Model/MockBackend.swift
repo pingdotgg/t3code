@@ -1588,7 +1588,7 @@ private actor MockState {
             status: .running,
             updatedAt: now.addingTimeInterval(-15)
         )
-        // Auto-review in flight: summons the review pet.
+        // Auto-review in flight: shows staged review progress.
         let thread8 = ChatThread(
             id: "thread-8",
             projectID: projectA.id,
@@ -1796,8 +1796,8 @@ private actor MockState {
     }
 
     /// A thread whose PR is being auto-reviewed on the server. Nothing is
-    /// running locally, so the transcript is quiet and the review pet is the
-    /// only thing narrating.
+    /// running locally, so the transcript is quiet and the progress surface
+    /// is the only thing narrating.
     private static func timelineForAutoReviewThread(at now: Date) -> [TimelineItem] {
         [
             .userMessage(

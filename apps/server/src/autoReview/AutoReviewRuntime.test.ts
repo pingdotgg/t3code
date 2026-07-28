@@ -9,6 +9,7 @@ import type {
 
 import * as AutoReviewJobStore from "./AutoReviewJobStore.ts";
 import {
+  isAutoReviewFixerThread,
   makeDrainPendingFixes,
   makeQueueOrDispatchFix,
   makeSyncThreadPhases,
@@ -45,6 +46,23 @@ const makeShell = (threads: ReadonlyArray<OrchestrationThreadShell>): Orchestrat
 
 const withStore = <A, E>(effect: Effect.Effect<A, E, AutoReviewJobStore.AutoReviewJobStore>) =>
   effect.pipe(Effect.provide(AutoReviewJobStore.layerInMemory), Effect.runPromise);
+
+describe("dedicated auto-review fixers", () => {
+  it("cannot be relinked as the PR origin on a later review", () => {
+    expect(
+      isAutoReviewFixerThread(
+        makeThread({
+          title: "Auto-review fixer · PR #42",
+          parentThreadId: "thread-1",
+        }),
+      ),
+    ).toBe(true);
+    expect(isAutoReviewFixerThread(makeThread({ title: "Auto-review fixer · PR #42" }))).toBe(
+      false,
+    );
+    expect(isAutoReviewFixerThread(makeThread({ parentThreadId: "thread-1" }))).toBe(false);
+  });
+});
 
 const enqueueSucceededWithFix = (
   store: AutoReviewJobStore.AutoReviewJobStore["Service"],

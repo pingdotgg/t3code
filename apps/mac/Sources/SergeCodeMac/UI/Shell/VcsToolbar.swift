@@ -225,7 +225,15 @@ struct VcsToolbar: View {
                 .padding(8)
             }
         }
-        .onAppear { branchSearchFocused = true }
+        .task {
+            // A focused TextField can vend SafariPlatformSupport's remote
+            // completion view. Let the NSPopover finish ordering first:
+            // macOS 27 otherwise throws from NSRemoteView while assigning the
+            // completion view's containing window.
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            branchSearchFocused = true
+        }
     }
 
     private var branchSearchField: some View {
@@ -235,6 +243,7 @@ struct VcsToolbar: View {
                 .foregroundStyle(.secondary)
             TextField("Filter branches", text: $branchQuery)
                 .textFieldStyle(.plain)
+                .autocorrectionDisabled()
                 .focused($branchSearchFocused)
             if !branchQuery.isEmpty {
                 Button {
@@ -498,6 +507,9 @@ struct VcsToolbar: View {
             TextEditor(text: $commitMessage)
                 .font(.body)
                 .frame(width: 380, height: 90)
+                .accessibilityLabel("Commit message")
+                .accessibilityHint(
+                    "Optional. Leave blank to have the server generate a commit message.")
                 .overlay(alignment: .topLeading) {
                     if commitMessage.isEmpty {
                         Text("Commit message (optional — server generates one if empty)")

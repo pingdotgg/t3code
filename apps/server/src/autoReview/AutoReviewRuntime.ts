@@ -16,6 +16,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
+  ProjectId,
   ThreadId,
   type ModelSelection,
   type OrchestrationShellSnapshot,
@@ -42,6 +43,25 @@ import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 
 /** Generous bound for the in-memory job scans in drain/phase sync. */
 const AUTO_REVIEW_JOB_LIST_LIMIT = 500;
+
+export const autoReviewFixerThreadTitle = (prNumber: number): string =>
+  `Auto-review fixer · PR #${prNumber}`;
+
+export const isAutoReviewFixerThread = (
+  thread: Pick<OrchestrationThreadShell, "title" | "parentThreadId">,
+): boolean => thread.parentThreadId != null && thread.title.startsWith("Auto-review fixer · PR #");
+
+const findAutoReviewFixerThread = (
+  shell: OrchestrationShellSnapshot,
+  projectId: string,
+  prNumber: number,
+): OrchestrationThreadShell | undefined =>
+  shell.threads.find(
+    (thread) =>
+      String(thread.projectId) === projectId &&
+      thread.parentThreadId != null &&
+      thread.title === autoReviewFixerThreadTitle(prNumber),
+  );
 
 /**
  * Best-effort fix dispatch: resolves true when the turn.start command was
@@ -260,10 +280,23 @@ export const makeSyncThreadPhases = (deps: {
       // head branch resolves to this thread — those are not linked yet, and
       // without them the thread would read as idle/done mid-review.
       const relevant = jobs.filter((job) => attributedThreadId.get(job.id) === String(thread.id));
+      const fixThreadBusy = (() => {
+        const latest = relevant
+          .filter((job) => job.status === "succeeded" && job.fixThreadId != null)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (!latest?.fixThreadId) {
+          return undefined;
+        }
+        const fixer = shell.threads.find(
+          (candidate) => String(candidate.id) === String(latest.fixThreadId),
+        );
+        return fixer ? isAutoReviewFixThreadBusy(busyInputForThread(fixer, now)) : false;
+      })();
       const desired = deriveAutoReviewThreadPhase({
         jobs: relevant,
         threadId: String(thread.id),
         threadBusy: isAutoReviewFixThreadBusy(busyInputForThread(thread, now)),
+        ...(fixThreadBusy === undefined ? {} : { fixThreadBusy }),
       });
       if (desired === thread.autoReviewPhase) {
         continue;
@@ -318,6 +351,81 @@ export const layer = Layer.effectDiscard(
         Effect.orElseSucceed(() => false),
       );
 
+    const resolveFixThread = (input: {
+      readonly shell: OrchestrationShellSnapshot;
+      readonly originThreadId: string;
+      readonly projectId: string;
+      readonly prNumber: number;
+      readonly modelSelection: ModelSelection | null;
+    }) =>
+      Effect.gen(function* () {
+        if (!input.modelSelection) {
+          return input.originThreadId;
+        }
+
+        const existing = findAutoReviewFixerThread(input.shell, input.projectId, input.prNumber);
+        if (existing) {
+          if (existing.archivedAt != null) {
+            const commandUuid = yield* crypto.randomUUIDv4;
+            yield* orchestration
+              .dispatch({
+                type: "thread.unarchive",
+                commandId: CommandId.make(`auto-review-fixer-unarchive:${commandUuid}`),
+                threadId: existing.id,
+              })
+              .pipe(Effect.asVoid);
+          }
+          return String(existing.id);
+        }
+
+        const origin = input.shell.threads.find(
+          (thread) => String(thread.id) === input.originThreadId,
+        );
+        if (!origin) {
+          return input.originThreadId;
+        }
+        const threadUuid = yield* crypto.randomUUIDv4;
+        const commandUuid = yield* crypto.randomUUIDv4;
+        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const fixerThreadId = ThreadId.make(threadUuid);
+        yield* orchestration
+          .dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`auto-review-fixer-create:${commandUuid}`),
+            threadId: fixerThreadId,
+            projectId: ProjectId.make(input.projectId),
+            title: autoReviewFixerThreadTitle(input.prNumber),
+            modelSelection: input.modelSelection,
+            runtimeMode: origin.runtimeMode,
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            branch: origin.branch,
+            worktreePath: origin.worktreePath,
+            parentThreadId: origin.id,
+            createdAt,
+          })
+          .pipe(Effect.asVoid);
+        return String(fixerThreadId);
+      });
+
+    const settleFixThread = (
+      shell: OrchestrationShellSnapshot,
+      input: { readonly projectId: string; readonly prNumber: number },
+    ) =>
+      Effect.gen(function* () {
+        const fixer = findAutoReviewFixerThread(shell, input.projectId, input.prNumber);
+        if (!fixer || fixer.archivedAt != null) {
+          return;
+        }
+        const commandUuid = yield* crypto.randomUUIDv4;
+        yield* orchestration
+          .dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(`auto-review-fixer-archive:${commandUuid}`),
+            threadId: fixer.id,
+          })
+          .pipe(Effect.asVoid);
+      });
+
     const setPhase = (
       threadId: string,
       phase: OrchestrationThreadAutoReviewPhase | null,
@@ -370,7 +478,10 @@ export const layer = Layer.effectDiscard(
             cwd: project?.workspaceRoot ?? "",
             candidates: shell.threads
               .filter(
-                (thread) => String(thread.projectId) === job.projectId && thread.archivedAt == null,
+                (thread) =>
+                  String(thread.projectId) === job.projectId &&
+                  thread.archivedAt == null &&
+                  !isAutoReviewFixerThread(thread),
               )
               .map((thread) => ({
                 threadId: String(thread.id),
@@ -387,13 +498,44 @@ export const layer = Layer.effectDiscard(
             ...(policy?.autoFixOriginThread === false
               ? {}
               : {
-                  queueOrDispatchFix: makeQueueOrDispatchFix({
-                    shell,
-                    store,
-                    dispatchFix,
-                    fixConcurrency: policy?.fixConcurrency ?? DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY,
-                  }),
+                  queueOrDispatchFix: (input: {
+                    readonly jobId: string;
+                    readonly threadId: string;
+                    readonly prompt: string;
+                    readonly modelSelection: ModelSelection | null;
+                    readonly projectId: string;
+                    readonly prNumber: number;
+                  }) =>
+                    Effect.gen(function* () {
+                      const targetThreadId = yield* resolveFixThread({
+                        shell,
+                        originThreadId: input.threadId,
+                        projectId: input.projectId,
+                        prNumber: input.prNumber,
+                        modelSelection: input.modelSelection,
+                      }).pipe(Effect.orElseSucceed(() => input.threadId));
+                      const outcome = yield* makeQueueOrDispatchFix({
+                        shell,
+                        store,
+                        dispatchFix,
+                        fixConcurrency:
+                          policy?.fixConcurrency ?? DEFAULT_AUTO_REVIEW_FIX_CONCURRENCY,
+                      })({
+                        jobId: input.jobId,
+                        threadId: targetThreadId,
+                        prompt: input.prompt,
+                        modelSelection: input.modelSelection,
+                      });
+                      return { outcome, threadId: targetThreadId };
+                    }),
                 }),
+            // Always retire an existing dedicated fixer after a clean review,
+            // even if the user disabled auto-fix after that thread was made.
+            settleFixThread: (input: { readonly projectId: string; readonly prNumber: number }) =>
+              settleFixThread(shell, input).pipe(
+                Effect.orElseSucceed(() => undefined),
+                Effect.asVoid,
+              ),
           } satisfies AutoReviewRunner.AutoReviewOriginContext;
         }),
       drainPendingFixes: makeDrainPendingFixes({
