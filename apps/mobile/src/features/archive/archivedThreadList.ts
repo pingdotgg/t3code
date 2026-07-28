@@ -319,9 +319,14 @@ export function buildArchivedThreadGroups(input: {
         key: Order.String,
       }),
       (group: ArchivedThreadGroup) => ({
-        timestamp: Math.max(
-          ...group.threads.map((thread) => archivedThreadTimestamp(thread, input.sort.field)),
-        ),
+        timestamp:
+          input.sort.direction === "asc"
+            ? Math.min(
+                ...group.threads.map((thread) => archivedThreadTimestamp(thread, input.sort.field)),
+              )
+            : Math.max(
+                ...group.threads.map((thread) => archivedThreadTimestamp(thread, input.sort.field)),
+              ),
         title: group.project.title,
         key: group.key,
       }),

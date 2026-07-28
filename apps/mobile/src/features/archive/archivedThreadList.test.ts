@@ -140,29 +140,47 @@ describe("buildArchivedThreadGroups", () => {
   });
 
   it("orders project sections by the selected field and direction", () => {
-    const olderProject = makeProject({ id: ProjectId.make("project-older"), title: "Older" });
-    const newerProject = makeProject({ id: ProjectId.make("project-newer"), title: "Newer" });
-    const olderCreated = makeThread({
+    const mixedProject = makeProject({ id: ProjectId.make("project-mixed"), title: "Mixed" });
+    const middleProject = makeProject({ id: ProjectId.make("project-middle"), title: "Middle" });
+    const oldestCreated = makeThread({
       archivedAt: "2026-06-02T00:00:00.000Z",
       createdAt: "2026-05-01T00:00:00.000Z",
       id: ThreadId.make("thread-older-created"),
-      projectId: olderProject.id,
-      title: "Older created",
+      projectId: mixedProject.id,
+      title: "Oldest created",
     });
-    const newerCreated = makeThread({
+    const newestCreated = makeThread({
       archivedAt: "2026-06-04T00:00:00.000Z",
-      createdAt: "2026-06-01T00:00:00.000Z",
+      createdAt: "2026-06-03T00:00:00.000Z",
       id: ThreadId.make("thread-newer-created"),
-      projectId: newerProject.id,
-      title: "Newer created",
+      projectId: mixedProject.id,
+      title: "Newest created",
+    });
+    const middleCreated = makeThread({
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      id: ThreadId.make("thread-middle-created"),
+      projectId: middleProject.id,
+      title: "Middle created",
     });
 
-    const result = buildGroups({
-      snapshots: [makeSnapshot([newerProject, olderProject], [newerCreated, olderCreated])],
+    const snapshots = [
+      makeSnapshot([middleProject, mixedProject], [middleCreated, newestCreated, oldestCreated]),
+    ];
+    const ascending = buildGroups({
+      snapshots,
       sort: { field: "createdAt", direction: "asc" },
     });
+    const descending = buildGroups({
+      snapshots,
+      sort: { field: "createdAt", direction: "desc" },
+    });
 
-    expect(result.map((group) => group.project.id)).toEqual(["project-older", "project-newer"]);
+    expect(ascending.map((group) => group.project.id)).toEqual(["project-mixed", "project-middle"]);
+    expect(descending.map((group) => group.project.id)).toEqual([
+      "project-mixed",
+      "project-middle",
+    ]);
   });
 
   it("falls back to created time when an archived timestamp is invalid", () => {
