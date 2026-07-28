@@ -20,7 +20,9 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
@@ -58,9 +60,33 @@ const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
+type ListenerNotification =
+  | {
+      readonly _tag: "Snapshot";
+      readonly servers: ReadonlyArray<DiscoveredLocalServer>;
+      readonly deliveryResult: Deferred.Deferred<Exit.Exit<void>>;
+      readonly isReplay: boolean;
+    }
+  | {
+      readonly _tag: "Stop";
+      readonly stopped: Deferred.Deferred<void>;
+    };
+
+interface ListenerRegistration {
+  readonly listener: Listener;
+  readonly notifications: Queue.Queue<ListenerNotification>;
+}
+
+class CurrentListenerRegistration extends Context.Reference<ListenerRegistration | undefined>(
+  "t3/preview/PortScanner/CurrentListenerRegistration",
+  {
+    defaultValue: () => undefined,
+  },
+) {}
+
 interface ScannerState {
   readonly lastSnapshot: ReadonlyArray<DiscoveredLocalServer>;
-  readonly listeners: ReadonlySet<Listener>;
+  readonly listeners: ReadonlySet<ListenerRegistration>;
   readonly terminalProcesses: ReadonlyMap<
     string,
     {
@@ -293,26 +319,63 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return yield* probeCommonPorts();
   });
 
-  const broadcast = Effect.fn("PortDiscovery.broadcast")(function* (
-    servers: ReadonlyArray<DiscoveredLocalServer>,
-  ) {
-    const listeners = (yield* Ref.get(stateRef)).listeners;
-    yield* Effect.forEach(listeners, (listener) => listener(servers), { discard: true });
+  const wakePollSchedule = Effect.gen(function* () {
+    const signal = yield* Ref.get(pollScheduleSignalRef);
+    if (signal !== undefined) {
+      yield* Deferred.succeed(signal, undefined).pipe(Effect.ignore);
+    }
   });
 
   const publishSnapshot = Effect.fn("PortDiscovery.publishSnapshot")(function* (
     next: ReadonlyArray<DiscoveredLocalServer>,
   ) {
-    yield* notificationLock.withPermit(
+    const currentListener = yield* CurrentListenerRegistration;
+    const result = yield* notificationLock.withPermit(
       Effect.gen(function* () {
-        const changed = yield* Ref.modify(stateRef, (state) =>
-          serversEqual(state.lastSnapshot, next)
-            ? [false, state]
-            : [true, { ...state, lastSnapshot: next }],
-        );
-        if (changed) yield* broadcast(next);
+        const result = yield* Ref.modify(stateRef, (state) => {
+          if (serversEqual(state.lastSnapshot, next)) {
+            return [
+              { changed: false, pollIntervalChanged: false, listeners: state.listeners },
+              state,
+            ];
+          }
+          return [
+            {
+              changed: true,
+              pollIntervalChanged: state.lastSnapshot.length === 0 || next.length === 0,
+              listeners: state.listeners,
+            },
+            { ...state, lastSnapshot: next },
+          ];
+        });
+        const deliveries: Array<Deferred.Deferred<Exit.Exit<void>>> = [];
+        if (result.changed) {
+          yield* Effect.forEach(
+            result.listeners,
+            (registration) =>
+              Effect.gen(function* () {
+                const deliveryResult = yield* Deferred.make<Exit.Exit<void>>();
+                deliveries.push(deliveryResult);
+                yield* Queue.offer(registration.notifications, {
+                  _tag: "Snapshot",
+                  servers: next,
+                  deliveryResult,
+                  isReplay: false,
+                });
+              }),
+            { discard: true },
+          );
+        }
+        return { pollIntervalChanged: result.pollIntervalChanged, deliveries };
       }),
     );
+    if (result.pollIntervalChanged) yield* wakePollSchedule;
+    if (currentListener === undefined) {
+      yield* Effect.forEach(result.deliveries, Deferred.await, {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    }
   });
 
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
@@ -329,13 +392,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
     ),
   );
-
-  const wakePollSchedule = Effect.gen(function* () {
-    const signal = yield* Ref.get(pollScheduleSignalRef);
-    if (signal !== undefined) {
-      yield* Deferred.succeed(signal, undefined).pipe(Effect.ignore);
-    }
-  });
 
   // Keep broad listener discovery as a fallback, but avoid a system-wide lsof
   // process every three seconds while the app is otherwise idle. Terminal PID
@@ -389,30 +445,91 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     releaseRetention,
   );
 
-  const removeListener = (listener: Listener) =>
+  const removeListener = (registration: ListenerRegistration) =>
     Ref.update(stateRef, (state) => {
       const listeners = new Set(state.listeners);
-      listeners.delete(listener);
+      listeners.delete(registration);
       return { ...state, listeners };
     });
 
+  const stopListener = Effect.fn("PortDiscovery.stopListener")(function* (
+    registration: ListenerRegistration,
+  ) {
+    const stopped = yield* Deferred.make<void>();
+    yield* notificationLock.withPermit(
+      Effect.gen(function* () {
+        yield* removeListener(registration);
+        yield* Queue.offer(registration.notifications, { _tag: "Stop", stopped });
+      }),
+    );
+    yield* Deferred.await(stopped);
+    yield* Queue.shutdown(registration.notifications);
+  });
+
+  const runListenerNotifications = Effect.fn("PortDiscovery.runListenerNotifications")(function* (
+    registration: ListenerRegistration,
+  ) {
+    let replayFailed = false;
+    while (true) {
+      const notification = yield* Queue.take(registration.notifications);
+      if (notification._tag === "Stop") {
+        yield* Deferred.succeed(notification.stopped, undefined).pipe(Effect.ignore);
+        return;
+      }
+      if (replayFailed) {
+        yield* Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore);
+        continue;
+      }
+      const delivery = yield* registration
+        .listener(notification.servers)
+        .pipe(Effect.provideService(CurrentListenerRegistration, registration), Effect.exit);
+      yield* Deferred.succeed(notification.deliveryResult, delivery).pipe(Effect.ignore);
+      if (notification.isReplay) {
+        replayFailed = Exit.isFailure(delivery);
+      } else if (Exit.isFailure(delivery)) {
+        yield* Effect.logWarning(
+          "preview port snapshot listener failed",
+          Cause.pretty(delivery.cause),
+        );
+      }
+    }
+  });
+
   const subscribe: PortDiscovery["Service"]["subscribe"] = Effect.fn("PortDiscovery.subscribe")(
-    (listener) =>
-      Effect.acquireRelease(
-        notificationLock.withPermit(
-          Ref.modify(stateRef, (state) => [
-            state.lastSnapshot,
-            {
-              ...state,
-              listeners: new Set([...state.listeners, listener]),
-            },
-          ]).pipe(
-            Effect.tap(listener),
-            Effect.onError(() => removeListener(listener)),
-          ),
-        ),
-        () => notificationLock.withPermit(removeListener(listener)),
-      ),
+    function* (listener) {
+      yield* Effect.acquireRelease(
+        Effect.gen(function* () {
+          const notifications = yield* Queue.unbounded<ListenerNotification>();
+          const replayResult = yield* Deferred.make<Exit.Exit<void>>();
+          const registration = { listener, notifications };
+          yield* notificationLock.withPermit(
+            Effect.gen(function* () {
+              const snapshot = yield* Ref.modify(stateRef, (state) => [
+                state.lastSnapshot,
+                {
+                  ...state,
+                  listeners: new Set([...state.listeners, registration]),
+                },
+              ]);
+              yield* Queue.offer(notifications, {
+                _tag: "Snapshot",
+                servers: snapshot,
+                deliveryResult: replayResult,
+                isReplay: true,
+              });
+            }),
+          );
+          yield* Effect.forkScoped(runListenerNotifications(registration));
+          const replayExit = yield* Deferred.await(replayResult);
+          if (Exit.isFailure(replayExit)) {
+            yield* stopListener(registration);
+            return yield* Effect.failCause(replayExit.cause);
+          }
+          return registration;
+        }),
+        stopListener,
+      );
+    },
   );
 
   const registerTerminalProcesses: PortDiscovery["Service"]["registerTerminalProcesses"] =

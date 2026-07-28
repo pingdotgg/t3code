@@ -62,7 +62,12 @@ import {
 } from "./ui/combobox";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { refreshVcsRefsOnMenuOpen, resetVcsRefQueryOrRefresh } from "./vcsRefMenuRefresh";
+import {
+  refreshVcsRefsAfterQueryReset,
+  refreshVcsRefsOnMenuOpen,
+  resetVcsRefQueriesOnMenuClose,
+  resetVcsRefQueryOrRefresh,
+} from "./vcsRefMenuRefresh";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
@@ -237,12 +242,19 @@ export function BranchToolbarBranchSelector({
   const isFetchingNextPage = branchRefState.isPending && branchRefState.data !== null;
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
   useEffect(() => {
-    if (!shouldRefreshBranchRefsAfterQueryReset || deferredTrimmedBranchQuery.length > 0) {
-      return;
-    }
-    setShouldRefreshBranchRefsAfterQueryReset(false);
-    branchRefState.refresh();
-  }, [branchRefState.refresh, deferredTrimmedBranchQuery, shouldRefreshBranchRefsAfterQueryReset]);
+    refreshVcsRefsAfterQueryReset(
+      isBranchMenuOpen,
+      shouldRefreshBranchRefsAfterQueryReset,
+      deferredTrimmedBranchQuery,
+      () => setShouldRefreshBranchRefsAfterQueryReset(false),
+      branchRefState.refresh,
+    );
+  }, [
+    branchRefState.refresh,
+    deferredTrimmedBranchQuery,
+    isBranchMenuOpen,
+    shouldRefreshBranchRefsAfterQueryReset,
+  ]);
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
   const sourceControlPresentation = useMemo(
@@ -519,12 +531,15 @@ export function BranchToolbarBranchSelector({
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setIsBranchMenuOpen(open);
-      if (!open) {
-        setBranchQuery("");
-      }
+      resetVcsRefQueriesOnMenuClose(
+        open,
+        () => setBranchQuery(""),
+        () => setBranchRefQuery(""),
+        () => setShouldRefreshBranchRefsAfterQueryReset(false),
+      );
       refreshVcsRefsOnMenuOpen(open, () =>
         resetVcsRefQueryOrRefresh(
-          branchRefQuery,
+          deferredTrimmedBranchQuery,
           () => {
             setBranchRefQuery("");
             setShouldRefreshBranchRefsAfterQueryReset(true);
@@ -533,7 +548,7 @@ export function BranchToolbarBranchSelector({
         ),
       );
     },
-    [branchRefQuery, branchRefState.refresh],
+    [branchRefState.refresh, deferredTrimmedBranchQuery],
   );
 
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);

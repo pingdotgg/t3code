@@ -19,3 +19,23 @@ export function refreshVcsRefsOnMenuOpen(
   if (!open) return;
   for (const refresh of refreshes) refresh();
 }
+
+export function resetVcsRefQueriesOnMenuClose(
+  open: boolean,
+  ...resets: ReadonlyArray<() => void>
+): void {
+  if (open) return;
+  for (const reset of resets) reset();
+}
+
+export function refreshVcsRefsAfterQueryReset(
+  open: boolean,
+  shouldRefresh: boolean,
+  query: string,
+  clearPendingRefresh: () => void,
+  ...refreshes: ReadonlyArray<RefreshVcsRefs>
+): void {
+  if (!open || !shouldRefresh || query.trim().length > 0) return;
+  clearPendingRefresh();
+  for (const refresh of refreshes) refresh();
+}

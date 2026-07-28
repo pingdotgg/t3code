@@ -71,7 +71,12 @@ import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
-import { refreshVcsRefsOnMenuOpen, resetVcsRefQueryOrRefresh } from "./vcsRefMenuRefresh";
+import {
+  refreshVcsRefsAfterQueryReset,
+  refreshVcsRefsOnMenuOpen,
+  resetVcsRefQueriesOnMenuClose,
+  resetVcsRefQueryOrRefresh,
+} from "./vcsRefMenuRefresh";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -203,6 +208,7 @@ export default function DiffPanel({
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [baseRefQueryForRefs, setBaseRefQueryForRefs] = useState("");
+  const [isBaseRefMenuOpen, setIsBaseRefMenuOpen] = useState(false);
   const [shouldRefreshBaseRefsAfterQueryReset, setShouldRefreshBaseRefsAfterQueryReset] =
     useState(false);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
@@ -402,14 +408,17 @@ export default function DiffPanel({
       : null,
   );
   useEffect(() => {
-    if (!shouldRefreshBaseRefsAfterQueryReset || baseRefQueryForRefs.trim().length > 0) {
-      return;
-    }
-    setShouldRefreshBaseRefsAfterQueryReset(false);
-    localBranchRefs.refresh();
-    remoteBranchRefs.refresh();
+    refreshVcsRefsAfterQueryReset(
+      isBaseRefMenuOpen,
+      shouldRefreshBaseRefsAfterQueryReset,
+      baseRefQueryForRefs,
+      () => setShouldRefreshBaseRefsAfterQueryReset(false),
+      localBranchRefs.refresh,
+      remoteBranchRefs.refresh,
+    );
   }, [
     baseRefQueryForRefs,
+    isBaseRefMenuOpen,
     localBranchRefs.refresh,
     remoteBranchRefs.refresh,
     shouldRefreshBaseRefsAfterQueryReset,
@@ -631,9 +640,13 @@ export default function DiffPanel({
               filteredItems={filteredBaseRefItems}
               value={selectedBaseRef ?? AUTOMATIC_BASE_REF}
               onOpenChange={(open) => {
-                if (!open) {
-                  setBaseRefQuery("");
-                }
+                setIsBaseRefMenuOpen(open);
+                resetVcsRefQueriesOnMenuClose(
+                  open,
+                  () => setBaseRefQuery(""),
+                  () => setBaseRefQueryForRefs(""),
+                  () => setShouldRefreshBaseRefsAfterQueryReset(false),
+                );
                 refreshVcsRefsOnMenuOpen(open, () =>
                   resetVcsRefQueryOrRefresh(
                     baseRefQueryForRefs,
