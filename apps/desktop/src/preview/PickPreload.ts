@@ -11,8 +11,10 @@ import type {
   PreviewAnnotationRegionTarget,
   PreviewAnnotationStrokeTarget,
   PreviewAnnotationStyleChange,
+  PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
 
+import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -375,6 +377,11 @@ function startAnnotation(): void {
   const hoverOutline = createBox(PRIMARY, PRIMARY_FILL);
   const marqueeBox = createBox(PRIMARY, PRIMARY_FILL);
   root.append(hoverOutline, marqueeBox);
+  root.addEventListener("keydown", (event) => {
+    // Let the focused annotation control handle the key, then keep it away
+    // from page-level shortcuts such as a video's Space play/pause binding.
+    event.stopPropagation();
+  });
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute(OVERLAY_ATTRIBUTE, "");
@@ -426,7 +433,7 @@ function startAnnotation(): void {
     "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
   composerRow.appendChild(dragHandle);
 
-  const submit = createButton("Attach", "Attach annotation and screenshot");
+  const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -1182,7 +1189,7 @@ function startAnnotation(): void {
     refreshToolButtons();
   };
 
-  submit.addEventListener("click", () => {
+  const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
@@ -1223,13 +1230,16 @@ function startAnnotation(): void {
         ...regions.map((region) => region.rect),
         ...strokes.map((stroke) => stroke.bounds),
       ]);
-      ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect);
+      ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
     });
-  });
+  };
+  submit.addEventListener("click", () => submitAnnotation("attach"));
   comment.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+    const submission = resolveAnnotationSubmission(event);
+    if (!submission) return;
     event.preventDefault();
-    submit.click();
+    event.stopPropagation();
+    submitAnnotation(submission);
   });
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
