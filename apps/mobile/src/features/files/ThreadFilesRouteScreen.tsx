@@ -372,6 +372,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
                   onSearchTextChange: setSearchQuery,
                   placeholder: "Search files",
                   searchTextChangeId: "files-search-text",
+                  value: searchQuery,
                 }),
               ]
             : undefined,

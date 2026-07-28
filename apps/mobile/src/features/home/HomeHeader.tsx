@@ -335,6 +335,7 @@ function IosHomeHeader(props: HomeHeaderProps) {
                     onSearchTextChange: props.onSearchQueryChange,
                     placeholder: "Search",
                     searchTextChangeId: "home-search-text",
+                    value: props.searchQuery,
                   }),
                 ]
               : undefined,

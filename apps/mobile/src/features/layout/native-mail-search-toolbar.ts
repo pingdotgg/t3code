@@ -2,8 +2,10 @@ import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens"
 
 type NativeMailSearchToolbarInput = Omit<
   HeaderBarButtonMailSearchToolbarItem,
-  "type" | "useFallbackSearchField"
->;
+  "searchText" | "type" | "useFallbackSearchField"
+> & {
+  readonly value: string;
+};
 
 /**
  * Builds the patched react-native-screens Mail-style bottom search toolbar.
@@ -16,9 +18,12 @@ type NativeMailSearchToolbarInput = Omit<
 export function createNativeMailSearchToolbarItem(
   input: NativeMailSearchToolbarInput,
 ): HeaderBarButtonMailSearchToolbarItem {
+  const { value, ...toolbarInput } = input;
+
   return {
     placeholder: "Search",
-    ...input,
+    ...toolbarInput,
+    searchText: value,
     type: "mailSearchToolbar",
     useFallbackSearchField: true,
   };
