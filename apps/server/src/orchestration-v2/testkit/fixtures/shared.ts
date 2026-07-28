@@ -384,6 +384,7 @@ export function materializeFixtureInput(input: {
     const commands: Array<OrchestrationV2Command> = [];
     const steps: Array<OrchestratorV2ScenarioStep> = [];
     let messageIndex = 0;
+    let runIndex = 0;
     const activeRunDispatchKeys = new Set<string>();
 
     const runIdFor = (runOrdinal: number) =>
@@ -428,16 +429,17 @@ export function materializeFixtureInput(input: {
       switch (step.type) {
         case "message":
           messageIndex += 1;
+          runIndex += 1;
           {
             const nextStep = input.fixtureInput.steps[stepIndex + 1];
             const shouldRunInBackground =
               (nextStep !== undefined &&
-                ((nextStep.type === "interrupt" && nextStep.targetRunIndex === messageIndex) ||
+                ((nextStep.type === "interrupt" && nextStep.targetRunIndex === runIndex) ||
                   nextStep.type === "queue_message" ||
-                  (nextStep.type === "restart" && nextStep.targetRunIndex === messageIndex))) ||
+                  (nextStep.type === "restart" && nextStep.targetRunIndex === runIndex))) ||
               nextStep?.type === "approve_next_runtime_request" ||
               nextStep?.type === "answer_next_user_input_request";
-            const key = `run:${messageIndex}`;
+            const key = `run:${runIndex}`;
             pushDispatch(
               dispatchMessageCommand({
                 commandId: yield* idAllocator.allocate.command({
@@ -461,7 +463,7 @@ export function materializeFixtureInput(input: {
               !(
                 nextStep !== undefined &&
                 (nextStep.type === "steer" || nextStep.type === "restart") &&
-                nextStep.targetRunIndex === messageIndex
+                nextStep.targetRunIndex === runIndex
               )
             ) {
               steps.push({ type: "await_thread_idle", threadId: ids.threadId });
@@ -470,6 +472,7 @@ export function materializeFixtureInput(input: {
           break;
         case "queue_message":
           messageIndex += 1;
+          runIndex += 1;
           pushDispatch(
             dispatchMessageCommand({
               commandId: yield* idAllocator.allocate.command({
@@ -486,7 +489,7 @@ export function materializeFixtureInput(input: {
               ...(step.attachments === undefined ? {} : { attachments: step.attachments }),
             }),
           );
-          steps.push({ type: "await", key: `run:${messageIndex - 1}` });
+          steps.push({ type: "await", key: `run:${runIndex - 1}` });
           steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           break;
         case "answer_next_user_input_request":

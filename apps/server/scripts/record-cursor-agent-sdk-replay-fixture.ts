@@ -20,9 +20,12 @@ import {
   SUBAGENT_PROMPT,
   TODO_LIST_PROMPT,
   TOOL_CALL_READ_ONLY_PROMPT,
-  TOOL_CALL_READ_ONLY_WORKSPACE_ROOT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+import {
+  cursorReplayPromptsForWorkspace,
+  shouldSeedCursorReplayWorkspace,
+} from "./cursorReplayRecordingWorkspace.ts";
 
 const RECORDINGS = {
   simple: {
@@ -99,35 +102,18 @@ const runFileSystem = <A, E>(
 
 async function prepareWorkspace(scenario: RecordingName): Promise<{
   readonly cwd: string;
-  readonly remove: boolean;
+  readonly owned: boolean;
 }> {
-  if (process.env.T3_CURSOR_REPLAY_CWD !== undefined) {
+  const configuredCwd = process.env.T3_CURSOR_REPLAY_CWD?.trim();
+  if (configuredCwd) {
     return {
-      cwd: process.env.T3_CURSOR_REPLAY_CWD,
-      remove: false,
-    };
-  }
-  if (scenario === "tool_call_read_only") {
-    await runFileSystem(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.remove(TOOL_CALL_READ_ONLY_WORKSPACE_ROOT, {
-          recursive: true,
-          force: true,
-        });
-        yield* fs.makeDirectory(TOOL_CALL_READ_ONLY_WORKSPACE_ROOT, {
-          recursive: true,
-        });
-      }),
-    );
-    return {
-      cwd: TOOL_CALL_READ_ONLY_WORKSPACE_ROOT,
-      remove: true,
+      cwd: configuredCwd,
+      owned: false,
     };
   }
   return {
     cwd: await makeCheckpointWorkspace(`cursor-agent-sdk-record-${scenario}`),
-    remove: true,
+    owned: true,
   };
 }
 
@@ -172,16 +158,27 @@ if (!apiKey) {
 
 const recording = RECORDINGS[scenario];
 const workspace = await prepareWorkspace(scenario);
-if (scenario === "subagent" || scenario === "tool_call_read_only" || scenario === "todo_list") {
-  await writeFixtureFiles(workspace.cwd);
-}
-
 const outputPath = readArgValue("--out") ?? new URL(recording.output, import.meta.url).pathname;
 
 try {
+  if (shouldSeedCursorReplayWorkspace({ scenario, owned: workspace.owned })) {
+    await writeFixtureFiles(workspace.cwd);
+  }
+  const prompts = await runFileSystem(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      return cursorReplayPromptsForWorkspace({
+        scenario,
+        configuredPrompts: recording.prompts,
+        packageJsonPath: path.join(workspace.cwd, "package.json"),
+        tsconfigPath: path.join(workspace.cwd, "tsconfig.json"),
+      });
+    }),
+  );
   const transcript = await recordCursorAgentSdkReplayTranscript({
     scenario,
-    prompts: recording.prompts,
+    prompts,
+    ...(scenario === "tool_call_read_only" ? { transcriptPrompts: recording.prompts } : {}),
     modelSelection: {
       ...CURSOR_MODEL_SELECTION,
       model: process.env.T3_CURSOR_REPLAY_MODEL ?? CURSOR_MODEL_SELECTION.model,
@@ -211,7 +208,7 @@ try {
     Console.log(`Wrote ${transcript.entries.length} Cursor SDK replay entries to ${outputPath}`),
   );
 } finally {
-  if (workspace.remove) {
+  if (workspace.owned) {
     await runFileSystem(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
