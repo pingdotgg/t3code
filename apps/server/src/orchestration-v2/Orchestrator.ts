@@ -1371,11 +1371,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `No stable source run was found for merge-back source ${command.sourcePoint.type}.`,
       });
     }
-    if (sourceRun.status !== "completed") {
+    if (sourceRun.status !== "completed" && sourceRun.status !== "waiting") {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Merge-back source run ${sourceRun.id} is ${sourceRun.status}; only completed runs are supported.`,
+        cause: `Merge-back source run ${sourceRun.id} is ${sourceRun.status}; only provider-finished runs are supported.`,
       });
     }
 
