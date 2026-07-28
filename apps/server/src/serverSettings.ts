@@ -270,6 +270,7 @@ const resolveClientFacingModelSelections = (settings: ServerSettings): ServerSet
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "automaticGitFetchInterval",
   "textGenerationModelSelection",
+  "workflowModelRouting",
   "customInstructions",
 ]);
 

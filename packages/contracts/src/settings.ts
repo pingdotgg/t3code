@@ -462,6 +462,20 @@ export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER = Duration.days(3);
 
+export const WorkflowTaskRole = Schema.Literals(["explore", "implement", "verify"]);
+export type WorkflowTaskRole = typeof WorkflowTaskRole.Type;
+
+/**
+ * Cost-aware model routing for multi-agent workflows. A null route inherits
+ * the parent model, preserving provider-native behavior until the user opts in.
+ */
+export const WorkflowModelRouting = Schema.Struct({
+  explore: Schema.NullOr(ModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  implement: Schema.NullOr(ModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  verify: Schema.NullOr(ModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type WorkflowModelRouting = typeof WorkflowModelRouting.Type;
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -484,9 +498,9 @@ export const ServerSettings = Schema.Struct({
   ),
   // When enabled (the default), new thread worktrees branch off the freshly
   // fetched `origin/<base>` ref instead of the local base branch, so threads
-  // never start from stale local state. The server fetches the remote base
-  // right before creating the worktree and falls back to the local ref when
-  // the fetch fails (e.g. offline).
+  // never start from stale local state. The server requires a successful fetch
+  // for each worktree creation and aborts creation when freshness cannot be
+  // established (for example, while offline).
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -498,6 +512,9 @@ export const ServerSettings = Schema.Struct({
         model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
       }),
     ),
+  ),
+  workflowModelRouting: WorkflowModelRouting.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ explore: null, implement: null, verify: null })),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
@@ -637,6 +654,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  workflowModelRouting: Schema.optionalKey(WorkflowModelRouting),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

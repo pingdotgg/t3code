@@ -14,9 +14,11 @@ import {
   listThreadsByProjectId,
   requireProject,
   requireProjectAbsent,
+  requireProjectIncludingDeleted,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
+  requireThreadIncludingDeleted,
   requireThreadNotArchived,
   requireValidParentThread,
 } from "./commandInvariants.ts";
@@ -222,7 +224,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.delete": {
-      yield* requireProject({
+      yield* requireProjectIncludingDeleted({
         readModel,
         command,
         projectId: command.projectId,
@@ -321,7 +323,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      yield* requireThreadIncludingDeleted({
         readModel,
         command,
         threadId: command.threadId,

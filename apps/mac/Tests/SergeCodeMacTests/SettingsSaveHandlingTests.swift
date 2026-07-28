@@ -22,6 +22,7 @@ struct SettingsSaveHandlingTests {
     private static let settingsSources = [
         "UI/Settings/SettingsScene.swift",
         "UI/Settings/AutoReviewSettingsTab.swift",
+        "UI/Settings/WorkflowRoutingSettingsTab.swift",
     ]
 
     /// Walks up from this file to `apps/mac`, so the test does not depend on
