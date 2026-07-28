@@ -3060,14 +3060,16 @@ public actor LiveBackend: BackendService {
                     event: .timelineAppended(threadID: shell.id, item: item))
             }
         }
-        let activeSubagentCount =
+        let activeBackgroundWorkCount =
             subagentTasksByThread[shell.id]?.activeBackgroundWorkCount ?? 0
+        let activeSubagentCount =
+            subagentTasksByThread[shell.id]?.activeSubagentCount ?? 0
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
             settledOverride: shell.settledOverride,
             hasPendingApprovals: shell.hasPendingApprovals,
             hasPendingUserInput: shell.hasPendingUserInput,
-            activeSubagentCount: activeSubagentCount,
+            activeSubagentCount: activeBackgroundWorkCount,
             autoReviewPhase: shell.autoReviewPhase)
         let presentedStatus =
             status == .running
@@ -3314,8 +3316,9 @@ public actor LiveBackend: BackendService {
             return
         }
         guard var thread = threadsByID[threadID] else { return }
-        let activeCount = subagentTasksByThread[threadID]?.activeBackgroundWorkCount ?? 0
-        thread.backgroundAgentCount = activeCount
+        let taskState = subagentTasksByThread[threadID]
+        let activeCount = taskState?.activeBackgroundWorkCount ?? 0
+        thread.backgroundAgentCount = taskState?.activeSubagentCount ?? 0
         thread.health = uiThreadHealth(for: threadID)
         if thread.status == .idle, activeCount > 0 {
             thread.status = .backgroundWork

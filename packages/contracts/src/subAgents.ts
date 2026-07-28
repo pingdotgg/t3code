@@ -2,10 +2,11 @@
  * Delegation contracts for the product-native MCP "agents" toolkit.
  *
  * A running provider session can delegate a self-contained task to a child
- * thread through the single `delegate_task` tool. The child inherits the
- * caller's runtime mode, project, and worktree, while its task role can select
- * a configured workflow provider/model route. Depth is capped at 1 and
- * concurrency at a small constant, so fan-out is bounded by construction.
+ * thread through `delegate_task`, then observe it through `wait_for_delegate`.
+ * The child inherits the caller's runtime mode, project, and worktree, while
+ * its task role can select a configured workflow provider/model route.
+ * Depth is capped at 1 and concurrency at a small constant, so fan-out is
+ * bounded by construction.
  *
  * Keep this module schema-only; the runtime lives in
  * `apps/server/src/mcp/toolkits/agents/`.
@@ -88,12 +89,30 @@ export const DelegateTaskResult = Schema.Struct({
 });
 export type DelegateTaskResult = typeof DelegateTaskResult.Type;
 
+export const DelegateTaskStatusInput = Schema.Struct({
+  /** Task id returned by delegate_task. */
+  taskId: TrimmedNonEmptyString,
+  /**
+   * How long to wait for a state change before returning the current running
+   * status. Kept short so provider MCP clients never depend on one fragile,
+   * many-minute HTTP request.
+   */
+  waitSeconds: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 30 })).annotate({
+      description: "Seconds to wait for completion before returning the current status (0-30).",
+      default: 20,
+    }),
+  ),
+});
+export type DelegateTaskStatusInput = typeof DelegateTaskStatusInput.Type;
+
 export const DelegateErrorReason = Schema.Literals([
   "capability-unavailable",
   "caller-thread-not-found",
   "depth-limit-exceeded",
   "concurrency-limit-exceeded",
   "dispatch-failed",
+  "task-not-found",
 ]);
 export type DelegateErrorReason = typeof DelegateErrorReason.Type;
 

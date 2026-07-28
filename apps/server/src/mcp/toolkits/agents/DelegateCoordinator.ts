@@ -7,9 +7,10 @@
  * model. The one exception is advisor mode: when the calling thread is an
  * advisor thread with a user-configured executor model, the child runs on
  * that executor selection instead (still with `interactionMode: "default"`
- * and the parent's stored runtime mode). The call blocks until the child
- * turn settles (or a generous timeout) and returns the child's final
- * message, so delegation costs exactly one tool round-trip.
+ * and the parent's stored runtime mode). `delegate_task` returns as soon as
+ * the child starts; `wait_for_delegate` performs bounded completion waits. A
+ * server-lifetime reconciler mirrors progress and terminal state into the
+ * parent timeline independently of the MCP request.
  *
  * Fan-out is bounded by construction: depth is capped at 1 via the persisted
  * `parentThreadId` (delegated children are refused, so advisor executor
@@ -33,6 +34,7 @@ import {
   ThreadId,
   type DelegateTaskInput,
   type DelegateTaskResult,
+  type DelegateTaskStatusInput,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type SubAgentStatus,
@@ -58,7 +60,8 @@ import { ServerSettingsService } from "../../../serverSettings.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;
-const WAIT_TIMEOUT_MILLIS = 15 * 60 * 1_000;
+const DEFAULT_STATUS_WAIT_SECONDS = 20;
+const RECONCILE_INTERVAL_MILLIS = 1_000;
 const TITLE_MAX_LENGTH = 60;
 const PARENT_ACTIVITY_TEXT_MAX_LENGTH = 2_000;
 const EFFORT_OPTION_IDS = new Set(["effort", "reasoningEffort", "reasoning"]);
@@ -73,12 +76,17 @@ interface DelegateRecord {
   readonly parentTurnId: TurnId | null;
   readonly lastTurnRequestedAt: string;
   readonly status: SubAgentStatus;
+  readonly lastProgressKey?: string | undefined;
 }
 
 export interface DelegateCoordinatorShape {
   readonly delegate: (
     scope: McpInvocationScope,
     input: DelegateTaskInput,
+  ) => Effect.Effect<DelegateTaskResult, DelegateError>;
+  readonly waitForDelegate: (
+    scope: McpInvocationScope,
+    input: DelegateTaskStatusInput,
   ) => Effect.Effect<DelegateTaskResult, DelegateError>;
 }
 
@@ -173,6 +181,43 @@ const truncateResult = (text: string): { readonly text: string; readonly truncat
         truncated: true,
       }
     : { text, truncated: false };
+
+const runningResult = (record: DelegateRecord, childThreadId: ThreadId): DelegateTaskResult => ({
+  taskId: record.taskId,
+  threadId: childThreadId,
+  status: "running",
+  result: "The delegated agent is still running. Call wait_for_delegate again.",
+  truncated: false,
+});
+
+const progressSnapshot = (
+  thread: OrchestrationThread,
+): { readonly key: string; readonly summary: string; readonly lastToolName?: string } | null => {
+  const activity = thread.activities.at(-1);
+  if (!activity) return null;
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : undefined;
+  const presentation =
+    payload?.presentation && typeof payload.presentation === "object"
+      ? (payload.presentation as Record<string, unknown>)
+      : undefined;
+  const detail = typeof payload?.detail === "string" ? payload.detail.trim() : "";
+  const summary = truncateParentActivityText(detail || activity.summary.trim());
+  if (summary.length === 0) return null;
+  const lastToolName =
+    typeof presentation?.title === "string"
+      ? presentation.title
+      : activity.kind.startsWith("tool.")
+        ? activity.summary
+        : undefined;
+  return {
+    key: `${activity.id}:${activity.createdAt}:${summary}`,
+    summary,
+    ...(lastToolName ? { lastToolName } : {}),
+  };
+};
 
 const makeDelegateCoordinator = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -297,6 +342,24 @@ const makeDelegateCoordinator = Effect.gen(function* () {
       return next;
     });
 
+  const writeProgressKey = (childThreadId: ThreadId, lastProgressKey: string) =>
+    SynchronizedRef.update(records, (current) => {
+      const existing = current.get(childThreadId);
+      if (!existing) return current;
+      const next = new Map(current);
+      next.set(childThreadId, { ...existing, lastProgressKey });
+      return next;
+    });
+
+  const claimTerminalStatus = (childThreadId: ThreadId, status: SubAgentStatus) =>
+    SynchronizedRef.modify(records, (current) => {
+      const existing = current.get(childThreadId);
+      if (!existing || existing.status !== "running") return [false, current] as const;
+      const next = new Map(current);
+      next.set(childThreadId, { ...existing, status });
+      return [true, next] as const;
+    });
+
   /**
    * First observation of a terminal status for a delegated child: update the
    * record, mirror completion into the parent timeline, and archive the child
@@ -309,7 +372,8 @@ const makeDelegateCoordinator = Effect.gen(function* () {
     thread: OrchestrationThread,
     finalText: string | null,
   ) {
-    yield* writeStatus(childThreadId, status);
+    const claimed = yield* claimTerminalStatus(childThreadId, status);
+    if (!claimed) return;
     yield* emitTaskCompleted(record, childThreadId, status, finalText).pipe(
       Effect.catch(() => Effect.void),
     );
@@ -359,88 +423,80 @@ const makeDelegateCoordinator = Effect.gen(function* () {
       ? providerService.value.noteSessionActivity(record.parentThreadId)
       : Effect.void;
 
+  const observeDelegate = Effect.fn("DelegateCoordinator.observeDelegate")(function* (
+    childThreadId: ThreadId,
+    record: DelegateRecord,
+  ): Effect.fn.Return<DelegateTaskResult, DelegateError> {
+    yield* noteParentActivity(record);
+    const detail = yield* snapshotQuery
+      .getThreadDetailById(childThreadId)
+      .pipe(Effect.mapError(dispatchFailed("read delegated thread state")));
+    if (Option.isNone(detail)) {
+      const message = "The delegated thread no longer exists (it may have been deleted).";
+      const claimed = yield* claimTerminalStatus(childThreadId, "error");
+      if (claimed) {
+        yield* emitTaskCompleted(record, childThreadId, "error", message).pipe(
+          Effect.catch(() => Effect.void),
+        );
+      }
+      return {
+        taskId: record.taskId,
+        threadId: childThreadId,
+        status: "error",
+        result: message,
+        truncated: false,
+      };
+    }
+    const thread = detail.value;
+    const status = turnStatus(thread, record.lastTurnRequestedAt);
+    if (isTerminalStatus(status)) {
+      const finalText = finalAssistantText(thread);
+      yield* settle(childThreadId, record, status, thread, finalText);
+      const result = truncateResult(finalText ?? completionSummaryForStatus(status));
+      return {
+        taskId: record.taskId,
+        threadId: childThreadId,
+        status,
+        result: result.text,
+        truncated: result.truncated,
+      };
+    }
+
+    const progress = progressSnapshot(thread);
+    if (progress && progress.key !== record.lastProgressKey) {
+      yield* appendParentTaskActivity({
+        record,
+        kind: "task.progress",
+        summary: "Delegated agent progress",
+        payload: {
+          taskId: record.taskId,
+          description: stripAgentTitlePrefix(record.title),
+          summary: progress.summary,
+          ...(progress.lastToolName ? { lastToolName: progress.lastToolName } : {}),
+          toolUseId: childThreadId,
+          detail: progress.summary,
+        },
+      }).pipe(Effect.catch(() => Effect.void));
+      yield* writeProgressKey(childThreadId, progress.key);
+    }
+    return runningResult(record, childThreadId);
+  });
+
   const awaitCompletion = Effect.fn("DelegateCoordinator.awaitCompletion")(function* (
     childThreadId: ThreadId,
     record: DelegateRecord,
+    waitSeconds: number,
   ) {
-    const deadline = (yield* Clock.currentTimeMillis) + WAIT_TIMEOUT_MILLIS;
+    const deadline = (yield* Clock.currentTimeMillis) + waitSeconds * 1_000;
     while (true) {
-      yield* noteParentActivity(record);
-      const detail = yield* snapshotQuery
-        .getThreadDetailById(childThreadId)
-        .pipe(Effect.mapError(dispatchFailed("read delegated thread state")));
-      if (Option.isNone(detail)) {
-        yield* writeStatus(childThreadId, "error");
-        return {
-          taskId: record.taskId,
-          threadId: childThreadId,
-          status: "error" as const,
-          result: "The delegated thread no longer exists (it may have been deleted).",
-          truncated: false,
-        };
-      }
-      const thread = detail.value;
-      const status = turnStatus(thread, record.lastTurnRequestedAt);
-      if (isTerminalStatus(status)) {
-        const finalText = finalAssistantText(thread);
-        yield* settle(childThreadId, record, status, thread, finalText);
-        const result = truncateResult(finalText ?? completionSummaryForStatus(status));
-        return {
-          taskId: record.taskId,
-          threadId: childThreadId,
-          status,
-          result: result.text,
-          truncated: result.truncated,
-        };
-      }
-      if ((yield* Clock.currentTimeMillis) >= deadline) {
-        // The child keeps running in the background; its timeline row stays
-        // live in the parent thread and settles on the next delegate call.
-        yield* appendParentTaskActivity({
-          record,
-          kind: "task.progress",
-          summary: "Delegated agent still running",
-          payload: {
-            taskId: record.taskId,
-            description: stripAgentTitlePrefix(record.title),
-            summary: "Delegated agent still running",
-            lastToolName: "delegate_task",
-            toolUseId: childThreadId,
-            detail:
-              "The delegated agent did not finish within the wait window and keeps running in the background.",
-          },
-        }).pipe(Effect.catch(() => Effect.void));
-        return {
-          taskId: record.taskId,
-          threadId: childThreadId,
-          status: "running" as const,
-          result:
-            "The delegated agent is still running in the background. Its progress is visible in this thread; delegate another task only after it settles.",
-          truncated: false,
-        };
+      const current = (yield* SynchronizedRef.get(records)).get(childThreadId) ?? record;
+      const result = yield* observeDelegate(childThreadId, current);
+      if (result.status !== "running" || (yield* Clock.currentTimeMillis) >= deadline) {
+        return result;
       }
       yield* Effect.sleep(Duration.millis(WAIT_POLL_INTERVAL_MILLIS));
     }
   });
-
-  /** Best-effort child teardown when the caller's tool call is interrupted. */
-  const interruptChild = (childThreadId: ThreadId, record: DelegateRecord) =>
-    Effect.gen(function* () {
-      const createdAt = yield* nowIso;
-      const commandUuid = yield* randomUuid;
-      yield* engine
-        .dispatch({
-          type: "thread.turn.interrupt",
-          commandId: CommandId.make(`server:delegate-interrupt:${commandUuid}`),
-          threadId: childThreadId,
-          createdAt,
-        })
-        .pipe(Effect.catch(() => Effect.void));
-      yield* writeStatus(childThreadId, "interrupted");
-      yield* emitTaskCompleted(record, childThreadId, "interrupted", null).pipe(
-        Effect.catch(() => Effect.void),
-      );
-    });
 
   /** Cap check, child creation, and turn start — serialized via the gate. */
   const prepareDelegate = Effect.fn("DelegateCoordinator.prepareDelegate")(function* (
@@ -596,15 +652,82 @@ const makeDelegateCoordinator = Effect.gen(function* () {
   const delegate: DelegateCoordinatorShape["delegate"] = (scope, input) =>
     delegateGate
       .withPermits(1)(prepareDelegate(scope, input))
-      .pipe(
-        Effect.flatMap(([childThreadId, record]) =>
-          awaitCompletion(childThreadId, record).pipe(
-            Effect.onInterrupt(() => interruptChild(childThreadId, record)),
-          ),
-        ),
-      );
+      .pipe(Effect.map(([childThreadId, record]) => runningResult(record, childThreadId)));
 
-  return DelegateCoordinator.of({ delegate });
+  const recoverRecord = Effect.fn("DelegateCoordinator.recoverRecord")(function* (
+    scope: McpInvocationScope,
+    taskId: string,
+  ) {
+    if (!taskId.startsWith("delegate:")) return null;
+    const childThreadId = ThreadId.make(taskId.slice("delegate:".length));
+    const detail = yield* snapshotQuery
+      .getThreadDetailById(childThreadId)
+      .pipe(Effect.mapError(dispatchFailed("recover delegated thread state")));
+    if (Option.isNone(detail) || detail.value.parentThreadId !== scope.threadId) return null;
+
+    const thread = detail.value;
+    const effortOption = thread.modelSelection.options?.find(
+      (option) => EFFORT_OPTION_IDS.has(option.id) && typeof option.value === "string",
+    );
+    const record: DelegateRecord = {
+      parentThreadId: scope.threadId,
+      taskId: RuntimeTaskId.make(taskId),
+      title: thread.title,
+      model: thread.modelSelection.model,
+      effort: typeof effortOption?.value === "string" ? effortOption.value : undefined,
+      providerLabel: thread.modelSelection.instanceId,
+      parentTurnId: null,
+      lastTurnRequestedAt: thread.latestTurn?.requestedAt ?? thread.createdAt,
+      // Reconciliation claims the real terminal state atomically and mirrors
+      // completion into the parent even when this record was rebuilt after a
+      // server restart.
+      status: "running",
+    };
+    yield* SynchronizedRef.update(records, (current) => {
+      const next = new Map(current);
+      next.set(childThreadId, record);
+      return next;
+    });
+    return [childThreadId, record] as const;
+  });
+
+  const waitForDelegate: DelegateCoordinatorShape["waitForDelegate"] = Effect.fn(
+    "DelegateCoordinator.waitForDelegate",
+  )(function* (scope, input) {
+    const snapshot = yield* SynchronizedRef.get(records);
+    const entry =
+      [...snapshot.entries()].find(([, record]) => record.taskId === input.taskId) ??
+      (yield* recoverRecord(scope, input.taskId));
+    if (!entry || entry[1].parentThreadId !== scope.threadId) {
+      return yield* new DelegateError({
+        reason: "task-not-found",
+        description: `No delegated task '${input.taskId}' belongs to this session.`,
+      });
+    }
+    const [childThreadId, record] = entry;
+    return yield* awaitCompletion(
+      childThreadId,
+      record,
+      input.waitSeconds ?? DEFAULT_STATUS_WAIT_SECONDS,
+    );
+  });
+
+  // This fiber belongs to the coordinator layer (server lifetime), not to an
+  // individual MCP request. It is the durable bridge from real child-thread
+  // state to the parent timeline when a provider disconnects or times out.
+  yield* Effect.gen(function* () {
+    while (true) {
+      const snapshot = yield* SynchronizedRef.get(records);
+      for (const [childThreadId, record] of snapshot) {
+        if (record.status !== "running") continue;
+        const current = (yield* SynchronizedRef.get(records)).get(childThreadId) ?? record;
+        yield* observeDelegate(childThreadId, current).pipe(Effect.catch(() => Effect.void));
+      }
+      yield* Effect.sleep(Duration.millis(RECONCILE_INTERVAL_MILLIS));
+    }
+  }).pipe(Effect.forkScoped);
+
+  return DelegateCoordinator.of({ delegate, waitForDelegate });
 });
 
 export const DelegateCoordinatorLive = Layer.effect(DelegateCoordinator, makeDelegateCoordinator);
@@ -613,6 +736,6 @@ export const DelegateCoordinatorLive = Layer.effect(DelegateCoordinator, makeDel
 export const __testing = {
   make: makeDelegateCoordinator,
   resolveTitle,
-  WAIT_TIMEOUT_MILLIS,
+  DEFAULT_STATUS_WAIT_SECONDS,
   WAIT_POLL_INTERVAL_MILLIS,
 };

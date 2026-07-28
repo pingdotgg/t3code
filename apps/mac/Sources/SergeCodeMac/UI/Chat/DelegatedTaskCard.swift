@@ -1,11 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// Inline representation of a delegated or provider-native sub-agent task in
-/// the chat timeline. The card is the ONLY surface for sub-agent work: there
-/// is no drill-in pane, no agents panel, and no sidebar thread. Collapsed it
-/// shows status, identity, elapsed time, and the latest activity line; a tap
-/// unfolds the progress log and (once settled) the agent's result in place.
+/// Inline representation of delegated work (a sub-agent or provider-native
+/// workflow) in the chat timeline. Collapsed it shows status, identity,
+/// elapsed time, and the latest activity line; a tap unfolds the progress log
+/// and (once settled) the result in place.
 @MainActor
 struct DelegatedTaskCard: View {
     /// Expanded log shows the tail; older entries are summarized above.
@@ -70,7 +69,9 @@ struct DelegatedTaskCard: View {
 
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 7) {
-                                Image(systemName: task.entityKind == .command ? "terminal" : "person.2")
+                                Image(
+                                    systemName: SubagentTaskPresentation.entityIconName(for: task)
+                                )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .frame(width: Self.iconColumn)
@@ -160,7 +161,7 @@ struct DelegatedTaskCard: View {
                 }
             }
             if task.state == .running || task.state == .paused {
-                Button("Stop agent", role: .destructive) {
+                Button(SubagentTaskPresentation.stopActionLabel(for: task), role: .destructive) {
                     onStopAgent()
                 }
                 Button("Stop turn…", role: .destructive) {
@@ -194,8 +195,8 @@ struct DelegatedTaskCard: View {
                 .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
-        .help("Stop agent")
-        .accessibilityLabel("Stop agent")
+        .help(SubagentTaskPresentation.stopActionLabel(for: task))
+        .accessibilityLabel(SubagentTaskPresentation.stopActionLabel(for: task))
     }
 
     @ViewBuilder

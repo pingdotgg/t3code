@@ -91,23 +91,31 @@ struct SidebarThreadItem {
     }
 
     var statusLabel: String {
-        if hasConnectionIssue { return member.location.connection.accessibilityLabel }
-        if thread.isStalled { return "Stalled" }
-        return switch thread.status {
-        case .backgroundWork: "Background work"
-        case .idle: "Idle"
-        case .running: "Running"
-        case .waiting: "Waiting"
-        case .waitingApproval: "Needs approval"
-        case .waitingInput: "Needs input"
-        case .error: "Error"
-        case .archived: "Archived"
-        case .settled: "Settled"
-        case .done: "Done"
-        case .reviewing: "Reviewing"
-        case .fixing: "Fixing"
-        case .readyToMerge: "Ready to merge"
+        let base: String
+        if hasConnectionIssue {
+            base = member.location.connection.accessibilityLabel
+        } else if thread.isStalled {
+            base = "Stalled"
+        } else {
+            base = switch thread.status {
+            case .backgroundWork: "Background work"
+            case .idle: "Idle"
+            case .running: "Running"
+            case .waiting: "Waiting"
+            case .waitingApproval: "Needs approval"
+            case .waitingInput: "Needs input"
+            case .error: "Error"
+            case .archived: "Archived"
+            case .settled: "Settled"
+            case .done: "Done"
+            case .reviewing: "Reviewing"
+            case .fixing: "Fixing"
+            case .readyToMerge: "Ready to merge"
+            }
         }
+        guard thread.backgroundAgentCount > 0 else { return base }
+        let noun = thread.backgroundAgentCount == 1 ? "sub-agent" : "sub-agents"
+        return "\(base), \(thread.backgroundAgentCount) \(noun) running"
     }
 }
 
@@ -117,14 +125,13 @@ struct SidebarProjectGroup: Identifiable {
     let name: String
     let members: [SidebarProjectMember]
     let threads: [SidebarThreadItem]
+    /// Cached while the group is projected. Reading this from a sort
+    /// comparator must stay O(1): computing it from `threads` there turns a
+    /// group sort into repeated scans of every thread in the sidebar.
+    let lastActivityAt: Date?
 
     var preferredMember: SidebarProjectMember {
         members.first(where: { $0.location.isLocal }) ?? members[0]
-    }
-
-    /// Most recent thread activity across the group; groups sort by this.
-    var lastActivityAt: Date? {
-        threads.map(\.thread.updatedAt).max()
     }
 
     var activeThreadCount: Int {
@@ -230,7 +237,8 @@ enum SidebarProjection {
                 id: id,
                 name: preferred.project.name,
                 members: sortedMembers,
-                threads: pinnedFirst)
+                threads: pinnedFirst,
+                lastActivityAt: pinnedFirst.lazy.map(\.thread.updatedAt).max())
         }
         .sorted { lhs, rhs in
             let left = lhs.lastActivityAt ?? .distantPast

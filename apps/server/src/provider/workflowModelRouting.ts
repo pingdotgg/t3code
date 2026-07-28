@@ -45,8 +45,8 @@ export function workflowModelRoutingInstructions(
   });
   const executionPolicy =
     nativeRoutes.length > 0
-      ? `For same-provider routes, use these configured native agents:\n${nativeRoutes.join("\n")}\nFor every other delegated task, call the SurgeCode MCP \`delegate_task\` tool and set its \`role\` to exactly one of \`explore\`, \`implement\`, or \`verify\`.`
-      : "For every delegated task, call the SurgeCode MCP `delegate_task` tool and set its `role` to exactly one of `explore`, `implement`, or `verify`.";
+      ? `For same-provider routes, use these configured native agents:\n${nativeRoutes.join("\n")}\nFor every other delegated task, call the SurgeCode MCP \`delegate_task\` tool, set its \`role\` to exactly one of \`explore\`, \`implement\`, or \`verify\`, then collect the result with \`wait_for_delegate\`.`
+      : "For every delegated task, call the SurgeCode MCP `delegate_task` tool, set its `role` to exactly one of `explore`, `implement`, or `verify`, then collect the result with `wait_for_delegate`.";
 
   return `<workflow_model_routing>
 The user configured cost-aware sub-agent routes for this workflow:

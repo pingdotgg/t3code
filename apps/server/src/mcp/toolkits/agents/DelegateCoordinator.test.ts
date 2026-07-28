@@ -244,16 +244,21 @@ const makeCoordinator = (options?: {
   }).pipe(Effect.provide(layer));
 };
 
-it.effect("delegates a task and returns the child's final message", () =>
+it.effect("delegates immediately, then returns the child's final message from a bounded wait", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator();
     harness.setThreadDetail((threadId) => Option.some(completedChildDetail(threadId)));
 
-    const result = yield* coordinator.delegate(makeScope(), {
+    const started = yield* coordinator.delegate(makeScope(), {
       prompt: "Review the diff",
       name: "reviewer",
     });
+    expect(started.status).toBe("running");
 
+    const result = yield* coordinator.waitForDelegate(makeScope(), {
+      taskId: started.taskId,
+      waitSeconds: 0,
+    });
     expect(result.status).toBe("completed");
     expect(result.result).toBe("All done.");
     expect(result.truncated).toBe(false);
@@ -300,30 +305,59 @@ it.effect("caps concurrent delegations per parent at three", () =>
     // Children stay running: no latestTurn and no failure activities.
     harness.setThreadDetail((threadId) => Option.some(makeThreadDetail(threadId)));
 
-    const fibers = yield* Effect.all(
-      [1, 2, 3].map((index) =>
-        coordinator.delegate(makeScope(), { prompt: `task ${index}` }).pipe(Effect.forkChild),
-      ),
+    yield* Effect.all(
+      [1, 2, 3].map((index) => coordinator.delegate(makeScope(), { prompt: `task ${index}` })),
     );
-    yield* TestClock.adjust(Duration.millis(10));
 
     const error = yield* coordinator
       .delegate(makeScope(), { prompt: "one too many" })
       .pipe(Effect.flip);
     expect(error._tag).toBe("DelegateError");
     expect(error.reason).toBe("concurrency-limit-exceeded");
-
-    yield* Effect.all(fibers.map((fiber) => Fiber.interrupt(fiber)));
   }),
 );
 
-it.effect("reports a missing delegated thread as an error result", () =>
+it.effect("reports a missing delegated thread as an error result when waiting", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator();
     harness.setThreadDetail(() => Option.none());
 
-    const result = yield* coordinator.delegate(makeScope(), { prompt: "vanished" });
+    const started = yield* coordinator.delegate(makeScope(), { prompt: "vanished" });
+    const result = yield* coordinator.waitForDelegate(makeScope(), {
+      taskId: started.taskId,
+      waitSeconds: 0,
+    });
     expect(result.status).toBe("error");
+    expect(
+      harness.dispatched.some(
+        (command) =>
+          command.type === "thread.activity.append" &&
+          command.activity.kind === "task.completed" &&
+          (command.activity.payload as { readonly status?: string }).status === "failed",
+      ),
+    ).toBe(true);
+  }),
+);
+
+it.effect("recovers a persisted delegated task after coordinator restart", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+    harness.setThreadDetail((threadId) => Option.some(completedChildDetail(threadId)));
+
+    const result = yield* coordinator.waitForDelegate(makeScope(), {
+      taskId: "delegate:recovered-child",
+      waitSeconds: 0,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.result).toBe("All done.");
+    expect(result.threadId).toBe(ThreadId.make("recovered-child"));
+    expect(
+      harness.dispatched.some(
+        (command) =>
+          command.type === "thread.activity.append" && command.activity.kind === "task.completed",
+      ),
+    ).toBe(true);
   }),
 );
 
@@ -342,7 +376,7 @@ it.effect("advisor parent with an executor model delegates on the executor selec
     harness.setThreadDetail((threadId) => Option.some(completedChildDetail(threadId)));
 
     const result = yield* coordinator.delegate(makeScope(), { prompt: "Implement the plan" });
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("running");
 
     const create = harness.dispatched.find((command) => command.type === "thread.create");
     expect(create).toMatchObject({
@@ -417,10 +451,7 @@ it.effect("advisor parent honors its configured executor sub-agent cap", () =>
     // Children stay running: no latestTurn and no failure activities.
     harness.setThreadDetail((threadId) => Option.some(makeThreadDetail(threadId)));
 
-    const fiber = yield* coordinator
-      .delegate(makeScope(), { prompt: "first task" })
-      .pipe(Effect.forkChild);
-    yield* TestClock.adjust(Duration.millis(10));
+    yield* coordinator.delegate(makeScope(), { prompt: "first task" });
 
     const error = yield* coordinator
       .delegate(makeScope(), { prompt: "over the configured cap" })
@@ -428,8 +459,6 @@ it.effect("advisor parent honors its configured executor sub-agent cap", () =>
     expect(error._tag).toBe("DelegateError");
     expect(error.reason).toBe("concurrency-limit-exceeded");
     expect(error.description).toContain("max 1");
-
-    yield* Fiber.interrupt(fiber);
   }),
 );
 
@@ -457,8 +486,9 @@ it.effect("heartbeats the parent's session activity while the delegated child ru
     // The parent turn is blocked on the delegate call and emits no runtime
     // events of its own; the coordinator must keep the parent's turn-activity
     // watchdog alive so the thread is not flagged as stalled.
+    const started = yield* coordinator.delegate(makeScope(), { prompt: "long running task" });
     const fiber = yield* coordinator
-      .delegate(makeScope(), { prompt: "long running task" })
+      .waitForDelegate(makeScope(), { taskId: started.taskId, waitSeconds: 20 })
       .pipe(Effect.forkChild);
     yield* TestClock.adjust(Duration.seconds(5));
     yield* Fiber.interrupt(fiber);

@@ -24,6 +24,12 @@ const DelegateToolkitHandlers = DelegateToolkit.toLayer({
       const coordinator = yield* DelegateCoordinator;
       return yield* coordinator.delegate(scope, input);
     }),
+  wait_for_delegate: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* requireAgentsScope();
+      const coordinator = yield* DelegateCoordinator;
+      return yield* coordinator.waitForDelegate(scope, input);
+    }),
 });
 
 export const DelegateToolkitHandlersLive = DelegateToolkitHandlers.pipe(

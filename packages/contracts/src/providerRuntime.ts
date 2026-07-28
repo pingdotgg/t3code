@@ -566,7 +566,7 @@ export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
 const TaskStartedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
-  entityType: Schema.optional(Schema.Literals(["subagent", "command"])),
+  entityType: Schema.optional(Schema.Literals(["subagent", "command", "workflow"])),
   description: Schema.optional(TrimmedNonEmptyStringSchema),
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
   subagentType: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -589,7 +589,7 @@ export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 
 const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
-  entityType: Schema.optional(Schema.Literals(["subagent", "command"])),
+  entityType: Schema.optional(Schema.Literals(["subagent", "command", "workflow"])),
   /**
    * The task's own description, when the progress event is in a position to
    * restate it. Optional because clients fold it over the description from
@@ -608,7 +608,7 @@ export type TaskProgressPayload = typeof TaskProgressPayload.Type;
 
 const TaskUpdatedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
-  entityType: Schema.optional(Schema.Literals(["subagent", "command"])),
+  entityType: Schema.optional(Schema.Literals(["subagent", "command", "workflow"])),
   status: Schema.optional(
     Schema.Literals(["pending", "running", "completed", "failed", "killed", "paused"]),
   ),
@@ -627,7 +627,7 @@ export type TaskUpdatedPayload = typeof TaskUpdatedPayload.Type;
 
 const TaskCompletedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
-  entityType: Schema.optional(Schema.Literals(["subagent", "command"])),
+  entityType: Schema.optional(Schema.Literals(["subagent", "command", "workflow"])),
   status: Schema.Literals(["completed", "failed", "stopped"]),
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
   usage: Schema.optional(Schema.Unknown),
