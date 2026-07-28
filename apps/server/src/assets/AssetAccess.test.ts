@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ThreadId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -7,10 +7,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
@@ -25,6 +28,8 @@ const testLayer = Layer.mergeAll(
     Layer.provide(WorkspacePaths.layer),
     Layer.provide(T3ProjectFileLoader.layer),
   ),
+  RepositoryIdentityResolver.layer,
+  ServerSettings.ServerSettingsService.layerTest(),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -245,6 +250,191 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues exact capabilities for configured project icons outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-root-",
+      });
+      const iconDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-custom-",
+      });
+      const iconPath = path.join(iconDirectory, "custom.svg");
+      yield* fileSystem.writeFileString(iconPath, "<svg />");
+      const canonicalIconPath = yield* fileSystem.realPath(iconPath);
+      const settings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectIcons: { [root]: iconPath },
+        }),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.empty,
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root, revision: iconPath },
+      }).pipe(Effect.provideService(ServerSettings.ServerSettingsService, settings));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({ kind: "file", path: canonicalIconPath });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("finds workspace icon settings keyed by the unnormalized request root", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-raw-root-",
+      });
+      const requestedRoot = `${root}/.`;
+      const iconDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-raw-custom-",
+      });
+      const iconPath = path.join(iconDirectory, "custom.svg");
+      yield* fileSystem.writeFileString(iconPath, "<svg />");
+      const settings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectIcons: { [requestedRoot]: iconPath },
+        }),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.empty,
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: requestedRoot, revision: iconPath },
+      }).pipe(Effect.provideService(ServerSettings.ServerSettingsService, settings));
+
+      expect(result.relativeUrl.endsWith("/custom.svg")).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects automatically discovered icon symlinks outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-auto-symlink-root-",
+      });
+      const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-auto-symlink-outside-",
+      });
+      const outsidePath = path.join(outsideDirectory, "secret.svg");
+      yield* fileSystem.writeFileString(outsidePath, "<svg>secret</svg>");
+      yield* fileSystem.symlink(outsidePath, path.join(root, "favicon.svg"));
+
+      const error = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("AssetProjectFaviconNotFoundError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects a configured project icon replaced by a symlink after signing", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-symlink-root-",
+      });
+      const iconDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-symlink-custom-",
+      });
+      const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-symlink-outside-",
+      });
+      const iconPath = path.join(iconDirectory, "custom.svg");
+      const outsidePath = path.join(outsideDirectory, "secret.svg");
+      yield* fileSystem.writeFileString(iconPath, "<svg>icon</svg>");
+      yield* fileSystem.writeFileString(outsidePath, "<svg>secret</svg>");
+      const settings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectIcons: { [root]: iconPath },
+        }),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.empty,
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root, revision: iconPath },
+      }).pipe(Effect.provideService(ServerSettings.ServerSettingsService, settings));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      yield* fileSystem.remove(iconPath);
+      yield* fileSystem.symlink(outsidePath, iconPath);
+
+      expect(yield* resolveAsset(token, suffix.slice(separatorIndex + 1))).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("uses a configured git-remote icon across clone paths", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-remote-root-",
+      });
+      const iconDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-remote-custom-",
+      });
+      const iconPath = path.join(iconDirectory, "custom.svg");
+      yield* fileSystem.writeFileString(iconPath, "<svg />");
+      const canonicalIconPath = yield* fileSystem.realPath(iconPath);
+      const settings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          projectIconsByGitRemote: { "github.com/t3tools/t3code": iconPath },
+        }),
+        updateSettings: () => Effect.die("not implemented"),
+        streamChanges: Stream.empty,
+      });
+      const repositoryIdentityResolver = RepositoryIdentityResolver.RepositoryIdentityResolver.of({
+        resolve: () =>
+          Effect.succeed({
+            canonicalKey: "github.com/t3tools/t3code",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "git@github.com:T3Tools/T3Code.git",
+            },
+          }),
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root, revision: iconPath },
+      }).pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, settings),
+        Effect.provideService(
+          RepositoryIdentityResolver.RepositoryIdentityResolver,
+          repositoryIdentityResolver,
+        ),
+      );
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({ kind: "file", path: canonicalIconPath });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("preserves structured project favicon resolution causes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -263,6 +453,7 @@ describe("AssetAccess", () => {
         cause: platformCause,
       });
       const resolver = ProjectFaviconResolver.ProjectFaviconResolver.of({
+        resolve: () => Effect.fail(resolutionCause),
         resolvePath: () => Effect.fail(resolutionCause),
       });
 

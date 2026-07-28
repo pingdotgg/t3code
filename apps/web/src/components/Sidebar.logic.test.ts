@@ -14,6 +14,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveProjectRepositoryKey,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
@@ -45,6 +46,21 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveProjectRepositoryKey", () => {
+  it("preserves a repository identity for sidebar favicon cache revisions", () => {
+    expect(
+      resolveProjectRepositoryKey({
+        repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
+      }),
+    ).toBe("github.com/pingdotgg/t3code");
+  });
+
+  it("returns null while repository identity is unavailable", () => {
+    expect(resolveProjectRepositoryKey(undefined)).toBeNull();
+    expect(resolveProjectRepositoryKey({ repositoryIdentity: null })).toBeNull();
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
