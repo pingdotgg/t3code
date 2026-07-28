@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type OrchestrationThreadActivity,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import { isInsightActivity } from "../insights";
 import { Schema } from "effect";
 import { type AppState, type EnvironmentState, selectThreadByRef, useStore } from "../store";
 import {
@@ -25,6 +27,38 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
+
+export function mergeActivityWindows(
+  olderActivities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestActivities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  if (olderActivities.length === 0) return latestActivities;
+  if (latestActivities.length === 0) return olderActivities;
+
+  const latestIds = new Set(latestActivities.map((activity) => activity.id));
+  return [
+    ...olderActivities.filter((activity) => !latestIds.has(activity.id)),
+    ...latestActivities,
+  ];
+}
+
+export function mergeInsightActivityWindows(
+  olderActivities: ReadonlyArray<OrchestrationThreadActivity>,
+  retainedInsightActivities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  return mergeActivityWindows(olderActivities.filter(isInsightActivity), retainedInsightActivities);
+}
+
+export function getActivityHistoryKey(
+  threadRequestKey: string | null,
+  latestActivities: ReadonlyArray<OrchestrationThreadActivity>,
+): string | null {
+  // A shifted oldest row means the server replaced the latest window. Stale
+  // local pages must be discarded so the next request fills the new boundary.
+  return threadRequestKey === null
+    ? null
+    : `${threadRequestKey}\u0000${latestActivities[0]?.id ?? ""}`;
+}
 
 export type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 

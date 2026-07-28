@@ -164,6 +164,7 @@ describe("OrchestrationEngine", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadActivitiesPage: () => Effect.die("unused"),
         }),
       ),
       Layer.provide(

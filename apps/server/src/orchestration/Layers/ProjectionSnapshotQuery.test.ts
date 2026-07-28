@@ -347,6 +347,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
+          hasMoreActivities: false,
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),
@@ -1260,6 +1261,165 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       assert.deepStrictEqual(shellSnapshot.threads, []);
       assert.equal(shellSnapshot.updatedAt, "2026-04-03T00:00:02.000Z");
+    }),
+  );
+
+  it.effect("windows thread activities and pages older history without data loss", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json, scripts_json,
+          created_at, updated_at, deleted_at
+        ) VALUES (
+          'project-history', 'History Project', '/tmp/history', NULL, '[]',
+          '2026-04-05T00:00:00.000Z', '2026-04-05T00:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          branch, worktree_path, created_at, updated_at, archived_at, deleted_at
+        ) VALUES (
+          'thread-history', 'project-history', 'History thread',
+          '{"instanceId":"codex","model":"gpt-5"}', 'full-access', 'default',
+          NULL, NULL, '2026-04-05T00:00:00.000Z', '2026-04-05T00:00:00.000Z', NULL, NULL
+        )
+      `;
+
+      yield* Effect.forEach(
+        Array.from({ length: 240 }, (_unused, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            ) VALUES (
+              ${`activity-${String(sequence).padStart(4, "0")}`},
+              'thread-history', NULL, 'info', 'runtime.note', ${`activity-${sequence}`}, '{}',
+              ${sequence}, '2026-04-05T00:01:00.000Z'
+            )
+          `,
+        { discard: true },
+      );
+
+      const detail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-history"));
+      assert.equal(detail._tag, "Some");
+      if (detail._tag === "Some") {
+        assert.equal(detail.value.activities.length, 200);
+        assert.equal(detail.value.activities[0]?.summary, "activity-41");
+        assert.equal(detail.value.activities.at(-1)?.summary, "activity-240");
+        assert.equal(detail.value.hasMoreActivities, true);
+      }
+
+      const olderPage = yield* snapshotQuery.getThreadActivitiesPage({
+        threadId: ThreadId.make("thread-history"),
+        beforeSequence: 41,
+      });
+      assert.equal(olderPage.activities.length, 40);
+      assert.equal(olderPage.activities[0]?.summary, "activity-1");
+      assert.equal(olderPage.activities.at(-1)?.summary, "activity-40");
+      assert.equal(olderPage.hasMore, false);
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* Effect.forEach(
+        Array.from({ length: 240 }, (_unused, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            ) VALUES (
+              ${`legacy-${String(sequence).padStart(4, "0")}`},
+              'thread-history', NULL, 'info', 'runtime.note', ${`legacy-${sequence}`}, '{}',
+              NULL, '2026-04-05T00:01:00.000Z'
+            )
+          `,
+        { discard: true },
+      );
+
+      const legacyDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-history"),
+      );
+      assert.equal(legacyDetail._tag, "Some");
+      if (legacyDetail._tag === "Some") {
+        const oldest = legacyDetail.value.activities[0];
+        assert.equal(legacyDetail.value.activities.length, 200);
+        assert.equal(oldest?.summary, "legacy-41");
+        assert.equal(legacyDetail.value.activities.at(-1)?.summary, "legacy-240");
+        assert.equal(legacyDetail.value.hasMoreActivities, true);
+        assert.ok(oldest);
+
+        const legacyOlderPage = yield* snapshotQuery.getThreadActivitiesPage({
+          threadId: ThreadId.make("thread-history"),
+          beforeCreatedAt: oldest.createdAt,
+          beforeActivityId: oldest.id,
+        });
+        assert.equal(legacyOlderPage.activities.length, 40);
+        assert.equal(legacyOlderPage.activities[0]?.summary, "legacy-1");
+        assert.equal(legacyOlderPage.activities.at(-1)?.summary, "legacy-40");
+        assert.equal(legacyOlderPage.hasMore, false);
+      }
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* Effect.forEach(
+        Array.from({ length: 4 }, (_unused, index) => index + 1),
+        (index) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            ) VALUES (
+              ${`legacy-${String(index).padStart(4, "0")}`},
+              'thread-history', NULL, 'info', 'runtime.note', ${`legacy-${index}`}, '{}',
+              NULL, '2026-04-05T00:01:00.000Z'
+            )
+          `,
+        { discard: true },
+      );
+      yield* Effect.forEach(
+        Array.from({ length: 4 }, (_unused, index) => index + 1),
+        (sequence) =>
+          sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+              sequence, created_at
+            ) VALUES (
+              ${`sequenced-${String(sequence).padStart(4, "0")}`},
+              'thread-history', NULL, 'info', 'runtime.note', ${`sequenced-${sequence}`}, '{}',
+              ${sequence}, '2026-04-05T00:02:00.000Z'
+            )
+          `,
+        { discard: true },
+      );
+
+      const transitionPage = yield* snapshotQuery.getThreadActivitiesPage({
+        threadId: ThreadId.make("thread-history"),
+        beforeSequence: 3,
+        limit: 3,
+      });
+      assert.deepStrictEqual(
+        transitionPage.activities.map((activity) => activity.summary),
+        ["legacy-4", "sequenced-1", "sequenced-2"],
+      );
+      assert.equal(transitionPage.hasMore, true);
+
+      const remainingLegacyPage = yield* snapshotQuery.getThreadActivitiesPage({
+        threadId: ThreadId.make("thread-history"),
+        beforeCreatedAt: transitionPage.activities[0]!.createdAt,
+        beforeActivityId: transitionPage.activities[0]!.id,
+        limit: 3,
+      });
+      assert.deepStrictEqual(
+        remainingLegacyPage.activities.map((activity) => activity.summary),
+        ["legacy-1", "legacy-2", "legacy-3"],
+      );
+      assert.equal(remainingLegacyPage.hasMore, false);
     }),
   );
 });

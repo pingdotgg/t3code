@@ -106,6 +106,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadActivitiesPage: () => Effect.die("unused"),
         }),
       ),
     );
@@ -184,6 +185,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadActivitiesPage: () => Effect.die("unused"),
         }),
       ),
     );
@@ -247,6 +249,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadActivitiesPage: () => Effect.die("unused"),
         }),
       ),
     );
@@ -305,6 +308,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadActivitiesPage: () => Effect.die("unused"),
         }),
       ),
     );
@@ -407,6 +411,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadActivitiesPage: () => Effect.die("unused"),
         }),
       ),
     );
@@ -464,6 +469,7 @@ describe("CheckpointDiffQueryLive", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadShellProjectContextById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadActivitiesPage: () => Effect.die("unused"),
         }),
       ),
     );

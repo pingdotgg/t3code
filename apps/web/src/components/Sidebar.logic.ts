@@ -12,9 +12,7 @@ import { isLatestTurnSettled, isThreadActivelyWorking } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
-// Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription.
-export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
+export const SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS = 120;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
@@ -261,11 +259,57 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   );
 }
 
-export function getSidebarThreadIdsToPrewarm<TThreadId>(
-  visibleThreadIds: readonly TThreadId[],
-  limit = SIDEBAR_THREAD_PREWARM_LIMIT,
-): TThreadId[] {
-  return visibleThreadIds.slice(0, Math.max(0, limit));
+export interface SidebarHoverPrewarmController {
+  hover: (threadKey: string | null) => void;
+  dispose: () => void;
+}
+
+export function createSidebarHoverPrewarmController(input: {
+  delayMs: number;
+  onPrewarmTargetChange: (threadKey: string | null) => void;
+  setTimeoutFn?: typeof globalThis.setTimeout;
+  clearTimeoutFn?: typeof globalThis.clearTimeout;
+}): SidebarHoverPrewarmController {
+  const setTimeoutFn = input.setTimeoutFn ?? globalThis.setTimeout;
+  const clearTimeoutFn = input.clearTimeoutFn ?? globalThis.clearTimeout;
+  let target: string | null = null;
+  let pendingKey: string | null = null;
+  let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+
+  const clearPending = () => {
+    if (timeoutId === null) return;
+    clearTimeoutFn(timeoutId);
+    timeoutId = null;
+    pendingKey = null;
+  };
+
+  return {
+    hover: (threadKey) => {
+      if (threadKey === null) {
+        clearPending();
+        if (target !== null) {
+          target = null;
+          input.onPrewarmTargetChange(null);
+        }
+        return;
+      }
+      if (threadKey === target) {
+        clearPending();
+        return;
+      }
+      if (threadKey === pendingKey) return;
+
+      clearPending();
+      pendingKey = threadKey;
+      timeoutId = setTimeoutFn(() => {
+        timeoutId = null;
+        pendingKey = null;
+        target = threadKey;
+        input.onPrewarmTargetChange(threadKey);
+      }, input.delayMs);
+    },
+    dispose: clearPending,
+  };
 }
 
 export function resolveAdjacentThreadId<T>(input: {

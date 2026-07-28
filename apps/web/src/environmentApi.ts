@@ -66,6 +66,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,
       getTurnDiff: rpcClient.orchestration.getTurnDiff,
+      getThreadActivities: rpcClient.orchestration.getThreadActivities,
       getFullThreadDiff: rpcClient.orchestration.getFullThreadDiff,
       getTurnDiffState: rpcClient.orchestration.getTurnDiffState,
       getFullThreadDiffState: rpcClient.orchestration.getFullThreadDiffState,

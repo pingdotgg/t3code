@@ -83,6 +83,7 @@ export interface EnvironmentState {
   messageByThreadId: Record<ThreadId, Record<MessageId, ChatMessage>>;
   activityIdsByThreadId: Record<ThreadId, string[]>;
   activityByThreadId: Record<ThreadId, Record<string, OrchestrationThreadActivity>>;
+  hasMoreActivitiesByThreadId?: Record<ThreadId, boolean>;
   // Insights lifecycle records retained independently of `activityByThreadId`
   // so thread-wide timing stays complete after the capped activity window
   // evicts older turns. Bounded by distinct turns, not raw activity count.
@@ -124,6 +125,7 @@ const initialEnvironmentState: EnvironmentState = {
   messageByThreadId: {},
   activityIdsByThreadId: {},
   activityByThreadId: {},
+  hasMoreActivitiesByThreadId: {},
   insightActivitiesByThreadId: {},
   proposedPlanIdsByThreadId: {},
   proposedPlanByThreadId: {},
@@ -325,6 +327,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     ...(thread.reviewResult !== undefined ? { reviewResult: thread.reviewResult } : {}),
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    hasMoreActivities: thread.hasMoreActivities ?? false,
   };
 }
 
@@ -812,6 +815,16 @@ function writeThreadState(
     };
   }
 
+  if (previousThread?.hasMoreActivities !== nextThread.hasMoreActivities) {
+    nextState = {
+      ...nextState,
+      hasMoreActivitiesByThreadId: {
+        ...nextState.hasMoreActivitiesByThreadId,
+        [nextThread.id]: nextThread.hasMoreActivities ?? false,
+      },
+    };
+  }
+
   if (previousThread?.proposedPlans !== nextThread.proposedPlans) {
     const nextProposedPlanSlice = buildProposedPlanSlice(nextThread);
     nextState = {
@@ -990,6 +1003,8 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   const { [threadId]: _removedMessages, ...messageByThreadId } = state.messageByThreadId;
   const { [threadId]: _removedActivityIds, ...activityIdsByThreadId } = state.activityIdsByThreadId;
   const { [threadId]: _removedActivities, ...activityByThreadId } = state.activityByThreadId;
+  const { [threadId]: _removedHasMoreActivities, ...hasMoreActivitiesByThreadId } =
+    state.hasMoreActivitiesByThreadId ?? {};
   const { [threadId]: _removedInsightActivities, ...insightActivitiesByThreadId } =
     state.insightActivitiesByThreadId;
   const { [threadId]: _removedPlanIds, ...proposedPlanIdsByThreadId } =
@@ -1015,6 +1030,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     messageByThreadId,
     activityIdsByThreadId,
     activityByThreadId,
+    hasMoreActivitiesByThreadId,
     insightActivitiesByThreadId,
     proposedPlanIdsByThreadId,
     proposedPlanByThreadId,
@@ -1547,6 +1563,14 @@ function syncEnvironmentShellSnapshot(
     messageByThreadId: retainThreadScopedRecord(state.messageByThreadId, nextThreadIds),
     activityIdsByThreadId: retainThreadScopedRecord(state.activityIdsByThreadId, nextThreadIds),
     activityByThreadId: retainThreadScopedRecord(state.activityByThreadId, nextThreadIds),
+    ...(state.hasMoreActivitiesByThreadId
+      ? {
+          hasMoreActivitiesByThreadId: retainThreadScopedRecord(
+            state.hasMoreActivitiesByThreadId,
+            nextThreadIds,
+          ),
+        }
+      : {}),
     insightActivitiesByThreadId: retainThreadScopedRecord(
       state.insightActivitiesByThreadId,
       nextThreadIds,
@@ -2026,15 +2050,15 @@ function applyEnvironmentOrchestrationEvent(
 
     case "thread.activity-appended":
       return updateThreadState(state, event.payload.threadId, (thread) => {
-        const activities = [
+        const allActivities = [
           ...thread.activities.filter((activity) => activity.id !== event.payload.activity.id),
           { ...event.payload.activity },
-        ]
-          .toSorted(compareActivities)
-          .slice(-MAX_THREAD_ACTIVITIES);
+        ].toSorted(compareActivities);
         return {
           ...thread,
-          activities,
+          activities: allActivities.slice(-MAX_THREAD_ACTIVITIES),
+          hasMoreActivities:
+            (thread.hasMoreActivities ?? false) || allActivities.length > MAX_THREAD_ACTIVITIES,
           updatedAt: event.occurredAt,
         };
       });

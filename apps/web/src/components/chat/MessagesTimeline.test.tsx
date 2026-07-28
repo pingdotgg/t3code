@@ -217,6 +217,31 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("needle");
   });
 
+  it("offers older activity history without loading it into the initial timeline", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hi")]}
+        hasMoreOlder
+      />,
+    );
+
+    expect(markup).toContain("Load older history");
+  });
+
+  it("shows when older activity history is loading", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hi")]}
+        hasMoreOlder
+        loadingOlder
+      />,
+    );
+
+    expect(markup).toContain("Loading older history");
+  });
+
   it("renders inline terminal labels with the composer chip UI", async () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

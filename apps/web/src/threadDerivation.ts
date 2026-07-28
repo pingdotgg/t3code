@@ -29,6 +29,7 @@ const threadCache = new WeakMap<
     turnState: ThreadTurnState | undefined;
     messages: Thread["messages"];
     activities: Thread["activities"];
+    hasMoreActivities: boolean;
     insightActivities: NonNullable<Thread["insightActivities"]>;
     proposedPlans: Thread["proposedPlans"];
     turnDiffSummaries: Thread["turnDiffSummaries"];
@@ -116,6 +117,7 @@ export function getThreadFromEnvironmentState(
   const turnState = state.threadTurnStateById[threadId];
   const messages = selectThreadMessages(state, threadId);
   const activities = selectThreadActivities(state, threadId);
+  const hasMoreActivities = state.hasMoreActivitiesByThreadId?.[threadId] ?? false;
   const insightActivities = state.insightActivitiesByThreadId[threadId] ?? EMPTY_INSIGHT_ACTIVITIES;
   const proposedPlans = selectThreadProposedPlans(state, threadId);
   const turnDiffSummaries = selectThreadTurnDiffSummaries(state, threadId);
@@ -129,6 +131,7 @@ export function getThreadFromEnvironmentState(
     cached.turnState === turnState &&
     cached.messages === messages &&
     cached.activities === activities &&
+    cached.hasMoreActivities === hasMoreActivities &&
     cached.insightActivities === insightActivities &&
     cached.proposedPlans === proposedPlans &&
     cached.turnDiffSummaries === turnDiffSummaries &&
@@ -145,6 +148,7 @@ export function getThreadFromEnvironmentState(
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
     messages,
     activities,
+    hasMoreActivities,
     insightActivities,
     proposedPlans,
     turnDiffSummaries,
@@ -157,6 +161,7 @@ export function getThreadFromEnvironmentState(
     turnState,
     messages,
     activities,
+    hasMoreActivities,
     insightActivities,
     proposedPlans,
     turnDiffSummaries,

@@ -150,7 +150,8 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
-  getSidebarThreadIdsToPrewarm,
+  createSidebarHoverPrewarmController,
+  SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -212,6 +213,43 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 const EMPTY_THREAD_ACTIVITIES: readonly OrchestrationThreadActivity[] = [];
 type ContextMenuPosition = { x: number; y: number };
+
+function SidebarThreadDetailPrewarmer({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  useEffect(
+    () => retainThreadDetailSubscription(threadRef.environmentId, threadRef.threadId),
+    [threadRef.environmentId, threadRef.threadId],
+  );
+  return null;
+}
+
+function SidebarHoverThreadPrewarmer() {
+  const [threadKey, setThreadKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = createSidebarHoverPrewarmController({
+      delayMs: SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
+      onPrewarmTargetChange: setThreadKey,
+    });
+    const onPointerOver = (event: globalThis.PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      controller.hover(
+        target?.closest("[data-thread-prewarm-key]")?.getAttribute("data-thread-prewarm-key") ??
+          null,
+      );
+    };
+    window.addEventListener("pointerover", onPointerOver, { passive: true });
+    return () => {
+      window.removeEventListener("pointerover", onPointerOver);
+      controller.dispose();
+    };
+  }, []);
+
+  const threadRef = useMemo(
+    () => (threadKey === null ? null : parseScopedThreadKey(threadKey)),
+    [threadKey],
+  );
+  return threadRef ? <SidebarThreadDetailPrewarmer threadRef={threadRef} /> : null;
+}
 
 function resolveContextMenuPosition(event: React.MouseEvent): ContextMenuPosition | undefined {
   if (window.desktopBridge) {
@@ -705,6 +743,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         sortable?.isOver && !sortable.isDragging ? "rounded-md ring-1 ring-primary/40" : ""
       }`}
       data-thread-item
+      data-thread-prewarm-key={threadKey}
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
       {...sortable?.attributes}
@@ -3613,49 +3652,6 @@ export default function Sidebar() {
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
   const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
-  const prewarmedSidebarThreadKeys = useMemo(
-    () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
-    [visibleSidebarThreadKeys],
-  );
-  const prewarmedSidebarThreadRefs = useMemo(
-    () =>
-      prewarmedSidebarThreadKeys.flatMap((threadKey) => {
-        const ref = parseScopedThreadKey(threadKey);
-        return ref ? [ref] : [];
-      }),
-    [prewarmedSidebarThreadKeys],
-  );
-  const retainedSidebarThreadDetailsRef = useRef(new Map<string, () => void>());
-
-  useEffect(() => {
-    const retained = retainedSidebarThreadDetailsRef.current;
-    const nextThreadKeys = new Set<string>();
-
-    for (const ref of prewarmedSidebarThreadRefs) {
-      const threadKey = scopedThreadKey(ref);
-      nextThreadKeys.add(threadKey);
-      if (!retained.has(threadKey)) {
-        retained.set(threadKey, retainThreadDetailSubscription(ref.environmentId, ref.threadId));
-      }
-    }
-
-    for (const [threadKey, release] of retained) {
-      if (!nextThreadKeys.has(threadKey)) {
-        release();
-        retained.delete(threadKey);
-      }
-    }
-  }, [prewarmedSidebarThreadRefs]);
-
-  useEffect(() => {
-    const retained = retainedSidebarThreadDetailsRef.current;
-    return () => {
-      for (const release of retained.values()) {
-        release();
-      }
-      retained.clear();
-    };
-  }, []);
 
   useEffect(() => {
     updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
@@ -3881,6 +3877,7 @@ export default function Sidebar() {
 
   return (
     <>
+      <SidebarHoverThreadPrewarmer />
       <SidebarChromeHeader isElectron={isElectron} />
 
       {isOnSettings ? (

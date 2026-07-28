@@ -196,6 +196,9 @@ function makeState(thread: Thread): AppState {
         thread.activities.map((activity) => [activity.id, activity] as const),
       ) as EnvironmentState["activityByThreadId"][ThreadId],
     },
+    hasMoreActivitiesByThreadId: {
+      [thread.id]: thread.hasMoreActivities ?? false,
+    },
     insightActivitiesByThreadId: {
       [thread.id]: thread.activities.filter(isInsightActivity),
     },
@@ -670,7 +673,7 @@ describe("setThreadBranch", () => {
 });
 
 describe("incremental orchestration updates", () => {
-  it("preserves provider session resume cursors from thread detail snapshots", () => {
+  it("preserves detail-only metadata from thread snapshots", () => {
     const threadId = ThreadId.make("thread-1");
     const resumeCursor = {
       schemaVersion: 1,
@@ -701,6 +704,7 @@ describe("incremental orchestration updates", () => {
         messages: [],
         proposedPlans: [],
         activities: [],
+        hasMoreActivities: true,
         checkpoints: [],
         session: {
           threadId,
@@ -718,6 +722,7 @@ describe("incremental orchestration updates", () => {
     );
 
     expect(threadsOf(next)[0]?.session?.resumeCursor).toEqual(resumeCursor);
+    expect(threadsOf(next)[0]?.hasMoreActivities).toBe(true);
   });
 
   it("does not mark bootstrap complete for incremental events", () => {
@@ -1717,6 +1722,7 @@ describe("insights lifecycle retention", () => {
 
     // The capped activity window evicted turn-1.
     expect(thread?.activities.length).toBe(500);
+    expect(thread?.hasMoreActivities).toBe(true);
     expect(thread?.activities.some((activity) => activity.id === "activity-turn-1-start")).toBe(
       false,
     );

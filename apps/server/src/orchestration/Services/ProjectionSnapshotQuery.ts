@@ -8,6 +8,8 @@
  */
 import type {
   OrchestrationCheckpointSummary,
+  OrchestrationGetThreadActivitiesInput,
+  OrchestrationGetThreadActivitiesResult,
   OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
@@ -124,6 +126,9 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+  readonly getThreadActivitiesPage: (
+    input: OrchestrationGetThreadActivitiesInput,
+  ) => Effect.Effect<OrchestrationGetThreadActivitiesResult, ProjectionRepositoryError>;
   readonly searchTranscript?: (
     query: string,
   ) => Effect.Effect<OrchestrationSearchTranscriptResult, ProjectionRepositoryError>;

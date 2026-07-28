@@ -187,9 +187,12 @@ import {
   createLocalDispatchSnapshot,
   createThreadPlanCatalogSelector,
   deriveComposerSendState,
+  getActivityHistoryKey,
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  mergeActivityWindows,
+  mergeInsightActivityWindows,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
@@ -218,10 +221,18 @@ import { InsightsPanel } from "./InsightsPanel";
 import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
 import { FindInChatBar } from "./chat/FindInChatBar";
 import { useChatFind } from "./chat/useChatFind";
+import { isInsightActivity } from "../insights";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
+const EMPTY_OLDER_ACTIVITY_STATE = {
+  historyKey: null,
+  activities: EMPTY_ACTIVITIES as ReadonlyArray<OrchestrationThreadActivity>,
+  loaded: false,
+  hasMore: false,
+  loading: false,
+} as const;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -1153,7 +1164,115 @@ function ChatViewBody(
       ? "ready"
       : rawPhase;
   const isConnecting = phase === "connecting";
-  const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const [olderActivityState, setOlderActivityState] = useState<{
+    historyKey: string | null;
+    activities: ReadonlyArray<OrchestrationThreadActivity>;
+    loaded: boolean;
+    hasMore: boolean;
+    loading: boolean;
+  }>(EMPTY_OLDER_ACTIVITY_STATE);
+  const activeThreadActivityRequestKey = activeThread
+    ? `${activeThread.environmentId}\u0000${activeThread.id}`
+    : null;
+  const liveThreadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const activeThreadActivityHistoryKey = getActivityHistoryKey(
+    activeThreadActivityRequestKey,
+    liveThreadActivities,
+  );
+  const activeThreadActivityHistoryKeyRef = useRef(activeThreadActivityHistoryKey);
+  activeThreadActivityHistoryKeyRef.current = activeThreadActivityHistoryKey;
+  const inFlightOlderActivitiesKeyRef = useRef<string | null>(null);
+  const activeOlderActivityState =
+    olderActivityState.historyKey === activeThreadActivityHistoryKey
+      ? olderActivityState
+      : EMPTY_OLDER_ACTIVITY_STATE;
+
+  const threadActivities = useMemo(
+    () => mergeActivityWindows(activeOlderActivityState.activities, liveThreadActivities),
+    [activeOlderActivityState.activities, liveThreadActivities],
+  );
+  const insightActivities = useMemo(
+    () =>
+      mergeInsightActivityWindows(
+        activeOlderActivityState.activities,
+        activeThread?.insightActivities ?? liveThreadActivities.filter(isInsightActivity),
+      ),
+    [activeOlderActivityState.activities, activeThread?.insightActivities, liveThreadActivities],
+  );
+  const hasMoreOlderActivities = activeOlderActivityState.loaded
+    ? activeOlderActivityState.hasMore
+    : (activeThread?.hasMoreActivities ?? false);
+  const loadOlderActivities = useCallback(() => {
+    if (!activeThread || !activeThreadActivityHistoryKey || !hasMoreOlderActivities) return;
+    const oldestActivity = threadActivities[0];
+    if (!oldestActivity) return;
+    if (inFlightOlderActivitiesKeyRef.current === activeThreadActivityHistoryKey) return;
+
+    const api = readEnvironmentApi(activeThread.environmentId);
+    if (!api) return;
+    const requestKey = activeThreadActivityHistoryKey;
+    inFlightOlderActivitiesKeyRef.current = requestKey;
+    setOlderActivityState((previous) => ({
+      historyKey: requestKey,
+      activities: previous.historyKey === requestKey ? previous.activities : EMPTY_ACTIVITIES,
+      loaded: previous.historyKey === requestKey ? previous.loaded : false,
+      hasMore: previous.historyKey === requestKey ? previous.hasMore : false,
+      loading: true,
+    }));
+    const cursor =
+      oldestActivity.sequence !== undefined
+        ? { beforeSequence: oldestActivity.sequence }
+        : {
+            beforeCreatedAt: oldestActivity.createdAt,
+            beforeActivityId: oldestActivity.id,
+          };
+
+    void api.orchestration
+      .getThreadActivities({
+        threadId: activeThread.id,
+        ...cursor,
+      })
+      .then((page) => {
+        if (activeThreadActivityHistoryKeyRef.current !== requestKey) return;
+        setOlderActivityState((previous) => {
+          const previousActivities =
+            previous.historyKey === requestKey ? previous.activities : EMPTY_ACTIVITIES;
+          const seen = new Set(previousActivities.map((activity) => activity.id));
+          return {
+            historyKey: requestKey,
+            activities: [
+              ...page.activities.filter((activity) => !seen.has(activity.id)),
+              ...previousActivities,
+            ],
+            loaded: true,
+            hasMore: page.hasMore,
+            loading: false,
+          };
+        });
+      })
+      .catch((error: unknown) => {
+        if (activeThreadActivityHistoryKeyRef.current !== requestKey) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not load older chat history",
+            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          }),
+        );
+      })
+      .finally(() => {
+        if (inFlightOlderActivitiesKeyRef.current === requestKey) {
+          inFlightOlderActivitiesKeyRef.current = null;
+        }
+        if (activeThreadActivityHistoryKeyRef.current === requestKey) {
+          setOlderActivityState((previous) =>
+            previous.historyKey === requestKey && previous.loading
+              ? { ...previous, loading: false }
+              : previous,
+          );
+        }
+      });
+  }, [activeThread, activeThreadActivityHistoryKey, hasMoreOlderActivities, threadActivities]);
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -4222,6 +4341,9 @@ function ChatViewBody(
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               onIsAtEndChange={onIsAtEndChange}
+              hasMoreOlder={hasMoreOlderActivities}
+              loadingOlder={activeOlderActivityState.loading}
+              onLoadOlder={loadOlderActivities}
               activeChatFindRowId={chatFindOpen ? (activeChatFindMatch?.rowId ?? null) : null}
               reviewResultActive={activeThread.reviewResult?.status === "parsed"}
             />
@@ -4407,10 +4529,7 @@ function ChatViewBody(
           />
         ) : null}
         {insightsOpen && !shouldUseRightPanelSheet ? (
-          <InsightsPanel
-            activities={activeThread.insightActivities ?? activeThread.activities}
-            onClose={closeInsights}
-          />
+          <InsightsPanel activities={insightActivities} onClose={closeInsights} />
         ) : null}
       </div>
       {/* end horizontal flex container */}
@@ -4447,11 +4566,7 @@ function ChatViewBody(
               onClose={closePlanSidebar}
             />
           ) : (
-            <InsightsPanel
-              activities={activeThread.insightActivities ?? activeThread.activities}
-              mode="sheet"
-              onClose={closeInsights}
-            />
+            <InsightsPanel activities={insightActivities} mode="sheet" onClose={closeInsights} />
           )}
         </RightPanelSheet>
       ) : null}

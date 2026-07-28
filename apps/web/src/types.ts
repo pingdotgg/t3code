@@ -126,6 +126,7 @@ export interface Thread {
   reviewResult?: ReviewResult | null | undefined;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  hasMoreActivities?: boolean;
   // Lifecycle activities retained for Insights beyond the capped `activities`
   // window. Derived in the store; may be absent on directly-built fixtures.
   insightActivities?: readonly OrchestrationThreadActivity[];

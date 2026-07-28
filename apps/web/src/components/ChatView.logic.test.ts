@@ -1,6 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   EnvironmentId,
+  EventId,
+  type OrchestrationThreadActivity,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -19,7 +21,10 @@ import {
   createLocalDispatchSnapshot,
   createThreadPlanCatalogSelector,
   deriveComposerSendState,
+  getActivityHistoryKey,
   hasServerAcknowledgedLocalDispatch,
+  mergeActivityWindows,
+  mergeInsightActivityWindows,
   reconcileMountedTerminalThreadIds,
   resolveInterruptTurnId,
   resolveSendEnvMode,
@@ -28,6 +33,60 @@ import {
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+function makeActivity(id: string, sequence: number): OrchestrationThreadActivity {
+  return {
+    id: EventId.make(id),
+    tone: "info",
+    kind: "runtime.note",
+    summary: id,
+    payload: {},
+    turnId: null,
+    sequence,
+    createdAt: `2026-07-28T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+  };
+}
+
+describe("mergeActivityWindows", () => {
+  it("deduplicates overlap when a refreshed live window replaces paged history", () => {
+    const older = [makeActivity("activity-1", 1), makeActivity("activity-2", 2)];
+    const latest = [makeActivity("activity-2", 2), makeActivity("activity-3", 3)];
+
+    expect(mergeActivityWindows(older, latest).map((activity) => activity.id)).toEqual([
+      "activity-1",
+      "activity-2",
+      "activity-3",
+    ]);
+  });
+
+  it("changes the history key when the live window boundary advances", () => {
+    const threadKey = "environment\u0000thread";
+
+    expect(getActivityHistoryKey(threadKey, [makeActivity("activity-2", 2)])).not.toBe(
+      getActivityHistoryKey(threadKey, [makeActivity("activity-3", 3)]),
+    );
+  });
+
+  it("adds lifecycle records from loaded pages to retained Insights history", () => {
+    const oldInsight = {
+      ...makeActivity("turn-started", 1),
+      kind: "insights.turn.started",
+      turnId: TurnId.make("turn-1"),
+    };
+    const oldNonInsight = makeActivity("runtime-note", 2);
+    const currentInsight = {
+      ...makeActivity("turn-completed", 3),
+      kind: "insights.turn.completed",
+      turnId: TurnId.make("turn-1"),
+    };
+
+    expect(
+      mergeInsightActivityWindows([oldInsight, oldNonInsight], [currentInsight]).map(
+        (activity) => activity.id,
+      ),
+    ).toEqual(["turn-started", "turn-completed"]);
+  });
+});
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {

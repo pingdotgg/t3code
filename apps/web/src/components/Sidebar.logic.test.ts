@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
+  createSidebarHoverPrewarmController,
   createThreadJumpHintVisibilityController,
-  getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
@@ -19,6 +19,7 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -162,17 +163,69 @@ describe("createThreadJumpHintVisibilityController", () => {
   });
 });
 
-describe("getSidebarThreadIdsToPrewarm", () => {
-  it("returns only the first visible thread ids up to the prewarm limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2", "t3"], 2)).toEqual(["t1", "t2"]);
+describe("createSidebarHoverPrewarmController", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
   });
 
-  it("returns all visible thread ids when they fit within the limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 10)).toEqual(["t1", "t2"]);
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it("returns no thread ids when the limit is zero", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
+  const makeController = () => {
+    const targets: Array<string | null> = [];
+    const controller = createSidebarHoverPrewarmController({
+      delayMs: SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
+      onPrewarmTargetChange: (threadKey) => {
+        targets.push(threadKey);
+      },
+    });
+    return { controller, targets };
+  };
+
+  it("prewarms a row only after the pointer rests on it", () => {
+    const { controller, targets } = makeController();
+
+    controller.hover("t1");
+    vi.advanceTimersByTime(SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS - 1);
+    expect(targets).toEqual([]);
+
+    vi.advanceTimersByTime(1);
+    expect(targets).toEqual(["t1"]);
+  });
+
+  it("prewarms at most one thread while sweeping across rows", () => {
+    const { controller, targets } = makeController();
+
+    controller.hover("t1");
+    vi.advanceTimersByTime(SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS / 2);
+    controller.hover("t2");
+    vi.advanceTimersByTime(SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS / 2);
+    controller.hover("t3");
+    vi.advanceTimersByTime(SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS);
+
+    expect(targets).toEqual(["t3"]);
+  });
+
+  it("releases the prewarm target when the pointer leaves thread rows", () => {
+    const { controller, targets } = makeController();
+
+    controller.hover("t1");
+    vi.advanceTimersByTime(SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS);
+    controller.hover(null);
+
+    expect(targets).toEqual(["t1", null]);
+  });
+
+  it("cancels a pending prewarm when the pointer leaves early", () => {
+    const { controller, targets } = makeController();
+
+    controller.hover("t1");
+    vi.advanceTimersByTime(SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS / 2);
+    controller.hover(null);
+    vi.advanceTimersByTime(SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS);
+
+    expect(targets).toEqual([]);
   });
 });
 
