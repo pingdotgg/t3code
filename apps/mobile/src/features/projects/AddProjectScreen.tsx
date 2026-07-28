@@ -236,16 +236,19 @@ function useBrowsePathInput(environment: EnvironmentOption | null) {
     reportDefect: false,
   });
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
+  const [isBrowseNavigating, setIsBrowseNavigating] = useState(false);
   const setPathInput = useCallback(
     (path: string) => {
       browseNavigation.invalidate();
+      setIsBrowseNavigating(false);
       commitPathInput(path);
     },
     [browseNavigation],
   );
   const navigateToBrowsePath = useCallback(
-    (path: string) =>
-      browseNavigation.run(
+    async (path: string) => {
+      setIsBrowseNavigating(true);
+      const committed = await browseNavigation.run(
         async () => {
           if (environment && canPreloadBrowsePath(environmentRuntime?.connectionState)) {
             await loadBrowsePath({
@@ -255,7 +258,12 @@ function useBrowsePathInput(environment: EnvironmentOption | null) {
           }
         },
         () => commitPathInput(path),
-      ),
+      );
+      if (committed) {
+        setIsBrowseNavigating(false);
+      }
+      return committed;
+    },
     [browseNavigation, environment, environmentRuntime?.connectionState, loadBrowsePath],
   );
 
@@ -272,7 +280,7 @@ function useBrowsePathInput(environment: EnvironmentOption | null) {
     [browseNavigation],
   );
 
-  return { pathInput, setPathInput, navigateToBrowsePath };
+  return { isBrowseNavigating, pathInput, setPathInput, navigateToBrowsePath };
 }
 
 function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
@@ -717,12 +725,13 @@ function FolderBrowser(props: {
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
-  const { navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(environment);
+  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
+    useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submitPath = useCallback(async () => {
-    if (!environment || isSubmitting) return;
+    if (!environment || isBrowseNavigating || isSubmitting) return;
     setError(null);
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
@@ -740,7 +749,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
       setError(errorMessage(Cause.squash(result.cause)));
     }
     setIsSubmitting(false);
-  }, [createProject, environment, isSubmitting, pathInput]);
+  }, [createProject, environment, isBrowseNavigating, isSubmitting, pathInput]);
 
   return (
     <AddProjectShell>
@@ -754,7 +763,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
           />
           <PrimaryActionButton
             label="Add project"
-            disabled={isSubmitting}
+            disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
           />
@@ -784,12 +793,13 @@ export function AddProjectDestinationScreen(props: {
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
-  const { navigateToBrowsePath, pathInput, setPathInput } = useBrowsePathInput(environment);
+  const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
+    useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submitPath = useCallback(async () => {
-    if (!environment || !remoteUrl || isSubmitting) return;
+    if (!environment || !remoteUrl || isBrowseNavigating || isSubmitting) return;
     setError(null);
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
@@ -818,7 +828,15 @@ export function AddProjectDestinationScreen(props: {
       }
     }
     setIsSubmitting(false);
-  }, [cloneRepository, createProject, environment, isSubmitting, pathInput, remoteUrl]);
+  }, [
+    cloneRepository,
+    createProject,
+    environment,
+    isBrowseNavigating,
+    isSubmitting,
+    pathInput,
+    remoteUrl,
+  ]);
 
   return (
     <AddProjectShell>
@@ -840,7 +858,7 @@ export function AddProjectDestinationScreen(props: {
           />
           <PrimaryActionButton
             label="Clone project"
-            disabled={isSubmitting || !remoteUrl}
+            disabled={isBrowseNavigating || isSubmitting || !remoteUrl}
             onPress={() => void submitPath()}
             loading={isSubmitting}
           />
