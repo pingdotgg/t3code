@@ -1,11 +1,14 @@
 diff --git a/dist/BunHttpServer.js b/dist/BunHttpServer.js
-index 5fb0cbacc183b58e31a442badf4aef06bebcd592..2c3d2ea9a727b71e502f9e5c207340dfa0f63879 100644
+index 5fb0cbacc183b58e31a442badf4aef06bebcd592..e31fb00c430821fc06247079091a93fb15a1ab92 100644
 --- a/dist/BunHttpServer.js
 +++ b/dist/BunHttpServer.js
-@@ -45,6 +45,17 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+@@ -45,6 +45,20 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
      ...options,
      fetch: handlerStack[0],
      websocket: {
++      // Patch: upstreamed as https://github.com/Effect-TS/effect/pull/6691 (ships
++      // in >= 4.0.0-beta.103 as the layer option `websocket: { ... }`). On
++      // upgrade: drop this patch and pass the option in apps/server/src/server.ts.
 +      // Negotiate permessage-deflate with clients that offer it; clients that
 +      // don't still get uncompressed frames on their connection. A dedicated
 +      // compressor keeps a per-connection sliding window (context takeover) so
@@ -21,13 +24,16 @@ index 5fb0cbacc183b58e31a442badf4aef06bebcd592..2c3d2ea9a727b71e502f9e5c207340df
          Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws));
        },
 diff --git a/src/BunHttpServer.ts b/src/BunHttpServer.ts
-index 9f2ac3dfc018e2d35c6f44785f1ce05e2e06fc7c..84f3062d880d05f5a680ec89a5f0a1b78a3ba0dc 100644
+index 9f2ac3dfc018e2d35c6f44785f1ce05e2e06fc7c..f2bd3def712677ae1e7d475f5eaf27ac2e42ae1a 100644
 --- a/src/BunHttpServer.ts
 +++ b/src/BunHttpServer.ts
-@@ -90,6 +90,17 @@ export const make = Effect.fnUntraced(
+@@ -90,6 +90,20 @@ export const make = Effect.fnUntraced(
        ...options as ServeOptions<R>,
        fetch: handlerStack[0],
        websocket: {
++        // Patch: upstreamed as https://github.com/Effect-TS/effect/pull/6691 (ships
++        // in >= 4.0.0-beta.103 as the layer option `websocket: { ... }`). On
++        // upgrade: drop this patch and pass the option in apps/server/src/server.ts.
 +        // Negotiate permessage-deflate with clients that offer it; clients that
 +        // don't still get uncompressed frames on their connection. A dedicated
 +        // compressor keeps a per-connection sliding window (context takeover) so
