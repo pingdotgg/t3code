@@ -2267,14 +2267,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getThreadDetailSnapshot: ProjectionSnapshotQueryShape["getThreadDetailSnapshot"] = (
     threadId,
   ) =>
-    Effect.all([getThreadDetailById(threadId), getSnapshotSequence()]).pipe(
-      Effect.map(([thread, sequence]) =>
-        Option.map(thread, (value) => ({
-          snapshotSequence: sequence.snapshotSequence,
-          thread: value,
-        })),
-      ),
-    );
+    sql
+      .withTransaction(
+        Effect.all([getThreadDetailById(threadId), getSnapshotSequence()]).pipe(
+          Effect.map(([thread, sequence]) =>
+            Option.map(thread, (value) => ({
+              snapshotSequence: sequence.snapshotSequence,
+              thread: value,
+            })),
+          ),
+        ),
+      )
+      .pipe(
+        Effect.mapError((error) => {
+          if (isPersistenceError(error)) {
+            return error;
+          }
+          return toPersistenceSqlError(
+            "ProjectionSnapshotQuery.getThreadDetailSnapshot:transaction",
+          )(error);
+        }),
+      );
 
   const listChildThreadRefs: ProjectionSnapshotQueryShape["listChildThreadRefs"] = (
     parentThreadId,

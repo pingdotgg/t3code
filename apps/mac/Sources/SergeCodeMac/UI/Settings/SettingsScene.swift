@@ -239,7 +239,7 @@ private struct GeneralSettingsTab: View {
                     }
                     SettingsDivider()
                     SettingsToggleRow(
-                        title: "Start new worktrees from origin",
+                        title: "Require latest origin/main for new worktrees",
                         isOn: binding(settings, \.newWorktreesStartFromOrigin))
                     SettingsDivider()
                     SettingsCardRow {

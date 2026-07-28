@@ -43,6 +43,27 @@ struct CancelledTurnTrackingTests {
         #expect(!model.isCancellationPending(for: makeThread(id: "t-2", startedAt: startedAt)))
     }
 
+    @Test("an explicit cancel stays on its originating thread after selection changes")
+    func explicitTargetWinsOverSelection() async throws {
+        let backend = MockBackend()
+        let model = AppModel(backend: backend)
+        let startedAt = Date(timeIntervalSince1970: 1_500)
+        let origin = makeThread(id: "t-origin", startedAt: startedAt)
+        let selected = makeThread(id: "t-selected", startedAt: startedAt)
+        await backend.insertThreads([origin, selected])
+        await model.refreshAll()
+        model.selectedThreadID = selected.id
+
+        await model.cancelCurrentTurn(threadID: origin.id)
+
+        #expect(model.isCancellationPending(for: origin))
+        #expect(!model.isCancellationPending(for: selected))
+        let originTimeline = try await backend.timeline(threadID: origin.id)
+        let selectedTimeline = try await backend.timeline(threadID: selected.id)
+        #expect(originTimeline.contains(where: Self.isCancellationNotice))
+        #expect(!selectedTimeline.contains(where: Self.isCancellationNotice))
+    }
+
     @Test("a cancelled run settling reports nothing, an ordinary one reports success")
     func policyUsesTheRecord() async throws {
         let backend = MockBackend()
@@ -71,5 +92,10 @@ struct CancelledTurnTrackingTests {
             ThreadStatusHaptics.event(
                 from: ThreadStatusSnapshot(threadID: untouched.id, status: .running),
                 to: completed) == .success)
+    }
+
+    private static func isCancellationNotice(_ item: TimelineItem) -> Bool {
+        guard case .notice(_, let text, _) = item else { return false }
+        return text == "Turn cancelled."
     }
 }

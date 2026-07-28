@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Keeps creation tied to the device the user explicitly selected. A missing
+/// connection means a remote disappeared; it must never be interpreted as the
+/// local Mac.
+enum NewSessionTargetPolicy {
+    static func permitsCreation(on deviceID: DeviceID, connection: ConnectionPhase?) -> Bool {
+        deviceID == .local || connection == .ready
+    }
+}
+
 /// Glass sheet for starting a new session: pick a project (existing or a new
 /// folder), choose a provider, then create the thread.
 ///
@@ -38,14 +47,19 @@ struct NewSessionSheet: View {
                 .entrance(.card, index: 0)
 
             VStack(alignment: .leading, spacing: 16) {
-                if !multi.remoteSessions.isEmpty {
+                if !multi.remoteSessions.isEmpty || selectedDeviceID != .local {
                     deviceSection
                         .entrance(.card, index: 1)
                 }
-                projectSection
-                    .entrance(.card, index: 2)
-                providerSection
-                    .entrance(.card, index: 3)
+                if selectedModel != nil {
+                    projectSection
+                        .entrance(.card, index: 2)
+                    providerSection
+                        .entrance(.card, index: 3)
+                } else {
+                    unavailableTargetContent
+                        .entrance(.card, index: 2)
+                }
                 footer
                     .entrance(.card, index: 4)
             }
@@ -56,6 +70,7 @@ struct NewSessionSheet: View {
         .animation(Motion.structure, value: mode)
         .animation(Motion.reveal, value: errorMessage == nil)
         .animation(Motion.reveal, value: providerReadinessMessage == nil)
+        .animation(Motion.reveal, value: targetAvailabilityMessage == nil)
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.
@@ -155,6 +170,7 @@ struct NewSessionSheet: View {
                     OptionCard(
                         title: session.descriptor.name,
                         isSelected: selectedDeviceID == session.id,
+                        showsWarning: session.connection != .ready,
                         action: { selectDevice(session.id) }
                     ) {
                         Image(systemName: "network")
@@ -162,6 +178,14 @@ struct NewSessionSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            }
+
+            if let targetAvailabilityMessage {
+                Label(targetAvailabilityMessage, systemImage: "network.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
             }
         }
     }
@@ -344,6 +368,18 @@ struct NewSessionSheet: View {
         }
     }
 
+    private var unavailableTargetContent: some View {
+        ContentUnavailableView {
+            Label("Device Unavailable", systemImage: "network.slash")
+        } description: {
+            Text("The selected Mac is no longer paired. Choose This Mac or another device.")
+        }
+        .frame(height: 150)
+        .frame(maxWidth: .infinity)
+        .background(cardFill, in: cardShape)
+        .overlay(cardShape.stroke(cardStroke, lineWidth: 1))
+    }
+
     // MARK: - Footer
 
     private var footer: some View {
@@ -429,8 +465,15 @@ struct NewSessionSheet: View {
     }
 
     private var canCreate: Bool {
-        guard model.canCreateThread(with: provider) else { return false }
-        guard model.capabilities.canBrowseLocalFolders || mode == .existing else { return false }
+        guard let selectedModel else { return false }
+        guard
+            NewSessionTargetPolicy.permitsCreation(
+                on: selectedDeviceID, connection: selectedRemoteSession?.connection)
+        else { return false }
+        guard selectedModel.canCreateThread(with: provider) else { return false }
+        guard selectedModel.capabilities.canBrowseLocalFolders || mode == .existing else {
+            return false
+        }
         switch mode {
         case .existing: return selectedProjectID != nil
         case .new: return !newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -442,7 +485,33 @@ struct NewSessionSheet: View {
     }
 
     private var model: AppModel {
-        multi.model(for: selectedDeviceID) ?? multi.local
+        selectedModel ?? multi.local
+    }
+
+    private var selectedModel: AppModel? {
+        multi.model(for: selectedDeviceID)
+    }
+
+    private var selectedRemoteSession: RemoteDeviceSession? {
+        guard selectedDeviceID != .local else { return nil }
+        return multi.remoteSessions.first { $0.id == selectedDeviceID }
+    }
+
+    private var targetAvailabilityMessage: String? {
+        guard selectedDeviceID != .local else { return nil }
+        guard let selectedRemoteSession else {
+            return "The selected Mac is no longer paired. Choose another device."
+        }
+        switch selectedRemoteSession.connection {
+        case .ready:
+            return nil
+        case .unauthorized:
+            return "Pair \(selectedRemoteSession.descriptor.name) again before creating a session."
+        case .failed:
+            return "Couldn’t connect to \(selectedRemoteSession.descriptor.name). Reconnect it before creating a session."
+        case .launchingServer, .connecting, .reconnecting:
+            return "Waiting for \(selectedRemoteSession.descriptor.name) to connect."
+        }
     }
 
     private var providerReadinessMessage: String? {
@@ -485,9 +554,23 @@ struct NewSessionSheet: View {
 
     private func create() async {
         clearError()
+        guard let selectedModel else {
+            errorMessage = "The selected Mac is no longer paired. Choose another device."
+            return
+        }
+        guard
+            NewSessionTargetPolicy.permitsCreation(
+                on: selectedDeviceID, connection: selectedRemoteSession?.connection)
+        else {
+            errorMessage =
+                targetAvailabilityMessage
+                ?? "Wait for the selected Mac to connect, then try again."
+            return
+        }
         Haptics.play(.commit)
         isBusy = true
         defer { isBusy = false }
+        let model = selectedModel
         var createdThread: ChatThread?
         switch mode {
         case .existing:
