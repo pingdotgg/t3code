@@ -94,24 +94,12 @@ run_bounded() {
   local timed_out_marker="$state_dir/timed-out"
   local finished_marker="$state_dir/finished"
 
-  # Put the command in its own process group so the watchdog can signal the
-  # whole tree. Signalling only the direct child leaves pnpm's grandchildren
-  # alive holding this script's stdout, and a caller capturing that output then
-  # blocks on EOF long after the timeout fired.
-  #
-  # Linux CI has setsid(1), which creates a group that is reliably isolated
-  # from this non-interactive shell. macOS has no setsid(1), so use job control
-  # there to make the background command its own group leader.
-  local command_pid
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "$@" &
-    command_pid=$!
-  else
-    set -m
-    "$@" &
-    command_pid=$!
-    set +m
-  fi
+  # The supervisor puts the command in a detached process group and owns its
+  # escalation. Signalling only pnpm's direct process leaves grandchildren
+  # alive holding this script's stdout, while shell job-control and setsid(1)
+  # expose different group-leader behavior across macOS and Linux.
+  node "$ROOT/scripts/run-bounded-command.mjs" "$@" &
+  local command_pid=$!
 
   # Detached from this script's stdout/stderr on purpose. A watchdog that
   # inherits them keeps the pipe open after the install is done, so anything
@@ -123,9 +111,11 @@ run_bounded() {
     # already been reaped and possibly reused.
     if [[ ! -f "$finished_marker" ]] && kill -0 "$command_pid" 2>/dev/null; then
       : > "$timed_out_marker"
-      kill -TERM -"$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
-      sleep 5
-      kill -KILL -"$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
+      kill -TERM "$command_pid" 2>/dev/null || true
+      # The supervisor escalates its child group after five seconds. This
+      # fallback only kills a broken supervisor that failed to finish.
+      sleep 7
+      kill -KILL "$command_pid" 2>/dev/null || true
     fi
   ) >/dev/null 2>&1 &
   local watchdog_pid=$!
