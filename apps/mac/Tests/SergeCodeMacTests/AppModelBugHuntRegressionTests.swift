@@ -218,6 +218,27 @@ struct AppModelBugHuntRegressionTests {
 
         #expect(model.lastError == nil)
     }
+
+    @Test("settings writes reach the server in invocation order")
+    func settingsWritesAreSerialized() async {
+        let backend = StubBackend()
+        backend.delayModelID = "gpt-5.4-mini"
+        let model = AppModel(backend: backend)
+        var old = try! await backend.settings()
+        old.autoReview.modelID = "gpt-5.4-mini"
+        var new = old
+        new.autoReview.modelID = "gpt-5.6-sol"
+
+        let oldSave = Task { await model.saveSettings(old) }
+        await Task.yield()
+        let newSave = Task { await model.saveSettings(new) }
+        #expect(await oldSave.value)
+        #expect(await newSave.value)
+
+        #expect(backend.savedModelIDs == ["gpt-5.4-mini", "gpt-5.6-sol"])
+        #expect(backend.storedSettings?.autoReview.modelID == "gpt-5.6-sol")
+        #expect(model.settings?.autoReview.modelID == "gpt-5.6-sol")
+    }
 }
 
 private enum StubBackendError: Error, Sendable {
@@ -234,6 +255,9 @@ private final class StubBackend: BackendService, @unchecked Sendable {
     var threadsShouldFail = false
     var diffFiles: [DiffFile] = []
     var diffShouldFail = false
+    var delayModelID: String?
+    private(set) var savedModelIDs: [String] = []
+    private(set) var storedSettings: AppSettings?
     var settleShouldFail = false
     private(set) var vcsRefreshedThreadIDs: [String] = []
 
@@ -331,7 +355,14 @@ private final class StubBackend: BackendService, @unchecked Sendable {
             newWorktreesStartFromOrigin: false,
             addProjectBaseDirectory: "")
     }
-    func updateSettings(_ settings: AppSettings) async throws -> AppSettings { settings }
+    func updateSettings(_ settings: AppSettings) async throws -> AppSettings {
+        if settings.autoReview.modelID == delayModelID {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        savedModelIDs.append(settings.autoReview.modelID)
+        storedSettings = settings
+        return settings
+    }
     func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob] { [] }
     func refreshProviders() async throws {}
     func updateProvider(instanceID: String) async throws {}

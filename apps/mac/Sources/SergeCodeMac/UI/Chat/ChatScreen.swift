@@ -33,11 +33,11 @@ public struct ChatScreen: View {
             isLiveTurn: thread.status.isLiveTurn, hasPhoto: hasPhoto, hasSteps: hasSteps)
     }
 
-    /// The auto-review pet for `thread`. A function rather than an inline
+    /// The auto-review progress surface for `thread`. A function rather than an inline
     /// closure in the modifier chain, for the same Swift 6.2 type-checker
     /// reason as `selectedThreadIsActive` above.
-    private func reviewPet(_ thread: ChatThread) -> some View {
-        ReviewPetOverlay(status: thread.status, threadID: thread.id)
+    private func autoReviewProgress(_ thread: ChatThread) -> some View {
+        AutoReviewProgressOverlay(status: thread.status, threadID: thread.id)
             .padding(.trailing, 22)
             .padding(.bottom, 6)
     }
@@ -79,7 +79,7 @@ public struct ChatScreen: View {
                         // the timeline rather than dropped into it: it must
                         // not scroll away, and it must not push the composer.
                         .overlay(alignment: .bottomTrailing) {
-                            reviewPet(thread)
+                            autoReviewProgress(thread)
                         }
                         ChatFollowUpBar(model: model)
                         // One shared row above the composer: the plan rail

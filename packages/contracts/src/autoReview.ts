@@ -216,6 +216,12 @@ export const AutoReviewJob = Schema.Struct({
   reviewUrl: Schema.optional(Schema.NullOr(Schema.String)),
   githubReviewId: Schema.optional(Schema.NullOr(TrimmedString)),
   originThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /**
+   * Dedicated fixer thread for this PR, when fixes do not run in the origin
+   * thread. Kept separate so phase projection and concurrency count the
+   * thread that is actually working.
+   */
+  fixThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   autoFixEnqueued: Schema.Boolean,
   /**
    * When the auto-fix turn was dispatched. Holds the job's fix-concurrency

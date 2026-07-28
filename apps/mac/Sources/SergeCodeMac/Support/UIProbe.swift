@@ -762,13 +762,13 @@
 
         /// The live-turn surfaces that only exist while something is working,
         /// so no other scene can reach them: the activity dock on a thread
-        /// parked on a running tool (mock `thread-7`), the auto-review pet on
+        /// parked on a running tool (mock `thread-7`), auto-review progress on
         /// a thread whose PR is under review (`thread-8`), and the dock's
         /// thinking phase on a thread that has been silent long enough for
         /// its copy to escalate (`thread-9`).
         ///
-        /// Each asserts its gate as well as capturing a PNG — the pet in
-        /// particular is a corner overlay that a full-window capture can
+        /// Each asserts its gate as well as capturing a PNG — auto-review
+        /// progress is a corner overlay that a full-window capture can
         /// easily *look* right without actually having mounted.
         ///
         /// Returns soft-failure slugs for the exit line, and that return is
@@ -859,46 +859,35 @@
 
             if model.threads.contains(where: { $0.id == "thread-8" }) {
                 multi.select(threadID: "thread-8", on: model.deviceID)
-                // Long enough for the pet's entrance spring to settle.
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(1))
                 let status = model.thread(threadID: "thread-8")?.status
-                let petPhase = status.flatMap(ReviewPetPhase.init(status:))
+                let progressPhase = status.flatMap(AutoReviewProgressPhase.init(status:))
                 // `ThreadStatus.reviewing` (the server's auto-review phase)
                 // and `ThreadState.isReviewing` (the local diff-review pane)
                 // are unrelated despite the names, and only the latter routes
-                // ChatScreen away from the timeline the pet hangs off. Assert
+                // ChatScreen away from the timeline the progress card hangs off. Assert
                 // it, so a future change that couples the two fails here
                 // instead of quietly capturing the wrong surface.
                 let onChatSurface = model.threadState("thread-8")?.isReviewing != true
-                let petMounted = UIProbeSurfaces.entry(
-                    UIProbeSurfaces.reviewPet, threadID: "thread-8") != nil
-                let playfulSurfaces = Motion.playful.showsPlayfulSurfaces
+                let progressMounted = UIProbeSurfaces.entry(
+                    UIProbeSurfaces.autoReviewProgress, threadID: "thread-8") != nil
                 print(
-                    "UIProbe: review pet status=\(status?.rawValue ?? "nil") "
-                        + "phase=\(petPhase?.rawValue ?? "none") "
-                        + "chatSurface=\(onChatSurface) mounted=\(petMounted) "
-                        + "playful=\(playfulSurfaces)")
+                    "UIProbe: auto-review progress status=\(status?.rawValue ?? "nil") "
+                        + "phase=\(progressPhase?.rawValue ?? "none") "
+                        + "chatSurface=\(onChatSurface) mounted=\(progressMounted)")
                 failures.append(
-                    contentsOf: expectSelected("thread-8", model: model, scene: "review-pet"))
-                if petPhase != .reviewing {
-                    print("UIProbe: FAIL review pet expected the reviewing phase")
-                    failures.append("review-pet-phase")
+                    contentsOf: expectSelected(
+                        "thread-8", model: model, scene: "auto-review-progress"))
+                if progressPhase != .reviewing {
+                    print("UIProbe: FAIL auto-review progress expected the reviewing phase")
+                    failures.append("auto-review-progress-phase")
                 }
-                if playfulSurfaces {
-                    // Doubles as the surface check. The pet is rendered inside
-                    // ChatScreen's chat branch, so it cannot be mounted while
-                    // `DiffReviewView` owns the detail column — a registration
-                    // for this thread *is* proof the capture is of the chat
-                    // surface, with no guess about the view hierarchy.
-                    failures.append(
-                        contentsOf: expectSurface(
-                            UIProbeSurfaces.reviewPet, threadID: "thread-8",
-                            detail: "reviewing", scene: "review-pet"))
-                } else if petMounted {
-                    // The opt-out has to actually remove it, not just still it.
-                    print("UIProbe: FAIL review pet mounted with playful motion off")
-                    failures.append("review-pet-opt-out")
-                }
+                // The progress surface is operational state, so it remains
+                // visible when decorative/playful surfaces are disabled.
+                failures.append(
+                    contentsOf: expectSurface(
+                        UIProbeSurfaces.autoReviewProgress, threadID: "thread-8",
+                        detail: "reviewing", scene: "auto-review-progress"))
                 // Secondary, and deliberately still `!= true`: it mirrors
                 // ChatScreen's own `?.isReviewing == true` routing, in which a
                 // missing ThreadState means the chat surface renders. Making
@@ -907,12 +896,12 @@
                 // on-screen assertion above is what actually closes the gap,
                 // because it cannot pass on absent state.
                 if !onChatSurface {
-                    print("UIProbe: FAIL review pet routing says the diff pane is mounted")
-                    failures.append("review-pet-review-pane")
+                    print("UIProbe: FAIL auto-review routing says the diff pane is mounted")
+                    failures.append("auto-review-progress-review-pane")
                 }
-                snapshot("19-review-pet", dir: dir)
+                snapshot("19-auto-review-progress", dir: dir)
             } else {
-                print("UIProbe: review pet skipped (live backend run)")
+                print("UIProbe: auto-review progress skipped (live backend run)")
             }
 
             // The thinking phase, and the elapsed-driven copy that goes with

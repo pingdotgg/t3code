@@ -1,9 +1,7 @@
 import Foundation
 import SwiftUI
 
-/// Local preference for the app's playful motion: the live activity dock's
-/// aurora chip and the auto-review pet, plus the ongoing loops that animate
-/// them.
+/// Local preference for the app's playful motion in the live activity dock.
 ///
 /// Default ON. Everything it gates mounts only while the agent is actually
 /// working, so a settled window pays nothing for it. The toggle exists
@@ -81,9 +79,9 @@ extension View {
 /// The two switches do different things on purpose:
 ///
 /// - Reduce Motion silences the *movement* but keeps the surface. The dock
-///   and the pet each carry state the rest of the chrome only whispers (what
-///   the agent is doing right now; that a background review is running), so
-///   deleting them would cost information, not just delight.
+///   carries state the rest of the chrome only whispers (what the agent is
+///   doing right now), so deleting it would cost information, not just
+///   delight.
 /// - The opt-out removes the surfaces outright. Someone who turns this off is
 ///   saying they don't want the character on screen at all, and the status
 ///   badge in the header plus the sidebar glyph already carry the same state.
@@ -107,12 +105,4 @@ struct PlayfulMotionProfile: Equatable, Sendable {
     /// to read as a drift rather than a spinner.
     let orbPeriod = 5.2
 
-    /// Seconds per breath of the pet's idle bob. Slow on purpose: the pet is
-    /// a fat, lazy Boston terrier, and the tempo is where that reads first.
-    let petBreathPeriod = 3.4
-
-    /// How long the "ready to merge" pet stays on screen before flopping
-    /// back into its bed. Long enough to read the caption twice; short
-    /// enough that a settled thread does not keep a character parked over it.
-    let petVictoryDwell = 6.5
 }
