@@ -16,7 +16,11 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
-import { ScheduledTaskRunStatus, ScheduledTaskSchedule } from "./scheduledTask.ts";
+import {
+  ScheduledTaskRunStatus,
+  ScheduledTaskSchedule,
+  ScheduledTaskUpsertSchedule,
+} from "./scheduledTask.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
   OrchestrationV2Actor,
@@ -46,15 +50,15 @@ const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
  * strings. Keep the structured object as the documented form while accepting
  * that compatibility shape at the tool boundary and decoding it immediately.
  */
-const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(ScheduledTaskSchedule).annotate(
-  {
-    description:
-      "Compatibility-only JSON encoding of the schedule object. Prefer a structured object.",
-  },
-);
+const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
+  ScheduledTaskUpsertSchedule,
+).annotate({
+  description:
+    "Compatibility-only JSON encoding of the schedule object. Prefer a structured object.",
+});
 
 const OrchestratorMcpSchedule = Schema.Union([
-  ScheduledTaskSchedule,
+  ScheduledTaskUpsertSchedule,
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
