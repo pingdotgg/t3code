@@ -133,6 +133,10 @@ const waitForBrowserSurfaceVisibility = async (
   const requiredStableMs = Math.min(100, Math.max(0, timeoutMs - 50));
   let presentedSince: number | null = null;
   while (Date.now() <= deadline) {
+    assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
+      operation: "open",
+      requestId,
+    });
     const now = Date.now();
     if (isPreviewAutomationTabPresented(threadRef, tabId, runtimeTabId)) {
       presentedSince ??= now;
