@@ -406,21 +406,21 @@ export const healthApi = HttpApiBuilder.group(
 export const revokeEnvironmentLinkRecord = Effect.fn(
   "relay.api.client.revokeEnvironmentLinkRecord",
 )(function* (input: {
-  readonly db: RelayDb.RelayDb["Service"];
-  readonly links: EnvironmentLinks.EnvironmentLinks["Service"];
-  readonly credentials: EnvironmentCredentials.EnvironmentCredentials["Service"];
   readonly userId: string;
   readonly environmentId: string;
   readonly environmentPublicKey: string;
 }) {
-  return yield* input.db.$client.withTransaction(
+  const transactions = yield* RelayDb.RelayTransactions;
+  const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
+  return yield* transactions.withTransaction(
     Effect.gen(function* () {
-      const revoked = yield* input.links.revokeForUser({
+      const revoked = yield* links.revokeForUser({
         userId: input.userId,
         environmentId: input.environmentId,
       });
       if (revoked) {
-        yield* input.credentials.revokeForEnvironmentPublicKey({
+        yield* credentials.revokeForEnvironmentPublicKey({
           environmentId: input.environmentId,
           environmentPublicKey: input.environmentPublicKey,
         });
@@ -431,19 +431,14 @@ export const revokeEnvironmentLinkRecord = Effect.fn(
 });
 
 export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnvironmentRecord")(
-  function* (input: {
-    readonly db: RelayDb.RelayDb["Service"];
-    readonly links: EnvironmentLinks.EnvironmentLinks["Service"];
-    readonly credentials: EnvironmentCredentials.EnvironmentCredentials["Service"];
-    readonly managedEndpointProvider: ManagedEndpointProvider.ManagedEndpointProvider["Service"];
-    readonly userId: string;
-    readonly environmentId: string;
-  }) {
-    const deprovisionTarget = yield* input.managedEndpointProvider.prepareDeprovision({
+  function* (input: { readonly userId: string; readonly environmentId: string }) {
+    const links = yield* EnvironmentLinks.EnvironmentLinks;
+    const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+    const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision({
       userId: input.userId,
       environmentId: input.environmentId,
     });
-    const link = yield* input.links.getForUser({
+    const link = yield* links.getForUser({
       userId: input.userId,
       environmentId: input.environmentId,
     });
@@ -451,9 +446,6 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       link === null
         ? false
         : yield* revokeEnvironmentLinkRecord({
-            db: input.db,
-            links: input.links,
-            credentials: input.credentials,
             userId: input.userId,
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
@@ -463,7 +455,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     // revocation commits so a database failure leaves a fully usable active
     // link. Still run teardown when the link is already revoked, allowing a
     // retry to finish cleanup after an earlier Cloudflare failure.
-    yield* input.managedEndpointProvider.deprovision({
+    yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
@@ -539,9 +531,7 @@ export const clientApi = HttpApiBuilder.group(
     const linker = yield* EnvironmentLinker.EnvironmentLinker;
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-    const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
     const devices = yield* Devices.Devices;
-    const db = yield* RelayDb.RelayDb;
     return handlers
       .handle(
         "listEnvironments",
@@ -663,10 +653,6 @@ export const clientApi = HttpApiBuilder.group(
           const { params } = args;
           const { userId } = yield* RelayClientPrincipal;
           const unlinked = yield* unlinkEnvironmentRecord({
-            db,
-            links,
-            credentials,
-            managedEndpointProvider,
             userId,
             environmentId: params.environmentId,
           }).pipe(
