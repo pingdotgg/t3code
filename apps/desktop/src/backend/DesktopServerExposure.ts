@@ -11,11 +11,13 @@ import {
 } from "@t3tools/contracts";
 import {
   DEFAULT_TAILSCALE_SERVE_PORT,
+  describeTailscaleStderrDiagnostic,
   disableTailscaleServe,
   ensureTailscaleServe,
   formatTailscaleServeUserMessage,
   readTailscaleStatus,
   TailscaleCommandError,
+  type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -210,6 +212,18 @@ const resolveDesktopCoreAdvertisedEndpoints = (
 
   return endpoints;
 };
+
+/**
+ * Reason text for a `tailscale` exit failure, or undefined when the CLI said
+ * nothing we recognize. Callers fall back to their own wording rather than
+ * echoing the exit code at the user.
+ */
+function describeTailscaleServeExitCause(cause: {
+  readonly stderrDiagnostic?: TailscaleStderrDiagnostic | undefined;
+}): string | undefined {
+  if (cause.stderrDiagnostic === undefined) return undefined;
+  return describeTailscaleStderrDiagnostic(cause.stderrDiagnostic) ?? undefined;
+}
 
 export class DesktopServerExposureNoNetworkAddressError extends Schema.TaggedErrorClass<DesktopServerExposureNoNetworkAddressError>()(
   "DesktopServerExposureNoNetworkAddressError",
@@ -604,7 +618,7 @@ export const make = Effect.gen(function* () {
             // shared user-facing copy for those.
             const exitDetail =
               cause._tag === "TailscaleCommandExitError"
-                ? cause.detail
+                ? describeTailscaleServeExitCause(cause)
                 : formatTailscaleServeUserMessage(cause);
             const configureUrl =
               cause._tag === "TailscaleCommandExitError" ? (cause.configureUrl ?? null) : null;
@@ -654,7 +668,7 @@ export const make = Effect.gen(function* () {
             Effect.mapError((cause) => {
               const exitDetail =
                 cause._tag === "TailscaleCommandExitError"
-                  ? cause.detail
+                  ? describeTailscaleServeExitCause(cause)
                   : formatTailscaleServeUserMessage(cause);
               return new DesktopTailscaleServeConfigureError({
                 enabled: false,

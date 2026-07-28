@@ -306,10 +306,16 @@ describe("DesktopServerExposure", () => {
           error.message,
           `Serve is not enabled on your tailnet. To enable, visit: ${configureUrl}`,
         );
-        // Wrapper message is structural; underlying CLI error remains on cause.
+        // The desktop error turns the label into prose for the toast; the CLI
+        // error underneath stays label-free because that one gets logged.
+        const exitCause = error.cause;
+        if (exitCause?._tag !== "TailscaleCommandExitError") {
+          throw new Error(`expected TailscaleCommandExitError, got ${String(exitCause?._tag)}`);
+        }
+        assert.equal(exitCause.stderrDiagnostic, "serve-not-enabled");
         assert.equal(
-          error.cause?.message,
-          `Serve is not enabled on your tailnet. To enable, visit: ${configureUrl}`,
+          exitCause.message,
+          `tailscale serve exited with code 1. To enable, visit: ${configureUrl}`,
         );
 
         const persisted = yield* settings.get;
