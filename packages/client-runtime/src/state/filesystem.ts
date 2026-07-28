@@ -11,6 +11,8 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+      // Directory contents can change outside the app, so each browser mount must revalidate.
+      staleTimeMs: 0,
     }),
   };
 }
