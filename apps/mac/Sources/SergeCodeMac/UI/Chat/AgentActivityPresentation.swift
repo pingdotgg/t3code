@@ -45,6 +45,7 @@ struct TimelineActivityScan: Equatable, Sendable {
         /// tape of what just happened.
         var recentToolKinds: [ToolEventKind] = []
         var toolCount = 0
+        var completedToolCount = 0
     }
 
     /// The turn in flight.
@@ -77,10 +78,13 @@ struct TimelineActivityScan: Equatable, Sendable {
                 scan.note(at)
             case .toolEvent(let id, let name, let detail, let kind, let status, let at, _, _):
                 scan.turn.toolCount += 1
-                scan.turn.recentToolKinds.append(kind)
-                if scan.turn.recentToolKinds.count > recentToolTapeLength {
-                    scan.turn.recentToolKinds.removeFirst(
-                        scan.turn.recentToolKinds.count - recentToolTapeLength)
+                if status != .running {
+                    scan.turn.completedToolCount += 1
+                    scan.turn.recentToolKinds.append(kind)
+                    if scan.turn.recentToolKinds.count > recentToolTapeLength {
+                        scan.turn.recentToolKinds.removeFirst(
+                            scan.turn.recentToolKinds.count - recentToolTapeLength)
+                    }
                 }
                 if status == .running {
                     scan.turn.hasActiveToolActivity = true
@@ -153,6 +157,8 @@ struct AgentActivity: Equatable, Sendable {
     var recentToolKinds: [ToolEventKind]
     /// Tool calls this turn.
     var toolCount: Int
+    /// Terminal tool calls already promoted into transcript history.
+    var completedToolCount: Int
 }
 
 /// Pure policy behind `AgentActivityDock`: when it shows, what it says, and
@@ -217,7 +223,8 @@ enum AgentActivityPresentation {
             phase: phase,
             since: since,
             recentToolKinds: scan.turn.recentToolKinds,
-            toolCount: scan.turn.toolCount)
+            toolCount: scan.turn.toolCount,
+            completedToolCount: scan.turn.completedToolCount)
     }
 
     // MARK: - Copy
@@ -289,6 +296,21 @@ enum AgentActivityPresentation {
         }
     }
 
+    /// Secondary context for the live surface. This changes with the phase,
+    /// but stays quieter than the primary verb so the card remains scannable.
+    static func contextLabel(phase: AgentActivityPhase, completedToolCount: Int) -> String {
+        switch phase {
+        case .thinking:
+            if completedToolCount == 0 { return "Working through the next step" }
+            return completedSummary(completedToolCount)
+        case .tool:
+            if completedToolCount == 0 { return "In progress · moves to the thread when complete" }
+            return "\(completedSummary(completedToolCount)) · current action in progress"
+        case .stalled:
+            return "No activity received — still listening"
+        }
+    }
+
     /// Screen-reader text. Deliberately plainer than the visible label: the
     /// escalating thinking copy is visual reassurance, not information, and
     /// re-announcing "still thinking" every few seconds would be noise on a
@@ -326,5 +348,9 @@ enum AgentActivityPresentation {
     private static func fallbackName(_ name: String, default fallback: String) -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    private static func completedSummary(_ count: Int) -> String {
+        "\(count) completed \(count == 1 ? "action" : "actions") this turn"
     }
 }

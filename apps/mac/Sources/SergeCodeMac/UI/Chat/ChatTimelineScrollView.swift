@@ -139,8 +139,10 @@ struct ChatTimelineScrollView: View {
         // mutable selection. ChatScreen keys this view by the same ID, keeping
         // the LazyVStack, its rows, and every scroll callback on one thread.
         let items = model.timeline(threadID: threadID)
-        // Finished tool bursts render condensed; grouping is pure render
-        // sugar over the untouched timeline array. Memoized on
+        // Finished tool bursts render condensed; running tools remain in the
+        // raw timeline for activity projection but are omitted from permanent
+        // transcript history until their terminal lifecycle update arrives.
+        // Memoized on
         // (threadID, structureVersion, settled), with timelineVersion used
         // only for content refreshes when assistant markdown changes.
         let threadKey = model.scopedThreadKey(threadID)
@@ -161,10 +163,10 @@ struct ChatTimelineScrollView: View {
             projectRoot: model.projectPath(forScopedThreadKey: threadKey),
             activeDecisionCardID: items.activeDecisionCardID,
             isConnectionReady: model.connection == .ready)
-        // Single ephemeral row, not a timeline entry: a long working stretch
+        // Single ephemeral surface, not a timeline entry: a long working stretch
         // must never stack repeated status items into the transcript. Covers
         // both gaps a live turn leaves at the tail — silent reasoning and an
-        // in-flight tool call whose own row has scrolled out of view.
+        // in-flight tool call that intentionally has no transcript row yet.
         let activity = AgentActivityPresentation.activity(
             threadStatus: thread?.status,
             isStalled: thread?.isStalled ?? false,

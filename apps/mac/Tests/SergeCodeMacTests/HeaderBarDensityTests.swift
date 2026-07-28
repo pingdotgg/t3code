@@ -50,9 +50,8 @@ struct HeaderBarDensityTests {
 
     @Test("folding a busy bar actually saves width at every tier")
     func foldingShrinksABusyBar() {
-        // A quiet repository shows only the branch chip and the git menu, and
-        // neither has anything to give up at the compact tier — so the strict
-        // saving is asserted where it matters, on the row that overflowed.
+        // Every lifecycle keeps the same slots; the density tier is the only
+        // mechanism that changes the bar's width.
         let inventory = GitBarInventory(status: busyStatus())
         #expect(inventory.estimatedWidth(at: .compact) < inventory.estimatedWidth(at: .full))
         #expect(inventory.estimatedWidth(at: .minimal) < inventory.estimatedWidth(at: .compact))
@@ -82,11 +81,13 @@ struct HeaderBarDensityTests {
         #expect(density(1800, busyStatus()) == .full)
     }
 
-    @Test("a quiet repository keeps its words in a narrow pane")
-    func quietRepositoryStaysReadable() {
-        // Only the branch chip and the git menu: there is no reason for those
-        // two to lose their labels just because the window is small.
-        #expect(density(760, quietStatus()) == .full)
+    @Test("a quiet repository keeps the same stable geometry")
+    func quietRepositoryKeepsStableGeometry() {
+        let busy = GitBarInventory(status: busyStatus())
+        let quiet = GitBarInventory(status: quietStatus())
+        for tier in HeaderBarDensity.allCases {
+            #expect(busy.estimatedWidth(at: tier) == quiet.estimatedWidth(at: tier))
+        }
     }
 
     @Test("an unmeasured header renders at full width")
@@ -116,6 +117,11 @@ struct HeaderBarDensityTests {
         #expect(inventory.filesChangedLabel == "3 files changed")
         #expect(inventory.insertionsLabel == "+267")
         #expect(inventory.deletionsLabel == "−113")
+
+        var mergedStatus = busyStatus()
+        mergedStatus.prState = .merged
+        let merged = GitBarInventory(status: mergedStatus)
+        #expect(merged.prLabel(at: .full) == "Merged #267")
     }
 
     @Test("the branch cap tightens with the tier")
@@ -124,14 +130,12 @@ struct HeaderBarDensityTests {
         #expect(HeaderBarDensity.compact.branchWidth > HeaderBarDensity.minimal.branchWidth)
     }
 
-    @Test("a branch name past the cap cannot widen the bar")
-    func branchNameIsCapped() {
+    @Test("branch length cannot change the bar width")
+    func branchLengthKeepsStableWidth() {
         let long = GitBarInventory(status: busyStatus(branch: String(repeating: "x", count: 400)))
         let short = GitBarInventory(status: busyStatus(branch: "x"))
         for tier in HeaderBarDensity.allCases {
-            #expect(
-                long.estimatedWidth(at: tier) - short.estimatedWidth(at: tier)
-                    <= tier.branchWidth)
+            #expect(long.estimatedWidth(at: tier) == short.estimatedWidth(at: tier))
         }
     }
 
@@ -154,11 +158,13 @@ struct HeaderBarDensityTests {
         #expect(!quiet.showsMerge)
     }
 
-    @Test("an outcome pill is counted against the width it takes")
-    func outcomePillCountsTowardWidth() {
+    @Test("an action outcome reuses the repository slot")
+    func outcomeReusesRepositorySlot() {
         let bare = GitBarInventory(status: busyStatus())
         let withOutcome = GitBarInventory(
             status: busyStatus(), outcomeTitle: "Pushed 3 commits to origin")
-        #expect(withOutcome.estimatedWidth(at: .full) > bare.estimatedWidth(at: .full))
+        for tier in HeaderBarDensity.allCases {
+            #expect(withOutcome.estimatedWidth(at: tier) == bare.estimatedWidth(at: tier))
+        }
     }
 }

@@ -4,12 +4,9 @@ import SwiftUI
 
 /// How much room the chat header's git bar has to spend on words.
 ///
-/// The bar shows the same chips at every density — nothing disappears — but
-/// each chip trades its prose for its glyph as the window narrows: "3 files
-/// changed +267 −113" becomes a document glyph with the two deltas, then just
-/// the file count; "Conflicts" becomes its warning triangle; "Comments · 4"
-/// becomes a bubble and a 4. Every collapsed chip keeps the full sentence in
-/// its tooltip and its accessibility label, so nothing is lost, only folded.
+/// The bar keeps the same five slots at every density. Each slot trades prose
+/// for a glyph as the window narrows while its tooltip and accessibility label
+/// retain the full meaning.
 enum HeaderBarDensity: Comparable, CaseIterable, Sendable {
     case minimal, compact, full
 
@@ -26,16 +23,32 @@ enum HeaderBarDensity: Comparable, CaseIterable, Sendable {
         }
     }
 
-    /// Width cap for the transient git-action outcome chip, whose title is a
-    /// server string of no bounded length. `nil` at the tier where the chip
-    /// folds to its glyph and the title lives only in the tooltip.
-    var outcomeChipWidth: CGFloat? {
+    /// Stable widths for the three stateful segments. Their contents can change
+    /// freely without moving neighboring controls.
+    var repositoryWidth: CGFloat {
         switch self {
-        case .full: 320
-        case .compact: 190
-        case .minimal: nil
+        case .full: 132
+        case .compact: 94
+        case .minimal: 54
         }
     }
+
+    var pullRequestWidth: CGFloat {
+        switch self {
+        case .full: 124
+        case .compact: 82
+        case .minimal: 42
+        }
+    }
+
+    var primaryActionWidth: CGFloat {
+        switch self {
+        case .full: 96
+        case .compact: 74
+        case .minimal: 42
+        }
+    }
+
 }
 
 // MARK: - Inventory
@@ -65,7 +78,8 @@ struct GitBarInventory: Equatable, Sendable {
     var showsComments: Bool
     var showsReadyForReview: Bool
     var showsMerge: Bool
-    /// Title of the transient git-action outcome pill, when one is up.
+    /// Title of the transient git-action outcome, when one is up. It replaces
+    /// the repository readout in-place instead of inserting another segment.
     var outcomeTitle: String?
 
     init(status: VcsStatus, outcomeTitle: String? = nil) {
@@ -110,11 +124,13 @@ struct GitBarInventory: Equatable, Sendable {
     var deletionsLabel: String? { deletions > 0 ? "−\(deletions)" : nil }
 
     func prLabel(at density: HeaderBarDensity) -> String? {
-        guard let prNumber else { return nil }
+        guard let prNumber else {
+            return density == .full ? "No PR" : nil
+        }
         switch density {
         case .full:
-            return "PR #\(prNumber)"
-                + (prIsMerged ? " · Merged" : prIsDraft ? " · Draft" : "")
+            return prIsMerged
+                ? "Merged #\(prNumber)" : prIsDraft ? "Draft #\(prNumber)" : "PR #\(prNumber)"
         case .compact: return "#\(prNumber)"
         case .minimal: return nil
         }
@@ -170,96 +186,22 @@ struct GitBarInventory: Equatable, Sendable {
 private enum Ink {
     static let character: CGFloat = 6.2
     static let icon: CGFloat = 13
-    static let chevron: CGFloat = 9
 }
 
 extension GitBarInventory {
     /// Estimated rendered width of the whole bar at `density`.
     func estimatedWidth(at density: HeaderBarDensity) -> CGFloat {
-        var chips: [CGFloat] = []
-
-        if let outcomeTitle {
-            if let cap = density.outcomeChipWidth {
-                chips.append(
-                    min(cap, chip(icons: 2, textWidth: Ink.character * CGFloat(outcomeTitle.count)))
-                )
-            } else {
-                chips.append(chip(icons: 2))
-            }
-        }
-
-        // Branch: one glyph, a truncating name, a chevron.
-        chips.append(
-            chip(
-                icons: 1,
-                textWidth: min(density.branchWidth, Ink.character * CGFloat(branch.count)),
-                chevron: true))
-
-        if showsWorkingTree {
-            let deltas = [insertionsLabel, deletionsLabel].compactMap(\.self)
-            switch density {
-            case .full:
-                chips.append(chip(text: ([filesChangedLabel] + deltas).joined(separator: " ")))
-            case .compact:
-                chips.append(
-                    chip(icons: 1, text: ([changedFilesCount] + deltas).joined(separator: " ")))
-            case .minimal:
-                chips.append(chip(icons: 1, text: changedFilesCount))
-            }
-        }
-
-        if showsDivergence {
-            let counts = [ahead > 0 ? aheadCount : nil, behind > 0 ? behindCount : nil]
-                .compactMap(\.self)
-            chips.append(chip(icons: counts.count, text: counts.joined(separator: " ")))
-        }
-
-        if prNumber != nil {
-            chips.append(chip(icons: 1, text: prLabel(at: density)))
-        }
-        if showsConflicts {
-            chips.append(chip(icons: 1, text: density.showsLabels ? "Conflicts" : nil))
-        }
-        if showsComments {
-            chips.append(chip(icons: 1, text: commentsLabel(at: density)))
-        }
-        if showsReadyForReview {
-            chips.append(chip(icons: 1, text: readyLabel(at: density)))
-        }
-        if showsMerge {
-            chips.append(chip(icons: 1, text: mergeLabel(at: density)))
-        }
-        chips.append(chip(icons: 1, text: gitLabel(at: density), chevron: true))
-
-        let gaps = CGFloat(max(0, chips.count - 1)) * HeaderChipMetrics.barSpacing
-        return chips.reduce(0, +) + gaps
+        let widths = [
+            density.branchWidth,
+            density.repositoryWidth,
+            density.pullRequestWidth,
+            density.primaryActionWidth,
+            HeaderChipMetrics.height,
+        ]
+        let gaps = CGFloat(widths.count - 1) * HeaderChipMetrics.barSpacing
+        return widths.reduce(0, +) + gaps + HeaderChipMetrics.barInset * 2
     }
 
-    /// Width of one chip from its parts, mirroring `HeaderChipChrome`: content
-    /// plus the gaps between its pieces plus the padding its shape adds.
-    private func chip(
-        icons: Int = 0, text: String? = nil, textWidth: CGFloat? = nil, chevron: Bool = false
-    ) -> CGFloat {
-        var content = CGFloat(icons) * Ink.icon
-        var pieces = icons
-        if let textWidth {
-            content += textWidth
-            pieces += 1
-        } else if let text, !text.isEmpty {
-            content += Ink.character * CGFloat(text.count)
-            pieces += 1
-        }
-        if chevron {
-            content += Ink.chevron
-            pieces += 1
-        }
-        let isIconOnly = pieces == icons && !chevron
-        let padding =
-            2
-            * (isIconOnly
-                ? HeaderChipMetrics.iconOnlyPadding : HeaderChipMetrics.horizontalPadding)
-        return content + CGFloat(max(0, pieces - 1)) * HeaderChipMetrics.contentSpacing + padding
-    }
 }
 
 // MARK: - Resolving the density

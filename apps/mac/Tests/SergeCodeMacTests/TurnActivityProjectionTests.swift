@@ -70,7 +70,8 @@ struct TurnActivityProjectionTests {
         let turn = TurnActivityProjection.currentTurn(timeline: timeline, checkpoints: [])
 
         #expect(turn.failedCount == 1)
-        #expect(turn.toolCount == 3)
+        #expect(turn.toolCount == 2)
+        #expect(!turn.events.contains { $0.status == .running })
     }
 
     @Test("turn number falls back to checkpoints when no user message exists")

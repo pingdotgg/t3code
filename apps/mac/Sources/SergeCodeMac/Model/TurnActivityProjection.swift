@@ -52,7 +52,11 @@ enum TurnActivityProjection {
                 startedAt = at
                 events = []
                 filesTouched = []
-            case .toolEvent(let id, let name, let detail, let kind, let status, _, _, _):
+            case .toolEvent(let id, let name, let detail, let kind, let status, _, _, _)
+            where status != .running:
+                // The full-width live activity card is the sole owner of
+                // non-terminal work. This inspector is completed turn
+                // history, matching the chat transcript projection.
                 events.append(
                     TurnActivity.Event(id: id, name: name, detail: detail, kind: kind, status: status))
                 if kind == .fileChange, !detail.isEmpty, !filesTouched.contains(detail) {
