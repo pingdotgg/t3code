@@ -46,7 +46,9 @@ export type ApnsDeliveryQueueError = ApnsDeliveryQueueSendError;
 export class ApnsDeliveryQueueSender extends Context.Service<
   ApnsDeliveryQueueSender,
   {
-    readonly send: (body: SignedApnsDeliveryJob) => Effect.Effect<void, Cloudflare.QueueSendError>;
+    readonly send: (
+      body: SignedApnsDeliveryJob,
+    ) => Effect.Effect<void, Cloudflare.Queues.SendError>;
   }
 >()("t3code-relay/agentActivity/ApnsDeliveryQueue/ApnsDeliveryQueueSender") {}
 
@@ -207,7 +209,7 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(ApnsDeliveryQueue, make);
 
 export const layerCloudflareQueues = (
-  sender: Cloudflare.QueueSender,
+  sender: Cloudflare.Queues.WriteQueueClient,
   alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
 ) =>
   layer.pipe(

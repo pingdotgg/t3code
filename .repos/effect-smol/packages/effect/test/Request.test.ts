@@ -1,5 +1,5 @@
 import { assert, describe, expect, it } from "@effect/vitest"
-import { Array, Context, Data, Fiber } from "effect"
+import { Array, Context, Data, Equal, Fiber, Hash } from "effect"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -133,6 +133,36 @@ const provideEnv = flow(
 )
 
 describe.sequential("Request", () => {
+  it("preserves __proto__ as an own constructor property", () => {
+    interface ProtoRequest extends Request.Request<void> {
+      readonly "__proto__": { readonly polluted: boolean }
+    }
+    const make = Request.of<ProtoRequest>()
+    const value = { polluted: true }
+    const request = make({ ["__proto__"]: value })
+
+    assert.isTrue(Request.isRequest(request))
+    assert.isTrue(Object.hasOwn(request, "__proto__"))
+    assert.strictEqual(request["__proto__"], value)
+  })
+
+  it("copies enumerable symbol properties in Class", () => {
+    const key = Symbol()
+    class SymbolRequest extends Request.Class<{ readonly [key]: string }, void> {}
+
+    assert.strictEqual(new SymbolRequest({ [key]: "value" })[key], "value")
+  })
+
+  it("compares StructuralProto values when hashes collide", () => {
+    class Req extends Request.Class<{ id: string; account: string }, string> {}
+
+    const a = new Req({ id: "id-8", account: "acct-2811" })
+    const b = new Req({ id: "id-14", account: "acct-755" })
+
+    assert.strictEqual(Hash.hash(a), Hash.hash(b))
+    assert.strictEqual(Equal.equals(a, b), false)
+  })
+
   it.effect(
     "requests are executed correctly",
     Effect.fnUntraced(function*() {
@@ -210,6 +240,34 @@ describe.sequential("Request", () => {
       provideEnv,
       Effect.provideService(Interrupts, { interrupts: 0 })
     )
+  )
+
+  it.effect(
+    "grouped requests can be interrupted before execution",
+    Effect.fnUntraced(function*() {
+      let resolverExecuted = false
+
+      const resolver = Resolver.make<GetNameById>(Effect.fnUntraced(function*(entries) {
+        resolverExecuted = true
+        for (const entry of entries) {
+          entry.completeUnsafe(Exit.succeed(userNames.get(entry.request.id)!))
+        }
+      })).pipe(
+        Resolver.grouped(({ request }) => request.id),
+        Resolver.setDelayEffect(Effect.never)
+      )
+
+      const fiber = yield* Effect.forkChild(Effect.request(new GetNameById({ id: userIds[0] }), resolver))
+      yield* Effect.yieldNow
+      yield* Fiber.interrupt(fiber)
+      const exit = yield* Fiber.await(fiber)
+
+      assert.strictEqual(exit._tag, "Failure")
+      if (exit._tag === "Failure") {
+        assert.strictEqual(Cause.hasInterruptsOnly(exit.cause), true)
+      }
+      assert.strictEqual(resolverExecuted, false)
+    })
   )
 
   it.effect(

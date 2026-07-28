@@ -1,6 +1,7 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -46,14 +47,23 @@ export interface ServerCertificate extends Resource<
   "AWS.IAM.ServerCertificate",
   ServerCertificateProps,
   {
+    /** The ARN of the server certificate. */
     serverCertificateArn: string;
+    /** The name of the server certificate. */
     serverCertificateName: string;
+    /** The stable unique ID of the server certificate. */
     serverCertificateId: string | undefined;
+    /** The IAM path of the server certificate. */
     path: string | undefined;
+    /** The PEM-encoded certificate body. */
     certificateBody: string;
+    /** The PEM-encoded certificate chain, if uploaded. */
     certificateChain: string | undefined;
+    /** When the certificate was uploaded. */
     uploadDate: Date | undefined;
+    /** When the certificate expires. */
     expiration: Date | undefined;
+    /** The tags applied to the certificate. */
     tags: Record<string, string>;
   },
   never,
@@ -66,7 +76,7 @@ export interface ServerCertificate extends Resource<
  * `ServerCertificate` uploads and tracks a TLS certificate bundle for legacy
  * IAM-integrated services. The private key is write-only and should be provided
  * as a redacted value when possible.
- *
+ * @resource
  * @section Uploading Server Certificates
  * @example Upload a TLS Certificate
  * ```typescript
@@ -249,6 +259,51 @@ export const ServerCertificateProvider = () =>
             tags: desiredTags,
           };
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // IAM is global; `listServerCertificates` enumerates every cert in
+            // the account. Metadata lacks the body/chain/tags, so hydrate each
+            // entry to produce the full Attributes shape `read` returns.
+            const metadatas = yield* iam.listServerCertificates.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap(
+                  (page) => page.ServerCertificateMetadataList ?? [],
+                ),
+              ),
+            );
+            const rows = yield* Effect.forEach(
+              metadatas,
+              (meta) =>
+                Effect.gen(function* () {
+                  const cert = yield* readCertificate(
+                    meta.ServerCertificateName,
+                  );
+                  // Raced delete between list and hydrate — skip it.
+                  if (!cert?.ServerCertificateMetadata?.Arn) {
+                    return undefined;
+                  }
+                  const tags = yield* iam.listServerCertificateTags({
+                    ServerCertificateName: meta.ServerCertificateName,
+                  });
+                  return {
+                    serverCertificateArn: cert.ServerCertificateMetadata.Arn,
+                    serverCertificateName:
+                      cert.ServerCertificateMetadata.ServerCertificateName,
+                    serverCertificateId:
+                      cert.ServerCertificateMetadata.ServerCertificateId,
+                    path: cert.ServerCertificateMetadata.Path,
+                    certificateBody: cert.CertificateBody,
+                    certificateChain: cert.CertificateChain,
+                    uploadDate: cert.ServerCertificateMetadata.UploadDate,
+                    expiration: cert.ServerCertificateMetadata.Expiration,
+                    tags: toTagRecord(tags.Tags),
+                  };
+                }),
+              { concurrency: 10 },
+            );
+            return rows.filter((row) => row !== undefined);
+          }),
         delete: Effect.fn(function* ({ output }) {
           yield* iam
             .deleteServerCertificate({

@@ -27,6 +27,7 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
@@ -181,9 +182,7 @@ export function HomeScreen(props: HomeScreenProps) {
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const threadListV2Enabled =
-    AsyncResult.isSuccess(preferencesResult) &&
-    preferencesResult.value.threadListV2Enabled === true;
+  const threadListV2Enabled = useThreadListV2Enabled();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);

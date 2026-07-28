@@ -1,23 +1,10 @@
 /**
- * The `Activity` module defines named, schema-backed effects that run at the
- * side-effect boundary of a durable workflow. Activities are executed through a
- * `WorkflowEngine`, encode their success and failure values with the provided
- * schemas, and can be replayed from persisted results instead of rerunning the
- * underlying effect.
+ * Defines named effects whose results can be stored by a workflow engine.
  *
- * Use activities for work that should not be embedded directly in workflow
- * control flow, such as calling external services, writing to databases,
- * enqueueing durable jobs, short sleeps delegated by `DurableClock`, or racing
- * multiple external operations with `raceAll`. Keep activity names and schemas
- * stable because engines use them, together with the workflow execution and
- * retry attempt, to identify stored results.
- *
- * Activities can be interrupted and retried, and workflow resumes may observe a
- * completed encoded result or run the activity again depending on what the
- * engine has persisted. Make external side effects idempotent, use
- * `idempotencyKey` for stable request keys derived from the workflow execution,
- * and include the current attempt only when each retry must address a distinct
- * external operation.
+ * An `Activity` is an `Effect` with a stable name and schemas for its success
+ * and error values. `make` wraps an effect so the `WorkflowEngine` can execute
+ * it, store its result, or replay that result during a workflow run. This module
+ * also includes helpers for retry attempts, idempotency keys, and durable races.
  *
  * @since 4.0.0
  */
@@ -47,8 +34,8 @@ const TypeId = "~effect/workflow/Activity"
  * @since 4.0.0
  */
 export interface Activity<
-  Success extends Schema.Top = Schema.Void,
-  Error extends Schema.Top = Schema.Never,
+  Success extends Schema.Constraint = Schema.Void,
+  Error extends Schema.Constraint = Schema.Never,
   R = never
 > extends
   Effect.Effect<
@@ -62,6 +49,7 @@ export interface Activity<
   readonly successSchema: Success
   readonly errorSchema: Error
   readonly exitSchema: Schema.Exit<Success, Error, Schema.Defect>
+  readonly exitSchemaPartial: Schema.Exit<Success, Error, Schema.Unknown>
   readonly annotations: Context.Context<never>
   annotate<I, S>(
     key: Context.Key<I, S>,
@@ -134,8 +122,8 @@ export interface AnyWithProps {
  */
 export const make = <
   R,
-  Success extends Schema.Top = Schema.Void,
-  Error extends Schema.Top = Schema.Never
+  Success extends Schema.Constraint = Schema.Void,
+  Error extends Schema.Constraint = Schema.Never
 >(options: {
   readonly name: string
   readonly success?: Success | undefined
@@ -165,7 +153,8 @@ export const make = <
     name: options.name,
     successSchema,
     errorSchema,
-    exitSchema: Schema.Exit(successSchemaJson, errorSchemaJson, Schema.Defect),
+    exitSchema: Schema.Exit(successSchemaJson, errorSchemaJson, Schema.Defect()),
+    exitSchemaPartial: Schema.Exit(successSchemaJson, errorSchemaJson, Schema.Unknown),
     annotations: options.annotations ?? Context.empty(),
     annotate(tag: Context.Key<any, any>, value: any) {
       return make({
@@ -189,11 +178,12 @@ export const make = <
   return self
 }
 
-const interruptRetryPolicy = Schedule.exponential(4.0, 1.5).pipe(
-  Schedule.either(Schedule.spaced("10 seconds")),
-  Schedule.either(Schedule.recurs(10)),
-  Schedule.satisfiesInputType<Cause.Cause<unknown>>(),
-  Schedule.while((meta) => Effect.succeed(Cause.hasInterrupts(meta.input)))
+const interruptRetryPolicy = Schedule.min([
+  Schedule.exponential(400, 1.5),
+  Schedule.spaced("10 seconds")
+]).pipe(
+  Schedule.setInputType<Cause.Cause<unknown>>(),
+  Schedule.while((meta) => meta.attempt <= 10 && Cause.hasInterrupts(meta.input))
 )
 
 const retryOnInterrupt = (
@@ -275,7 +265,7 @@ export const idempotencyKey: (
  * Runs a non-empty collection of activities as a durable race and returns the
  * first completed success or failure using unioned success and error schemas.
  *
- * @category Racing
+ * @category racing
  * @since 4.0.0
  */
 export const raceAll = <const Activities extends NonEmptyReadonlyArray<Any>>(
@@ -314,8 +304,8 @@ const InstanceTag = Context.Service<WorkflowInstance, WorkflowInstance["Service"
 
 const makeExecute = Effect.fnUntraced(function*<
   R,
-  Success extends Schema.Top = typeof Schema.Void,
-  Error extends Schema.Top = typeof Schema.Never
+  Success extends Schema.Constraint = typeof Schema.Void,
+  Error extends Schema.Constraint = typeof Schema.Never
 >(activity: Activity<Success, Error, R>) {
   const engine = yield* EngineTag
   const instance = yield* InstanceTag

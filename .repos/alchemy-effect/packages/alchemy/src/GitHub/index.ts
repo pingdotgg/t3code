@@ -1,8 +1,13 @@
 export * as Auth from "./AuthProvider.ts";
 export * from "./Comment.ts";
 export { GitHubCredentials, fromEnv, fromToken } from "./Credentials.ts";
+export * from "./Env.ts";
+export * from "./Environment.ts";
 export * from "./Providers.ts";
+export * from "./Repository.ts";
+export * from "./RepositoryEventSource.ts";
 export * from "./Secret.ts";
 export * from "./Secrets.ts";
 export * from "./Variable.ts";
 export * from "./Variables.ts";
+export * from "./Webhook.ts";
