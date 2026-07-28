@@ -66,11 +66,13 @@ export function posixShellSingleQuote(value: string): string {
  * FUSE mount busy forever: its runtime process parks in `fuse_dev_do_read` and
  * never unmounts, so every restart strands a mount and a process.
  *
- * The multi-digit `exec N>&-` is inside an `eval` string on purpose. Shells
- * differ on whether they accept fd numbers above 9, and a parse error in the
- * script body would mean never reaching the exec at all — an app that quits and
- * never returns. Deferring the parse to `eval` makes the worst case "fds stay
- * open", not "the app is gone".
+ * Only emitted for bash. Chromium's fds are well above 9, and dash — `/bin/sh`
+ * on Debian and Ubuntu — does not accept multi-digit fd numbers in
+ * redirections: it reads `exec 10>&-` as running a command named `10`, and a
+ * failed `exec` terminates a non-interactive shell on the spot. That kills the
+ * helper before it reaches the re-exec, leaving the app gone for good. `eval`
+ * does not help, because this is a failed command rather than a parse error,
+ * so `|| true` never runs.
  */
 const CLOSE_INHERITED_FDS_SNIPPET =
   'for fd in /proc/$$/fd/*; do n=${fd##*/}; case "$n" in 0|1|2) continue;; esac; ' +
@@ -80,6 +82,10 @@ export function buildAppImageRelaunchShellCommand(input: {
   readonly appImagePath: string;
   readonly args: readonly string[];
   readonly delayMs: number;
+  /** Only safe under bash; see {@link CLOSE_INHERITED_FDS_SNIPPET}. */
+  readonly closeInheritedFds?: boolean;
+  /** Captures the helper's stderr, so a failed delayed `exec` is diagnosable. */
+  readonly logPath?: string | undefined;
 }): string {
   // Whole seconds only: POSIX specifies `sleep` as taking an integer, and a
   // /bin/sh whose sleep rejects "1.0" would short-circuit the `&&` and never
@@ -90,7 +96,12 @@ export function buildAppImageRelaunchShellCommand(input: {
   const quotedPath = posixShellSingleQuote(input.appImagePath);
   const quotedArgs = input.args.map(posixShellSingleQuote).join(" ");
   const execTarget = quotedArgs.length > 0 ? `${quotedPath} ${quotedArgs}` : quotedPath;
+  // The exec happens after we have exited, so its failure (AppImage moved,
+  // execute bit dropped) can only be reported by leaving a trace behind.
+  const relaunch = input.logPath
+    ? `{ sleep ${sleepSeconds} && exec ${execTarget}; } 2>>${posixShellSingleQuote(input.logPath)}`
+    : `sleep ${sleepSeconds} && exec ${execTarget}`;
   // Close first, then sleep: releasing the fds up front lets the outgoing
   // mount unmount *during* the delay rather than after it.
-  return `${CLOSE_INHERITED_FDS_SNIPPET}; sleep ${sleepSeconds} && exec ${execTarget}`;
+  return input.closeInheritedFds ? `${CLOSE_INHERITED_FDS_SNIPPET}; ${relaunch}` : relaunch;
 }

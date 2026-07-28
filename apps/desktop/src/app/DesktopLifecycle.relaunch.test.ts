@@ -90,19 +90,56 @@ describe("buildAppImageRelaunchShellCommand", () => {
         delayMs: 1_000,
       });
 
-      assert.isTrue(
-        command.endsWith(
-          `sleep 1 && exec ${posixShellSingleQuote("/home/user/T3 Code.AppImage")} ${posixShellSingleQuote("--no-sandbox")}`,
-        ),
+      assert.equal(
         command,
+        `sleep 1 && exec ${posixShellSingleQuote("/home/user/T3 Code.AppImage")} ${posixShellSingleQuote("--no-sandbox")}`,
       );
-      // Inherited Chromium fds keep the outgoing AppImage's FUSE mount busy, so
-      // they must be dropped before the re-exec — and before the sleep, so the
-      // unmount can happen during it.
-      assert.isTrue(command.startsWith("for fd in /proc/$$/fd/*;"), command);
-      assert.isTrue(command.indexOf("exec $n>&-") < command.indexOf("sleep 1"), command);
 
       assert.equal(posixShellSingleQuote("it's"), `'it'\\''s'`);
+    }),
+  );
+
+  it.effect("omits the fd cleanup unless the shell is known to handle it", () =>
+    Effect.sync(() => {
+      const base = {
+        appImagePath: "/opt/T3.AppImage",
+        args: [],
+        delayMs: 1_000,
+      } as const;
+
+      // dash reads `exec 10>&-` as a command named "10" and a failed exec kills
+      // a non-interactive shell, so emitting this for /bin/sh would abort the
+      // helper before the re-exec and lose the app entirely.
+      assert.isFalse(buildAppImageRelaunchShellCommand(base).includes("/proc/$$/fd"));
+
+      const withCleanup = buildAppImageRelaunchShellCommand({
+        ...base,
+        closeInheritedFds: true,
+      });
+      // Must run before the sleep, so the outgoing mount can be released during it.
+      assert.isTrue(withCleanup.startsWith("for fd in /proc/$$/fd/*;"), withCleanup);
+      assert.isTrue(
+        withCleanup.indexOf("exec $n>&-") < withCleanup.indexOf("sleep 1"),
+        withCleanup,
+      );
+    }),
+  );
+
+  it.effect("captures helper stderr when a log path is supplied", () =>
+    Effect.sync(() => {
+      const command = buildAppImageRelaunchShellCommand({
+        appImagePath: "/opt/T3.AppImage",
+        args: [],
+        delayMs: 1_000,
+        logPath: "/home/user/.t3/logs/relaunch.log",
+      });
+
+      // The exec runs after the app has exited, so a failure there can only be
+      // reported by what it leaves behind.
+      assert.isTrue(
+        command.endsWith(`; } 2>>${posixShellSingleQuote("/home/user/.t3/logs/relaunch.log")}`),
+        command,
+      );
     }),
   );
 });

@@ -180,7 +180,14 @@ export const make = DesktopLifecycle.of({
         // Await the spawn: a failure here must not fall through to exit(0), or
         // the app just disappears and never comes back.
         yield* Effect.tryPromise({
-          try: () => scheduleAppImageRelaunch(relaunchPlan),
+          try: () =>
+            scheduleAppImageRelaunch(
+              relaunchPlan,
+              process.env,
+              // The re-exec fires after we are gone, so its own failures can
+              // only surface here.
+              environment.path.join(environment.logDir, "relaunch.log"),
+            ),
           catch: (cause) => new DesktopLifecycleRelaunchError({ reason, cause }),
         });
       } else {
@@ -192,17 +199,24 @@ export const make = DesktopLifecycle.of({
       // Only give up the lock once the relaunch is committed. Neither path has
       // started the next process yet (app.relaunch defers its spawn to exit,
       // the AppImage helper sleeps first), so releasing here still beats the
-      // successor's requestSingleInstanceLock() — but if the setup above threw,
-      // the catchCause below leaves us running, and holding the lock is what
-      // keeps the next manual launch focusing this window instead of opening a
-      // second full instance.
+      // successor's requestSingleInstanceLock().
       yield* electronApp.releaseSingleInstanceLock;
       yield* electronApp.exit(0);
     }).pipe(
-      Effect.catchCause((cause) => {
-        const error = new DesktopLifecycleRelaunchError({ reason, cause });
-        return logLifecycleError(error.message, { error });
-      }),
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          const error = new DesktopLifecycleRelaunchError({ reason, cause });
+          yield* logLifecycleError(error.message, { error });
+          // By this point `quitting` is set and requestDesktopShutdownAndWait
+          // has already torn the backend down, so there is no working app left
+          // to return to. Staying alive would just hold the single-instance
+          // lock on a dead instance, and every later launch would focus *this*
+          // window instead of starting a usable one. Hand the lock back and
+          // exit non-zero so the next launch comes up clean.
+          yield* electronApp.releaseSingleInstanceLock.pipe(Effect.ignore);
+          yield* electronApp.exit(1);
+        }),
+      ),
       Effect.forkDetach,
       Effect.asVoid,
     );

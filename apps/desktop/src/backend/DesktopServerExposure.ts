@@ -573,6 +573,8 @@ export const make = Effect.gen(function* () {
       // after Serve is already active, roll Serve back so we do not leave
       // unintended network exposure with UI/settings still showing disabled.
       let preflightedServePort: number | null = null;
+      let revertEnableBinding: { readonly servePort: number; readonly localPort: number } | null =
+        null;
       if (input.enabled) {
         const current = yield* Ref.get(stateRef);
         const servePort = input.port ?? current.tailscaleServePort;
@@ -650,6 +652,13 @@ export const make = Effect.gen(function* () {
               });
             }),
           );
+          // Mirror the enable path's rollback. Serve is already down; if the
+          // settings write now fails, both stateRef and the persisted document
+          // still say enabled, so without this the UI would advertise an HTTPS
+          // endpoint that no longer answers.
+          if (current.port > 0) {
+            revertEnableBinding = { servePort, localPort: current.port };
+          }
         }
       }
 
@@ -667,18 +676,28 @@ export const make = Effect.gen(function* () {
                 cause,
               }),
           ),
-          Effect.tapError(() =>
-            preflightedServePort === null
-              ? Effect.void
-              : disableTailscaleServe({ servePort: preflightedServePort }).pipe(
-                  Effect.provideService(
-                    ChildProcessSpawner.ChildProcessSpawner,
-                    childProcessSpawner,
-                  ),
-                  // Best-effort: still surface the original persistence failure.
-                  Effect.ignore,
-                ),
-          ),
+          // Put the tailnet back the way the still-unchanged settings describe
+          // it. Best-effort either way: the original persistence failure is
+          // what the caller needs to see.
+          Effect.tapError(() => {
+            if (preflightedServePort !== null) {
+              return disableTailscaleServe({ servePort: preflightedServePort }).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Effect.ignore,
+              );
+            }
+            if (revertEnableBinding !== null) {
+              return ensureTailscaleServe({
+                localPort: revertEnableBinding.localPort,
+                servePort: revertEnableBinding.servePort,
+                localHost: "127.0.0.1",
+              }).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Effect.ignore,
+              );
+            }
+            return Effect.void;
+          }),
         );
 
       const nextState = yield* Ref.updateAndGet(stateRef, (current) => ({

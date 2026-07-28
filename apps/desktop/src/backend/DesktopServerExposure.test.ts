@@ -470,6 +470,80 @@ describe("DesktopServerExposure", () => {
     );
   });
 
+  it.effect("re-enables Serve when persisting the disable fails", () => {
+    const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
+      operation: "replace-settings-file",
+      path: "/tmp/desktop-settings.json",
+      cause: new Error("disk exploded"),
+    });
+    const enabledSettings = {
+      ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 8443,
+    };
+    const settingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+      get: Effect.succeed(enabledSettings),
+      load: Effect.succeed(enabledSettings),
+      setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
+      setServerExposureMode: () => Effect.die("unexpected exposure mode change"),
+      setTailscaleServe: () => Effect.fail(settingsFailure),
+      setUpdateChannel: () => Effect.die("unexpected update channel change"),
+      setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+      setWslDistro: () => Effect.die("unexpected WSL distro change"),
+      setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+      applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+      applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+    } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
+
+    const tailscaleCommands: Array<ReadonlyArray<string>> = [];
+    const recordingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        tailscaleCommands.push((command as unknown as { args: ReadonlyArray<string> }).args);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        tailscaleCommands.length = 0;
+        const error = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: false })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServePersistenceError);
+        // Serve was torn down before the write, and the write failed — so the
+        // binding must come back, or settings would advertise an HTTPS endpoint
+        // that no longer answers.
+        assert.deepEqual(tailscaleCommands, [
+          ["serve", "--https=8443", "off"],
+          ["serve", "--bg", "--https=8443", "http://127.0.0.1:4173"],
+        ]);
+      }),
+      {},
+      recordingSpawner,
+      settingsLayer,
+    );
+  });
+
   it.effect("preserves persistence request context and the settings failure chain", () => {
     const diskFailure = new Error("disk exploded");
     const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
