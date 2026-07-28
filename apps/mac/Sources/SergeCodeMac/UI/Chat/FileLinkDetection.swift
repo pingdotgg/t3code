@@ -1,9 +1,15 @@
 import Foundation
 import SwiftUI
 
-struct FileLinkTarget: Equatable, Sendable {
+struct FileLinkTarget: Equatable, Hashable, Sendable {
     let path: String
     let line: Int?
+
+    var displayName: String {
+        let name = (path as NSString).lastPathComponent
+        guard let line else { return name }
+        return "\(name):\(line)"
+    }
 }
 
 private let fileLinkScheme = "sergecode-file"
@@ -11,13 +17,18 @@ private let pathComponentAllowedCharacters = CharacterSet.alphanumerics.union(
     CharacterSet(charactersIn: "-._~"))
 
 private let plainFilePathExpression = try! NSRegularExpression(
-    pattern: #"/?(?:[\w.@+-]+/)+[\w.@+-]+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?"#)
+    pattern: #"/?(?:[\w.@+-]+/)+[\w.@+-]+\.[A-Za-z0-9]{1,16}(?:(?::\d+(?::\d+)?(?:-\d+)?)|(?:#L\d+(?:C\d+)?(?:-L?\d+)?))?|(?<![\w.@+-])[\w@+-]+\.(?:swift|tsx|ts|jsx|js|mjs|cjs|json|mdx|md|py|rb|rs|go|java|kts|kt|cpp|cc|c|hpp|h|mm|m|cs|sh|zsh|fish|sql|toml|yaml|yml|xml|html|scss|css|vue|svelte)(?:(?::\d+(?::\d+)?(?:-\d+)?)|(?:#L\d+(?:C\d+)?(?:-L?\d+)?))?"#,
+    options: [.caseInsensitive])
 private let inlineCodeFilePathExpression = try! NSRegularExpression(
-    pattern: #"^(?:/?(?:[\w.@+-]+/)+[\w.@+-]+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?|[\w.@+-]+\.[A-Za-z0-9]{1,8}:\d+(?::\d+)?)$"#)
+    pattern: #"^(?:(?:/?(?:[\w.@+ -]+/)*[\w.@+ -]+\.[A-Za-z0-9]{1,16})|(?:(?:[\w.@+ -]+/)*(?:AGENTS|README|LICENSE|Makefile|Dockerfile|Gemfile|Rakefile|Justfile)))(?:(?::\d+(?::\d+)?(?:-\d+)?)|(?:#L\d+(?:C\d+)?(?:-L?\d+)?))?$"#,
+    options: [.caseInsensitive])
 // Non-greedy path group so `file.ts:3:7` yields path `file.ts`, line 3
 // (greedy `(.*)` would swallow `:3` into the path and report line 7).
 private let lineSuffixExpression = try! NSRegularExpression(
-    pattern: #"^(.*?):(\d+)(?::\d+)?$"#)
+    pattern: #"^(.*?):(\d+)(?::\d+)?(?:-\d+)?$"#)
+private let fragmentLineSuffixExpression = try! NSRegularExpression(
+    pattern: #"^(.*?)#L(\d+)(?:C\d+)?(?:-L?\d+)?$"#,
+    options: [.caseInsensitive])
 
 func fileLinkURL(path: String, line: Int?) -> URL? {
     guard !path.isEmpty,
@@ -47,6 +58,46 @@ func parseFileLinkURL(_ url: URL) -> FileLinkTarget? {
         line = nil
     }
     return FileLinkTarget(path: path, line: line)
+}
+
+/// Converts a Markdown link destination into the same internal target used by
+/// auto-linkified paths. Agent output commonly uses relative destinations
+/// (`[AppModel.swift](apps/mac/…/AppModel.swift#L40)`), which `URL(string:)`
+/// accepts but the system cannot open meaningfully. HTTP/mail links stay
+/// external; local file URLs and workspace-relative paths become SergeCode
+/// links so click and contextual open actions share one route.
+func fileTarget(fromMarkdownDestination destination: String) -> FileLinkTarget? {
+    var candidate = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !candidate.isEmpty else { return nil }
+
+    if candidate.hasPrefix("<"), candidate.hasSuffix(">") {
+        candidate.removeFirst()
+        candidate.removeLast()
+    }
+
+    if let url = URL(string: candidate), let scheme = url.scheme?.lowercased() {
+        if scheme == fileLinkScheme {
+            return parseFileLinkURL(url)
+        }
+        if scheme == "file" {
+            return fileTarget(from: url.path(percentEncoded: false)
+                + url.fragment.map { "#\($0)" }.orEmpty)
+        }
+        return nil
+    }
+
+    guard !candidate.hasPrefix("#"),
+        candidate.contains("/") || looksLikeFileName(candidate)
+    else { return nil }
+    return fileTarget(from: candidate)
+}
+
+/// Produces the server launcher's target. Code editors understand
+/// `path:line`; Finder must receive the real filesystem path without a
+/// position suffix.
+func editorSubpath(for target: FileLinkTarget, editor: ExternalEditor) -> String {
+    guard editor != .fileManager, let line = target.line else { return target.path }
+    return "\(target.path):\(line)"
 }
 
 func linkifyFilePaths(in attributed: AttributedString) -> AttributedString {
@@ -86,7 +137,16 @@ func linkifyFilePaths(in attributed: AttributedString) -> AttributedString {
 }
 
 private func fileTarget(from token: String) -> FileLinkTarget? {
+    let token = token.trimmingCharacters(
+        in: CharacterSet(charactersIn: " \t\r\n\"'`()[]{}<>,.;"))
     let fullRange = NSRange(token.startIndex..<token.endIndex, in: token)
+    if let match = fragmentLineSuffixExpression.firstMatch(in: token, range: fullRange),
+        let pathRange = Range(match.range(at: 1), in: token),
+        let lineRange = Range(match.range(at: 2), in: token),
+        let line = Int(token[lineRange])
+    {
+        return FileLinkTarget(path: String(token[pathRange]), line: line)
+    }
     guard let match = lineSuffixExpression.firstMatch(in: token, range: fullRange),
           let pathRange = Range(match.range(at: 1), in: token),
           let lineRange = Range(match.range(at: 2), in: token),
@@ -95,6 +155,18 @@ private func fileTarget(from token: String) -> FileLinkTarget? {
         return FileLinkTarget(path: token, line: nil)
     }
     return FileLinkTarget(path: String(token[pathRange]), line: line)
+}
+
+private func looksLikeFileName(_ value: String) -> Bool {
+    let path = value
+        .split(separator: "#", maxSplits: 1).first
+        .map(String.init) ?? value
+    let withoutLocation = path.replacingOccurrences(
+        of: #":\d+(?::\d+)?$"#, with: "", options: .regularExpression)
+    let name = (withoutLocation as NSString).lastPathComponent
+    guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return false }
+    let ext = name[name.index(after: dot)...]
+    return !ext.isEmpty && ext.count <= 16
 }
 
 private func isHTTPToken(at matchRange: Range<String.Index>, in text: String) -> Bool {
@@ -110,4 +182,8 @@ private func isHTTPToken(at matchRange: Range<String.Index>, in text: String) ->
     // Only skip real URLs — repo paths like `httpserver/config.ts` or
     // `http-client/main.go` merely start with "http".
     return prefix.hasPrefix("http://") || prefix.hasPrefix("https://")
+}
+
+private extension Optional where Wrapped == String {
+    var orEmpty: String { self ?? "" }
 }

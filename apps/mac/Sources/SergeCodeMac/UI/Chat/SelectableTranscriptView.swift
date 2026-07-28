@@ -28,6 +28,8 @@ extension EnvironmentValues {
 
 struct SelectableTranscriptSheet: View {
     let items: [TimelineItem]
+    let threadID: String
+    let model: AppModel
     /// Optional project root for path shortening in tool rows.
     var projectRoot: String? = nil
     var threadIsSettled: Bool = false
@@ -36,13 +38,31 @@ struct SelectableTranscriptSheet: View {
     let contentKey: String
 
     @Environment(\.dismiss) private var dismiss
+    @UIState private var didCopyAll = false
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Select Text")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Thread Transcript")
+                        .font(.headline)
+                    Text("One continuous document for selection and copying")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
+                Button {
+                    copyAll()
+                } label: {
+                    Label(
+                        didCopyAll ? "Copied" : "Copy All",
+                        systemImage: didCopyAll ? "checkmark" : "doc.on.doc")
+                }
+                .disabled(didCopyAll)
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .help("Copy the entire thread")
+                .contentTransition(
+                    Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
@@ -53,13 +73,35 @@ struct SelectableTranscriptSheet: View {
 
             SelectableTranscriptTextView(
                 items: items,
+                threadID: threadID,
+                model: model,
                 projectRoot: projectRoot,
                 threadIsSettled: threadIsSettled,
                 contentKey: contentKey)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 560, minHeight: 420)
+        .frame(minWidth: 620, minHeight: 480)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func copyAll() {
+        let transcript = TranscriptTextBuilder.attributedString(
+            from: items,
+            projectRoot: projectRoot,
+            threadIsSettled: threadIsSettled)
+        let thread = model.thread(threadID: threadID)
+        Pasteboard.copy(
+            ThreadTranscriptExport.text(
+                title: thread?.title ?? "",
+                projectRoot: projectRoot,
+                provider: thread?.provider.displayName,
+                modelID: thread?.modelID,
+                transcript: transcript.string))
+        withAnimation(Motion.feedback) { didCopyAll = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation(Motion.reveal) { didCopyAll = false }
+        }
     }
 }
 
@@ -67,19 +109,46 @@ struct SelectableTranscriptSheet: View {
 
 struct SelectableTranscriptTextView: NSViewRepresentable {
     let items: [TimelineItem]
+    let threadID: String
+    let model: AppModel
     let projectRoot: String?
     let threadIsSettled: Bool
     let contentKey: String
 
     @MainActor
-    final class Coordinator {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         var appliedKey: String?
         var lastRebuild: ContinuousClock.Instant?
         var pendingRebuild: Task<Void, Never>?
+        var threadID = ""
+        weak var model: AppModel?
+
+        func textView(
+            _ textView: NSTextView,
+            clickedOnLink link: Any,
+            at charIndex: Int
+        ) -> Bool {
+            guard let url = link as? URL ?? (link as? String).flatMap(URL.init(string:)),
+                let target = parseFileLinkURL(url),
+                let model
+            else { return false }
+            let raw = UserDefaults.standard.string(forKey: "preferredExternalEditor")
+            let editor = raw.flatMap(ExternalEditor.init(rawValue:)) ?? .fileManager
+            Task {
+                await model.openInEditor(
+                    threadID: threadID,
+                    subpath: editorSubpath(for: target, editor: editor),
+                    editor: editor)
+            }
+            return true
+        }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        let coordinator = Coordinator()
+        coordinator.threadID = threadID
+        coordinator.model = model
+        return coordinator
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -101,6 +170,10 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(
             width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.font = TranscriptTextBuilder.bodyFont
+        textView.delegate = context.coordinator
+        textView.isAutomaticLinkDetectionEnabled = false
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         rebuild(
             textView: textView,
             scrollView: scrollView,
@@ -111,6 +184,8 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
+        coordinator.threadID = threadID
+        coordinator.model = model
         guard contentKey != coordinator.appliedKey else { return }
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
@@ -342,7 +417,7 @@ enum TranscriptTextBuilder {
             if leadingBreak { appendBlankLine(to: result) }
             appendHeader("You", to: result)
             if !text.isEmpty {
-                appendPlain(text, font: bodyFont, color: .labelColor, to: result)
+                appendSwiftUI(attributedMarkdownDocument(text), to: result)
             }
             if !attachments.isEmpty {
                 if !text.isEmpty { appendBlankLine(to: result) }
@@ -498,7 +573,7 @@ enum TranscriptTextBuilder {
             appendMono(command, color: .labelColor, to: result)
         case .fileChange(let path, let edits):
             let short = PathDisplay.short(path, projectRoot: projectRoot)
-            appendMono(short, color: .secondaryLabelColor, to: result)
+            appendFilePath(short, targetPath: path, to: result)
             let lines = FileChangeDiffText.attributedBody(diffLines(from: edits))
             result.append(NSAttributedString(string: "\n"))
             appendSwiftUI(lines, to: result)
@@ -584,6 +659,22 @@ enum TranscriptTextBuilder {
         result.append(NSAttributedString(string: text, attributes: attrs))
     }
 
+    private static func appendFilePath(
+        _ text: String,
+        targetPath: String,
+        to result: NSMutableAttributedString
+    ) {
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: monoFont,
+            .foregroundColor: NSColor.controlAccentColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        if let url = fileLinkURL(path: targetPath, line: nil) {
+            attrs[.link] = url
+        }
+        result.append(NSAttributedString(string: text, attributes: attrs))
+    }
+
     private static func appendBlankLine(to result: NSMutableAttributedString) {
         result.append(NSAttributedString(string: "\n\n"))
     }
@@ -593,5 +684,38 @@ enum TranscriptTextBuilder {
         to result: NSMutableAttributedString
     ) {
         result.append(NSAttributedString(attributed))
+    }
+}
+
+enum ThreadTranscriptExport {
+    static func text(
+        title: String,
+        projectRoot: String?,
+        provider: String?,
+        modelID: String?,
+        transcript: String
+    ) -> String {
+        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var metadata = ["# \(resolvedTitle.isEmpty ? "Untitled Thread" : resolvedTitle)"]
+
+        if let projectRoot = nonEmpty(projectRoot) {
+            metadata.append("Project: \(projectRoot)")
+        }
+        let agent = [nonEmpty(provider), nonEmpty(modelID)]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+        if !agent.isEmpty {
+            metadata.append("Agent: \(agent)")
+        }
+
+        guard !transcript.isEmpty else { return metadata.joined(separator: "\n") }
+        return metadata.joined(separator: "\n") + "\n\n---\n\n" + transcript
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else { return nil }
+        return value
     }
 }

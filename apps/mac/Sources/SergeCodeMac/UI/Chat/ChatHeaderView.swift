@@ -11,6 +11,8 @@ struct ChatHeaderView: View {
     let model: AppModel
     let scenery: SceneryStore
     let threadKey: String
+    var onCopyThread: () -> Void = {}
+    var onSelectText: () -> Void = {}
 
     /// The header's own width, which is what the git bar's density is resolved
     /// from. Measured rather than inferred, and measured *here* rather than on
@@ -19,6 +21,7 @@ struct ChatHeaderView: View {
     /// feedback loop — a bar that collapses frees the space that would expand
     /// it again.
     @UIState private var headerWidth: CGFloat = 0
+    @UIState private var didCopyThread = false
 
     struct GitStripOverflow: Equatable {
         /// The strip needs more width than the header gives it.
@@ -115,6 +118,8 @@ struct ChatHeaderView: View {
             GitStrip(model: model, threadID: thread.id, density: density)
                 .id(thread.id)
 
+            transcriptActions
+
             // Provider and status are fixed-width and never scroll away: they
             // are the header's at-a-glance state, and pinning them also keeps
             // the git strip's trailing anchor on the git actions menu.
@@ -173,6 +178,36 @@ struct ChatHeaderView: View {
         Text("·")
             .foregroundStyle(.tertiary)
             .accessibilityHidden(true)
+    }
+
+    private var transcriptActions: some View {
+        HStack(spacing: 1) {
+            MessageActionButton(
+                systemImage: didCopyThread ? "checkmark" : "doc.on.doc",
+                help: didCopyThread ? "Thread copied" : "Copy entire thread",
+                tint: didCopyThread ? .green : .secondary
+            ) {
+                guard !didCopyThread else { return }
+                onCopyThread()
+                withAnimation(Motion.feedback) { didCopyThread = true }
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    withAnimation(Motion.reveal) { didCopyThread = false }
+                }
+            }
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
+
+            MessageActionButton(
+                systemImage: "text.viewfinder",
+                help: "Select text across the entire thread",
+                action: onSelectText)
+        }
+        .padding(.horizontal, 3)
+        .padding(.vertical, 2)
+        .background(.thinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
+        .accessibilityElement(children: .contain)
     }
 }
 

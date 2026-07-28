@@ -126,9 +126,8 @@ struct FileLinkDetectionTests {
         #expect(links[0].text == "src/foo.ts:12")
     }
 
-    @Test("inline code bare filename with line is linkified; without line is not")
+    @Test("inline code bare filenames are linkified with or without a line")
     func inlineCodeBareFilename() throws {
-        // Regex allows bare `Package.swift:12` (filename + line) inside code spans.
         let withLine = try inlineAttributed("open `Package.swift:12`")
         let withLineOut = linkifyFilePaths(in: withLine)
         let withLineLinks = fileLinkTargets(in: withLineOut)
@@ -136,11 +135,11 @@ struct FileLinkDetectionTests {
         #expect(withLineLinks[0].target.path == "Package.swift")
         #expect(withLineLinks[0].target.line == 12)
 
-        // Bare filename without line is NOT matched by inlineCodeFilePathExpression
-        // (second alt requires :\\d+; first alt requires a directory slash).
         let bare = try inlineAttributed("see `Package.swift`")
         let bareOut = linkifyFilePaths(in: bare)
-        #expect(fileLinkTargets(in: bareOut).isEmpty)
+        let bareLinks = fileLinkTargets(in: bareOut)
+        #expect(bareLinks.count == 1)
+        #expect(bareLinks[0].target == FileLinkTarget(path: "Package.swift", line: nil))
     }
 
     // MARK: - Plain text
@@ -158,10 +157,12 @@ struct FileLinkDetectionTests {
         let andOr = linkifyFilePaths(in: AttributedString("use and/or carefully"))
         #expect(fileLinkTargets(in: andOr).isEmpty)
 
-        // Bare filename without directory is not matched by plainFilePathExpression
-        // (requires at least one path segment with /).
+        // Common source filenames are useful agent references even without a
+        // directory or line number.
         let bare = linkifyFilePaths(in: AttributedString("just foo.ts here"))
-        #expect(fileLinkTargets(in: bare).isEmpty)
+        #expect(fileLinkTargets(in: bare).map(\.target) == [
+            FileLinkTarget(path: "foo.ts", line: nil)
+        ])
     }
 
     // MARK: - HTTP skip
@@ -243,4 +244,57 @@ struct FileLinkDetectionTests {
         #expect(links[0].target.path == "src/a.ts")
         #expect(links[0].target.line == 3)
     }
+
+    @Test("GitHub-style line fragments are decoded")
+    func githubLineFragment() {
+        let output = linkifyFilePaths(
+            in: AttributedString("see apps/mac/Sources/AppModel.swift#L42"))
+        let links = fileLinkTargets(in: output)
+        #expect(links.count == 1)
+        #expect(
+            links[0].target
+                == FileLinkTarget(path: "apps/mac/Sources/AppModel.swift", line: 42))
+    }
+
+    @Test("line ranges and extensionless inline paths become file targets")
+    func rangesAndExtensionlessPaths() throws {
+        let prose = linkifyFilePaths(
+            in: AttributedString("compare AppModel.swift:42-48 with View.tsx#L7-L12"))
+        let proseTargets = fileLinkTargets(in: prose).map(\.target)
+        #expect(proseTargets == [
+            FileLinkTarget(path: "AppModel.swift", line: 42),
+            FileLinkTarget(path: "View.tsx", line: 7),
+        ])
+
+        let inline = try inlineAttributed("follow `docs/AGENTS` then `Makefile`")
+        let inlineTargets = fileLinkTargets(in: linkifyFilePaths(in: inline)).map(\.target)
+        #expect(inlineTargets == [
+            FileLinkTarget(path: "docs/AGENTS", line: nil),
+            FileLinkTarget(path: "Makefile", line: nil),
+        ])
+    }
+
+    @Test("editor targets preserve line numbers without corrupting Finder paths")
+    func editorTargets() {
+        let target = FileLinkTarget(path: "Sources/App.swift", line: 27)
+        #expect(editorSubpath(for: target, editor: .vscode) == "Sources/App.swift:27")
+        #expect(editorSubpath(for: target, editor: .cursor) == "Sources/App.swift:27")
+        #expect(editorSubpath(for: target, editor: .fileManager) == "Sources/App.swift")
+    }
+
+    @Test("Markdown destinations distinguish local files from web links")
+    func markdownDestinations() {
+        #expect(
+            fileTarget(fromMarkdownDestination: "apps/mac/Sources/AppModel.swift#L42")
+                == FileLinkTarget(path: "apps/mac/Sources/AppModel.swift", line: 42))
+        #expect(
+            fileTarget(fromMarkdownDestination: "<docs/My File.md>")
+                == FileLinkTarget(path: "docs/My File.md", line: nil))
+        #expect(
+            fileTarget(fromMarkdownDestination: "file:///tmp/Agent.swift#L7")
+                == FileLinkTarget(path: "/tmp/Agent.swift", line: 7))
+        #expect(fileTarget(fromMarkdownDestination: "https://example.com/file.swift") == nil)
+        #expect(fileTarget(fromMarkdownDestination: "#local-heading") == nil)
+    }
+
 }

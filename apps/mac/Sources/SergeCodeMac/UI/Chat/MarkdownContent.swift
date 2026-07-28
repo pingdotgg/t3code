@@ -20,6 +20,41 @@ enum MarkdownBlock: Equatable {
     case table(MarkdownTable)
 }
 
+/// File references already present in parsed Markdown, in reading order.
+/// Keeping this projection on the IR means contextual actions use exactly the
+/// same destinations the visible Text runs expose, including explicit local
+/// Markdown links and automatically detected paths.
+func markdownFileTargets(in blocks: [MarkdownBlock]) -> [FileLinkTarget] {
+    var targets: [FileLinkTarget] = []
+    var seen = Set<FileLinkTarget>()
+
+    func collect(_ attributed: AttributedString) {
+        for run in attributed.runs {
+            guard let url = run.link, let target = parseFileLinkURL(url),
+                seen.insert(target).inserted
+            else { continue }
+            targets.append(target)
+        }
+    }
+
+    for block in blocks {
+        switch block {
+        case .paragraph(let text), .heading(_, let text),
+            .bulletItem(_, let text), .orderedItem(_, _, let text),
+            .taskItem(_, _, let text):
+            collect(text)
+        case .quote(let paragraphs):
+            paragraphs.forEach(collect)
+        case .table(let table):
+            table.header.forEach(collect)
+            table.rows.flatMap { $0 }.forEach(collect)
+        case .rule, .codeBlock:
+            break
+        }
+    }
+    return targets
+}
+
 struct MarkdownTable: Equatable {
     var columnAlignments: [TextAlignment?]
     var header: [AttributedString]
@@ -636,8 +671,16 @@ private func inlineAttributed(markup: Markup) -> AttributedString {
 
     case let link as Markdown.Link:
         var result = inlineAttributed(children: link.children)
-        if let destination = link.destination, let url = URL(string: destination) {
-            result.link = url
+        if let destination = link.destination {
+            if let target = fileTarget(fromMarkdownDestination: destination),
+                let url = fileLinkURL(path: target.path, line: target.line)
+            {
+                result.link = url
+                result.foregroundColor = AlpineTheme.accent
+                result.underlineStyle = .single
+            } else if let url = URL(string: destination) {
+                result.link = url
+            }
         }
         return result
 
@@ -750,6 +793,7 @@ struct AssistantMarkdownView: View {
     // mutation while the view value can remain otherwise unchanged. (The
     // streaming path is the exception — see `usesStreamingReveal`.)
     private let renderedBlocks: [MarkdownRenderedBlock]
+    private let fileTargets: [FileLinkTarget]
 
     /// Streaming assistant text renders through `StreamingMarkdownBlocks`,
     /// which reveals the incoming markdown a few bytes per display frame and
@@ -796,6 +840,7 @@ struct AssistantMarkdownView: View {
             // (see StreamingReveal.swift) and parses the revealed prefix
             // incrementally. Nothing to parse eagerly here.
             self.renderedBlocks = []
+            self.fileTargets = []
         } else {
             if !messageID.isEmpty {
                 StreamingMarkdownCache.finish(
@@ -810,6 +855,7 @@ struct AssistantMarkdownView: View {
             let document = MarkdownBlockCache.document(
                 for: markdown, messageID: messageID.isEmpty ? nil : messageID)
             self.renderedBlocks = MarkdownBlocksView.renderedBlocks(from: document)
+            self.fileTargets = markdownFileTargets(in: document.blocks)
         }
     }
 
@@ -826,6 +872,7 @@ struct AssistantMarkdownView: View {
     private struct DrainedRender {
         let byteCount: Int
         let blocks: [MarkdownRenderedBlock]
+        let fileTargets: [FileLinkTarget]
     }
 
     /// Blocks captured when the reveal drained, or nil when they belong to an
@@ -833,6 +880,13 @@ struct AssistantMarkdownView: View {
     private var drainedBlocks: [MarkdownRenderedBlock]? {
         guard let drainedRender, drainedRender.byteCount == markdown.utf8.count else { return nil }
         return drainedRender.blocks
+    }
+
+    private var contextualFileTargets: [FileLinkTarget] {
+        guard let drainedRender, drainedRender.byteCount == markdown.utf8.count else {
+            return fileTargets
+        }
+        return drainedRender.fileTargets
     }
 
     var body: some View {
@@ -906,6 +960,10 @@ struct AssistantMarkdownView: View {
                     : "File is on \(model.deviceName ?? "the remote Mac")"))
         .contextMenu {
             Button("Copy as Markdown") { Pasteboard.copy(markdown) }
+            if !contextualFileTargets.isEmpty {
+                Divider()
+                fileActionsMenu
+            }
             if let openSelectText {
                 Divider()
                 Button("Select Text…") { openSelectText() }
@@ -948,11 +1006,12 @@ struct AssistantMarkdownView: View {
         let threadKey = model.scopedThreadKey(threadID)
         StreamingMarkdownCache.finish(threadID: threadKey, messageID: messageID)
         StreamingRevealStore.finish(threadID: threadKey, messageID: messageID)
+        let document = MarkdownBlockCache.document(
+            for: markdown, messageID: messageID.isEmpty ? nil : messageID)
         drainedRender = DrainedRender(
             byteCount: byteCount,
-            blocks: MarkdownBlocksView.renderedBlocks(
-                from: MarkdownBlockCache.document(
-                    for: markdown, messageID: messageID.isEmpty ? nil : messageID)))
+            blocks: MarkdownBlocksView.renderedBlocks(from: document),
+            fileTargets: markdownFileTargets(in: document.blocks))
     }
 
     @ViewBuilder
@@ -973,7 +1032,52 @@ struct AssistantMarkdownView: View {
     }
 
     private func openFile(path: String, line: Int?, with editor: ExternalEditor) async {
-        await model.openInEditor(threadID: threadID, subpath: path, editor: editor)
+        let target = FileLinkTarget(path: path, line: line)
+        await model.openInEditor(
+            threadID: threadID,
+            subpath: editorSubpath(for: target, editor: editor),
+            editor: editor)
+    }
+
+    @ViewBuilder
+    private var fileActionsMenu: some View {
+        if contextualFileTargets.count == 1, let target = contextualFileTargets.first {
+            Button("Open \(target.displayName) in \(preferredEditor.displayName)") {
+                Task {
+                    await openFile(
+                        path: target.path, line: target.line, with: preferredEditor)
+                }
+            }
+            .disabled(!model.capabilities.opensLocalEditor)
+            fileTargetMenu(target, label: "Open With")
+        } else {
+            Menu("Open File") {
+                ForEach(contextualFileTargets.prefix(12), id: \.self) { target in
+                    fileTargetMenu(target, label: target.displayName)
+                }
+                if contextualFileTargets.count > 12 {
+                    Divider()
+                    Button("\(contextualFileTargets.count - 12) more references") {}
+                        .disabled(true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fileTargetMenu(_ target: FileLinkTarget, label: String) -> some View {
+        Menu(label) {
+            ForEach(ExternalEditor.allCases) { editor in
+                Button("Open in \(editor.displayName)") {
+                    Task {
+                        await openFile(path: target.path, line: target.line, with: editor)
+                    }
+                }
+                .disabled(!model.capabilities.opensLocalEditor)
+            }
+            Divider()
+            Button("Copy Path") { Pasteboard.copy(target.path) }
+        }
     }
 
     private func showEditorMenu(for target: FileLinkTarget) {
@@ -1991,7 +2095,7 @@ private class EditorMenuHandler: NSObject {
         Task {
             await action.model.openInEditor(
                 threadID: action.threadID,
-                subpath: action.target.path,
+                subpath: editorSubpath(for: action.target, editor: action.editor),
                 editor: action.editor
             )
         }
