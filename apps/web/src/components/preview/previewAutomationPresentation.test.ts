@@ -7,6 +7,7 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
+  reconcilePreviewServerSessions,
   resetPreviewStateForTests,
 } from "~/previewStateStore";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -16,9 +17,11 @@ import {
   isPreviewAutomationTabPresented,
   readPreviewAutomationPresentationDiagnostics,
   revealPreviewAutomationTab,
+  waitForBrowserSurfaceVisibility,
   withPreviewAutomationBackgroundPresentation,
   waitForPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
+import { PreviewAutomationTargetUnavailableError } from "./previewAutomationErrors";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
 
@@ -30,6 +33,17 @@ const snapshot = (tabId: string, updatedAt: string): PreviewSessionSnapshot => (
   canGoForward: false,
   updatedAt,
 });
+
+const presentationTarget = (tabId: string, runtimeTabId: string) => ({
+  threadRef,
+  tabId,
+  runtimeTabId,
+});
+
+const addRuntimeTab = (tabId: string): string => {
+  applyPreviewServerSnapshot(threadRef, snapshot(tabId, "2026-07-25T00:00:00.000Z"));
+  return previewRuntimeTabId(threadRef, readThreadPreviewState(threadRef).serverEpoch, tabId);
+};
 
 describe("preview automation presentation", () => {
   beforeEach(() => {
@@ -56,9 +70,11 @@ describe("preview automation presentation", () => {
     ).toMatchObject({
       tabId: "tab-1",
     });
-    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(false);
+    expect(isPreviewAutomationTabPresented(presentationTarget("tab-1", tabOneRuntimeId))).toBe(
+      false,
+    );
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+      readPreviewAutomationPresentationDiagnostics(presentationTarget("tab-1", tabOneRuntimeId)),
     ).toEqual({
       activeSurfaceKind: "inline-preview",
       activeSurfaceId: "mini-player:tab-1",
@@ -72,9 +88,11 @@ describe("preview automation presentation", () => {
 
     const serverIdSurface = acquireBrowserSurface("tab-1");
     serverIdSurface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
-    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(false);
+    expect(isPreviewAutomationTabPresented(presentationTarget("tab-1", tabOneRuntimeId))).toBe(
+      false,
+    );
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+      readPreviewAutomationPresentationDiagnostics(presentationTarget("tab-1", tabOneRuntimeId)),
     ).toMatchObject({
       surfaceRegistered: false,
       presentationRectAvailable: false,
@@ -84,18 +102,22 @@ describe("preview automation presentation", () => {
     const surface = acquireBrowserSurface(tabOneRuntimeId);
     surface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
 
-    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(true);
+    expect(isPreviewAutomationTabPresented(presentationTarget("tab-1", tabOneRuntimeId))).toBe(
+      true,
+    );
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+      readPreviewAutomationPresentationDiagnostics(presentationTarget("tab-1", tabOneRuntimeId)),
     ).toMatchObject({
       surfaceRegistered: true,
       presentationRectAvailable: true,
     });
 
     usePreviewMiniPlayerStore.getState().open(threadRef, "tab-2");
-    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(false);
+    expect(isPreviewAutomationTabPresented(presentationTarget("tab-1", tabOneRuntimeId))).toBe(
+      false,
+    );
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+      readPreviewAutomationPresentationDiagnostics(presentationTarget("tab-1", tabOneRuntimeId)),
     ).toEqual({
       activeSurfaceKind: "inline-preview",
       activeSurfaceId: "mini-player:tab-2",
@@ -111,7 +133,9 @@ describe("preview automation presentation", () => {
 
   it("reports presentation precedence and hidden retained panel state", () => {
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+      readPreviewAutomationPresentationDiagnostics(
+        presentationTarget("tab-requested", "runtime-requested"),
+      ),
     ).toEqual({
       activeSurfaceKind: "none",
       activeSurfaceId: null,
@@ -127,7 +151,9 @@ describe("preview automation presentation", () => {
     usePreviewMiniPlayerStore.getState().open(threadRef, "tab-inline");
 
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+      readPreviewAutomationPresentationDiagnostics(
+        presentationTarget("tab-requested", "runtime-requested"),
+      ),
     ).toEqual({
       activeSurfaceKind: "inline-preview",
       activeSurfaceId: "mini-player:tab-inline",
@@ -143,7 +169,9 @@ describe("preview automation presentation", () => {
     useRightPanelStore.getState().close(threadRef);
 
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+      readPreviewAutomationPresentationDiagnostics(
+        presentationTarget("tab-requested", "runtime-requested"),
+      ),
     ).toEqual({
       activeSurfaceKind: "none",
       activeSurfaceId: null,
@@ -160,7 +188,9 @@ describe("preview automation presentation", () => {
     useRightPanelStore.getState().openBrowser(threadRef, "tab-panel");
 
     expect(
-      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+      readPreviewAutomationPresentationDiagnostics(
+        presentationTarget("tab-requested", "runtime-requested"),
+      ),
     ).toEqual({
       activeSurfaceKind: "right-panel",
       activeSurfaceId: "browser:tab-panel",
@@ -175,6 +205,7 @@ describe("preview automation presentation", () => {
 
   it("uses the operation budget when background staging does not render", async () => {
     vi.useFakeTimers();
+    const runtimeTabId = addRuntimeTab("tab-background");
     vi.stubGlobal("document", {
       querySelectorAll: () => [],
     });
@@ -186,7 +217,7 @@ describe("preview automation presentation", () => {
         threadRef,
         requestId: "request-background",
         tabId: "tab-background",
-        runtimeTabId: "runtime-background",
+        runtimeTabId,
         timeoutMs: 40,
       });
       const rejection = expect(presentation).rejects.toMatchObject({
@@ -204,7 +235,46 @@ describe("preview automation presentation", () => {
     }
   });
 
-  it("accepts a tab that becomes foregrounded while background staging renders", async () => {
+  it("rejects an open visibility wait when the runtime guest is replaced", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    const tabId = "tab-open";
+    const serverSnapshot = snapshot(tabId, "2026-07-25T00:00:00.000Z");
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [serverSnapshot],
+      serverEpoch: "epoch-1",
+      revision: 1,
+    });
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", tabId);
+    try {
+      const visibility = waitForBrowserSurfaceVisibility({
+        threadRef,
+        requestId: "request-open",
+        tabId,
+        runtimeTabId,
+        timeoutMs: 500,
+      });
+      const rejection = expect(visibility).rejects.toBeInstanceOf(
+        PreviewAutomationTargetUnavailableError,
+      );
+
+      reconcilePreviewServerSessions(threadRef, {
+        sessions: [serverSnapshot],
+        serverEpoch: "epoch-2",
+        revision: 0,
+      });
+      await vi.advanceTimersByTimeAsync(50);
+
+      await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects background staging when the runtime guest is replaced", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("document", {
       querySelectorAll: () => [],
@@ -212,14 +282,57 @@ describe("preview automation presentation", () => {
     vi.stubGlobal("window", {
       setTimeout,
     });
-    const surface = acquireBrowserSurface("tab-foregrounded");
+    const tabId = "tab-background";
+    const serverSnapshot = snapshot(tabId, "2026-07-25T00:00:00.000Z");
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [serverSnapshot],
+      serverEpoch: "epoch-1",
+      revision: 1,
+    });
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", tabId);
+    try {
+      const presentation = waitForPreviewAutomationBackgroundPresentation({
+        threadRef,
+        requestId: "request-background",
+        tabId,
+        runtimeTabId,
+        timeoutMs: 500,
+      });
+      const rejection = expect(presentation).rejects.toBeInstanceOf(
+        PreviewAutomationTargetUnavailableError,
+      );
+
+      reconcilePreviewServerSessions(threadRef, {
+        sessions: [serverSnapshot],
+        serverEpoch: "epoch-2",
+        revision: 0,
+      });
+      await vi.advanceTimersByTimeAsync(16);
+
+      await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("accepts a tab that becomes foregrounded while background staging renders", async () => {
+    vi.useFakeTimers();
+    const runtimeTabId = addRuntimeTab("tab-foregrounded");
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [],
+    });
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    const surface = acquireBrowserSurface(runtimeTabId);
     try {
       revealPreviewAutomationTab(threadRef, "tab-foregrounded");
       const presentation = waitForPreviewAutomationBackgroundPresentation({
         threadRef,
         requestId: "request-foregrounded",
         tabId: "tab-foregrounded",
-        runtimeTabId: "tab-foregrounded",
+        runtimeTabId,
         timeoutMs: 40,
       });
 
@@ -235,11 +348,12 @@ describe("preview automation presentation", () => {
   });
 
   it("stages a visible surface when another inline preview surface is selected", async () => {
+    const runtimeTabId = addRuntimeTab("tab-background");
     vi.stubGlobal("document", {
       querySelectorAll: () => [
         {
           dataset: {
-            previewViewport: "tab-background",
+            previewViewport: runtimeTabId,
             previewBackgroundCapture: "true",
           },
           offsetWidth: 800,
@@ -252,28 +366,28 @@ describe("preview automation presentation", () => {
         return 1;
       },
     });
-    const surface = acquireBrowserSurface("tab-background");
+    const surface = acquireBrowserSurface(runtimeTabId);
     try {
       surface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
       revealPreviewAutomationTab(threadRef, "tab-foreground");
 
-      const background = await withPreviewAutomationBackgroundPresentation(
+      const background = await withPreviewAutomationBackgroundPresentation({
         threadRef,
-        "request-background",
-        "tab-background",
-        "tab-background",
-        40,
-        async (isBackground) => {
+        requestId: "request-background",
+        tabId: "tab-background",
+        runtimeTabId,
+        timeoutMs: 40,
+        use: async (isBackground) => {
           expect(
-            useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+            useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId],
           ).toBe(1);
           return isBackground;
         },
-      );
+      });
 
       expect(background).toBe(true);
       expect(
-        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId],
       ).toBeUndefined();
     } finally {
       surface.release();
@@ -283,12 +397,13 @@ describe("preview automation presentation", () => {
 
   it("falls back to frame timers when compositor animation frames remain paused", async () => {
     vi.useFakeTimers();
+    const runtimeTabId = addRuntimeTab("tab-background");
     const cancelAnimationFrame = vi.fn();
     vi.stubGlobal("document", {
       querySelectorAll: () => [
         {
           dataset: {
-            previewViewport: "tab-background",
+            previewViewport: runtimeTabId,
             previewBackgroundCapture: "true",
           },
           offsetWidth: 800,
@@ -301,17 +416,15 @@ describe("preview automation presentation", () => {
     });
     const use = vi.fn(async (background: boolean) => background);
     try {
-      const operation = withPreviewAutomationBackgroundPresentation(
+      const operation = withPreviewAutomationBackgroundPresentation({
         threadRef,
-        "request-paused-frame",
-        "tab-background",
-        "tab-background",
-        40,
+        requestId: "request-paused-frame",
+        tabId: "tab-background",
+        runtimeTabId,
+        timeoutMs: 40,
         use,
-      );
-      expect(
-        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
-      ).toBe(1);
+      });
+      expect(useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId]).toBe(1);
 
       await vi.advanceTimersByTimeAsync(32);
       await expect(operation).resolves.toBe(true);
@@ -321,7 +434,7 @@ describe("preview automation presentation", () => {
       expect(cancelAnimationFrame).toHaveBeenNthCalledWith(1, 1);
       expect(cancelAnimationFrame).toHaveBeenNthCalledWith(2, 1);
       expect(
-        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId],
       ).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
@@ -331,11 +444,12 @@ describe("preview automation presentation", () => {
 
   it("retains a background capture lease until a timed-out operation settles", async () => {
     vi.useFakeTimers();
+    const runtimeTabId = addRuntimeTab("tab-background");
     vi.stubGlobal("document", {
       querySelectorAll: () => [
         {
           dataset: {
-            previewViewport: "tab-background",
+            previewViewport: runtimeTabId,
             previewBackgroundCapture: "true",
           },
           offsetWidth: 800,
@@ -353,14 +467,14 @@ describe("preview automation presentation", () => {
       const stalledOperation = new Promise<void>((resolve) => {
         settleOperation = resolve;
       });
-      const operation = withPreviewAutomationBackgroundPresentation(
+      const operation = withPreviewAutomationBackgroundPresentation({
         threadRef,
-        "request-stalled",
-        "tab-background",
-        "tab-background",
-        40,
-        () => stalledOperation,
-      );
+        requestId: "request-stalled",
+        tabId: "tab-background",
+        runtimeTabId,
+        timeoutMs: 40,
+        use: () => stalledOperation,
+      });
       const rejection = expect(operation).rejects.toMatchObject({
         _tag: "PreviewAutomationBackgroundPresentationTimeoutError",
         requestId: "request-stalled",
@@ -368,21 +482,17 @@ describe("preview automation presentation", () => {
         timeoutMs: 40,
       });
       await Promise.resolve();
-      expect(
-        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
-      ).toBe(1);
+      expect(useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId]).toBe(1);
 
       await vi.advanceTimersByTimeAsync(40);
       await rejection;
-      expect(
-        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
-      ).toBe(1);
+      expect(useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId]).toBe(1);
 
       settleOperation();
       await stalledOperation;
       await Promise.resolve();
       expect(
-        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+        useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId[runtimeTabId],
       ).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();

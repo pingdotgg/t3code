@@ -47,9 +47,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 import {
-  isPreviewAutomationTabPresented,
-  readPreviewAutomationPresentationDiagnostics,
   revealPreviewAutomationTab,
+  waitForBrowserSurfaceVisibility,
   withPreviewAutomationBackgroundPresentation,
 } from "./previewAutomationPresentation";
 import {
@@ -58,7 +57,6 @@ import {
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
-  PreviewAutomationVisibilityTimeoutError,
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
 import {
@@ -122,45 +120,6 @@ const waitForDesktopOverlay = async (
   });
 };
 
-const waitForBrowserSurfaceVisibility = async (
-  threadRef: ScopedThreadRef,
-  requestId: string,
-  tabId: string,
-  runtimeTabId: string,
-  timeoutMs: number,
-): Promise<void> => {
-  const deadline = Date.now() + timeoutMs;
-  const requiredStableMs = Math.min(100, Math.max(0, timeoutMs - 50));
-  let presentedSince: number | null = null;
-  while (Date.now() <= deadline) {
-    assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
-      operation: "open",
-      requestId,
-    });
-    const now = Date.now();
-    if (isPreviewAutomationTabPresented(threadRef, tabId, runtimeTabId)) {
-      presentedSince ??= now;
-      // Require the selection to survive multiple presentation updates. A
-      // single transient `visible` frame can otherwise make open acknowledge
-      // just before routing or panel reconciliation unmounts the surface.
-      if (now - presentedSince >= requiredStableMs) return;
-    } else {
-      presentedSince = null;
-      // Session reconciliation and route hydration can race a cold open.
-      // Reassert the explicit show request only while that request is pending.
-      revealPreviewAutomationTab(threadRef, tabId);
-    }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
-  }
-  throw new PreviewAutomationVisibilityTimeoutError({
-    requestId,
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
-    tabId,
-    timeoutMs,
-    ...readPreviewAutomationPresentationDiagnostics(threadRef, tabId, runtimeTabId),
-  });
-};
 interface ExecutablePreviewWebview extends Element {
   readonly executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
 }
@@ -533,13 +492,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               );
             }
             if (waitPolicy?.waitForVisibility) {
-              await waitForBrowserSurfaceVisibility(
+              await waitForBrowserSurfaceVisibility({
                 threadRef,
-                request.requestId,
-                activeTabId,
-                activeRuntimeTabId,
-                remainingOperationBudget(),
-              );
+                requestId: request.requestId,
+                tabId: activeTabId,
+                runtimeTabId: activeRuntimeTabId,
+                timeoutMs: remainingOperationBudget(),
+              });
             }
             return await currentStatus(threadRef, activeTabId);
           }
@@ -657,19 +616,19 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "snapshot": {
             const ready = await requireReadyTab();
             const presentationTimeoutMs = remainingOperationBudget();
-            return await withPreviewAutomationBackgroundPresentation(
+            return await withPreviewAutomationBackgroundPresentation({
               threadRef,
-              request.requestId,
-              ready.tabId,
-              ready.runtimeTabId,
-              presentationTimeoutMs,
-              async (background) =>
+              requestId: request.requestId,
+              tabId: ready.tabId,
+              runtimeTabId: ready.runtimeTabId,
+              timeoutMs: presentationTimeoutMs,
+              use: async (background) =>
                 await ready.bridge.automation.snapshot(
                   ready.runtimeTabId,
                   background,
                   remainingOperationBudget(),
                 ),
-            );
+            });
           }
           case "click": {
             const ready = await requireReadyTab();

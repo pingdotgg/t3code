@@ -8,15 +8,32 @@ import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/prev
 import { setActivePreviewTab } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
-import { PreviewAutomationBackgroundPresentationTimeoutError } from "./previewAutomationErrors";
-import type { PreviewAutomationVisibilityTimeoutError } from "./previewAutomationErrors";
+import {
+  PreviewAutomationBackgroundPresentationTimeoutError,
+  PreviewAutomationVisibilityTimeoutError,
+} from "./previewAutomationErrors";
+import { assertPreviewRuntimeCurrent } from "./previewNavigationReadiness";
 
-interface PreviewAutomationBackgroundPresentationInput {
+interface PreviewAutomationPresentationTarget {
   readonly threadRef: ScopedThreadRef;
-  readonly requestId: string;
   readonly tabId: string;
   readonly runtimeTabId: string;
+}
+
+interface PreviewAutomationBackgroundPresentationInput extends PreviewAutomationPresentationTarget {
+  readonly requestId: string;
   readonly timeoutMs: number;
+}
+
+interface PreviewAutomationVisibilityInput extends PreviewAutomationPresentationTarget {
+  readonly requestId: string;
+  readonly timeoutMs: number;
+}
+
+interface PreviewAutomationBackgroundPresentationUseInput<
+  A,
+> extends PreviewAutomationBackgroundPresentationInput {
+  readonly use: (background: boolean) => Promise<A>;
 }
 
 type PreviewAutomationPresentationDiagnostics = Required<
@@ -79,30 +96,23 @@ export function revealPreviewAutomationTab(ref: ScopedThreadRef, tabId: string):
   usePreviewMiniPlayerStore.getState().open(ref, tabId);
 }
 
-function readPreviewAutomationPresentation(
-  ref: ScopedThreadRef,
-  tabId: string,
-  runtimeTabId: string,
-) {
-  const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+function readPreviewAutomationPresentation(input: PreviewAutomationPresentationTarget) {
+  const panel = selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    input.threadRef,
+  );
   const miniPlayer = selectThreadPreviewMiniPlayer(
     usePreviewMiniPlayerStore.getState().byThreadKey,
-    ref,
+    input.threadRef,
   );
-  const presentation = useBrowserSurfaceStore.getState().byTabId[runtimeTabId];
+  const presentation = useBrowserSurfaceStore.getState().byTabId[input.runtimeTabId];
   return { panel, miniPlayer, presentation };
 }
 
 export function readPreviewAutomationPresentationDiagnostics(
-  ref: ScopedThreadRef,
-  tabId: string,
-  runtimeTabId: string,
+  input: PreviewAutomationPresentationTarget,
 ): PreviewAutomationPresentationDiagnostics {
-  const { panel, miniPlayer, presentation } = readPreviewAutomationPresentation(
-    ref,
-    tabId,
-    runtimeTabId,
-  );
+  const { panel, miniPlayer, presentation } = readPreviewAutomationPresentation(input);
   const activeSurfaceKind =
     miniPlayer !== null
       ? ("inline-preview" as const)
@@ -127,18 +137,49 @@ export function readPreviewAutomationPresentationDiagnostics(
 }
 
 export function isPreviewAutomationTabPresented(
-  ref: ScopedThreadRef,
-  tabId: string,
-  runtimeTabId: string,
+  input: PreviewAutomationPresentationTarget,
 ): boolean {
-  const { panel, miniPlayer, presentation } = readPreviewAutomationPresentation(
-    ref,
-    tabId,
-    runtimeTabId,
-  );
+  const { panel, miniPlayer, presentation } = readPreviewAutomationPresentation(input);
   const requestedSurfaceIsActive =
-    (panel.isOpen && panel.activeSurfaceId === `browser:${tabId}`) || miniPlayer?.tabId === tabId;
+    (panel.isOpen && panel.activeSurfaceId === `browser:${input.tabId}`) ||
+    miniPlayer?.tabId === input.tabId;
   return requestedSurfaceIsActive && (presentation?.visible ?? false);
+}
+
+export async function waitForBrowserSurfaceVisibility(
+  input: PreviewAutomationVisibilityInput,
+): Promise<void> {
+  const deadline = Date.now() + input.timeoutMs;
+  const requiredStableMs = Math.min(100, Math.max(0, input.timeoutMs - 50));
+  let presentedSince: number | null = null;
+  while (Date.now() <= deadline) {
+    assertPreviewRuntimeCurrent(input.threadRef, input.tabId, input.runtimeTabId, {
+      operation: "open",
+      requestId: input.requestId,
+    });
+    const now = Date.now();
+    if (isPreviewAutomationTabPresented(input)) {
+      presentedSince ??= now;
+      // Require the selection to survive multiple presentation updates. A
+      // single transient `visible` frame can otherwise make open acknowledge
+      // just before routing or panel reconciliation unmounts the surface.
+      if (now - presentedSince >= requiredStableMs) return;
+    } else {
+      presentedSince = null;
+      // Same-server reconciliation and route hydration can race a cold open.
+      // Reassert the explicit show request only while that request is pending.
+      revealPreviewAutomationTab(input.threadRef, input.tabId);
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+  }
+  throw new PreviewAutomationVisibilityTimeoutError({
+    requestId: input.requestId,
+    environmentId: input.threadRef.environmentId,
+    threadId: input.threadRef.threadId,
+    tabId: input.tabId,
+    timeoutMs: input.timeoutMs,
+    ...readPreviewAutomationPresentationDiagnostics(input),
+  });
 }
 
 export async function waitForPreviewAutomationBackgroundPresentation(
@@ -147,7 +188,11 @@ export async function waitForPreviewAutomationBackgroundPresentation(
   const deadline = Date.now() + input.timeoutMs;
   const timeoutError = () => backgroundPresentationTimeoutError(input);
   while (true) {
-    if (isPreviewAutomationTabPresented(input.threadRef, input.tabId, input.runtimeTabId)) {
+    assertPreviewRuntimeCurrent(input.threadRef, input.tabId, input.runtimeTabId, {
+      operation: "snapshot",
+      requestId: input.requestId,
+    });
+    if (isPreviewAutomationTabPresented(input)) {
       return;
     }
 
@@ -166,6 +211,10 @@ export async function waitForPreviewAutomationBackgroundPresentation(
       void wrapper.offsetWidth;
       await waitForPreviewAutomationCompositorFrame(deadline, timeoutError);
       await waitForPreviewAutomationCompositorFrame(deadline, timeoutError);
+      assertPreviewRuntimeCurrent(input.threadRef, input.tabId, input.runtimeTabId, {
+        operation: "snapshot",
+        requestId: input.requestId,
+      });
       return;
     }
 
@@ -178,20 +227,18 @@ export async function waitForPreviewAutomationBackgroundPresentation(
 }
 
 export async function withPreviewAutomationBackgroundPresentation<A>(
-  threadRef: ScopedThreadRef,
-  requestId: string,
-  tabId: string,
-  runtimeTabId: string,
-  timeoutMs: number,
-  use: (background: boolean) => Promise<A>,
+  input: PreviewAutomationBackgroundPresentationUseInput<A>,
 ): Promise<A> {
-  const background = !isPreviewAutomationTabPresented(threadRef, tabId, runtimeTabId);
-  if (!background) return await use(false);
+  assertPreviewRuntimeCurrent(input.threadRef, input.tabId, input.runtimeTabId, {
+    operation: "snapshot",
+    requestId: input.requestId,
+  });
+  const background = !isPreviewAutomationTabPresented(input);
+  if (!background) return await input.use(false);
 
-  const input = { threadRef, requestId, tabId, runtimeTabId, timeoutMs };
   const timeoutError = () => backgroundPresentationTimeoutError(input);
-  const deadline = Date.now() + timeoutMs;
-  const releaseCapture = acquireBrowserSurfaceBackgroundCapture(runtimeTabId);
+  const deadline = Date.now() + input.timeoutMs;
+  const releaseCapture = acquireBrowserSurfaceBackgroundCapture(input.runtimeTabId);
   let captureStarted = false;
   let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
 
@@ -200,8 +247,12 @@ export async function withPreviewAutomationBackgroundPresentation<A>(
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw timeoutError();
 
-    const stillBackground = !isPreviewAutomationTabPresented(threadRef, tabId, runtimeTabId);
-    const capture = use(stillBackground);
+    assertPreviewRuntimeCurrent(input.threadRef, input.tabId, input.runtimeTabId, {
+      operation: "snapshot",
+      requestId: input.requestId,
+    });
+    const stillBackground = !isPreviewAutomationTabPresented(input);
+    const capture = input.use(stillBackground);
     captureStarted = true;
     const operation = capture.finally(releaseCapture);
     const captureDeadline = new Promise<never>((_resolve, reject) => {
