@@ -2576,9 +2576,12 @@ export default function SidebarV2() {
         <DialogPopup className="max-w-xl">
           <DialogHeader className="gap-3 pb-1!">
             <DialogTitle className="text-balance">Project settings</DialogTitle>
-            <DialogDescription className="grid gap-1.5 text-base">
+            <DialogDescription className="sr-only">
+              Manage project names, grouping rules, and environments.
+            </DialogDescription>
+            <div className="grid gap-1.5 text-base text-muted-foreground">
               {projectActionsTarget?.memberProjects.map((member) => (
-                <span key={member.physicalProjectKey} className="flex min-w-0 items-center gap-3">
+                <div key={member.physicalProjectKey} className="flex min-w-0 items-center gap-3">
                   <span className="flex min-w-0 items-center gap-1">
                     <FolderIcon className="size-3.5 shrink-0 opacity-60" />
                     <span className="min-w-0 truncate font-mono">{member.workspaceRoot}</span>
@@ -2601,9 +2604,9 @@ export default function SidebarV2() {
                       {member.environmentLabel ?? "Current environment"}
                     </span>
                   </span>
-                </span>
+                </div>
               ))}
-            </DialogDescription>
+            </div>
           </DialogHeader>
           <DialogPanel className="p-0">
             <div className="divide-y divide-border/60">
