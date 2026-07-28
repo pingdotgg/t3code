@@ -19,6 +19,7 @@ const child = NodeChildProcess.spawn(command, args, {
 
 let escalation;
 let spawnFailed = false;
+let timeoutRequested = false;
 
 child.once("error", (error) => {
   spawnFailed = true;
@@ -40,6 +41,7 @@ const signalChildGroup = (signal) => {
 };
 
 process.once("SIGTERM", () => {
+  timeoutRequested = true;
   signalChildGroup("SIGTERM");
   escalation = setTimeout(() => {
     signalChildGroup("SIGKILL");
@@ -53,6 +55,9 @@ child.once("close", (code, signal) => {
 
   if (spawnFailed) {
     process.exit(127);
+  }
+  if (timeoutRequested) {
+    process.exit(124);
   }
   if (code !== null) {
     process.exit(code);
