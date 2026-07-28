@@ -212,6 +212,17 @@ type TerminalTurnStatus = Extract<
   "completed" | "interrupted" | "failed" | "cancelled"
 >;
 
+interface OpenCodeErrorTerminal {
+  readonly failure: OrchestrationV2ProviderFailure;
+  readonly threadDisposition: "reusable" | "broken";
+}
+
+interface PendingOpenCodeErrorCleanup {
+  readonly messageIds: Set<string>;
+  readonly terminal: OpenCodeErrorTerminal;
+  sawPreCleanupIdle: boolean;
+}
+
 interface ActiveOpenCodeTurn {
   readonly isRoot: boolean;
   readonly threadId: ThreadId;
@@ -233,6 +244,7 @@ interface ActiveOpenCodeTurn {
   nativeUserMessageId: string | null;
   interrupted: boolean;
   finalized: boolean;
+  pendingErrorCleanup: PendingOpenCodeErrorCleanup | null;
   planId: PlanId | null;
 }
 
@@ -677,6 +689,20 @@ export function terminalToolStatus(status: TerminalTurnStatus): {
     case "failed":
       return { node: "failed", item: "failed" };
   }
+}
+
+function nonTerminalToolMessageIds(turn: ActiveOpenCodeTurn): Set<string> {
+  return new Set(
+    Array.from(turn.parts.values()).flatMap((part) =>
+      part.type === "tool" && (part.state.status === "pending" || part.state.status === "running")
+        ? [part.messageID]
+        : [],
+    ),
+  );
+}
+
+function isInterruptedToolError(part: ToolPart): boolean {
+  return part.state.status === "error" && recordValue(part.state.metadata, "interrupted") === true;
 }
 
 function toolInput(part: ToolPart): Record<string, unknown> {
@@ -1773,13 +1799,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
           status: TerminalTurnStatus,
-          terminal?: {
-            readonly failure?: OrchestrationV2ProviderFailure;
-            readonly threadDisposition?: "reusable" | "broken";
-          },
+          terminal?: Partial<OpenCodeErrorTerminal>,
         ) {
           if (turn.finalized) return;
           turn.finalized = true;
+          turn.pendingErrorCleanup = null;
           const completedAt = yield* DateTime.now;
           for (const part of turn.parts.values()) {
             if (part.type === "text" || part.type === "reasoning") {
@@ -1792,7 +1816,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             // and the row spins forever.
             if (
               part.type === "tool" &&
-              (part.state.status === "pending" || part.state.status === "running")
+              (part.state.status === "pending" ||
+                part.state.status === "running" ||
+                (status === "interrupted" && isInterruptedToolError(part)))
             ) {
               yield* emitToolPart(state, turn, part, status);
             }
@@ -1921,6 +1947,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             nativeUserMessageId: message.id,
             interrupted: false,
             finalized: false,
+            pendingErrorCleanup: null,
             planId: null,
           };
           state.activeTurn = turn;
@@ -2096,6 +2123,19 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               yield* emitTextPart(state, turn, part, true);
             }
           }
+          const cleanup = turn.pendingErrorCleanup;
+          if (
+            cleanup !== null &&
+            cleanup.messageIds.delete(message.id) &&
+            cleanup.messageIds.size === 0
+          ) {
+            yield* finalizeTurn(
+              state,
+              turn,
+              turn.interrupted ? "interrupted" : "failed",
+              cleanup.terminal,
+            );
+          }
         });
 
         const handleEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
@@ -2160,6 +2200,20 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 return;
               }
               if (event.properties.status.type === "idle" && state.activeTurn !== null) {
+                const cleanup = state.activeTurn.pendingErrorCleanup;
+                if (cleanup !== null) {
+                  if (!cleanup.sawPreCleanupIdle) {
+                    cleanup.sawPreCleanupIdle = true;
+                    return;
+                  }
+                  yield* finalizeTurn(
+                    state,
+                    state.activeTurn,
+                    state.activeTurn.interrupted ? "interrupted" : "failed",
+                    cleanup.terminal,
+                  );
+                  return;
+                }
                 yield* finalizeTurn(
                   state,
                   state.activeTurn,
@@ -2171,6 +2225,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             case "session.idle": {
               const state = threads.get(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
+                if (state.activeTurn.pendingErrorCleanup !== null) return;
                 yield* finalizeTurn(
                   state,
                   state.activeTurn,
@@ -2196,20 +2251,34 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               }
               for (const state of states) {
                 if (state.activeTurn !== null) {
-                  yield* finalizeTurn(
-                    state,
-                    state.activeTurn,
-                    terminalStatusForError(event, state.activeTurn),
-                    {
-                      failure: makeProviderFailure({
-                        message,
-                        code: event.properties.error?.name ?? null,
-                        class: "provider_error",
-                      }),
-                      threadDisposition:
-                        event.properties.sessionID === undefined ? "broken" : "reusable",
-                    },
-                  );
+                  const turn = state.activeTurn;
+                  const status = terminalStatusForError(event, turn);
+                  const terminal: OpenCodeErrorTerminal = {
+                    failure: makeProviderFailure({
+                      message,
+                      code: event.properties.error?.name ?? null,
+                      class: "provider_error",
+                    }),
+                    threadDisposition:
+                      event.properties.sessionID === undefined ? "broken" : "reusable",
+                  };
+                  const messageIds = nonTerminalToolMessageIds(turn);
+                  if (
+                    event.properties.sessionID === undefined ||
+                    status === "interrupted" ||
+                    messageIds.size === 0
+                  ) {
+                    yield* finalizeTurn(state, turn, status, terminal);
+                    continue;
+                  }
+                  // OpenCode cleanup publishes terminal tool parts before its
+                  // completed assistant message. That message is the protocol
+                  // boundary for retaining authoritative cleanup results.
+                  turn.pendingErrorCleanup ??= {
+                    messageIds,
+                    terminal,
+                    sawPreCleanupIdle: false,
+                  };
                 }
               }
               return;
@@ -2515,6 +2584,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 nativeUserMessageId: null,
                 interrupted: false,
                 finalized: false,
+                pendingErrorCleanup: null,
                 planId: null,
               };
               state.appThread = turnInput.appThread;

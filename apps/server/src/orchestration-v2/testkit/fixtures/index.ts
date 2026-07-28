@@ -18,6 +18,12 @@ import { messageSteeringInput } from "./message_steering/input.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
 import { assertMultiTurnOutput } from "./multi_turn/codex_output.ts";
 import { multiTurnInput } from "./multi_turn/input.ts";
+import { openCodeErrorCleanupDrainInput } from "./opencode_error_cleanup_drain/input.ts";
+import { assertOpenCodeErrorCleanupDrainOutput } from "./opencode_error_cleanup_drain/output.ts";
+import { assertOpenCodeErrorCleanupMultipleMessagesOutput } from "./opencode_error_cleanup_multiple_messages/output.ts";
+import { assertOpenCodeErrorUnscopedOutput } from "./opencode_error_unscoped/output.ts";
+import { assertOpenCodeInterruptErrorCleanupOutput } from "./opencode_interrupt_error_cleanup/output.ts";
+import { assertOpenCodeInterruptErrorCleanupAbortedToolOutput } from "./opencode_interrupt_error_cleanup_aborted_tool/output.ts";
 import { openCodeSubagentInput } from "./opencode_subagent/input.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
 import { assertPlanQuestionsOutput } from "./plan_questions/codex_output.ts";
@@ -414,6 +420,113 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./subagent_v2_nested/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertSubagentV2NestedOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_error_cleanup_drain",
+    buildInput: openCodeErrorCleanupDrainInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_error_cleanup_drain/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertOpenCodeErrorCleanupDrainOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_error_cleanup_fallback",
+    buildInput: openCodeErrorCleanupDrainInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_error_cleanup_fallback/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertOpenCodeErrorCleanupDrainOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_error_cleanup_multiple_messages",
+    buildInput: openCodeErrorCleanupDrainInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_error_cleanup_multiple_messages/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertOpenCodeErrorCleanupMultipleMessagesOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_error_cleanup_no_pre_idle",
+    buildInput: openCodeErrorCleanupDrainInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_error_cleanup_no_pre_idle/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertOpenCodeErrorCleanupDrainOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_error_unscoped",
+    buildInput: openCodeErrorCleanupDrainInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_error_unscoped/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertOpenCodeErrorUnscopedOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_interrupt_error_cleanup",
+    buildInput: turnInterruptMidToolInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_interrupt_error_cleanup/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertOpenCodeInterruptErrorCleanupOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_interrupt_error_cleanup_aborted_tool",
+    buildInput: turnInterruptMidToolInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_interrupt_error_cleanup_aborted_tool/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertOpenCodeInterruptErrorCleanupAbortedToolOutput,
       },
     ],
   },
