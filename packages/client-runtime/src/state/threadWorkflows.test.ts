@@ -143,4 +143,18 @@ describe("thread workflows", () => {
 
     expect(resolveLatestMergeBackRun(projection)?.id).toBe("newest-finished");
   });
+
+  it.each(["preparing", "starting", "running"] as const)(
+    "does not merge older history while a newer run is %s",
+    (status) => {
+      const projection = {
+        runs: [
+          { id: "older-completed", status: "completed", ordinal: 1 },
+          { id: "newer-active", status, ordinal: 2 },
+        ],
+      } as never;
+
+      expect(resolveLatestMergeBackRun(projection)).toBeNull();
+    },
+  );
 });
