@@ -2164,8 +2164,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         // The second phase can be rejected on its own: the text-only entry
         // fit, but adding image payloads pushed past the quota. Disk would
         // then still hold the phase-one entry with pendingImageCount set,
-        // which reads as an orphan after reload — so say so now.
-        if (!imagesDurable && images.length > 0) {
+        // which reads as an orphan after reload — so say so now. Gated on the
+        // entry write having been durable: on the in-memory fallback nothing
+        // is ever durable, and the session-only warning already covered it.
+        if (!imagesDurable && durable && images.length > 0) {
           toastManager.add({
             type: "warning",
             title: "Stashed images were not saved",
