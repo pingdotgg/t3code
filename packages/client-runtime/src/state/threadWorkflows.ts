@@ -10,6 +10,7 @@ type Run = Projection["runs"][number];
 type ProviderSession = Projection["providerSessions"][number];
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>(["preparing", "starting", "running", "waiting"]);
+const MERGE_BACK_RUN_STATUSES = new Set<Run["status"]>(["waiting", "completed"]);
 
 export interface QueuedThreadRun {
   readonly run: Run;
@@ -25,6 +26,21 @@ export interface ThreadQueueWorkflowState {
 
 export function resolveActiveThreadRun(projection: Projection): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
+}
+
+/**
+ * A successfully finished provider turn remains in `waiting` while its
+ * checkpoint is captured. Keep that newest turn available for merge-back
+ * instead of falling through to an older fully checkpointed run.
+ */
+export function resolveLatestMergeBackRun(projection: Projection): Run | null {
+  return projection.runs.reduce<Run | null>(
+    (latest, run) =>
+      MERGE_BACK_RUN_STATUSES.has(run.status) && (latest === null || run.ordinal > latest.ordinal)
+        ? run
+        : latest,
+    null,
+  );
 }
 
 export function resolveThreadProviderSession(projection: Projection): ProviderSession | null {
