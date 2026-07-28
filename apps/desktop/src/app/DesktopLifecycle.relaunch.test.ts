@@ -125,7 +125,7 @@ describe("buildAppImageRelaunchShellCommand", () => {
     }),
   );
 
-  it.effect("captures helper stderr when a log path is supplied", () =>
+  it.effect("records a relaunch failure without letting the log block the exec", () =>
     Effect.sync(() => {
       const command = buildAppImageRelaunchShellCommand({
         appImagePath: "/opt/T3.AppImage",
@@ -134,10 +134,16 @@ describe("buildAppImageRelaunchShellCommand", () => {
         logPath: "/home/user/.t3/logs/relaunch.log",
       });
 
-      // The exec runs after the app has exited, so a failure there can only be
-      // reported by what it leaves behind.
+      // Wrapping the group in `2>>log` would abort the whole helper when the
+      // log directory is missing, and would also follow a *successful* exec
+      // into the relaunched app. Guard with a test and append afterwards.
+      assert.notInclude(command, "} 2>>");
+      assert.include(command, `[ -x ${posixShellSingleQuote("/opt/T3.AppImage")} ] && exec `);
+      // A bad log path must not matter once we are past the exec.
       assert.isTrue(
-        command.endsWith(`; } 2>>${posixShellSingleQuote("/home/user/.t3/logs/relaunch.log")}`),
+        command.endsWith(
+          `>>${posixShellSingleQuote("/home/user/.t3/logs/relaunch.log")} 2>/dev/null`,
+        ),
         command,
       );
     }),

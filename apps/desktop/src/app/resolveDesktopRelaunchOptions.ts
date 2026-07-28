@@ -96,10 +96,23 @@ export function buildAppImageRelaunchShellCommand(input: {
   const quotedPath = posixShellSingleQuote(input.appImagePath);
   const quotedArgs = input.args.map(posixShellSingleQuote).join(" ");
   const execTarget = quotedArgs.length > 0 ? `${quotedPath} ${quotedArgs}` : quotedPath;
-  // The exec happens after we have exited, so its failure (AppImage moved,
-  // execute bit dropped) can only be reported by leaving a trace behind.
+  // The exec happens after we have exited, so a missing or non-executable
+  // AppImage can only be reported by leaving a trace behind. Test for it and
+  // append a line *after* the exec instead of redirecting the whole group:
+  //
+  //   - `{ ...; } 2>>log` fails the redirection outright when the log's
+  //     directory is missing or unwritable, and the re-exec then never runs at
+  //     all — trading a diagnosable failure for a guaranteed one.
+  //   - that redirection also survives a *successful* exec, so the relaunched
+  //     app would spend its whole life appending Chromium stderr to an
+  //     unrotated file.
+  //
+  // `2>/dev/null` on the append keeps a bad log path from mattering, and the
+  // exec'd process keeps the stdio it was always meant to have.
   const relaunch = input.logPath
-    ? `{ sleep ${sleepSeconds} && exec ${execTarget}; } 2>>${posixShellSingleQuote(input.logPath)}`
+    ? `sleep ${sleepSeconds}; [ -x ${quotedPath} ] && exec ${execTarget}; ` +
+      `echo ${posixShellSingleQuote(`T3 Code relaunch failed: ${input.appImagePath} is missing or not executable`)} ` +
+      `>>${posixShellSingleQuote(input.logPath)} 2>/dev/null`
     : `sleep ${sleepSeconds} && exec ${execTarget}`;
   // Close first, then sleep: releasing the fds up front lets the outgoing
   // mount unmount *during* the delay rather than after it.
