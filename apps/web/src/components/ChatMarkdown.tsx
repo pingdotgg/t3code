@@ -5,6 +5,8 @@ import {
   ChevronRightIcon,
   CopyIcon,
   GlobeIcon,
+  ImageOffIcon,
+  LoaderCircleIcon,
   Maximize2Icon,
   Minimize2Icon,
   WrapTextIcon,
@@ -40,6 +42,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -73,6 +76,8 @@ import {
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
+import { useAssetUrlState } from "../assets/assetUrls";
+import { resolveMarkdownImageFile } from "../markdown-images";
 import { cn } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
 import { useActiveEnvironmentId } from "../state/entities";
@@ -122,6 +127,7 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -883,6 +889,163 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
   return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
+function markdownImageName(src: string, alt: string | undefined): string {
+  const trimmedAlt = alt?.trim();
+  if (trimmedAlt) return trimmedAlt;
+  try {
+    const pathname = new URL(src, "https://t3.local").pathname;
+    const basename = pathname.slice(pathname.lastIndexOf("/") + 1);
+    return basename ? decodeURIComponent(basename) : "Image";
+  } catch {
+    return "Image";
+  }
+}
+
+function MarkdownImageLoading({ name }: { name: string }) {
+  return (
+    <span
+      className="my-2 flex h-32 w-56 max-w-full items-center justify-center rounded-lg bg-muted/55 text-muted-foreground"
+      role="status"
+      aria-label={`Loading ${name}`}
+    >
+      <LoaderCircleIcon className="size-5 animate-spin" aria-hidden="true" />
+    </span>
+  );
+}
+
+function MarkdownImageUnavailable({ name }: { name: string }) {
+  return (
+    <span
+      className="my-2 flex min-h-20 w-56 max-w-full items-center gap-2 rounded-lg bg-muted/55 px-3 py-2 text-xs text-muted-foreground"
+      role="img"
+      aria-label={`${name} unavailable`}
+    >
+      <ImageOffIcon className="size-4 shrink-0" aria-hidden="true" />
+      <span className="truncate">{name}</span>
+    </span>
+  );
+}
+
+interface MarkdownImagePreviewProps extends Omit<
+  React.ImgHTMLAttributes<HTMLImageElement>,
+  "alt" | "src"
+> {
+  readonly src: string;
+  readonly alt: string | undefined;
+  readonly name: string;
+  readonly onExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+}
+
+function MarkdownImagePreview({
+  src,
+  alt,
+  name,
+  onExpand,
+  className,
+  onError,
+  ...props
+}: MarkdownImagePreviewProps) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (failedSrc === src) {
+    return <MarkdownImageUnavailable name={name} />;
+  }
+
+  const image = (
+    <img
+      {...props}
+      src={src}
+      alt={alt ?? ""}
+      className={cn(
+        "block h-auto max-h-72 w-auto max-w-full rounded-lg object-contain outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10",
+        className,
+      )}
+      loading={props.loading ?? "lazy"}
+      decoding={props.decoding ?? "async"}
+      draggable={false}
+      onError={(event) => {
+        onError?.(event);
+        setFailedSrc(src);
+      }}
+    />
+  );
+
+  if (!onExpand) {
+    return <span className="my-2 inline-flex max-w-full rounded-lg bg-muted/35">{image}</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      className="my-2 inline-flex min-h-10 min-w-10 max-w-full cursor-zoom-in overflow-hidden rounded-lg bg-muted/35 text-left shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_1px_2px_-1px_rgba(0,0,0,0.06)] transition-[box-shadow,scale] duration-150 ease-out hover:shadow-[0_0_0_1px_rgba(0,0,0,0.1),0_2px_4px_rgba(0,0,0,0.08)] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.08)] dark:hover:shadow-[0_0_0_1px_rgba(255,255,255,0.13)]"
+      aria-label={`Open ${name} larger`}
+      onClick={() => onExpand({ images: [{ src, name }], index: 0 })}
+    >
+      {image}
+    </button>
+  );
+}
+
+function WorkspaceMarkdownImage(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly path: string;
+  readonly name: string;
+  readonly alt: string | undefined;
+  readonly imageProps: Omit<React.ImgHTMLAttributes<HTMLImageElement>, "alt" | "src">;
+  readonly onExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+}) {
+  const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
+    _tag: "workspace-file",
+    threadId: props.threadRef.threadId,
+    path: props.path,
+  });
+
+  if (assetUrl._tag === "Failure") {
+    return <MarkdownImageUnavailable name={props.name} />;
+  }
+  if (assetUrl._tag === "Loading") {
+    return <MarkdownImageLoading name={props.name} />;
+  }
+  return (
+    <MarkdownImagePreview
+      {...props.imageProps}
+      src={assetUrl.url}
+      alt={props.alt}
+      name={props.name}
+      onExpand={props.onExpand}
+    />
+  );
+}
+
+function MarkdownImage({
+  src,
+  alt,
+  cwd,
+  threadRef,
+  onExpand,
+  ...props
+}: React.ImgHTMLAttributes<HTMLImageElement> & {
+  readonly cwd: string | undefined;
+  readonly threadRef: ScopedThreadRef | undefined;
+  readonly onExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+}) {
+  if (!src) return null;
+  const localFile = resolveMarkdownImageFile(src, cwd);
+  const name = localFile?.name ?? markdownImageName(src, alt);
+  if (localFile && threadRef) {
+    return (
+      <WorkspaceMarkdownImage
+        threadRef={threadRef}
+        path={localFile.path}
+        name={alt?.trim() || name}
+        alt={alt}
+        imageProps={props}
+        onExpand={onExpand}
+      />
+    );
+  }
+  return <MarkdownImagePreview {...props} src={src} alt={alt} name={name} onExpand={onExpand} />;
+}
+
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 
 /** Hosts whose favicon request already failed this session — skip straight to the globe. */
@@ -1302,6 +1465,7 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  onImageExpand,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1490,6 +1654,18 @@ function ChatMarkdown({
           />
         );
       },
+      img({ node: _node, src, alt, ...props }) {
+        return (
+          <MarkdownImage
+            {...props}
+            src={src}
+            alt={alt}
+            cwd={cwd}
+            threadRef={threadRef}
+            onExpand={onImageExpand}
+          />
+        );
+      },
       a({ node, href, children, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
@@ -1627,6 +1803,7 @@ function ChatMarkdown({
     isStreaming,
     markdownFileLinkMetaByHref,
     onTaskListChange,
+    onImageExpand,
     openInPreferredEditor,
     openExternalLinkInPreview,
     openMarkdownFileInPreview,
