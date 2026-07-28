@@ -9,7 +9,7 @@ import {
   type OrchestrationEvent,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Effect, Layer, ManagedRuntime, Metric, Option, Queue, Stream } from "effect";
+import { Deferred, Effect, Layer, ManagedRuntime, Metric, Option, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -78,6 +78,8 @@ const hasMetricSnapshot = (
 
 describe("OrchestrationEngine", () => {
   it("bootstraps the in-memory read model from persisted projections", async () => {
+    const bootstrapStarted = Effect.runSync(Deferred.make<void>());
+    const releaseBootstrap = Effect.runSync(Deferred.make<void>());
     const failOnHistoricalReplayStore: OrchestrationEventStoreShape = {
       append: () =>
         Effect.fail(
@@ -166,7 +168,9 @@ describe("OrchestrationEngine", () => {
       ),
       Layer.provide(
         Layer.succeed(OrchestrationProjectionPipeline, {
-          bootstrap: Effect.void,
+          bootstrap: Deferred.succeed(bootstrapStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseBootstrap)),
+          ),
           projectEvent: () => Effect.void,
         } satisfies OrchestrationProjectionPipelineShape),
       ),
@@ -177,7 +181,17 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(layer);
 
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const enginePromise = runtime.runPromise(Effect.service(OrchestrationEngineService));
+    await Effect.runPromise(Deferred.await(bootstrapStarted));
+    const acquisitionResult = await Promise.race([
+      enginePromise.then(() => "acquired" as const),
+      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 100)),
+    ]);
+    await Effect.runPromise(Deferred.succeed(releaseBootstrap, undefined));
+
+    expect(acquisitionResult).toBe("acquired");
+
+    const engine = await enginePromise;
     const readModel = await runtime.runPromise(engine.getReadModel());
 
     expect(readModel.snapshotSequence).toBe(7);
@@ -185,6 +199,55 @@ describe("OrchestrationEngine", () => {
     expect(readModel.projects[0]?.title).toBe("Bootstrap Project");
     expect(readModel.threads).toHaveLength(1);
     expect(readModel.threads[0]?.title).toBe("Bootstrap Thread");
+
+    await runtime.dispose();
+  });
+
+  it("fails dispatches when projection bootstrap fails", async () => {
+    const bootstrapError = new PersistenceSqlError({
+      operation: "test.bootstrap",
+      detail: "bootstrap failed",
+    });
+    const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3-orchestration-bootstrap-failure-test-",
+    });
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(
+          Layer.succeed(OrchestrationProjectionPipeline, {
+            bootstrap: Effect.fail(bootstrapError),
+            projectEvent: () => Effect.void,
+          } satisfies OrchestrationProjectionPipelineShape),
+        ),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(RepositoryIdentityResolverLive),
+        Layer.provide(SqlitePersistenceMemory),
+        Layer.provideMerge(serverConfigLayer),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+
+    await expect(
+      runtime.runPromise(
+        engine
+          .dispatch({
+            type: "project.create",
+            commandId: CommandId.make("cmd-project-bootstrap-failure"),
+            projectId: asProjectId("project-bootstrap-failure"),
+            title: "Bootstrap Failure",
+            workspaceRoot: "/tmp/project-bootstrap-failure",
+            defaultModelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            createdAt: now(),
+          })
+          .pipe(Effect.timeout("1 second")),
+      ),
+    ).rejects.toThrow("bootstrap failed");
 
     await runtime.dispose();
   });

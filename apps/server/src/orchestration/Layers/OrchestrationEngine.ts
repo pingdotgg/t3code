@@ -1,10 +1,4 @@
-import type {
-  OrchestrationEvent,
-  OrchestrationReadModel,
-  ProjectId,
-  ThreadId,
-  WorkflowRunId,
-} from "@t3tools/contracts";
+import type { OrchestrationEvent, ProjectId, ThreadId, WorkflowRunId } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import {
   Cause,
@@ -95,6 +89,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+  const initialized = yield* Deferred.make<void, OrchestrationDispatchError>();
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     const dispatchStartSequence = readModel.snapshotSequence;
@@ -283,23 +278,42 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     );
   };
 
-  yield* projectionPipeline.bootstrap;
-  readModel = yield* projectionSnapshotQuery.getSnapshot();
-
   const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
-  yield* Effect.forkScoped(worker);
-  yield* Effect.logDebug("orchestration engine started").pipe(
-    Effect.annotateLogs({ sequence: readModel.snapshotSequence }),
+  yield* Effect.forkScoped(
+    Effect.gen(function* () {
+      const initializationExit = yield* Effect.exit(
+        Effect.gen(function* () {
+          yield* projectionPipeline.bootstrap;
+          readModel = yield* projectionSnapshotQuery.getSnapshot();
+          yield* Effect.forkScoped(worker);
+          yield* Effect.logDebug("orchestration engine started").pipe(
+            Effect.annotateLogs({ sequence: readModel.snapshotSequence }),
+          );
+        }),
+      );
+      if (Exit.isFailure(initializationExit)) {
+        yield* Deferred.failCause(initialized, initializationExit.cause).pipe(Effect.orDie);
+        return;
+      }
+      yield* Deferred.succeed(initialized, undefined).pipe(Effect.orDie);
+    }),
   );
 
   const getReadModel: OrchestrationEngineShape["getReadModel"] = () =>
-    Effect.sync((): OrchestrationReadModel => readModel);
+    Deferred.await(initialized).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof Error ? cause : new Error("Orchestration engine initialization failed"),
+      ),
+      Effect.orDie,
+      Effect.map(() => readModel),
+    );
 
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive) =>
     eventStore.readFromSequence(fromSequenceExclusive);
 
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
     Effect.gen(function* () {
+      yield* Deferred.await(initialized);
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, { command, result, startedAtMs: Date.now() });
       return yield* Deferred.await(result);
