@@ -125,6 +125,30 @@ struct AppModelBugHuntRegressionTests {
         #expect(model.archivedThreadsTotal == 0)
     }
 
+    @Test("deleting a project removes archived rows even when the reload fails")
+    func projectDeleteLocallyRemovesArchiveBeforeReload() async {
+        let backend = StubBackend()
+        let project = Project(id: "p-delete", name: "Delete", path: "/tmp/delete")
+        let archived = ChatThread(
+            id: "t-delete-archive", projectID: project.id,
+            title: "Archived session", provider: .claude, status: .archived,
+            updatedAt: Date())
+        backend.projectsResult = [project]
+        backend.threadsResult = [archived]
+        let model = AppModel(backend: backend)
+        await model.refreshAll()
+        await model.refreshArchivedThreads()
+        #expect(model.archivedThreads.map(\.id) == [archived.id])
+
+        backend.threadsShouldFail = true
+        await model.deleteProject(project)
+
+        #expect(model.archivedThreads.isEmpty)
+        #expect(model.archivedThreadsTotal == 0)
+        #expect(model.archivedThreadsNextCursor == nil)
+        #expect(model.archivedThreadsError != nil)
+    }
+
     @Test("settle reports failure so the sidebar can preserve selection")
     func settleReportsFailure() async {
         let backend = StubBackend()
@@ -205,7 +229,9 @@ private enum StubBackendError: Error, Sendable {
 private final class StubBackend: BackendService, @unchecked Sendable {
     private let streamPair = AsyncStream<BackendEvent>.makeStream()
 
+    var projectsResult: [Project] = []
     var threadsResult: [ChatThread] = []
+    var threadsShouldFail = false
     var diffFiles: [DiffFile] = []
     var diffShouldFail = false
     var settleShouldFail = false
@@ -215,8 +241,11 @@ private final class StubBackend: BackendService, @unchecked Sendable {
 
     func start() async {}
     func stop() async { streamPair.continuation.finish() }
-    func projects() async throws -> [Project] { [] }
-    func threads() async throws -> [ChatThread] { threadsResult }
+    func projects() async throws -> [Project] { projectsResult }
+    func threads() async throws -> [ChatThread] {
+        if threadsShouldFail { throw StubBackendError.failed }
+        return threadsResult
+    }
     func timeline(threadID: String) async throws -> [TimelineItem] { [] }
     func closeTimeline(threadID: String) async {}
     func providers() async throws -> [ProviderInstance] { [] }

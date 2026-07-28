@@ -2055,9 +2055,16 @@ public final class AppModel {
             threads.removeAll { $0.projectID == project.id }
             projects.removeAll { $0.id == project.id }
             rebuildProjectPathIndex()
+            let removedArchivedCount = archivedThreads.count { $0.projectID == project.id }
+            archivedThreads.removeAll { $0.projectID == project.id }
+            archivedThreadsTotal = max(0, archivedThreadsTotal - removedArchivedCount)
+            // The old cursor was calculated against rows that no longer exist.
+            // Disable pagination until the authoritative first page reloads.
+            archivedThreadsNextCursor = nil
             // The shell snapshot contains active sessions only, while Archive
             // is paged independently. Refresh it after the server cascade so a
-            // deleted project's archived sessions do not remain visible.
+            // successful reload restores the exact total and cursor. The local
+            // removal above keeps deleted rows gone if that reload fails.
             await refreshArchivedThreads()
         } catch {
             report(error)
