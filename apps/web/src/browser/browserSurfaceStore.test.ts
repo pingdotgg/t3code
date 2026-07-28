@@ -129,7 +129,7 @@ describe("browserSurfaceStore", () => {
     });
   });
 
-  it("uses the live panel rect for a hidden background tab", () => {
+  it("keeps a hidden background tab on its own last rect", () => {
     const staleRect = { x: 0, y: 0, width: 500, height: 700 };
     const liveRect = { x: 10, y: 20, width: 900, height: 640 };
     expect(
@@ -158,7 +158,7 @@ describe("browserSurfaceStore", () => {
         },
         "hidden",
       ),
-    ).toEqual(liveRect);
+    ).toEqual(staleRect);
   });
 
   it("stages a never-presented background tab inside the renderer viewport", () => {

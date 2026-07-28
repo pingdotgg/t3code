@@ -61,6 +61,7 @@ export function selectBrowserSurfaceRenderState(
   return {
     byTabId: state.byTabId,
     backgroundCapture: (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0,
+    content: current?.content ?? null,
     cornerRadius: current?.cornerRadius ?? 0,
     fitSourceContent: current?.fitSourceContent ?? false,
     fittedSourceContent: current?.fittedSourceContent ?? null,
@@ -73,19 +74,7 @@ export function resolveBrowserSurfacePanelRect(
   tabId: string,
 ): BrowserSurfaceRect | null {
   const current = byTabId[tabId];
-  if (current?.visible && current.rect) return current.rect;
-
-  let latestVisible: BrowserSurfacePresentation | undefined;
-  for (const presentation of Object.values(byTabId)) {
-    if (
-      presentation.visible &&
-      presentation.rect &&
-      (!latestVisible || presentation.updatedAt > latestVisible.updatedAt)
-    ) {
-      latestVisible = presentation;
-    }
-  }
-  return latestVisible?.rect ?? current?.rect ?? null;
+  return current?.rect ?? null;
 }
 
 export function resolveBrowserSurfaceBackgroundCaptureRect(

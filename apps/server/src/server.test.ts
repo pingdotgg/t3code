@@ -73,6 +73,7 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
+import { resolveAvailableEditorsForConfig } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -3080,6 +3081,34 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("negotiates permessage-deflate with clients that offer it", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { cookie, url } = parseSessionCookieFromWsUrl(yield* getWsServerUrl("/ws"));
+      const openSocket = (perMessageDeflate: boolean) =>
+        Effect.acquireRelease(
+          Effect.callback<NodeSocket.NodeWS.WebSocket, Error>((resume) => {
+            const socket = new NodeSocket.NodeWS.WebSocket(url, {
+              perMessageDeflate,
+              ...(cookie ? { headers: { cookie } } : {}),
+            });
+            socket.on("open", () => resume(Effect.succeed(socket)));
+            socket.on("error", (error) => resume(Effect.fail(error)));
+          }),
+          (socket) => Effect.sync(() => socket.close()),
+        );
+
+      const compressed = yield* openSocket(true);
+      // The ws client records the negotiated extension only when the server's
+      // 101 response accepted the offer.
+      assert.include(compressed.extensions, "permessage-deflate");
+
+      const plain = yield* openSocket(false);
+      assert.notInclude(plain.extensions, "permessage-deflate");
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("issues short-lived websocket tickets for authenticated bearer sessions", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -3761,6 +3790,23 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.shellResumeCompletionMarker, true);
       assert.equal(response.threadResumeCompletionMarker, true);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not block server config when editor discovery never resolves", () =>
+    Effect.gen(function* () {
+      const discoveryInterrupted = yield* Deferred.make<void>();
+      const responseFiber = yield* resolveAvailableEditorsForConfig(
+        Effect.never.pipe(
+          Effect.onInterrupt(() => Deferred.succeed(discoveryInterrupted, undefined)),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust(Duration.seconds(5));
+
+      const availableEditors = yield* Fiber.join(responseFiber);
+      yield* Deferred.await(discoveryInterrupted);
+      assert.deepEqual(availableEditors, []);
+    }),
   );
 
   it.effect(

@@ -228,6 +228,7 @@ describe("preview automation presentation", () => {
         threadRef,
         "request-background",
         "tab-background",
+        "tab-background",
         40,
         async (isBackground) => {
           expect(
@@ -270,6 +271,7 @@ describe("preview automation presentation", () => {
       const operation = withPreviewAutomationBackgroundPresentation(
         threadRef,
         "request-paused-frame",
+        "tab-background",
         "tab-background",
         40,
         use,
@@ -321,6 +323,7 @@ describe("preview automation presentation", () => {
       const operation = withPreviewAutomationBackgroundPresentation(
         threadRef,
         "request-stalled",
+        "tab-background",
         "tab-background",
         40,
         () => stalledOperation,
