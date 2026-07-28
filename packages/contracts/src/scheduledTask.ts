@@ -23,13 +23,15 @@ const TimeOfDay = TrimmedNonEmptyString.check(
 
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
+const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+  description: "Positive interval in milliseconds.",
+});
+
 const ScheduledTaskIntervalSchedule = Schema.Struct({
   type: Schema.Literal("interval").annotate({
     description: "Select interval scheduling.",
   }),
-  everyMs: Schema.Int.annotate({
-    description: "Interval in milliseconds.",
-  }),
+  everyMs: ScheduledTaskIntervalMs,
 }).annotate({
   description: "Run repeatedly after a fixed number of milliseconds.",
 });
@@ -71,7 +73,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
     type: Schema.Literal("interval").annotate({
       description: "Select interval scheduling.",
     }),
-    everyMs: Schema.Int.check(
+    everyMs: ScheduledTaskIntervalMs.check(
       Schema.isGreaterThanOrEqualTo(MIN_SCHEDULED_TASK_INTERVAL_MS),
     ).annotate({
       description: "Interval in milliseconds, with a minimum of 60000 (one minute).",
