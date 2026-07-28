@@ -91,11 +91,18 @@ export const layer: Layer.Layer<
       }
 
       const capturedAt = yield* DateTime.now;
+      const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const baselineCheckpoint = projection.checkpoints.some(
-        (candidate) => candidate.scopeId === scope.id && candidate.ordinalWithinScope === 0,
+        (candidate) =>
+          candidate.scopeId === scope.id &&
+          candidate.ordinalWithinScope === baselineOrdinalWithinScope &&
+          candidate.status === "ready",
       )
         ? null
-        : yield* checkpoints.materializeBaselineCheckpoint({ scope });
+        : yield* checkpoints.materializeBaselineCheckpoint({
+            scope,
+            ordinalWithinScope: baselineOrdinalWithinScope,
+          });
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
