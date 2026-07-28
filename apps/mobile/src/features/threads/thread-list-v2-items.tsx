@@ -73,15 +73,12 @@ const SIDEBAR_V2_ROW_RADIUS = 12;
 export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
-  /** Leading sections sit right under the list header and need no top gap. */
-  readonly first?: boolean;
 }) {
   const borderColor = useThemeColor("--color-border");
   return (
     <View
       className={cn(
-        "mb-1.5 flex-row items-center gap-2.5",
-        props.first ? "mt-1" : "mt-4",
+        "mb-1.5 mt-4 flex-row items-center gap-2.5",
         props.pane === "sidebar" ? "px-3" : "px-5",
       )}
     >
@@ -166,7 +163,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   return (
     <>
       {props.showPendingDivider ? (
-        <ThreadListV2SectionDivider first label="Pending" pane={props.pane} />
+        <ThreadListV2SectionDivider label="Pending" pane={props.pane} />
       ) : null}
       <ControlPillMenu
         actions={PENDING_TASK_MENU_ACTIONS}
