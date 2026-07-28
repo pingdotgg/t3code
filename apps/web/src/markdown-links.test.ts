@@ -168,6 +168,19 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta("AGENTS.md", "/Users/julius/project")).toBeNull();
   });
 
+  it("links extensionless bare filenames with a line suffix", () => {
+    expect(resolveInlineCodeFileLinkMeta("Makefile:12", "/Users/julius/project")).toMatchObject({
+      targetPath: "/Users/julius/project/Makefile:12",
+      basename: "Makefile",
+      line: 12,
+    });
+    expect(resolveInlineCodeFileLinkMeta("Dockerfile:8:2", "/Users/julius/project")).toMatchObject({
+      line: 8,
+      column: 2,
+    });
+    expect(resolveInlineCodeFileLinkMeta("Makefile:12")).toBeNull();
+  });
+
   it("links dot-prefixed relative paths without extensions", () => {
     expect(
       resolveInlineCodeFileLinkMeta("./scripts/deploy", "/Users/julius/project"),

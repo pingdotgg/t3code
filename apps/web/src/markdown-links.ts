@@ -174,6 +174,7 @@ const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
+const BARE_EXTENSIONLESS_POSITION_PATTERN = /^[A-Za-z0-9_-]+(?::\d+){1,2}$/;
 const SINGLE_LABEL_HOSTNAMES = new Set(["localhost"]);
 // Allowlists, not full public-suffix detection: treating every dotted first
 // segment as a host would swallow real paths like `conf.d/x.conf` or
@@ -294,7 +295,16 @@ export function resolveInlineCodeFileLinkMeta(
     }
   }
 
-  return resolveMarkdownFileLinkMeta(candidate, cwd);
+  const resolved = resolveMarkdownFileLinkMeta(candidate, cwd);
+  if (resolved) return resolved;
+
+  // `Makefile:12` — extensionless bare names fail the generic markdown-link
+  // candidate patterns, but here the :line suffix already marked the span as
+  // a file reference.
+  if (cwd && BARE_EXTENSIONLESS_POSITION_PATTERN.test(candidate)) {
+    return buildFileLinkMetaFromTarget(resolvePathLinkTarget(candidate, cwd), cwd);
+  }
+  return null;
 }
 
 function basenameOfPath(path: string): string {
@@ -321,7 +331,10 @@ export function resolveMarkdownFileLinkMeta(
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
   if (!targetPath) return null;
+  return buildFileLinkMetaFromTarget(targetPath, cwd);
+}
 
+function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): MarkdownFileLinkMeta {
   const { path, line, column } = splitPathAndPosition(targetPath);
   const parsedLine = line ? Number.parseInt(line, 10) : Number.NaN;
   const parsedColumn = column ? Number.parseInt(column, 10) : Number.NaN;
