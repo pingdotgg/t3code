@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { getBaseAttributes, MarkdownRenderable, TextAttributes } from "@opentui/core";
+import { createTestRenderer } from "@opentui/core/testing";
 
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import {
   ansi,
+  createTuiSyntaxStyle,
   relativeTime,
   resolveProjectStatus,
   resolveThreadStatus,
@@ -77,6 +80,63 @@ describe("ansi", () => {
 
   it("Given an unknown name, then it falls back to the terminal default foreground", () => {
     expect(ansi("chartreuse").intent).toBe("default");
+  });
+});
+
+describe("createTuiSyntaxStyle", () => {
+  it("styles Markdown hierarchy instead of flattening it to plain text", () => {
+    const style = createTuiSyntaxStyle();
+    try {
+      expect(style.getStyle("markup.heading")).toMatchObject({
+        bold: true,
+      });
+      expect(style.getStyle("markup.heading")?.fg?.intent).toBe("indexed");
+      expect(style.getStyle("markup.heading")?.fg?.slot).toBe(6);
+      expect(style.getStyle("markup.strong")?.bold).toBe(true);
+      expect(style.getStyle("markup.italic")?.italic).toBe(true);
+      expect(style.getStyle("markup.raw")?.bg?.slot).toBe(8);
+      expect(style.getStyle("markup.link.label")?.underline).toBe(true);
+    } finally {
+      style.destroy();
+    }
+  });
+
+  it("applies the bold terminal attribute to rendered Markdown emphasis", async () => {
+    const style = createTuiSyntaxStyle();
+    const renderer = await createTestRenderer({ width: 24, height: 4 });
+    try {
+      renderer.renderer.root.add(
+        new MarkdownRenderable(renderer.renderer, {
+          id: "styled-markdown",
+          content: "**Important**",
+          syntaxStyle: style,
+          streaming: true,
+          width: 24,
+        }),
+      );
+      await renderer.renderOnce();
+
+      const lines = renderer.captureCharFrame().split("\n");
+      const row = lines.findIndex((line) => line.includes("Important"));
+      const column = row >= 0 ? (lines[row]?.indexOf("Important") ?? -1) : -1;
+      expect(row).toBeGreaterThanOrEqual(0);
+      expect(column).toBeGreaterThanOrEqual(0);
+
+      const buffer = renderer.renderer.currentRenderBuffer;
+      const attributes = buffer.buffers.attributes.slice(
+        row * buffer.width + column,
+        row * buffer.width + column + "Important".length,
+      );
+      expect(
+        Array.from(attributes).every(
+          (attribute) =>
+            (getBaseAttributes(attribute) & TextAttributes.BOLD) === TextAttributes.BOLD,
+        ),
+      ).toBe(true);
+    } finally {
+      renderer.renderer.destroy();
+      style.destroy();
+    }
   });
 });
 

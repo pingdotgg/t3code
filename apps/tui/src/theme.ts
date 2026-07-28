@@ -1,4 +1,4 @@
-import { RGBA } from "@opentui/core";
+import { RGBA, SyntaxStyle } from "@opentui/core";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 /**
@@ -249,6 +249,28 @@ export const THEME: Palette = {
   accent: indexedColor(6),
   selectedBg: indexedColor(8),
 };
+
+/**
+ * OpenTUI's empty SyntaxStyle does not assign attributes to Markdown scopes,
+ * leaving headings, emphasis, links, and inline code visually indistinguishable
+ * from prose. Keep the styling terminal-themed while restoring that hierarchy.
+ */
+export function createTuiSyntaxStyle(palette: Palette = THEME): SyntaxStyle {
+  return SyntaxStyle.fromStyles({
+    default: { fg: palette.text },
+    conceal: { fg: palette.dim, dim: true },
+    "markup.heading": { fg: palette.accent, bold: true },
+    "markup.strong": { fg: palette.text, bold: true },
+    "markup.italic": { fg: palette.text, italic: true },
+    "markup.strikethrough": { fg: palette.dim, dim: true },
+    "markup.raw": { fg: palette.text, bg: palette.selectedBg },
+    "markup.list": { fg: palette.accent, bold: true },
+    "markup.quote": { fg: palette.dim, italic: true },
+    "markup.link": { fg: palette.accent },
+    "markup.link.label": { fg: palette.accent, underline: true },
+    "markup.link.url": { fg: palette.dim, underline: true },
+  });
+}
 
 /** The active palette. */
 export const usePalette = (): Palette => THEME;
