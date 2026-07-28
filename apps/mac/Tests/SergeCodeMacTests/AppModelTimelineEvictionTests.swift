@@ -38,12 +38,12 @@ struct AppModelTimelineEvictionTests {
 
     // MARK: - Pure function
 
-    @Test("evictionCandidates keeps selected + keep-1 others, evicts oldest")
+    @Test("evictionCandidates can keep only the selected thread")
     func keepsWindowEvictsOldest() {
-        // recent is MRU-first: t0 selected, t1..t3 recent, t4..t5 oldest.
+        // recent is MRU-first: t0 selected, all others are off-screen.
         let recent = ["t0", "t1", "t2", "t3", "t4", "t5"]
-        let evicted = AppModel.evictionCandidates(recent: recent, keep: 4)
-        #expect(evicted == ["t4", "t5"])
+        let evicted = AppModel.evictionCandidates(recent: recent, keep: 1)
+        #expect(evicted == ["t1", "t2", "t3", "t4", "t5"])
         #expect(!evicted.contains("t0"))
     }
 
@@ -66,7 +66,7 @@ struct AppModelTimelineEvictionTests {
 
     // MARK: - AppModel selection path
 
-    @Test("selecting across 6 threads retains stale timeline on the two oldest")
+    @Test("selecting across 6 threads keeps only the visible detail stream")
     func selectionPrunesOldestThreadStates() async {
         let model = makeModel()
         let ids = (0..<6).map { "thread-\($0)" }
@@ -76,8 +76,7 @@ struct AppModelTimelineEvictionTests {
             seedTimeline(model, threadID: id)
         }
 
-        // Select in order thread-0 … thread-5. After the sixth selection,
-        // keep = 4 holds [5, 4, 3, 2]; 1 and 0 are evicted.
+        // Select in order thread-0 … thread-5. Only thread-5 stays live.
         for id in ids {
             model.selectedThreadID = id
         }
@@ -87,13 +86,13 @@ struct AppModelTimelineEvictionTests {
 
         #expect(model.selectedThreadID == "thread-5")
 
-        for kept in ["thread-5", "thread-4", "thread-3", "thread-2"] {
+        for kept in ["thread-5"] {
             let state = model.threadState(kept)
             #expect(state?.hasLoadedTimeline == true, "expected \(kept) retained")
             #expect((state?.timeline.count ?? 0) == 1, "expected \(kept) timeline retained")
         }
 
-        for evicted in ["thread-1", "thread-0"] {
+        for evicted in ["thread-4", "thread-3", "thread-2", "thread-1", "thread-0"] {
             let state = model.threadState(evicted)
             #expect(state?.hasLoadedTimeline == false, "expected \(evicted) hasLoadedTimeline false")
             #expect((state?.timeline.count ?? 0) == 1, "expected \(evicted) stale timeline retained")
