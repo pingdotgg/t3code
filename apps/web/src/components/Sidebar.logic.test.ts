@@ -6,6 +6,7 @@ import {
   canArchiveSettledSidebarThread,
   createThreadJumpHintVisibilityController,
   filterArchivableSidebarThreads,
+  getCompletedArchiveThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -362,6 +363,40 @@ describe("withCoordinatedThreadArchiveEntries", () => {
     failFirstFlow?.();
 
     await expect(firstFlow).rejects.toThrow("archive failed");
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
+    expect(reservations.size).toBe(0);
+  });
+
+  it("does not retry entries an owner intentionally skipped", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let finishEligibilityCheck: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries: [entries[0]],
+      reservations,
+      run: async (ownedEntries) => {
+        await new Promise<void>((resolve) => {
+          finishEligibilityCheck = resolve;
+        });
+        const outcome = await archiveSelectedThreadEntries({
+          entries: ownedEntries,
+          archive: vi.fn(async () => ({ _tag: "Success" }) as const),
+          canArchive: () => false,
+        });
+        return getCompletedArchiveThreadKeys(outcome);
+      },
+    });
+    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
+
+    const secondRun = vi.fn(async () => ["two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+    finishEligibilityCheck?.();
+
+    await expect(firstFlow).resolves.toEqual(["one"]);
     await expect(secondFlow).resolves.toEqual(["two"]);
     expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
     expect(reservations.size).toBe(0);

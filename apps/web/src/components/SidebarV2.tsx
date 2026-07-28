@@ -112,6 +112,7 @@ import {
   filterArchivableSidebarThreads,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
+  getCompletedArchiveThreadKeys,
   hasUnseenCompletion,
   isThreadSessionRunning,
   isTrailingDoubleClick,
@@ -2052,7 +2053,7 @@ export default function SidebarV2() {
   );
   // One archive per thread at a time across row, selection, and settled
   // partition flows. Later flows wait for owners, then retry only entries that
-  // were not archived successfully by the earlier flow.
+  // were neither archived nor intentionally skipped by the earlier flow.
   const archivingThreadReservationsRef = useRef(new Map<string, Promise<ReadonlySet<string>>>());
   const attemptArchive = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -2061,7 +2062,7 @@ export default function SidebarV2() {
         await withCoordinatedThreadArchiveEntries({
           entries: [{ threadKey, threadRef }],
           reservations: archivingThreadReservationsRef.current,
-          run: async (entries, onArchived) => {
+          run: async (entries, onCompleted) => {
             const thread = threadByKeyRef.current.get(threadKey);
             if (
               !(await confirmArchive(
@@ -2070,9 +2071,9 @@ export default function SidebarV2() {
             ) {
               return [];
             }
-            const outcome = await archiveThreadEntries(entries, { onArchived });
+            const outcome = await archiveThreadEntries(entries, { onArchived: onCompleted });
             removeFromSelection(outcome.archivedThreadKeys);
-            return outcome.archivedThreadKeys;
+            return getCompletedArchiveThreadKeys(outcome);
           },
         });
       })();
@@ -2093,7 +2094,7 @@ export default function SidebarV2() {
             return { threadKey: scopedThreadKey(threadRef), threadRef };
           }),
           reservations: archivingThreadReservationsRef.current,
-          run: async (entries, onArchived) => {
+          run: async (entries, onCompleted) => {
             const count = entries.length;
             if (
               !(await confirmArchive(
@@ -2103,12 +2104,12 @@ export default function SidebarV2() {
               return [];
             }
             const outcome = await archiveThreadEntries(entries, {
-              onArchived,
+              onArchived: onCompleted,
               recheckLiveEligibility: true,
               requireStillSettled: true,
             });
             removeFromSelection(outcome.archivedThreadKeys);
-            return outcome.archivedThreadKeys;
+            return getCompletedArchiveThreadKeys(outcome);
           },
         });
       } finally {
@@ -2219,7 +2220,7 @@ export default function SidebarV2() {
             ];
           }),
           reservations: archivingThreadReservationsRef.current,
-          run: async (entries, onArchived) => {
+          run: async (entries, onCompleted) => {
             const archiveCount = entries.length;
             if (
               !(await confirmArchive(
@@ -2229,11 +2230,11 @@ export default function SidebarV2() {
               return [];
             }
             const outcome = await archiveThreadEntries(entries, {
-              onArchived,
+              onArchived: onCompleted,
               recheckLiveEligibility: true,
             });
             removeFromSelection(outcome.archivedThreadKeys);
-            return outcome.archivedThreadKeys;
+            return getCompletedArchiveThreadKeys(outcome);
           },
         });
         return;
