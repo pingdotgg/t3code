@@ -89,10 +89,19 @@ enum AlpineTheme {
     /// Hairline edge for the bubble: a whisper of accent, not a glow.
     static let userBubbleStroke = accent.opacity(0.22)
 
-    /// Playful pastel ramp for reasoning-effort levels, calm → intense. Slot
-    /// indices line up with `EffortLevelStyle.slot`; all entries come from the
-    /// shared nature palette above so the fun stays on-identity.
-    static let effortLevelColors: [Color] = [sky, meadow, lichen, clay, lavender]
+    /// Reasoning-effort ramp, calm → intense. Slot indices line up with
+    /// `EffortLevelStyle.slot`: everyday levels use the shared nature palette,
+    /// while Max and unlimited modes intentionally cross into system warning
+    /// colors.
+    static let effortLevelColors: [Color] = [
+        sky,
+        meadow,
+        lichen,
+        lavender,
+        clay,
+        Color(nsColor: .systemOrange),
+        Color(nsColor: .systemRed),
+    ]
 
     /// Color for an effort ramp slot, clamped so out-of-range slots degrade
     /// to the nearest ramp edge instead of crashing a picker.
