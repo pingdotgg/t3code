@@ -314,6 +314,29 @@ private struct RunProfileMenu: View {
                             }
                         }
                     }
+                    if isUltraProfile(option) {
+                        Divider()
+                            .padding(.vertical, 4)
+                        HStack(spacing: 10) {
+                            Image(systemName: "point.3.connected.trianglepath.dotted")
+                                .foregroundStyle(AlpineTheme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Sub-agent models")
+                                    .font(.callout.weight(.medium))
+                                Text("Configure Explore, Implement, and Verify in Settings ▸ Workflows.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            SettingsLink {
+                                Text("Open Settings")
+                            }
+                            .controlSize(.small)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                    }
                 }
                 .padding(8)
             }
@@ -366,6 +389,11 @@ private struct RunProfileMenu: View {
 
     private func effectiveTier(of option: ModelOption) -> String? {
         thread.serviceTier ?? option.serviceTierChoices.first(where: \.isDefault)?.id
+    }
+
+    private func isUltraProfile(_ option: ModelOption) -> Bool {
+        guard let effort = effectiveEffort(of: option)?.lowercased() else { return false }
+        return effort == "ultra" || effort == "ultracode"
     }
 
     private func showsTier(_ option: ModelOption) -> Bool {
