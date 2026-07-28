@@ -1,4 +1,7 @@
 export const BRAND_ASSET_PATHS = {
+  alphaIconComposerProject: "assets/alpha/app-icon.icon",
+  alphaMacIconPng: "assets/alpha/alpha-macos-1024.png",
+
   developmentIconComposerProject: "assets/dev/app-icon.icon",
   developmentIosIconPng: "assets/dev/blueprint-ios-1024.png",
   developmentUniversalIconPng: "assets/dev/blueprint-universal-1024.png",

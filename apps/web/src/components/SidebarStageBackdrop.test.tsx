@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { StageBackdropArt, StageBackdropButtonArt } from "./SidebarStageBackdrop";
 
 describe("SidebarStageBackdrop", () => {
-  it.each(["nightly", "dev"] as const)(
+  it.each(["alpha", "nightly", "dev"] as const)(
     "uses unique SVG definition ids when %s artwork is rendered more than once",
     (variant) => {
       const markup = renderToStaticMarkup(

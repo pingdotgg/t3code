@@ -1,7 +1,8 @@
 # Brand icons
 
-The three Icon Composer projects are the source of truth for full application icons:
+The four Icon Composer projects are the source of truth for application icons:
 
+- `alpha/app-icon.icon` (macOS)
 - `dev/app-icon.icon`
 - `nightly/app-icon.icon`
 - `prod/app-icon.icon`
@@ -23,8 +24,9 @@ After changing an Icon Composer project, open it in Icon Composer and export the
 - Size: `1024pt`
 - Scale: `1×`
 
-Save the three exports to:
+Save the four exports to:
 
+- `alpha/app-icon.icon` -> `alpha/alpha-macos-1024.png`
 - `dev/app-icon.icon` -> `dev/blueprint-macos-1024.png`
 - `nightly/app-icon.icon` -> `nightly/nightly-macos-1024.png`
 - `prod/app-icon.icon` -> `prod/black-macos-1024.png`
@@ -34,10 +36,11 @@ The result must be a 1024×1024 PNG with the classic macOS safe area: the opaque
 To have Codex perform the native exports, paste this prompt into a task opened at the repository root:
 
 ```text
-Use [@Computer](plugin://computer-use@openai-bundled) and the Icon Composer app to export the three macOS app icons in this repository.
+Use [@Computer](plugin://computer-use@openai-bundled) and the Icon Composer app to export the four macOS app icons in this repository.
 
 For each project below, use Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, and Scale: 1×, then save the PNG to the exact destination:
 
+- assets/alpha/app-icon.icon -> assets/alpha/alpha-macos-1024.png
 - assets/dev/app-icon.icon -> assets/dev/blueprint-macos-1024.png
 - assets/nightly/app-icon.icon -> assets/nightly/nightly-macos-1024.png
 - assets/prod/app-icon.icon -> assets/prod/black-macos-1024.png

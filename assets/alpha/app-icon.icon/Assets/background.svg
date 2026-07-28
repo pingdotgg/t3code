@@ -1,0 +1,30 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="dawn" x1="8" y1="7" x2="121" y2="124" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#713FC4"/>
+      <stop offset="0.32" stop-color="#B94892"/>
+      <stop offset="0.64" stop-color="#ED6D76"/>
+      <stop offset="1" stop-color="#F5B36E"/>
+    </linearGradient>
+    <radialGradient id="sunGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(101 23) rotate(137) scale(62 56)">
+      <stop stop-color="#FFF7C8" stop-opacity="0.76"/>
+      <stop offset="0.34" stop-color="#FFD47E" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#FF9870" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="edgeShade" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(64 57) rotate(90) scale(82)">
+      <stop offset="0.66" stop-color="#552C91" stop-opacity="0"/>
+      <stop offset="1" stop-color="#35246E" stop-opacity="0.44"/>
+    </radialGradient>
+    <clipPath id="frame">
+      <rect width="128" height="128" rx="10"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="128" height="128" fill="url(#dawn)"/>
+    <rect width="128" height="128" fill="url(#sunGlow)"/>
+    <path d="M-12 108C10 91 33 91 54 101C75 111 94 109 113 97C124 90 134 84 141 84V140H-12V108Z" fill="#6B3F9B" fill-opacity="0.52"/>
+    <path d="M-12 122C12 106 37 108 58 117C81 127 101 120 141 99V140H-12V122Z" fill="#432B78" fill-opacity="0.66"/>
+    <rect width="128" height="128" fill="url(#edgeShade)"/>
+  </g>
+</svg>

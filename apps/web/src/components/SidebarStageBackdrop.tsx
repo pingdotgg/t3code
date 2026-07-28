@@ -5,7 +5,7 @@ import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import { primaryServerConfigAtom } from "../state/server";
 
-export type SidebarStageBackdropVariant = "nightly" | "dev";
+export type SidebarStageBackdropVariant = "alpha" | "nightly" | "dev";
 
 // A wide viewBox keeps the 96-unit art height at a fixed scale while sidebar resizing reveals
 // more horizontal canvas instead of zooming the scene.
@@ -15,6 +15,7 @@ export function resolveSidebarStageBackdropVariant(
   stageLabel: string,
 ): SidebarStageBackdropVariant | null {
   const normalized = stageLabel.trim().toLowerCase();
+  if (normalized === "alpha") return "alpha";
   if (normalized === "nightly") return "nightly";
   if (normalized === "dev") return "dev";
   return null;
@@ -45,11 +46,147 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
 }
 
 export function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+  if (variant === "alpha") return <AlphaDawnArt />;
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
 }
 
 export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+  if (variant === "alpha") return <AlphaDawnArt compact />;
   return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
+}
+
+const ALPHA_SPARKLES: ReadonlyArray<{ x: number; y: number; size: number }> = [
+  { x: 34, y: 21, size: 1.6 },
+  { x: 146, y: 14, size: 1.2 },
+  { x: 318, y: 18, size: 1.4 },
+  { x: 438, y: 30, size: 1.1 },
+  { x: 564, y: 16, size: 1.5 },
+  { x: 674, y: 28, size: 1.2 },
+];
+
+function AlphaDawnArt({ compact = false }: { compact?: boolean }) {
+  const idPrefix = useId().replaceAll(":", "");
+  const skyId = `${idPrefix}-stage-alpha-sky`;
+  const glowId = `${idPrefix}-stage-alpha-glow`;
+  const hillsFarId = `${idPrefix}-stage-alpha-hills-far`;
+  const hillsNearId = `${idPrefix}-stage-alpha-hills-near`;
+  const glowsId = `${idPrefix}-stage-alpha-glows`;
+  const sceneId = `${idPrefix}-stage-alpha-scene`;
+
+  return (
+    <svg
+      className="h-full w-full"
+      fill="none"
+      preserveAspectRatio="xMinYMin slice"
+      viewBox={compact ? "96 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <defs>
+        <linearGradient
+          id={skyId}
+          x1="12"
+          y1="4"
+          x2="620"
+          y2="92"
+          gradientUnits="userSpaceOnUse"
+          spreadMethod="reflect"
+        >
+          <stop stopColor="#6E3EC4" />
+          <stop offset="0.28" stopColor="#B84991" />
+          <stop offset="0.58" stopColor="#ED6F75" />
+          <stop offset="0.82" stopColor="#FF9D62" />
+          <stop offset="1" stopColor="#F7BE72" />
+        </linearGradient>
+        <radialGradient
+          id={glowId}
+          cx="0"
+          cy="0"
+          r="1"
+          gradientTransform="translate(232 42) rotate(90) scale(66 112)"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#FFF4BD" stopOpacity="0.92" />
+          <stop offset="0.28" stopColor="#FFD47C" stopOpacity="0.48" />
+          <stop offset="0.7" stopColor="#FF9A68" stopOpacity="0.12" />
+          <stop offset="1" stopColor="#FF8A70" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient
+          id={hillsFarId}
+          x1="0"
+          y1="58"
+          x2="0"
+          y2="96"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#7C4296" stopOpacity="0.72" />
+          <stop offset="1" stopColor="#4E2B74" stopOpacity="0.9" />
+        </linearGradient>
+        <linearGradient
+          id={hillsNearId}
+          x1="0"
+          y1="66"
+          x2="0"
+          y2="96"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#503177" stopOpacity="0.84" />
+          <stop offset="1" stopColor="#2F235C" stopOpacity="0.96" />
+        </linearGradient>
+        <pattern id={glowsId} width="720" height="96" patternUnits="userSpaceOnUse">
+          <rect width="720" height="96" fill={`url(#${glowId})`} />
+        </pattern>
+        <pattern id={sceneId} width="720" height="96" patternUnits="userSpaceOnUse">
+          <g stroke="#FFF4D3" strokeLinecap="round">
+            {ALPHA_SPARKLES.map((sparkle) => (
+              <g
+                key={`${sparkle.x}-${sparkle.y}`}
+                opacity="0.72"
+                transform={`translate(${sparkle.x} ${sparkle.y})`}
+              >
+                <path d={`M-${sparkle.size} 0H${sparkle.size}`} strokeWidth="0.65" />
+                <path d={`M0 -${sparkle.size}V${sparkle.size}`} strokeWidth="0.65" />
+              </g>
+            ))}
+          </g>
+
+          <g opacity="0.84">
+            <circle cx="232" cy="45" r="13" fill="#FFF1B3" />
+            <circle cx="228" cy="41" r="4" fill="#FFF9DA" fillOpacity="0.72" />
+            <g stroke="#FFE7A0" strokeLinecap="round" strokeOpacity="0.72" strokeWidth="0.8">
+              <path d="M232 24V28" />
+              <path d="M232 62V66" />
+              <path d="M211 45H215" />
+              <path d="M249 45H253" />
+              <path d="M217 30L220 33" />
+              <path d="M244 57L247 60" />
+              <path d="M247 30L244 33" />
+              <path d="M220 57L217 60" />
+            </g>
+          </g>
+
+          <g stroke="#FFF5D8" strokeLinecap="round" strokeLinejoin="round" opacity="0.62">
+            <path d="M390 26L407 31L395 35L390 26Z" fill="#FFF5D8" fillOpacity="0.16" />
+            <path d="M395 35L393 41L399 34" strokeWidth="0.7" />
+            <path d="M390 26L397 33" strokeWidth="0.65" />
+            <path d="M377 35C371 38 368 42 366 47" strokeDasharray="2 3" strokeOpacity="0.4" />
+          </g>
+
+          <path
+            d="M0 78C28 69 48 62 76 65C102 68 116 76 142 73C170 70 188 55 218 57C248 59 264 73 292 74C322 75 342 62 370 64C398 66 416 78 446 76C474 74 494 59 522 60C552 61 570 75 600 74C628 73 648 62 674 64C692 65 708 71 720 76V96H0V78Z"
+            fill={`url(#${hillsFarId})`}
+          />
+          <path
+            d="M0 88C36 82 60 75 94 78C126 81 148 90 180 86C212 82 234 72 266 75C300 78 320 89 354 87C388 85 410 75 444 77C476 79 498 89 530 88C562 87 586 78 618 79C650 80 682 88 720 86V96H0V88Z"
+            fill={`url(#${hillsNearId})`}
+          />
+        </pattern>
+      </defs>
+
+      <rect width="100%" height="96" fill={`url(#${skyId})`} />
+      <rect width="100%" height="96" fill={`url(#${glowsId})`} />
+      <rect width="100%" height="96" fill={`url(#${sceneId})`} />
+    </svg>
+  );
 }
 
 const NIGHTLY_STARS: ReadonlyArray<{
