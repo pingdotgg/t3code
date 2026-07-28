@@ -23,7 +23,50 @@ const TimeOfDay = TrimmedNonEmptyString.check(
 
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
+const ScheduledTaskIntervalSchedule = Schema.Struct({
+  type: Schema.Literal("interval").annotate({
+    description: "Select interval scheduling.",
+  }),
+  everyMs: Schema.Int.annotate({
+    description: "Interval in milliseconds.",
+  }),
+}).annotate({
+  description: "Run repeatedly after a fixed number of milliseconds.",
+});
+
+const ScheduledTaskFixedTimeSchedule = Schema.Struct({
+  type: Schema.Literal("fixed_time").annotate({
+    description: "Select a fixed local wall-clock time.",
+  }),
+  timeOfDay: TimeOfDay,
+  weekdays: Schema.optional(
+    Schema.Array(
+      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })).annotate({
+        description: "Weekday number where 0 is Sunday and 6 is Saturday.",
+      }),
+    ).annotate({
+      description: "Optional weekdays; omit to run every day.",
+    }),
+  ),
+}).annotate({
+  description: "Run at a fixed local wall-clock time on selected weekdays.",
+});
+
+/**
+ * Read model for persisted schedules. Keep accepting legacy sub-minute rows so
+ * users can list, disable, edit, or delete them after the write minimum changes.
+ */
 export const ScheduledTaskSchedule = Schema.Union([
+  ScheduledTaskIntervalSchedule,
+  ScheduledTaskFixedTimeSchedule,
+]).annotate({
+  description:
+    "Structured recurring schedule. Pass an object with type 'interval' or 'fixed_time'.",
+});
+export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
+
+/** Mutation model: newly created or updated interval schedules run at most once per minute. */
+export const ScheduledTaskUpsertSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval").annotate({
       description: "Select interval scheduling.",
@@ -36,28 +79,11 @@ export const ScheduledTaskSchedule = Schema.Union([
   }).annotate({
     description: "Run repeatedly after a fixed number of milliseconds.",
   }),
-  Schema.Struct({
-    type: Schema.Literal("fixed_time").annotate({
-      description: "Select a fixed local wall-clock time.",
-    }),
-    timeOfDay: TimeOfDay,
-    weekdays: Schema.optional(
-      Schema.Array(
-        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })).annotate({
-          description: "Weekday number where 0 is Sunday and 6 is Saturday.",
-        }),
-      ).annotate({
-        description: "Optional weekdays; omit to run every day.",
-      }),
-    ),
-  }).annotate({
-    description: "Run at a fixed local wall-clock time on selected weekdays.",
-  }),
+  ScheduledTaskFixedTimeSchedule,
 ]).annotate({
-  description:
-    "Structured recurring schedule. Pass an object with type 'interval' or 'fixed_time'.",
+  description: "Writable recurring schedule. Pass an object with type 'interval' or 'fixed_time'.",
 });
-export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
+export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
 export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succeeded", "failed"]);
 export type ScheduledTaskRunStatus = typeof ScheduledTaskRunStatus.Type;
@@ -100,7 +126,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   title: TrimmedNonEmptyString,
   prompt: TrimmedNonEmptyString,
   enabled: Schema.Boolean,
-  schedule: ScheduledTaskSchedule,
+  schedule: ScheduledTaskUpsertSchedule,
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
