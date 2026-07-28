@@ -233,6 +233,9 @@ export function effectiveSettled(
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
     readonly changeRequestState?: ChangeRequestStateLike | null;
+    /** Optional idle guard after a change request merges or closes. Callers
+        that omit it (or pass 0) keep the immediate-settle behavior. */
+    readonly changeRequestSettleIdleMs?: number;
   },
 ): boolean {
   // Blocked work must remain visible even when a user explicitly settled it.
@@ -259,7 +262,19 @@ export function effectiveSettled(
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
   if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
-    return true;
+    // A zero delay settles on the merge signal itself, matching the
+    // immediate-settle default; callers with a minute-quantized clock can
+    // therefore never postpone "Now". Only a configured positive delay
+    // compares clocks, holding a still-active thread until it goes idle.
+    const changeRequestSettleIdleMs = options.changeRequestSettleIdleMs ?? 0;
+    if (changeRequestSettleIdleMs <= 0) return true;
+    const lastActivityAt = threadLastActivityAt(shell);
+    if (
+      lastActivityAt === null ||
+      Date.parse(lastActivityAt) < Date.parse(options.now) - changeRequestSettleIdleMs
+    ) {
+      return true;
+    }
   }
   // An open PR is unfinished business regardless of how long the thread has
   // been quiet: review can take days, and hiding the thread would bury the

@@ -35,6 +35,13 @@ import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/pu
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
+import {
+  CHANGE_REQUEST_SETTLE_IDLE_MINUTES_STEP,
+  DEFAULT_CHANGE_REQUEST_SETTLE_IDLE_MINUTES,
+  formatChangeRequestSettleIdleMinutes,
+  MAX_CHANGE_REQUEST_SETTLE_IDLE_MINUTES,
+  MIN_CHANGE_REQUEST_SETTLE_IDLE_MINUTES,
+} from "../../lib/settlementPreferences";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -46,6 +53,7 @@ import {
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsStepperRow } from "./components/SettingsStepperRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
@@ -543,8 +551,13 @@ function GeneralSettingsSection() {
  * mobile preferences.
  */
 function LegacySettingsSection() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const changeRequestSettleIdleMinutes = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.changeRequestSettleIdleMinutes ??
+      DEFAULT_CHANGE_REQUEST_SETTLE_IDLE_MINUTES)
+    : DEFAULT_CHANGE_REQUEST_SETTLE_IDLE_MINUTES;
 
   return (
     <View className="gap-3">
@@ -555,6 +568,25 @@ function LegacySettingsSection() {
           value={!threadListV2Enabled}
           onValueChange={(value) => savePreferences({ legacyThreadListEnabled: value })}
         />
+        {threadListV2Enabled ? (
+          <SettingsStepperRow
+            icon="slider.horizontal.3"
+            label="Merged PR idle delay"
+            value={changeRequestSettleIdleMinutes}
+            displayValue={formatChangeRequestSettleIdleMinutes(changeRequestSettleIdleMinutes)}
+            valueLabel={
+              changeRequestSettleIdleMinutes === 0
+                ? "Settle immediately after merge or close"
+                : `Wait ${formatChangeRequestSettleIdleMinutes(
+                    changeRequestSettleIdleMinutes,
+                  )} after merge or close`
+            }
+            min={MIN_CHANGE_REQUEST_SETTLE_IDLE_MINUTES}
+            max={MAX_CHANGE_REQUEST_SETTLE_IDLE_MINUTES}
+            step={CHANGE_REQUEST_SETTLE_IDLE_MINUTES_STEP}
+            onValueChange={(value) => savePreferences({ changeRequestSettleIdleMinutes: value })}
+          />
+        ) : null}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Brings back the original grouped thread list. The default list is flat, in creation order:

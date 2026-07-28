@@ -212,6 +212,23 @@ describe("effectiveSettled", () => {
     ).toBe(false);
   });
 
+  it("settles a merged PR immediately by default and honors a configured idle guard", () => {
+    const shell = makeShell({ activityAt: "2026-04-09T23:30:00.000Z" });
+    const options = {
+      now: NOW,
+      autoSettleAfterDays: null,
+      changeRequestState: "merged" as const,
+    };
+
+    expect(effectiveSettled(shell, options)).toBe(true);
+    expect(
+      effectiveSettled(shell, { ...options, changeRequestSettleIdleMs: 60 * 60 * 1_000 }),
+    ).toBe(false);
+    expect(
+      effectiveSettled(shell, { ...options, changeRequestSettleIdleMs: 15 * 60 * 1_000 }),
+    ).toBe(true);
+  });
+
   it("never settles a starting session, even with a settled override", () => {
     const shell = makeShell({
       settledOverride: "settled",

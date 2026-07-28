@@ -562,6 +562,34 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledShelfHeaderIndex).toBe(0);
   });
 
+  it("settles a merged PR immediately by default and honors a configured idle delay", () => {
+    const merged = makeThread({
+      id: ThreadId.make("merged"),
+      title: "Merged",
+      latestUserMessageAt: "2026-06-01T23:30:00.000Z",
+    });
+    const changeRequestStateByKey = new Map([[`${environmentId}:${merged.id}`, "merged" as const]]);
+
+    const immediateDefault = buildThreadListV2Items({
+      threads: [merged],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey,
+      now: NOW,
+    });
+    const oneHour = buildThreadListV2Items({
+      threads: [merged],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey,
+      changeRequestSettleIdleMs: 60 * 60 * 1_000,
+      now: NOW,
+    });
+
+    expect(immediateDefault.items[0]?.variant).toBe("slim");
+    expect(oneHour.items[0]?.variant).toBe("card");
+  });
+
   it("keeps cards in creation order while settled sorts by recency", () => {
     const { items } = buildThreadListV2Items({
       threads: [

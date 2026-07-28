@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 
+import { resolveChangeRequestSettleIdleMs } from "../../lib/settlementPreferences";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { resolveThreadListV2Enabled } from "./threadListV2";
 
@@ -16,4 +17,13 @@ export function useThreadListV2Enabled(): boolean {
     legacyPreference: loaded ? preferencesResult.value.legacyThreadListEnabled : undefined,
     preferencesLoaded: loaded,
   });
+}
+
+export function useThreadListV2ChangeRequestSettleIdleMs(): number {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  return resolveChangeRequestSettleIdleMs(
+    AsyncResult.isSuccess(preferencesResult)
+      ? preferencesResult.value.changeRequestSettleIdleMinutes
+      : undefined,
+  );
 }

@@ -33,7 +33,10 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
-import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import {
+  useThreadListV2ChangeRequestSettleIdleMs,
+  useThreadListV2Enabled,
+} from "../threads/use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
@@ -206,6 +209,7 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const changeRequestSettleIdleMs = useThreadListV2ChangeRequestSettleIdleMs();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -651,6 +655,7 @@ export function HomeScreen(props: HomeScreenProps) {
       changeRequestStateByKey,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      changeRequestSettleIdleMs,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
@@ -660,6 +665,7 @@ export function HomeScreen(props: HomeScreenProps) {
     });
   }, [
     changeRequestStateByKey,
+    changeRequestSettleIdleMs,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
