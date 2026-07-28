@@ -484,9 +484,9 @@ export const ServerSettings = Schema.Struct({
   ),
   // When enabled (the default), new thread worktrees branch off the freshly
   // fetched `origin/<base>` ref instead of the local base branch, so threads
-  // never start from stale local state. The server fetches the remote base
-  // right before creating the worktree and falls back to the local ref when
-  // the fetch fails (e.g. offline).
+  // never start from stale local state. The server requires a successful fetch
+  // for each worktree creation and aborts creation when freshness cannot be
+  // established (for example, while offline).
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
