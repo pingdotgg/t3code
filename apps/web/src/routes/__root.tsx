@@ -7,11 +7,12 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useParams,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
-import { resolveServerBackedAppDisplayName } from "../branding.logic";
+import { formatWorkspaceDocumentTitle, resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -47,7 +48,15 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useProject,
+  useThreadShell,
+} from "../state/entities";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -155,11 +164,38 @@ function GlassAppearanceSync() {
 function DocumentTitleSync() {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const title = resolveServerBackedAppDisplayName({
+  const appName = resolveServerBackedAppDisplayName({
     baseName: APP_BASE_NAME,
     fallbackDisplayName: APP_DISPLAY_NAME,
     fallbackStageLabel: APP_STAGE_LABEL,
     primaryServerVersion,
+  });
+
+  // Params are read non-strictly because DocumentTitleSync renders above the
+  // matched route; only thread/draft routes expose environmentId/threadId/draftId.
+  const params = useParams({ strict: false });
+  const target = resolveThreadRouteTarget(params);
+
+  const thread = useThreadShell(target?.kind === "server" ? target.threadRef : null);
+  const draftId = target?.kind === "draft" ? target.draftId : null;
+  // Drafts have no thread title yet, but they still belong to a project, so the
+  // window title can reflect the active project while a new chat is being composed.
+  const draftSession = useComposerDraftStore((store) =>
+    draftId === null ? null : store.getDraftSession(draftId),
+  );
+
+  const projectRef =
+    thread !== null
+      ? scopeProjectRef(thread.environmentId, thread.projectId)
+      : draftSession !== null
+        ? scopeProjectRef(draftSession.environmentId, draftSession.projectId)
+        : null;
+  const project = useProject(projectRef);
+
+  const title = formatWorkspaceDocumentTitle({
+    appName,
+    projectTitle: project?.title,
+    threadTitle: thread?.title,
   });
 
   useEffect(() => {

@@ -36,3 +36,20 @@ export function resolveServerBackedAppDisplayName(input: {
     ? input.fallbackDisplayName
     : formatAppDisplayName({ baseName: input.baseName, stageLabel });
 }
+
+/**
+ * Builds the `document.title` shown for the current workspace context so external
+ * tooling (window-title scanners, time trackers) can see the active project/thread.
+ * Falls back to the plain app name when no project/thread context is available.
+ */
+export function formatWorkspaceDocumentTitle(input: {
+  readonly appName: string;
+  readonly projectTitle: string | null | undefined;
+  readonly threadTitle: string | null | undefined;
+}): string {
+  const context = [input.projectTitle, input.threadTitle]
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part));
+
+  return context.length === 0 ? input.appName : `${context.join(" – ")} — ${input.appName}`;
+}
