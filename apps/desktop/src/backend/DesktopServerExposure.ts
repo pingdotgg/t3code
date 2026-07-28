@@ -20,6 +20,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -692,9 +693,14 @@ export const make = Effect.gen(function* () {
               }),
           ),
           // Put the tailnet back the way the still-unchanged settings describe
-          // it. Best-effort either way: the original persistence failure is
-          // what the caller needs to see.
-          Effect.tapError(() => {
+          // it. `onExit` rather than `tapError`: the tailnet has already been
+          // changed by this point, so an interrupt (app quitting mid-toggle) or
+          // a defect must undo it too — `tapError` sees only typed failures, and
+          // skipping the rollback on those exits is exactly the silent-exposure
+          // case this whole path exists to prevent. Best-effort, since the
+          // original persistence failure is what the caller needs to see.
+          Effect.onExit((exit) => {
+            if (Exit.isSuccess(exit)) return Effect.void;
             if (preflightedServePort !== null) {
               return disableTailscaleServe({ servePort: preflightedServePort }).pipe(
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),

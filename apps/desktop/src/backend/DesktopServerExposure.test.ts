@@ -3,6 +3,7 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -467,6 +468,71 @@ describe("DesktopServerExposure", () => {
       }),
       {},
       unspawnableAfterEnable,
+    );
+  });
+
+  it.effect("rolls the preflighted binding back when persistence dies", () => {
+    // `tapError` only sees typed failures, so a defect (and likewise an
+    // interrupt, e.g. the app quitting mid-toggle) used to skip the rollback and
+    // leave Serve live on the tailnet with settings still saying disabled.
+    const settingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+      get: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+      load: Effect.succeed(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+      setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
+      setServerExposureMode: () => Effect.die("unexpected exposure mode change"),
+      setTailscaleServe: () => Effect.die("settings file vanished"),
+      setUpdateChannel: () => Effect.die("unexpected update channel change"),
+      setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+      setWslDistro: () => Effect.die("unexpected WSL distro change"),
+      setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+      applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+      applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+    } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
+
+    const tailscaleCommands: Array<ReadonlyArray<string>> = [];
+    const recordingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        tailscaleCommands.push((command as unknown as { args: ReadonlyArray<string> }).args);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode("{}")),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        tailscaleCommands.length = 0;
+        const exit = yield* serverExposure
+          .setTailscaleServeEnabled({ enabled: true, port: 8443 })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(exit));
+        // Enabled, then rolled back — the tailnet must not be left exposed.
+        assert.deepEqual(tailscaleCommands, [
+          ["serve", "--bg", "--https=8443", "http://127.0.0.1:4173"],
+          ["serve", "--https=8443", "off"],
+        ]);
+      }),
+      {},
+      recordingSpawner,
+      settingsLayer,
     );
   });
 
