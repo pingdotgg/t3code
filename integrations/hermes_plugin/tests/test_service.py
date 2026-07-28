@@ -1509,6 +1509,14 @@ class ServiceDefinitionTest(unittest.TestCase):
             patch(
                 "integrations.hermes_plugin.service._verify_product_health"
             ) as verify_health,
+            patch(
+                "integrations.hermes_plugin.service._current_source_commit",
+                return_value="a" * 40,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._source_checkout_clean",
+                return_value=True,
+            ),
         ):
             result = service_module._activate_staged_product_locked(
                 config,
@@ -1526,6 +1534,90 @@ class ServiceDefinitionTest(unittest.TestCase):
         state = json.loads(config.service_state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["product_version"], "0.0.30")
         self.assertEqual(state["product_source_commit"], "a" * 40)
+
+    def test_coherent_activation_rejects_a_late_source_move(self) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            runtime_root=root / "runtime",
+            binary_path=root / "runtime" / "bin" / "t3",
+            data_dir=root / "runtime" / "data",
+            service_dir=root / "service" / "t3code",
+            watchdog_service_dir=root / "service" / "t3code-plugin-watchdog",
+        )
+        staged = root / "transaction" / "t3"
+        staged.parent.mkdir(parents=True)
+        staged.write_bytes(b"verified coherent runtime")
+        checksum = hashlib.sha256(staged.read_bytes()).hexdigest()
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value="0.0.30",
+            ),
+            patch("integrations.hermes_plugin.service._prepare_service_dir"),
+            patch("integrations.hermes_plugin.service._write_t3_s6_service"),
+            patch("integrations.hermes_plugin.service._install_watchdog"),
+            patch(
+                "integrations.hermes_plugin.service._verify_t3_service_up",
+                return_value=9621,
+            ),
+            patch("integrations.hermes_plugin.service._verify_product_health"),
+            patch(
+                "integrations.hermes_plugin.service._current_source_commit",
+                return_value="b" * 40,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._source_checkout_clean",
+                return_value=True,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._set_desired_state"
+            ) as set_desired_state,
+            self.assertRaisesRegex(
+                ServiceError,
+                "source changed during coherent activation",
+            ),
+        ):
+            service_module._activate_staged_product_locked(
+                config,
+                staged_binary=staged,
+                product_version="0.0.30",
+                source_commit="a" * 40,
+                binary_sha256=checksum,
+            )
+
+        set_desired_state.assert_not_called()
+
+    def test_coherent_activation_rechecks_retained_runtime_checksum(self) -> None:
+        root = Path(self.temporary.name)
+        config = replace(
+            self.config,
+            runtime_root=root / "runtime",
+            binary_path=root / "runtime" / "bin" / "t3",
+            data_dir=root / "runtime" / "data",
+        )
+        config.binary_path.parent.mkdir(parents=True)
+        config.binary_path.write_bytes(b"runtime changed after release verification")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.service._prepare_service_dir"
+            ) as prepare_service,
+            self.assertRaisesRegex(
+                ServiceError,
+                "checksum changed before activation",
+            ),
+        ):
+            service_module._activate_staged_product_locked(
+                config,
+                staged_binary=config.binary_path,
+                product_version="0.0.30",
+                source_commit="a" * 40,
+                binary_sha256=hashlib.sha256(b"verified runtime").hexdigest(),
+            )
+
+        prepare_service.assert_not_called()
 
     def test_missing_live_hermes_home_fails_without_orphan_cleanup(self) -> None:
         with (
