@@ -462,7 +462,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarV2Status(thread);
   // Snoozing is explicit, so unlike Done, a never-visited wake still counts.
-  // Visiting clears both the pill and the wake's ordering/settlement guard.
+  // Visiting clears the pill and its priority. The completed wake continues
+  // suppressing auto-settle until real activity clears the snooze lifecycle.
   const isWoke = isSidebarV2ThreadWoke({ wokeAt: props.wokeAt, lastVisitedAt });
   // Background work fades as a whole. Input requests stay fully prominent
   // because the agent cannot continue without the user; approval retains its
@@ -1607,7 +1608,7 @@ export default function SidebarV2() {
           now,
           autoSettleAfterDays,
           changeRequestState,
-          suppressAutoSettle: isWoke,
+          suppressAutoSettle: wokeAt !== null,
         })
       ) {
         settled.push(thread);

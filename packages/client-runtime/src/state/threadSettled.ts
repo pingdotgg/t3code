@@ -234,7 +234,7 @@ export function effectiveSettled(
     readonly autoSettleAfterDays: number | null;
     readonly changeRequestState?: ChangeRequestStateLike | null;
     /** Keep an attention-bearing thread active while still honoring an
-        explicit user settle. Used by the sidebar while a wake is unvisited. */
+        explicit user settle. Used while a thread retains a completed wake. */
     readonly suppressAutoSettle?: boolean;
   },
 ): boolean {

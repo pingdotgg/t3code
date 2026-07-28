@@ -38,6 +38,21 @@ export function startNewThreadForProject(
   return true;
 }
 
+/** Visits use server-backed timestamps so local clock skew cannot clear
+    unread state. A completed snooze wake is also server-backed and may be
+    newer than the thread projection's updatedAt. */
+export function resolveThreadVisitedAt(input: {
+  readonly threadUpdatedAt: string;
+  readonly wokeAt: string | null;
+}): string {
+  if (input.wokeAt === null) return input.threadUpdatedAt;
+  const threadUpdatedAtMs = Date.parse(input.threadUpdatedAt);
+  const wokeAtMs = Date.parse(input.wokeAt);
+  if (Number.isNaN(wokeAtMs)) return input.threadUpdatedAt;
+  if (Number.isNaN(threadUpdatedAtMs) || wokeAtMs > threadUpdatedAtMs) return input.wokeAt;
+  return input.threadUpdatedAt;
+}
+
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
   nextModelSelection?: ModelSelection;
