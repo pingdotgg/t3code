@@ -403,6 +403,33 @@ export const healthApi = HttpApiBuilder.group(
   }),
 );
 
+export const revokeEnvironmentLinkRecord = Effect.fn(
+  "relay.api.client.revokeEnvironmentLinkRecord",
+)(function* (input: {
+  readonly db: RelayDb.RelayDb["Service"];
+  readonly links: EnvironmentLinks.EnvironmentLinks["Service"];
+  readonly credentials: EnvironmentCredentials.EnvironmentCredentials["Service"];
+  readonly userId: string;
+  readonly environmentId: string;
+  readonly environmentPublicKey: string;
+}) {
+  return yield* input.db.$client.withTransaction(
+    Effect.gen(function* () {
+      const revoked = yield* input.links.revokeForUser({
+        userId: input.userId,
+        environmentId: input.environmentId,
+      });
+      if (revoked) {
+        yield* input.credentials.revokeForEnvironmentPublicKey({
+          environmentId: input.environmentId,
+          environmentPublicKey: input.environmentPublicKey,
+        });
+      }
+      return revoked;
+    }),
+  );
+});
+
 export const mobileApi = HttpApiBuilder.group(
   RelayApi,
   "mobile",
@@ -472,6 +499,7 @@ export const clientApi = HttpApiBuilder.group(
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
     const devices = yield* Devices.Devices;
+    const db = yield* RelayDb.RelayDb;
     return handlers
       .handle(
         "listEnvironments",
@@ -605,16 +633,14 @@ export const clientApi = HttpApiBuilder.group(
           if (link === null) {
             return { ok: false };
           }
-          const unlinked = yield* links.revokeForUser({
+          const unlinked = yield* revokeEnvironmentLinkRecord({
+            db,
+            links,
+            credentials,
             userId,
-            environmentId: params.environmentId,
-          });
-          if (unlinked) {
-            yield* credentials.revokeForEnvironmentPublicKey({
-              environmentId: link.environmentId,
-              environmentPublicKey: link.environmentPublicKey,
-            });
-          }
+            environmentId: link.environmentId,
+            environmentPublicKey: link.environmentPublicKey,
+          }).pipe(Effect.catchTag("SqlError", () => relayInternalErrorResponse("internal_error")));
           return { ok: unlinked };
         }, mapRelayCommonApiErrors("not_authorized")),
       )

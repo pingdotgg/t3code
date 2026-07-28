@@ -22,12 +22,15 @@ import {
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
   relayNotFoundRoute,
+  revokeEnvironmentLinkRecord,
   traceRelayHttpRequestWith,
   verifyRelayClientBearerToken,
   withoutCapturedParentSpan,
 } from "./Api.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
+import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -152,6 +155,48 @@ describe("relay environment authentication", () => {
       ),
       Effect.scoped,
     );
+  });
+});
+
+describe("relay environment unlink", () => {
+  it.effect("revokes the link and its credentials in one database transaction", () => {
+    const calls: Array<string> = [];
+    const db = {
+      $client: {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+          calls.push("transaction");
+          return effect;
+        },
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+    const links = {
+      revokeForUser: () =>
+        Effect.sync(() => {
+          calls.push("link");
+          return true;
+        }),
+    } as unknown as EnvironmentLinks.EnvironmentLinks["Service"];
+    const credentials = {
+      revokeForEnvironmentPublicKey: () =>
+        Effect.sync(() => {
+          calls.push("credential");
+          return true;
+        }),
+    } as unknown as EnvironmentCredentials.EnvironmentCredentials["Service"];
+
+    return Effect.gen(function* () {
+      expect(
+        yield* revokeEnvironmentLinkRecord({
+          db,
+          links,
+          credentials,
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+        }),
+      ).toBe(true);
+      expect(calls).toEqual(["transaction", "link", "credential"]);
+    });
   });
 });
 
