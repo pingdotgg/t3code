@@ -33,15 +33,15 @@ export function compileClaudeModelSelection(
   const rawEffort = getModelSelectionStringOptionValue(selection, "effort");
   const resolvedEffort = resolveClaudeEffort(capabilities, rawEffort);
   const effort = normalizeClaudeCliEffort(resolvedEffort, selection.model);
-  const fastMode =
-    supportsBoolean("fastMode") &&
-    getModelSelectionBooleanOptionValue(selection, "fastMode") === true;
+  const fastMode = supportsBoolean("fastMode")
+    ? getModelSelectionBooleanOptionValue(selection, "fastMode")
+    : undefined;
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")
     : undefined;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
-    ...(fastMode ? { fastMode: true } : {}),
+    ...(typeof fastMode === "boolean" ? { fastMode } : {}),
     ...(isClaudeUltracodeEffort(resolvedEffort) ? { ultracode: true } : {}),
   };
   const apiModelId = resolveClaudeApiModelId(selection);
