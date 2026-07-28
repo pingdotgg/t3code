@@ -47,7 +47,6 @@ vi.mock("./threads", () => ({
 
 import {
   resolveThreadDetailRef,
-  shouldSubscribeToThreadDetail,
   useThread,
   useThreadDetailWhenReady,
   useThreadStatusWhenReady,
@@ -67,35 +66,26 @@ beforeEach(() => {
 });
 
 describe("thread detail subscription", () => {
-  it("waits for a server shell before subscribing for a local draft", () => {
-    expect(
-      shouldSubscribeToThreadDetail({
-        hasLocalDraft: true,
-        hasServerShell: false,
-      }),
-    ).toBe(false);
-    expect(
-      shouldSubscribeToThreadDetail({
-        hasLocalDraft: true,
-        hasServerShell: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps normal server thread subscriptions independent of shell state", () => {
-    expect(
-      shouldSubscribeToThreadDetail({
-        hasLocalDraft: false,
-        hasServerShell: false,
-      }),
-    ).toBe(true);
-  });
-
   it("starts the actual detail hook only after a local draft receives its shell", () => {
     mocks.hasLocalDraft = true;
 
     function Probe() {
       useThread(THREAD_REF);
+      return null;
+    }
+
+    renderToStaticMarkup(createElement(Probe));
+    expect(mocks.detailAtom).not.toHaveBeenCalled();
+
+    mocks.shell = { id: THREAD_REF.threadId };
+    renderToStaticMarkup(createElement(Probe));
+    expect(mocks.detailAtom).toHaveBeenCalledOnce();
+    expect(mocks.detailAtom).toHaveBeenCalledWith(THREAD_REF);
+  });
+
+  it("preserves explicit shell gating for callers without a local draft", () => {
+    function Probe() {
+      useThread(THREAD_REF, { waitForShell: true });
       return null;
     }
 

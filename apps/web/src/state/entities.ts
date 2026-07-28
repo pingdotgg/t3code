@@ -152,11 +152,14 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
  * the server shell. Waiting for that shell prevents the expected pre-creation
  * HTTP 404 from being treated as an authoritative deletion.
  */
-export function shouldSubscribeToThreadDetail(input: {
-  readonly hasLocalDraft: boolean;
-  readonly hasServerShell: boolean;
-}): boolean {
-  return !input.hasLocalDraft || input.hasServerShell;
+export function resolveThreadDetailRef(
+  ref: ScopedThreadRef | null,
+  options: {
+    shellExists: boolean;
+    waitForShell: boolean;
+  },
+): ScopedThreadRef | null {
+  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
 }
 
 export function useThreadDetailWhenReady(
@@ -166,7 +169,12 @@ export function useThreadDetailWhenReady(
     readonly hasServerShell: boolean;
   },
 ): EnvironmentThread | null {
-  return useThreadDetail(shouldSubscribeToThreadDetail(input) ? ref : null);
+  return useThreadDetail(
+    resolveThreadDetailRef(ref, {
+      shellExists: input.hasServerShell,
+      waitForShell: input.hasLocalDraft,
+    }),
+  );
 }
 
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
@@ -182,17 +190,12 @@ export function useThreadStatusWhenReady(
     readonly hasServerShell: boolean;
   },
 ): EnvironmentThreadStatus {
-  return useThreadStatus(shouldSubscribeToThreadDetail(input) ? ref : null);
-}
-
-export function resolveThreadDetailRef(
-  ref: ScopedThreadRef | null,
-  options: {
-    shellExists: boolean;
-    waitForShell: boolean;
-  },
-): ScopedThreadRef | null {
-  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
+  return useThreadStatus(
+    resolveThreadDetailRef(ref, {
+      shellExists: input.hasServerShell,
+      waitForShell: input.hasLocalDraft,
+    }),
+  );
 }
 
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
