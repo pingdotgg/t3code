@@ -2943,6 +2943,114 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("classifies Claude local workflows across their full task lifecycle", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "run the review workflow",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "workflow-review-1",
+        tool_use_id: "toolu-workflow-review-1",
+        description: "Review the connector",
+        task_type: "local_workflow",
+        workflow_name: "review-changes",
+        session_id: "sdk-session-workflow",
+        uuid: "workflow-started",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "workflow-review-1",
+        tool_use_id: "toolu-workflow-review-1",
+        description: "Review the connector",
+        last_tool_name: "Read",
+        summary: "Inspecting the adapter",
+        usage: {
+          total_tokens: 30,
+          tool_uses: 1,
+          duration_ms: 100,
+        },
+        session_id: "sdk-session-workflow",
+        uuid: "workflow-progress",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "workflow-review-1",
+        patch: {
+          status: "running",
+          is_backgrounded: true,
+        },
+        session_id: "sdk-session-workflow",
+        uuid: "workflow-updated",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "workflow-review-1",
+        tool_use_id: "toolu-workflow-review-1",
+        status: "completed",
+        output_file: "/tmp/workflow-review-1.output",
+        summary: "Review complete",
+        session_id: "sdk-session-workflow",
+        uuid: "workflow-completed",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const taskEvents = runtimeEvents.filter(
+        (event) =>
+          event.type === "task.started" ||
+          event.type === "task.progress" ||
+          event.type === "task.updated" ||
+          event.type === "task.completed",
+      );
+
+      assert.deepEqual(
+        taskEvents.map((event) => event.type),
+        ["task.started", "task.progress", "task.updated", "task.completed"],
+      );
+      for (const event of taskEvents) {
+        assert.equal(event.payload.entityType, "workflow");
+      }
+      const started = taskEvents[0];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.taskType, "local_workflow");
+        assert.equal(started.payload.workflowName, "review-changes");
+      }
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.entityType === "command" &&
+            event.payload.isBackgrounded === true,
+        ),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("reports subagent reasoning effort, preferring a Task tool input override", () => {
     const capabilities = createModelCapabilities({
       optionDescriptors: [
@@ -3071,6 +3179,8 @@ describe("ClaudeAdapterLive", () => {
         subtype: "task_started",
         task_id: "task-stop-1",
         description: "Long runner",
+        task_type: "local_workflow",
+        workflow_name: "long-review",
         session_id: "sdk-session-stop-task",
         uuid: "task-started-stop-1",
       } as unknown as SDKMessage);
@@ -3094,6 +3204,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(stopped?.type, "task.completed");
       if (stopped?.type === "task.completed") {
         assert.equal(stopped.payload.status, "stopped");
+        assert.equal(stopped.payload.entityType, "workflow");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

@@ -50,9 +50,30 @@ enum SubagentTaskPresentation {
     }
 
     static func title(for task: SubagentTaskItem) -> String {
-        task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? task.description!
-            : task.entityKind == .command ? "Command" : "Subagent task"
+        if task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return task.description!
+        }
+        switch task.entityKind {
+        case .command: return "Command"
+        case .subagent: return "Subagent task"
+        case .workflow: return "Workflow"
+        }
+    }
+
+    static func entityIconName(for task: SubagentTaskItem) -> String {
+        switch task.entityKind {
+        case .command: "terminal"
+        case .subagent: "person.2"
+        case .workflow: "point.3.connected.trianglepath.dotted"
+        }
+    }
+
+    static func stopActionLabel(for task: SubagentTaskItem) -> String {
+        switch task.entityKind {
+        case .command: "Stop command"
+        case .subagent: "Stop agent"
+        case .workflow: "Stop workflow"
+        }
     }
 
     /// Compact identity badge: "Explore · Sonnet 5 · High" or "workflow · Opus 4.8".

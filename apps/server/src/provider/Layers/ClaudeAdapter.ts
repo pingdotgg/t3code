@@ -199,6 +199,8 @@ interface BackgroundTaskOutputMonitor {
   fiber: Fiber.Fiber<void, never> | undefined;
 }
 
+type ClaudeTaskEntityType = "subagent" | "command" | "workflow";
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -234,6 +236,13 @@ interface ClaudeSessionContext {
   readonly taskToolInputsByUseId: Map<string, Record<string, unknown>>;
   /** task_id → tool_use_id for pruning taskToolInputsByUseId on terminal. */
   readonly taskToolUseIdByTaskId: Map<string, string>;
+  /**
+   * Stable task identity learned from task_started. Claude's later
+   * task_progress/task_updated/task_notification messages do not repeat
+   * task_type, so recomputing from each message loses workflow/command
+   * classification midway through the lifecycle.
+   */
+  readonly taskEntityTypeByTaskId: Map<string, ClaudeTaskEntityType>;
   /**
    * task_id → last known authoritative model (Task tool input override and/or
    * mined from subagent assistant messages). Used to emit task.updated only
@@ -792,6 +801,7 @@ function forgetTaskToolInputForTask(
 ): void {
   const toolUseId = toolUseIdFromMessage ?? context.taskToolUseIdByTaskId.get(taskId);
   context.taskToolUseIdByTaskId.delete(taskId);
+  context.taskEntityTypeByTaskId.delete(taskId);
   context.taskModelByTaskId.delete(taskId);
   context.commandTaskIds.delete(taskId);
   if (toolUseId) {
@@ -803,6 +813,7 @@ function forgetTaskToolInputForTask(
 function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
   context.taskToolInputsByUseId.clear();
   context.taskToolUseIdByTaskId.clear();
+  context.taskEntityTypeByTaskId.clear();
   context.taskModelByTaskId.clear();
   context.backgroundTaskOutputByToolUseId.clear();
   context.commandTaskIds.clear();
@@ -824,6 +835,11 @@ function pruneTaskToolInputMemoryForClosedTasks(context: ClaudeSessionContext): 
   for (const taskId of context.taskModelByTaskId.keys()) {
     if (!context.openTaskIds.has(taskId)) {
       context.taskModelByTaskId.delete(taskId);
+    }
+  }
+  for (const taskId of context.taskEntityTypeByTaskId.keys()) {
+    if (!context.openTaskIds.has(taskId)) {
+      context.taskEntityTypeByTaskId.delete(taskId);
     }
   }
   for (const taskId of context.commandTaskIds) {
@@ -869,15 +885,38 @@ function resolveSubagentTaskModel(
 function taskEntityType(
   taskType: string | undefined,
   subagentType: string | undefined,
-): "subagent" | "command" | undefined {
+  workflowName?: string | undefined,
+): ClaudeTaskEntityType | undefined {
   const normalizedTaskType = taskType?.toLowerCase();
   if (["local_bash", "bash", "command", "command_execution"].includes(normalizedTaskType ?? "")) {
     return "command";
   }
-  if (["local_agent", "subagent", "sub-agent"].includes(normalizedTaskType ?? "") || subagentType) {
+  if (["local_workflow", "workflow", "workflow_execution"].includes(normalizedTaskType ?? "")) {
+    return "workflow";
+  }
+  if (
+    ["local_agent", "remote_agent", "subagent", "sub-agent"].includes(normalizedTaskType ?? "") ||
+    subagentType
+  ) {
     return "subagent";
   }
+  if (workflowName) {
+    return "workflow";
+  }
   return undefined;
+}
+
+function resolveTaskEntityType(
+  context: ClaudeSessionContext,
+  taskId: string,
+  taskType?: string | undefined,
+  subagentType?: string | undefined,
+  workflowName?: string | undefined,
+): ClaudeTaskEntityType | undefined {
+  return (
+    taskEntityType(taskType, subagentType, workflowName) ??
+    context.taskEntityTypeByTaskId.get(taskId)
+  );
 }
 
 /**
@@ -2879,7 +2918,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   /**
    * Emit synthetic `task.completed` (status "stopped") for every still-open
-   * subagent task so the projection/UI stop treating them as running.
+   * provider task so the projection/UI stop treating it as running.
    */
   const closeOpenSubagentTasks = Effect.fn("closeOpenSubagentTasks")(function* (
     context: ClaudeSessionContext,
@@ -2890,6 +2929,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     const openIds = Array.from(context.openTaskIds);
     for (const taskId of openIds) {
+      const entityType = context.taskEntityTypeByTaskId.get(taskId);
       yield* stopBackgroundTaskOutputMonitor(context, taskId);
       context.openTaskIds.delete(taskId);
       context.syntheticallyStoppedTaskIds.add(taskId);
@@ -2904,6 +2944,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
         payload: {
           taskId: RuntimeTaskId.make(taskId),
+          ...(entityType ? { entityType } : {}),
           status: "stopped",
           summary,
         },
@@ -3886,11 +3927,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const workflowName = readOptionalTrimmedString(
           (message as { workflow_name?: unknown }).workflow_name,
         );
-        const entityType = taskEntityType(message.task_type, subagentType);
+        const entityType = resolveTaskEntityType(
+          context,
+          message.task_id,
+          message.task_type,
+          subagentType,
+          workflowName,
+        );
         const model = resolveSubagentTaskModel(context, toolUseId);
         const effort = resolveSubagentTaskEffort(context, toolUseId);
         context.openTaskIds.add(message.task_id);
         rememberTaskToolUseId(context, message.task_id, toolUseId);
+        if (entityType) {
+          context.taskEntityTypeByTaskId.set(message.task_id, entityType);
+        }
         // Remembered because a later `output_file` (on a tool result or on the
         // completion itself) is only a background-command signal for a task
         // the runtime classified as a command in the first place.
@@ -3930,7 +3980,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const subagentType = readOptionalTrimmedString(
           (message as { subagent_type?: unknown }).subagent_type,
         );
-        const entityType = taskEntityType(
+        const entityType = resolveTaskEntityType(
+          context,
+          message.task_id,
           readOptionalTrimmedString((message as { task_type?: unknown }).task_type),
           subagentType,
         );
@@ -3979,7 +4031,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           typeof patch.total_paused_ms === "number" ? patch.total_paused_ms : undefined;
         const isBackgrounded =
           typeof patch.is_backgrounded === "boolean" ? patch.is_backgrounded : undefined;
-        const entityType = taskEntityType(
+        const entityType = resolveTaskEntityType(
+          context,
+          message.task_id,
           readOptionalTrimmedString(patch.task_type),
           readOptionalTrimmedString(patch.subagent_type),
         );
@@ -4020,9 +4074,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const toolUseId = readOptionalTrimmedString(
           (message as { tool_use_id?: unknown }).tool_use_id,
         );
-        const entityType = taskEntityType(
+        const entityType = resolveTaskEntityType(
+          context,
+          message.task_id,
           readOptionalTrimmedString((message as { task_type?: unknown }).task_type),
           readOptionalTrimmedString((message as { subagent_type?: unknown }).subagent_type),
+          readOptionalTrimmedString((message as { workflow_name?: unknown }).workflow_name),
         );
         // The completion may be the first message to classify this task; a
         // command's `output_file` is only adoptable once it is known to be one.
@@ -4958,6 +5015,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         taskToolInputsByUseId: new Map(),
         taskToolUseIdByTaskId: new Map(),
+        taskEntityTypeByTaskId: new Map(),
         taskModelByTaskId: new Map(),
         backgroundTaskOutputByToolUseId: new Map(),
         backgroundTaskOutputMonitors: new Map(),
@@ -5208,6 +5266,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               if (context.stopped || !context.openTaskIds.has(taskId)) {
                 return;
               }
+              const entityType = context.taskEntityTypeByTaskId.get(taskId);
               yield* stopBackgroundTaskOutputMonitor(context, taskId);
               context.openTaskIds.delete(taskId);
               context.syntheticallyStoppedTaskIds.add(taskId);
@@ -5224,6 +5283,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                   : {}),
                 payload: {
                   taskId: RuntimeTaskId.make(taskId),
+                  ...(entityType ? { entityType } : {}),
                   status: "stopped",
                   summary: "Task stopped (stopTask grace elapsed).",
                 },
