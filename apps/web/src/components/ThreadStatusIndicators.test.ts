@@ -1,6 +1,7 @@
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
+import { AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -10,6 +11,7 @@ import {
   resolveDisplayedThreadPrProvider,
   resolveThreadPr,
   settledPrHoverColorClass,
+  threadChangeRequestSnapshotsAtom,
   type ThreadChangeRequestSnapshot,
 } from "./ThreadStatusIndicators";
 
@@ -384,6 +386,24 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         changeRequestState: displayed?.state ?? null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("threadChangeRequestSnapshotsAtom", () => {
+  it("retains snapshots while sidebar and chat consumers are unmounted", () => {
+    const registry = AtomRegistry.make();
+    const threadKey = "environment-1:thread-1";
+    const snapshot = snapshotFor("feature/current", mergedFeaturePr());
+
+    const unmount = registry.mount(threadChangeRequestSnapshotsAtom);
+    registry.set(threadChangeRequestSnapshotsAtom, new Map([[threadKey, snapshot]]));
+    unmount();
+
+    const remount = registry.mount(threadChangeRequestSnapshotsAtom);
+    expect(registry.get(threadChangeRequestSnapshotsAtom).get(threadKey)).toEqual(snapshot);
+
+    remount();
+    registry.dispose();
   });
 });
 
