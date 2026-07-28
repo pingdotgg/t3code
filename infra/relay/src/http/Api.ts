@@ -439,6 +439,10 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     readonly userId: string;
     readonly environmentId: string;
   }) {
+    const deprovisionTarget = yield* input.managedEndpointProvider.prepareDeprovision({
+      userId: input.userId,
+      environmentId: input.environmentId,
+    });
     const link = yield* input.links.getForUser({
       userId: input.userId,
       environmentId: input.environmentId,
@@ -462,6 +466,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     yield* input.managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
+      target: deprovisionTarget,
     });
     return unlinked;
   },

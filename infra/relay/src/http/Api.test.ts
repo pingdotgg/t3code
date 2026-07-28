@@ -233,9 +233,25 @@ describe("relay environment unlink", () => {
           return true;
         }),
     } as unknown as EnvironmentCredentials.EnvironmentCredentials["Service"];
+    const deprovisionTarget = {
+      userId: "user-1",
+      environmentId: "environment-1",
+      hostname: "environment-1.example.test",
+      tunnelId: "tunnel-1",
+      tunnelName: "environment-1-tunnel",
+      dnsRecordId: "dns-1",
+      readyAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "generation-before-unlink",
+    } satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
     const managedEndpointProvider = {
-      deprovision: () =>
+      prepareDeprovision: () =>
         Effect.sync(() => {
+          calls.push("prepare");
+          return deprovisionTarget;
+        }),
+      deprovision: (input: { readonly target?: unknown }) =>
+        Effect.sync(() => {
+          expect(input.target).toBe(deprovisionTarget);
           calls.push("deprovision");
         }),
     } as unknown as ManagedEndpointProvider.ManagedEndpointProvider["Service"];
@@ -251,7 +267,14 @@ describe("relay environment unlink", () => {
           environmentId: "environment-1",
         }),
       ).toBe(true);
-      expect(calls).toEqual(["lookup", "transaction", "link", "credential", "deprovision"]);
+      expect(calls).toEqual([
+        "prepare",
+        "lookup",
+        "transaction",
+        "link",
+        "credential",
+        "deprovision",
+      ]);
     });
   });
 
@@ -288,6 +311,11 @@ describe("relay environment unlink", () => {
         }).pipe(Effect.andThen(Effect.fail(failure))),
     } as unknown as EnvironmentCredentials.EnvironmentCredentials["Service"];
     const managedEndpointProvider = {
+      prepareDeprovision: () =>
+        Effect.sync(() => {
+          calls.push("prepare");
+          return null;
+        }),
       deprovision: () =>
         Effect.sync(() => {
           calls.push("deprovision");
@@ -307,7 +335,7 @@ describe("relay environment unlink", () => {
           }),
         ),
       ).toBe(failure);
-      expect(calls).toEqual(["transaction", "link", "credential"]);
+      expect(calls).toEqual(["prepare", "transaction", "link", "credential"]);
     });
   });
 
@@ -317,6 +345,11 @@ describe("relay environment unlink", () => {
       getForUser: () => Effect.succeed(null),
     } as unknown as EnvironmentLinks.EnvironmentLinks["Service"];
     const managedEndpointProvider = {
+      prepareDeprovision: () =>
+        Effect.sync(() => {
+          calls.push("prepare");
+          return null;
+        }),
       deprovision: () =>
         Effect.sync(() => {
           calls.push("deprovision");
@@ -334,7 +367,7 @@ describe("relay environment unlink", () => {
           environmentId: "environment-1",
         }),
       ).toBe(false);
-      expect(calls).toEqual(["deprovision"]);
+      expect(calls).toEqual(["prepare", "deprovision"]);
     });
   });
 });
