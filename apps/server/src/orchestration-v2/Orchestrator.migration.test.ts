@@ -3,32 +3,32 @@ import { ContextHandoffId } from "@t3tools/contracts";
 
 import { appendContextHandoffId, shouldPrepareLegacyImportHandoff } from "./Orchestrator.ts";
 
-it("reissues imported context until the provider thread is materialized", () => {
+it("reissues imported context until a V2 run completes", () => {
   assert.isTrue(
     shouldPrepareLegacyImportHandoff({
       historyOrigin: "v1_import",
-      hasNativeThreadRef: false,
+      hasCompletedRun: false,
       legacyImportItemCount: 2,
     }),
   );
   assert.isFalse(
     shouldPrepareLegacyImportHandoff({
       historyOrigin: "v1_import",
-      hasNativeThreadRef: true,
+      hasCompletedRun: true,
       legacyImportItemCount: 2,
     }),
   );
   assert.isFalse(
     shouldPrepareLegacyImportHandoff({
       historyOrigin: undefined,
-      hasNativeThreadRef: false,
+      hasCompletedRun: false,
       legacyImportItemCount: 2,
     }),
   );
   assert.isFalse(
     shouldPrepareLegacyImportHandoff({
       historyOrigin: "v1_import",
-      hasNativeThreadRef: false,
+      hasCompletedRun: false,
       legacyImportItemCount: 0,
     }),
   );

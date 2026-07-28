@@ -198,8 +198,19 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
       !/\s/.test(section.body[bodyStart] ?? "")
     ) {
       const nextWhitespace = section.body.slice(bodyStart).search(/\s/);
-      if (nextWhitespace === -1) continue;
-      bodyStart += nextWhitespace;
+      if (nextWhitespace !== -1) {
+        bodyStart += nextWhitespace;
+      }
+    }
+    const codeUnitAtStart = section.body.charCodeAt(bodyStart);
+    const codeUnitBeforeStart = section.body.charCodeAt(bodyStart - 1);
+    if (
+      codeUnitAtStart >= 0xdc00 &&
+      codeUnitAtStart <= 0xdfff &&
+      codeUnitBeforeStart >= 0xd800 &&
+      codeUnitBeforeStart <= 0xdbff
+    ) {
+      bodyStart += 1;
     }
     const bodySuffix = section.body.slice(bodyStart).trimStart();
     if (bodySuffix.length === 0) continue;
