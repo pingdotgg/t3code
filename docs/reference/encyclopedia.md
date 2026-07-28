@@ -6,6 +6,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 
 - [Project and workspace](#project-and-workspace)
 - [Thread timeline](#thread-timeline)
+- [Thread lifecycle](#thread-lifecycle)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
@@ -39,6 +40,16 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 #### Activity
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
+
+### Thread lifecycle
+
+#### Archive
+
+A reversible action that removes a thread from active thread lists without deleting its conversation
+history. An archived thread has an archive timestamp in [the orchestration contracts][1] and remains
+available from the Archive screen until it is unarchived or deleted. Unarchiving restores it to the
+active thread list; deleting it permanently clears the thread and its history. See the
+[Archive user guide][25].
 
 ### Orchestration
 
@@ -146,6 +157,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - If you see `receipt`, think "async milestone signal".
 - If you see `checkpoint`, think "workspace snapshot for diff/restore".
 - If you see `quiesced`, think "all relevant follow-up work has gone idle".
+- If you see `archive`, think "hide a thread from active lists without deleting its history".
 
 ## Related Docs
 
@@ -153,6 +165,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [provider-architecture.md][16]
 - [runtime-modes.md][18]
 - [workspace-layout.md][2]
+- [Archive user guide][25]
 
 [1]: ../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -178,3 +191,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../apps/server/src/checkpointing/Utils.ts
 [23]: ../apps/server/src/checkpointing/Diffs.ts
 [24]: ./architecture.md
+[25]: ../user/archive.md
