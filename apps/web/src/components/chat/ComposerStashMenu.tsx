@@ -24,16 +24,13 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
 }
 
 /**
- * Popover listing the current connection method's stashed prompts.
- * Keyboard-first: opened by ⌘S on an empty composer, navigated with
- * arrows, restored with Enter, dismissed with Escape. The listener runs
- * capture-phase on window so it wins over the Lexical editor's handlers
- * while the menu is open.
+ * Popover listing the stashed prompts. Keyboard-first: opened by ⌘S on an
+ * empty composer, navigated with arrows, restored with Enter, dismissed
+ * with Escape. The listener runs capture-phase on window so it wins over
+ * the Lexical editor's handlers while the menu is open.
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
-  providerLabel: string;
-  otherScopesCount: number;
   onRestore: (entry: PromptStashEntry) => void;
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
@@ -99,12 +96,11 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <CommandGroup>
             <CommandGroupLabel className="flex items-center gap-1.5 px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
               <BookmarkIcon className="size-3" aria-hidden="true" />
-              Stashed prompts — {props.providerLabel}
+              Stashed prompts
             </CommandGroupLabel>
             {entries.length === 0 ? (
               <p className="px-3 pb-3 pt-1 text-muted-foreground/70 text-xs">
-                Nothing stashed for this method yet. Press ⌘S with a prompt in the composer to stash
-                it.
+                Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.
               </p>
             ) : (
               entries.map((entry) => (
@@ -173,12 +169,6 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
               ))
             )}
           </CommandGroup>
-          {props.otherScopesCount > 0 ? (
-            <p className="border-t border-border/50 px-3 py-2 text-[11px] text-muted-foreground/60">
-              {props.otherScopesCount} more stashed under other connection methods — switch provider
-              to see them.
-            </p>
-          ) : null}
         </CommandList>
       </div>
     </Command>

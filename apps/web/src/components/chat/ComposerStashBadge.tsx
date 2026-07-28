@@ -5,8 +5,7 @@ import { cn } from "~/lib/utils";
 
 /**
  * Bookmark pill perched on the composer's top-right shoulder. Shows the
- * current method's stash count and doubles as the click target for opening
- * the stash menu.
+ * stash count and doubles as the click target for opening the stash menu.
  *
  * On save the badge gives one quiet acknowledgement: it lifts to full
  * opacity and the count ticks over. `pulseKey` changes per stash, remounting
