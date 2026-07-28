@@ -970,7 +970,9 @@ export function terminatePosixOwnedProcessTree(input: {
       });
       yield* Effect.sleep("10 millis");
     }
-    const survivors = new Map(snapshot().map((entry) => [entry.pid, entry]));
+    const finalTable = snapshot();
+    discover(finalTable);
+    const survivors = new Map(finalTable.map((entry) => [entry.pid, entry]));
     const residual = [...ledger.values()].filter((owned) => {
       const observed = survivors.get(owned.pid);
       if (!samePosixProcessIdentity(owned, observed) || observed === undefined) {
