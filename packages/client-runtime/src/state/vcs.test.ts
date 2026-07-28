@@ -143,10 +143,7 @@ describe("cached VCS refs", () => {
         const result = Stream.unwrap(
           makeCachedVcsRefsChanges({ cwd: "/repo", limit: 100 }).pipe(
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            Effect.provideService(
-              Persistence.EnvironmentCacheStore,
-              cacheWithRefs(Option.some(CACHED_REFS)),
-            ),
+            Effect.provideService(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
           ),
         ).pipe(Stream.runHead);
         const fiber = yield* Effect.forkChild(result);
@@ -205,7 +202,7 @@ describe("cached VCS refs", () => {
     ),
   );
 
-  it.effect("does not emit persisted refs before a live refresh", () =>
+  it.effect("emits persisted refs before a live refresh", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const client = {
@@ -229,9 +226,9 @@ describe("cached VCS refs", () => {
               cacheWithRefs(Option.some(CACHED_REFS)),
             ),
           ),
-        ).pipe(Stream.runHead);
+        ).pipe(Stream.take(2), Stream.runCollect);
 
-        expect(Option.getOrThrow(refs)).toEqual(LIVE_REFS);
+        expect(refs).toEqual([CACHED_REFS, LIVE_REFS]);
       }),
     ),
   );

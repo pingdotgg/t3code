@@ -250,6 +250,96 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("backs off failed upstream refreshes across linked worktrees", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetchAttempts = yield* Ref.make(0);
+      const failingFetchSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("fetch") && command.args.includes("--quiet")) {
+            yield* Ref.update(fetchAttempts, (count) => count + 1);
+            return yield* PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "ChildProcessSpawner",
+              method: "spawn",
+              pathOrDescriptor: command.command,
+            });
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingFetchSpawner),
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+      const pathService = yield* Path.Path;
+      const worktreePath = pathService.join(worktreesRoot, "linked");
+      const runGit = (workingDirectory: string, args: ReadonlyArray<string>) =>
+        driver.execute({
+          operation: "GitVcsDriver.test.upstreamRefreshBackoff",
+          cwd: workingDirectory,
+          args,
+          timeoutMs: 10_000,
+        });
+
+      yield* driver.initRepo({ cwd });
+      yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+      yield* runGit(cwd, ["config", "user.name", "Test"]);
+      yield* writeTextFile(cwd, "README.md", "# test\n");
+      yield* runGit(cwd, ["add", "."]);
+      yield* runGit(cwd, ["commit", "-m", "initial commit"]);
+      const initialBranch = (yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim();
+      yield* runGit(remote, ["init", "--bare"]);
+      yield* runGit(cwd, ["remote", "add", "origin", remote]);
+      yield* runGit(cwd, ["push", "-u", "origin", initialBranch]);
+      yield* runGit(cwd, ["worktree", "add", "-b", "feature/linked", worktreePath]);
+      yield* runGit(worktreePath, [
+        "branch",
+        "--set-upstream-to",
+        `origin/${initialBranch}`,
+        "feature/linked",
+      ]);
+      const rootCommonDir = (yield* runGit(cwd, ["rev-parse", "--git-common-dir"])).stdout.trim();
+      const linkedCommonDir = (yield* runGit(worktreePath, [
+        "rev-parse",
+        "--git-common-dir",
+      ])).stdout.trim();
+      assert.equal(
+        yield* fileSystem.realPath(pathService.resolve(cwd, rootCommonDir)),
+        yield* fileSystem.realPath(pathService.resolve(worktreePath, linkedCommonDir)),
+      );
+      yield* Ref.set(fetchAttempts, 0);
+
+      yield* driver.statusDetailsRemote(cwd);
+      yield* driver.statusDetailsRemote(worktreePath);
+      assert.equal(yield* Ref.get(fetchAttempts), 1);
+
+      yield* TestClock.adjust("29 seconds");
+      yield* driver.statusDetailsRemote(worktreePath);
+      assert.equal(yield* Ref.get(fetchAttempts), 1);
+
+      yield* TestClock.adjust("1 second");
+      yield* driver.statusDetailsRemote(cwd);
+      assert.equal(yield* Ref.get(fetchAttempts), 2);
+
+      yield* TestClock.adjust("59 seconds");
+      yield* driver.statusDetailsRemote(worktreePath);
+      assert.equal(yield* Ref.get(fetchAttempts), 2);
+
+      yield* TestClock.adjust("1 second");
+      yield* driver.statusDetailsRemote(cwd);
+      assert.equal(yield* Ref.get(fetchAttempts), 3);
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>

@@ -50,7 +50,8 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
-const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
+const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
+const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_TTL = Duration.minutes(10);
@@ -100,6 +101,13 @@ class StatusRemoteRefreshCacheKey extends Data.Class<{
   gitCommonDir: string;
   remoteName: string;
 }> {}
+
+function statusUpstreamRefreshFailureCooldown(consecutiveFailures: number): Duration.Duration {
+  const exponent = Math.max(0, consecutiveFailures - 1);
+  const cooldownMs =
+    Duration.toMillis(STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN) * Math.pow(2, exponent);
+  return Duration.min(Duration.millis(cooldownMs), STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN);
+}
 
 class GitRefsSnapshotCacheKey extends Data.Class<{
   gitCommonDir: string;
@@ -1013,9 +1021,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const commonDirOutput = commonDirResult.stdout.trim();
-    const gitCommonDir = path.isAbsolute(commonDirOutput)
+    const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
       ? path.normalize(commonDirOutput)
       : path.resolve(cwd, commonDirOutput);
+    const gitCommonDir = yield* fileSystem
+      .realPath(resolvedGitCommonDir)
+      .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
     const worktreeRootResult = yield* executeGit(
       "GitVcsDriver.resolveRepositoryPaths.worktreeRoot",
       cwd,
@@ -1071,20 +1082,46 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
+  const statusRemoteRefreshFailureCounts = new Map<string, number>();
+  const statusRemoteRefreshFailureKey = (cacheKey: StatusRemoteRefreshCacheKey) =>
+    `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
+  const recordStatusRemoteRefreshFailure = (cacheKey: StatusRemoteRefreshCacheKey) => {
+    const key = statusRemoteRefreshFailureKey(cacheKey);
+    const nextCount = (statusRemoteRefreshFailureCounts.get(key) ?? 0) + 1;
+    statusRemoteRefreshFailureCounts.delete(key);
+    statusRemoteRefreshFailureCounts.set(key, nextCount);
+    if (statusRemoteRefreshFailureCounts.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
+      const oldestKey = statusRemoteRefreshFailureCounts.keys().next().value;
+      if (oldestKey !== undefined) {
+        statusRemoteRefreshFailureCounts.delete(oldestKey);
+      }
+    }
+  };
+  const clearStatusRemoteRefreshFailures = (cacheKey: StatusRemoteRefreshCacheKey) => {
+    statusRemoteRefreshFailureCounts.delete(statusRemoteRefreshFailureKey(cacheKey));
+  };
   const refreshStatusRemoteCacheEntry = Effect.fn("refreshStatusRemoteCacheEntry")(function* (
     cacheKey: StatusRemoteRefreshCacheKey,
   ) {
-    yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName);
-    return true as const;
+    return yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName).pipe(
+      Effect.tap(() => Effect.sync(() => clearStatusRemoteRefreshFailures(cacheKey))),
+      Effect.tapError(() => Effect.sync(() => recordStatusRemoteRefreshFailure(cacheKey))),
+      Effect.as(true as const),
+    );
   });
 
   const statusRemoteRefreshCache = yield* Cache.makeWith(refreshStatusRemoteCacheEntry, {
     capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
-    // Keep successful refreshes warm and briefly back off failed refreshes to avoid retry storms.
-    timeToLive: (exit) =>
+    // A failed background fetch is intentionally cached and exponentially
+    // backed off. Status reads swallow this failure and use the last fetched
+    // refs, so repeated thread mounts cannot turn a slow or unavailable remote
+    // into a repository-wide Git subprocess storm.
+    timeToLive: (exit, cacheKey) =>
       Exit.isSuccess(exit)
         ? STATUS_UPSTREAM_REFRESH_INTERVAL
-        : STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN,
+        : statusUpstreamRefreshFailureCooldown(
+            statusRemoteRefreshFailureCounts.get(statusRemoteRefreshFailureKey(cacheKey)) ?? 1,
+          ),
   });
 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (

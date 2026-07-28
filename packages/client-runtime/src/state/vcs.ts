@@ -82,15 +82,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
     return refs;
   });
 
-  const cachedRefs = Stream.fromEffect(
-    SubscriptionRef.get(supervisor.state).pipe(
-      Effect.flatMap((connection) =>
-        connection.phase === "connected"
-          ? Effect.succeed(Option.none<VcsListRefsResult>())
-          : Effect.succeed(cached),
-      ),
-    ),
-  ).pipe(
+  const cachedRefs = Stream.fromEffect(Effect.succeed(cached)).pipe(
     Stream.filterMap((refs) =>
       Option.match(refs, {
         onNone: () => Result.failVoid,
