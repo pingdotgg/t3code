@@ -122,8 +122,8 @@ struct EnvironmentDescriptorDecodingTests {
     // The exact wire shape apps/server/src/advertisedEndpoints.ts serves:
     // tailscale entry first (the only one with isDefault), direct entry
     // always present, URLs normalized with a trailing slash. The
-    // `compatibility` object is intentionally not modeled and must be
-    // ignored, not rejected.
+    // `compatibility` is decoded so endpoint adoption can reject transports
+    // that a future server marks incompatible with this native client.
     @Test("decodes the server's advertised-endpoints wire shape")
     func decodesAdvertisedEndpoints() throws {
         let json = """
@@ -142,6 +142,7 @@ struct EnvironmentDescriptorDecodingTests {
         #expect(tailscale.wsBaseUrl == "wss://serges-mac.tail1234.ts.net/")
         #expect(tailscale.isDefault == true)
         #expect(tailscale.status == "available")
+        #expect(tailscale.compatibility?.desktopApp == "compatible")
 
         let direct = try #require(endpoints.last)
         #expect(direct.id == "direct")

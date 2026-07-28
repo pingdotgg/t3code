@@ -18,11 +18,29 @@ enum PairingEndpointSelection {
         _ endpoints: [AdvertisedEndpoint]?
     ) -> AdvertisedEndpoint? {
         endpoints?.first { endpoint in
-            endpoint.isDefault == true
-                && (endpoint.reachability == "public"
-                    || endpoint.reachability == "private-network")
-                && endpoint.status == "available"
-                && endpoint.compatibility.desktopApp == "compatible"
+            guard endpoint.isDefault == true, endpoint.status == "available" else {
+                return false
+            }
+            guard endpoint.reachability == "public"
+                || endpoint.reachability == "private-network"
+            else {
+                return false
+            }
+            guard endpoint.compatibility?.desktopApp != "incompatible",
+                let httpURL = URL(string: endpoint.httpBaseUrl),
+                let wsURL = URL(string: endpoint.wsBaseUrl),
+                httpURL.scheme == "https",
+                wsURL.scheme == "wss",
+                httpURL.host == wsURL.host,
+                httpURL.port == wsURL.port,
+                httpURL.user == nil,
+                httpURL.password == nil,
+                wsURL.user == nil,
+                wsURL.password == nil
+            else {
+                return false
+            }
+            return true
         }
     }
 

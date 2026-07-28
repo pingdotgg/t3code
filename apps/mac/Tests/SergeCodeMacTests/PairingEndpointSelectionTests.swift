@@ -11,7 +11,8 @@ struct PairingEndpointSelectionTests {
         kind: String,
         httpBaseUrl: String,
         status: String = "available",
-        isDefault: Bool? = nil
+        isDefault: Bool? = nil,
+        desktopCompatibility: String = "compatible"
     ) -> AdvertisedEndpoint {
         AdvertisedEndpoint(
             id: id,
@@ -24,6 +25,9 @@ struct PairingEndpointSelectionTests {
                 .replacingOccurrences(of: "http:", with: "ws:"),
             reachability: kind == "private-network"
                 ? "private-network" : (kind == "tunnel" ? "public" : "lan"),
+            compatibility: AdvertisedEndpointCompatibility(
+                hostedHttpsApp: "compatible",
+                desktopApp: desktopCompatibility),
             source: "server",
             status: status,
             isDefault: isDefault)
@@ -73,6 +77,48 @@ struct PairingEndpointSelectionTests {
                 status: "unavailable", isDefault: true)
         ]
         #expect(PairingEndpointSelection.preferredRemoteEndpoint(unavailable) == nil)
+    }
+
+    @Test("ignores a default endpoint marked incompatible with the desktop app")
+    func requiresDesktopCompatibility() {
+        let incompatible = [
+            Self.endpoint(
+                id: "managed-tunnel",
+                kind: "tunnel",
+                httpBaseUrl: "https://environment.surgecode.dev/",
+                isDefault: true,
+                desktopCompatibility: "incompatible")
+        ]
+
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint(incompatible) == nil)
+    }
+
+    @Test("rejects insecure or cross-origin remote transports")
+    func requiresSecureSameOriginTransport() {
+        let insecure = Self.endpoint(
+            id: "managed-tunnel",
+            kind: "tunnel",
+            httpBaseUrl: "http://environment.surgecode.dev/",
+            isDefault: true)
+        var mismatchedSocket = Self.endpoint(
+            id: "managed-tunnel",
+            kind: "tunnel",
+            httpBaseUrl: "https://environment.surgecode.dev/",
+            isDefault: true)
+        mismatchedSocket = AdvertisedEndpoint(
+            id: mismatchedSocket.id,
+            label: mismatchedSocket.label,
+            provider: mismatchedSocket.provider,
+            httpBaseUrl: mismatchedSocket.httpBaseUrl,
+            wsBaseUrl: "wss://other.surgecode.dev/ws",
+            reachability: mismatchedSocket.reachability,
+            compatibility: mismatchedSocket.compatibility,
+            source: mismatchedSocket.source,
+            status: mismatchedSocket.status,
+            isDefault: mismatchedSocket.isDefault)
+
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint([insecure]) == nil)
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint([mismatchedSocket]) == nil)
     }
 
     @Test("prefers a public managed tunnel over the private-network fallback")

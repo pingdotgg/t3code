@@ -1074,7 +1074,7 @@ private struct PhoneSettingsTab: View {
                 SettingsToggleRow(
                     title: "Use Tailscale fallback",
                     description:
-                        "Optional compatibility route when SurgeCode Cloud is not linked. Fresh installs use the managed cloud tunnel and do not require Tailscale.",
+                        "Optional compatibility route when SurgeCode Cloud is not linked. A linked Mac uses its managed tunnel and does not require Tailscale.",
                     isOn: Binding(
                         get: { tailscaleEnabled },
                         set: { newValue in

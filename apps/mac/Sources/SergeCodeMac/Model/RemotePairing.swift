@@ -60,7 +60,7 @@ public enum RemotePairing {
     }
 
     private static func preferredReachableBaseURL(
-        descriptor: ExecutionEnvironmentDescriptor,
+        descriptor: EnvironmentDescriptor,
         fallback: URL
     ) async -> URL {
         guard let endpoint = PairingEndpointSelection.preferredRemoteEndpoint(
@@ -68,7 +68,8 @@ public enum RemotePairing {
             let candidate = URL(string: endpoint.httpBaseUrl),
             candidate != fallback,
             let candidateDescriptor = try? await PairingClient.fetchDescriptor(
-                httpBaseURL: candidate),
+                httpBaseURL: candidate,
+                requestTimeout: 3),
             candidateDescriptor.environmentId == descriptor.environmentId
         else { return fallback }
         return candidate

@@ -30,6 +30,7 @@ import {
   RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
@@ -225,6 +226,12 @@ function validateRelayConfigPayload(
       httpUrl.password !== "" ||
       wsUrl.username !== "" ||
       wsUrl.password !== "" ||
+      httpUrl.pathname !== "/" ||
+      httpUrl.search !== "" ||
+      httpUrl.hash !== "" ||
+      wsUrl.pathname !== "/ws" ||
+      wsUrl.search !== "" ||
+      wsUrl.hash !== "" ||
       payload.endpoint.providerKind !== "cloudflare_tunnel" ||
       payload.endpointRuntime?.providerKind !== payload.endpoint.providerKind
     ) {
@@ -363,6 +370,7 @@ interface CloudHttpDependencies {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly environment: ServerEnvironment.ServerEnvironment["Service"];
   readonly endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"];
+  readonly relayClient: RelayClient.RelayClient["Service"];
   readonly environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"];
   readonly cliTokenManager: CliTokenManager.CloudCliTokenManager["Service"];
   readonly httpClient: HttpClient.HttpClient;
@@ -373,6 +381,7 @@ const cloudHttpDependencies = Effect.gen(function* () {
     secrets: yield* ServerSecretStore.ServerSecretStore,
     environment: yield* ServerEnvironment.ServerEnvironment,
     endpointRuntime: yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+    relayClient: yield* RelayClient.RelayClient,
     environmentAuth: yield* EnvironmentAuth.EnvironmentAuth,
     cliTokenManager: yield* CliTokenManager.CloudCliTokenManager,
     httpClient: yield* HttpClient.HttpClient,
@@ -466,6 +475,34 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     cloudUserId: payload.cloudUserId,
   });
   yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
+  if (payload.endpointRuntime) {
+    const relayClientStatus = yield* dependencies.relayClient.resolve;
+    if (relayClientStatus.status === "missing") {
+      yield* dependencies.relayClient.install.pipe(
+        Effect.mapError(
+          (error) =>
+            new EnvironmentCloudEndpointUnavailableError({
+              message: "Managed endpoint relay client could not be installed.",
+              endpointRuntimeStatus: {
+                status: "failed",
+                providerKind: payload.endpointRuntime?.providerKind,
+                reason: error.message,
+              },
+            }),
+        ),
+      );
+    } else if (relayClientStatus.status === "unsupported") {
+      return yield* new EnvironmentCloudEndpointUnavailableError({
+        message: "Managed endpoint relay client is unsupported on this device.",
+        endpointRuntimeStatus: {
+          status: "unsupported",
+          providerKind: payload.endpointRuntime.providerKind,
+          platform: relayClientStatus.platform,
+          arch: relayClientStatus.arch,
+        },
+      });
+    }
+  }
   const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
     payload.endpointRuntime,
   );

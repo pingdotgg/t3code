@@ -180,6 +180,16 @@ public struct AdvertisedEndpointProvider: Sendable, Decodable, Equatable {
     }
 }
 
+public struct AdvertisedEndpointCompatibility: Sendable, Decodable, Equatable {
+    public let hostedHttpsApp: String
+    public let desktopApp: String
+
+    public init(hostedHttpsApp: String, desktopApp: String) {
+        self.hostedHttpsApp = hostedHttpsApp
+        self.desktopApp = desktopApp
+    }
+}
+
 public struct AdvertisedEndpoint: Sendable, Decodable, Equatable {
     public let id: String
     public let label: String
@@ -187,6 +197,7 @@ public struct AdvertisedEndpoint: Sendable, Decodable, Equatable {
     public let httpBaseUrl: String
     public let wsBaseUrl: String
     public let reachability: String
+    public let compatibility: AdvertisedEndpointCompatibility?
     public let source: String
     public let status: String
     public let isDefault: Bool?
@@ -199,6 +210,7 @@ public struct AdvertisedEndpoint: Sendable, Decodable, Equatable {
         httpBaseUrl: String,
         wsBaseUrl: String,
         reachability: String,
+        compatibility: AdvertisedEndpointCompatibility? = nil,
         source: String,
         status: String,
         isDefault: Bool? = nil,
@@ -210,6 +222,7 @@ public struct AdvertisedEndpoint: Sendable, Decodable, Equatable {
         self.httpBaseUrl = httpBaseUrl
         self.wsBaseUrl = wsBaseUrl
         self.reachability = reachability
+        self.compatibility = compatibility
         self.source = source
         self.status = status
         self.isDefault = isDefault
@@ -262,10 +275,12 @@ public struct RemoteSessionState: Sendable, Decodable, Equatable {
 public enum PairingClient {
     public static func fetchDescriptor(
         httpBaseURL: URL,
-        urlSession: URLSession = .shared
+        urlSession: URLSession = .shared,
+        requestTimeout: TimeInterval = 10
     ) async throws -> EnvironmentDescriptor {
         let endpoint = httpBaseURL.appendingPathComponent(".well-known/t3/environment")
         var request = URLRequest(url: endpoint)
+        request.timeoutInterval = requestTimeout
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // The descriptor is unauthenticated and served by every SergeCode

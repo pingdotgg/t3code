@@ -2716,11 +2716,15 @@ public actor LiveBackend: BackendService {
         guard let port = sidecarPort,
             let base = URL(string: "http://127.0.0.1:\(port)/")
         else { return nil }
-        guard let descriptor = try? await PairingClient.fetchDescriptor(httpBaseURL: base),
+        guard let descriptor = try? await PairingClient.fetchDescriptor(
+            httpBaseURL: base,
+            requestTimeout: 3),
             let endpoint = PairingEndpointSelection.preferredRemoteEndpoint(
                 descriptor.advertisedEndpoints),
             let remoteBase = URL(string: endpoint.httpBaseUrl),
-            let remoteDescriptor = try? await PairingClient.fetchDescriptor(httpBaseURL: remoteBase),
+            let remoteDescriptor = try? await PairingClient.fetchDescriptor(
+                httpBaseURL: remoteBase,
+                requestTimeout: 3),
             remoteDescriptor.environmentId == descriptor.environmentId
         else { return nil }
         return endpoint
