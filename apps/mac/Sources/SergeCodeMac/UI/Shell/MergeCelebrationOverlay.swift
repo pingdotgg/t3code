@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Full-window celebration for a successful PR merge: two confetti cannons in
-/// the bottom corners fire a pastel burst while a badge echoing the outcome
-/// ("Merged PR #12") pops in at center on the delight spring. Mounted by
+/// the bottom corners fire a pastel burst while a compact, neutral confirmation
+/// appears beneath the toolbar. Mounted by
 /// `RootView` for `model.mergeCelebration`, removed when it calls
 /// `onFinished` after the burst has played out.
 ///
@@ -27,6 +27,8 @@ struct MergeCelebrationOverlay: View {
                 ConfettiBurst(seed: celebration.id)
             }
             badge(reducedMotion: !profile.allowsDecorativeEffects)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.top, 28)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)
@@ -37,7 +39,7 @@ struct MergeCelebrationOverlay: View {
             onFinished()
         }
         .onAppear {
-            withAnimation(Motion.delight) {
+            withAnimation(Motion.reveal) {
                 badgeIn = true
             }
             // The rarest success in the app gets the app's only two-tap
@@ -49,30 +51,25 @@ struct MergeCelebrationOverlay: View {
 
     private func badge(reducedMotion: Bool) -> some View {
         HStack(spacing: 10) {
-            let seal = Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(AlpineTheme.forest)
-            if reducedMotion {
-                seal
-            } else {
-                // Completion beat: one bounce as the badge pops in.
-                seal.symbolEffect(.bounce, value: badgeIn)
-            }
+            Image(systemName: "checkmark.seal")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(AlpineTheme.statusSuccess)
             Text(celebration.title)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(AlpineTheme.forest)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.primary)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
         .background {
-            Capsule()
-                .fill(AlpineTheme.accent)
-                .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
                 .overlay {
-                    Capsule().strokeBorder(AlpineTheme.forest.opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                 }
         }
-        .scaleEffect(reducedMotion || badgeIn ? 1 : 0.55)
+        .scaleEffect(reducedMotion || badgeIn ? 1 : 0.98)
         .opacity(badgeIn ? 1 : 0)
         .accessibilityLabel(Text("Pull request merged"))
     }

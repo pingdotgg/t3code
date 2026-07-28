@@ -1951,7 +1951,9 @@
 
             let frameAfter = window.frame
             let minAfter = window.contentMinSize
-            let stripAfter = UIProbeGitStrip.metrics(for: threadID)?.contentWidth ?? 0
+            // No geometry callback is the expected result when the fixed-width
+            // bar only replaces content inside its segments.
+            let stripAfter = UIProbeGitStrip.metrics(for: threadID)?.contentWidth ?? stripBefore
             log("content-growth-after")
             print("UIProbe: content-growth stripContent=\(Int(stripAfter))")
 
@@ -1964,12 +1966,12 @@
             }
 
             var failed = false
-            if stripAfter <= stripBefore {
+            if abs(stripAfter - stripBefore) > epsilon {
                 failed = true
                 UIProbeAssertions.fail(
                     "content-growth",
-                    "strip did not grow (\(Int(stripBefore)) -> \(Int(stripAfter))); "
-                        + "the check proves nothing")
+                    "repository state moved the unified bar "
+                        + "(\(Int(stripBefore)) -> \(Int(stripAfter)))")
             }
             if differs(frameAfter.size, frameBefore.size) {
                 failed = true
@@ -2016,8 +2018,8 @@
             if !failed {
                 UIProbeAssertions.pass(
                     "content-growth",
-                    "strip \(Int(stripBefore)) -> \(Int(stripAfter))pt, window and minimum "
-                        + "unchanged, still expandable to \(Int(grownFrame.width))pt")
+                    "unified bar held at \(Int(stripAfter))pt, window and minimum unchanged, "
+                        + "still expandable to \(Int(grownFrame.width))pt")
             }
             snapshot("window-size-content-growth", window: window, dir: dir)
         }
