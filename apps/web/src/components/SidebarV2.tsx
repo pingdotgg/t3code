@@ -2574,12 +2574,35 @@ export default function SidebarV2() {
         }}
       >
         <DialogPopup className="max-w-xl">
-          <DialogHeader className="gap-1.5">
+          <DialogHeader className="gap-3 pb-1!">
             <DialogTitle className="text-balance">Project settings</DialogTitle>
-            <DialogDescription>
-              {projectActionsTarget && projectActionsTarget.memberProjects.length > 1
-                ? `${projectActionsTarget.displayName} has an entry in each environment. Changes apply only to the entry you choose.`
-                : `Manage ${projectActionsTarget?.displayName ?? "this project"} in this environment.`}
+            <DialogDescription className="grid gap-1.5 text-base">
+              {projectActionsTarget?.memberProjects.map((member) => (
+                <span key={member.physicalProjectKey} className="flex min-w-0 items-center gap-3">
+                  <span className="flex min-w-0 items-center gap-1">
+                    <FolderIcon className="size-3.5 shrink-0 opacity-60" />
+                    <span className="min-w-0 truncate font-mono">{member.workspaceRoot}</span>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      className="size-4 shrink-0 rounded-sm"
+                      aria-label="Copy project path"
+                      title="Copy project path"
+                      onClick={() =>
+                        copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
+                      }
+                    >
+                      <CopyIcon className="size-3.5" />
+                    </Button>
+                  </span>
+                  <span className="flex min-w-0 shrink-0 items-center gap-1">
+                    <ServerIcon className="size-3.5 shrink-0 opacity-60" />
+                    <span className="min-w-0 truncate">
+                      {member.environmentLabel ?? "Current environment"}
+                    </span>
+                  </span>
+                </span>
+              ))}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="p-0">
@@ -2587,35 +2610,13 @@ export default function SidebarV2() {
               {projectActionsTarget?.memberProjects.map((member) => (
                 <section
                   key={member.physicalProjectKey}
-                  className="flex min-w-0 flex-col gap-4 px-6 py-5 sm:gap-3 sm:py-4"
+                  className="grid min-w-0 gap-5 px-6 pb-5 pt-2 sm:gap-4 sm:pb-4 sm:pt-2"
                 >
-                  <div className="flex min-w-0 items-start gap-3">
-                    <ProjectFavicon
-                      environmentId={member.environmentId}
-                      cwd={member.workspaceRoot}
-                      className="size-5 shrink-0 sm:size-4"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-1.5 text-base text-muted-foreground sm:text-sm">
-                        <ServerIcon className="size-4 shrink-0 stroke-muted-foreground" />
-                        <p className="min-w-0 truncate">
-                          {member.environmentLabel ?? "Current environment"}
-                        </p>
-                      </div>
-                      <p
-                        className="truncate font-mono text-base text-muted-foreground/72 sm:text-sm"
-                        title={member.workspaceRoot}
-                      >
-                        {member.workspaceRoot}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2 sm:gap-3 sm:pl-7">
+                  <div className="grid gap-4 sm:grid-cols-2 sm:gap-3">
                     <label className="grid min-w-0 gap-1.5">
                       <span className="font-medium text-foreground">Project name</span>
                       <Input
                         key={`${member.physicalProjectKey}:${member.title}`}
-                        size="sm"
                         aria-label={`Project name in ${member.environmentLabel ?? "current environment"}`}
                         defaultValue={member.title}
                         onBlur={(event) => {
@@ -2646,8 +2647,7 @@ export default function SidebarV2() {
                         }}
                       >
                         <SelectTrigger
-                          size="sm"
-                          className="w-full"
+                          className="w-full sm:min-h-7.5"
                           aria-label={`Grouping rule for ${member.environmentLabel ?? "current environment"}`}
                         >
                           <SelectValue>
@@ -2679,32 +2679,23 @@ export default function SidebarV2() {
                       </Select>
                     </label>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 sm:pl-7">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() =>
-                        copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
-                      }
-                    >
-                      <CopyIcon />
-                      Copy path
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground sm:ml-auto"
-                      onClick={() => {
-                        const projectGroup = projectActionsTarget;
-                        if (!projectGroup) return;
-                        setProjectActionsTarget(null);
-                        void handleRemoveProjectMembers(projectGroup, [member]);
-                      }}
-                    >
-                      <Trash2Icon />
-                      Remove
-                    </Button>
-                  </div>
+                  {projectActionsTarget.memberProjects.length > 1 ? (
+                    <div className="flex justify-end">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive-foreground hover:bg-destructive/8 hover:text-destructive-foreground"
+                        onClick={() => {
+                          const projectGroup = projectActionsTarget;
+                          setProjectActionsTarget(null);
+                          void handleRemoveProjectMembers(projectGroup, [member]);
+                        }}
+                      >
+                        <Trash2Icon />
+                        Remove project
+                      </Button>
+                    </div>
+                  ) : null}
                 </section>
               ))}
             </div>
@@ -2734,8 +2725,26 @@ export default function SidebarV2() {
               </div>
             ) : null}
           </DialogPanel>
-          <DialogFooter variant="bare">
-            <Button onClick={() => setProjectActionsTarget(null)}>Done</Button>
+          <DialogFooter
+            variant="bare"
+            className={cn(
+              projectActionsTarget?.memberProjects.length === 1 && "sm:justify-between",
+            )}
+          >
+            {projectActionsTarget?.memberProjects.length === 1 ? (
+              <Button
+                variant="destructive-outline"
+                onClick={() => {
+                  const projectGroup = projectActionsTarget;
+                  setProjectActionsTarget(null);
+                  void handleRemoveProjectMembers(projectGroup, projectGroup.memberProjects);
+                }}
+              >
+                <Trash2Icon />
+                Remove project
+              </Button>
+            ) : null}
+            <Button onClick={() => setProjectActionsTarget(null)}>Close</Button>
           </DialogFooter>
         </DialogPopup>
       </Dialog>
