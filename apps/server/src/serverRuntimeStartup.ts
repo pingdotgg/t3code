@@ -286,6 +286,31 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
+export const startEffectWorkerWithRelay = Effect.fn(
+  "ServerRuntimeStartup.startEffectWorkerWithRelay",
+)(function* <WorkerContext, RelayContext>(input: {
+  readonly runWorker: Effect.Effect<void, never, WorkerContext>;
+  readonly startRelay: Effect.Effect<void, never, RelayContext>;
+  readonly workerFiberRef: Ref.Ref<Fiber.Fiber<void, never> | null>;
+}) {
+  const workerFiber = yield* input.runWorker.pipe(Effect.forkScoped);
+  yield* Ref.set(input.workerFiberRef, workerFiber);
+  yield* input.startRelay.pipe(
+    Effect.onExit((exit) => {
+      if (Exit.isSuccess(exit)) {
+        return Effect.void;
+      }
+      return Ref.getAndSet(input.workerFiberRef, null).pipe(
+        Effect.flatMap((ownedWorkerFiber) =>
+          ownedWorkerFiber === null
+            ? Effect.void
+            : Fiber.interrupt(ownedWorkerFiber).pipe(Effect.asVoid),
+        ),
+      );
+    }),
+  );
+});
+
 export function runOrderedV2StartupPhases<
   Import,
   Verification extends { readonly valid: boolean },
@@ -432,10 +457,10 @@ export const make = Effect.gen(function* () {
       recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
       startEffectWorker: runStartupPhase(
         "orchestration-v2.effect-worker.start",
-        Effect.gen(function* () {
-          const workerFiber = yield* EffectWorker.runDaemon.pipe(Effect.forkScoped);
-          yield* Ref.set(effectWorkerFiber, workerFiber);
-          yield* agentAwarenessRelay.start();
+        startEffectWorkerWithRelay({
+          runWorker: EffectWorker.runDaemon,
+          startRelay: agentAwarenessRelay.start(),
+          workerFiberRef: effectWorkerFiber,
         }),
       ),
       autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
