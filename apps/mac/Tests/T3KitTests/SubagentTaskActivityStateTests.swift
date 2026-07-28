@@ -747,6 +747,26 @@ struct SubagentTaskActivityStateTests {
         #expect(T3SubagentTaskEntityKind(nil, taskType: nil) == .subagent)
     }
 
+    @Test("Claude local_workflow task types infer workflow kind")
+    func claudeWorkflowTaskTypeFallback() throws {
+        let started = activity(
+            id: "act-claude-workflow", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("workflow-1"),
+                "taskType": .string("local_workflow"),
+                "workflowName": .string("review-changes"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        let result = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        let item = try #require(result)
+
+        #expect(item.entityKind == .workflow)
+        #expect(item.workflowName == "review-changes")
+        #expect(item.producesTimelineRow)
+    }
+
     @Test("a foreground command earns no row until it is backgrounded")
     func commandRowsAppearOnlyWhenBackgrounded() throws {
         let started = activity(
@@ -772,6 +792,7 @@ struct SubagentTaskActivityStateTests {
         let foreground = try #require(startedResult)
         #expect(foreground.producesTimelineRow == false)
         #expect(state.activeTaskCount == 1)
+        #expect(state.activeSubagentCount == 0)
         #expect(state.activeBackgroundWorkCount == 0)
 
         let backgroundedResult = state.apply(
@@ -779,6 +800,7 @@ struct SubagentTaskActivityStateTests {
         let detached = try #require(backgroundedResult)
         #expect(detached.isBackgrounded)
         #expect(detached.producesTimelineRow)
+        #expect(state.activeSubagentCount == 0)
         #expect(state.activeBackgroundWorkCount == 1)
     }
 
@@ -840,6 +862,7 @@ struct SubagentTaskActivityStateTests {
 
         #expect(agentItem.producesTimelineRow)
         #expect(workflowItem.producesTimelineRow)
+        #expect(state.activeSubagentCount == 1)
         #expect(state.activeBackgroundWorkCount == 2)
     }
 }

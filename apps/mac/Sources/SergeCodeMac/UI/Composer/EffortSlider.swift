@@ -62,6 +62,9 @@ struct EffortSlider: View {
     }
 
     private var activeColor: Color { activeStop?.color ?? AlpineTheme.accent }
+    private var activeCostTier: EffortCostTier {
+        activeStop?.style.costTier ?? .standard
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -81,17 +84,17 @@ struct EffortSlider: View {
         }
         .padding(12)
         .background {
-            RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
-                .fill(activeColor.opacity(0.10))
-                .overlay {
-                    RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
-                        .stroke(activeColor.opacity(isFocused ? 0.85 : 0.28))
-                }
-                // Scoped to the card's own tint: an animation on the whole
-                // slider would also claim the knob's travel and override the
-                // spring it lands on.
-                .animation(Motion.feedback, value: activeIndex)
-                .animation(Motion.feedback, value: isFocused)
+            ZStack {
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+                    .fill(activeColor.opacity(0.10))
+                EffortCostBackdrop(tier: activeCostTier, color: activeColor)
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+                    .stroke(activeColor.opacity(isFocused ? 0.85 : 0.28))
+            }
+            // Scoped to the card's own tint: an animation on the whole slider
+            // would also claim the knob's travel and override its landing spring.
+            .animation(Motion.feedback, value: activeIndex)
+            .animation(Motion.feedback, value: isFocused)
         }
         .focusable(true)
         .focused($isFocused)
@@ -111,7 +114,7 @@ struct EffortSlider: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Reasoning effort")
         .accessibilityValue(accessibilityValue)
-        .accessibilityHint("Higher levels let the model think longer before answering")
+        .accessibilityHint(accessibilityHint)
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: move(by: 1)
@@ -126,6 +129,11 @@ struct EffortSlider: View {
         var value = "\(activeStop.label), level \(activeIndex + 1) of \(stops.count)"
         if activeStop.isProviderDefault { value += ", provider default" }
         return value
+    }
+
+    private var accessibilityHint: String {
+        activeCostTier.accessibilityWarning
+            ?? "Higher levels let the model think longer before answering"
     }
 
     // MARK: - Summary
@@ -145,7 +153,11 @@ struct EffortSlider: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            levelPips
+            if activeCostTier == .standard {
+                levelPips
+            } else {
+                EffortCostBadge(tier: activeCostTier, color: activeColor)
+            }
         }
         .animation(Motion.feedback, value: activeIndex)
     }
@@ -172,7 +184,11 @@ struct EffortSlider: View {
 
     private var summaryDetail: String {
         guard let activeStop else { return "" }
-        if activeStop.isProviderDefault { return "Provider default" }
+        if let detail = activeStop.style.costTier.detail { return detail }
+        if activeStop.id.lowercased().contains("high") {
+            return "Recommended ceiling · normal token range"
+        }
+        if activeStop.isProviderDefault { return "Provider default · normal token range" }
         return "Level \(activeIndex + 1) of \(stops.count)"
     }
 
@@ -242,8 +258,15 @@ struct EffortSlider: View {
     }
 
     private var knob: some View {
-        let glow: CGFloat =
-            Motion.reduceMotion ? 0 : 5 + CGFloat(activeStop?.style.rank ?? 0) * 9
+        let glow: CGFloat = {
+            guard !Motion.reduceMotion else { return 0 }
+            switch activeCostTier {
+            case .standard: return 5 + CGFloat(activeStop?.style.rank ?? 0) * 9
+            case .extraHigh: return 17
+            case .maximum: return 24
+            case .unlimited: return 34
+            }
+        }()
 
         return ZStack {
             Circle()

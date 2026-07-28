@@ -341,6 +341,53 @@ struct ActivityRowTests {
                 itemType: "command_execution", phase: .succeeded, output: nil, outputIsError: false))
     }
 
+    @Test func projectedCommandRetainsCommandAndOutputSummary() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "detail": .string("Bash"),
+                    "data": .object([
+                        "item": .object([
+                            "command": .array([
+                                .string("bash"), .string("-lc"), .string("swift test"),
+                            ])
+                        ]),
+                        "rawOutput": .object([
+                            "content": .string("All tests passed")
+                        ]),
+                    ]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Bash", detail: "Tool: bash -lc swift test",
+                itemType: "command_execution", phase: .succeeded,
+                output: "All tests passed", outputIsError: false))
+    }
+
+    @Test func projectedFileChangeRetainsFirstFileIdentity() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Edit",
+                payload: .object([
+                    "itemType": .string("file_change"),
+                    "detail": .string("Edit"),
+                    "data": .object([
+                        "files": .array([
+                            .object(["path": .string("Sources/App.swift")]),
+                            .object(["path": .string("Sources/Other.swift")]),
+                        ])
+                    ]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Edit",
+                detail: #"Tool: {"file_path":"Sources\/App.swift"}"#,
+                itemType: "file_change", phase: .succeeded,
+                output: nil, outputIsError: false))
+    }
+
     // MARK: Native tool identity
 
     @Test func toolIdentityNamesTheRowAndItsFamily() {

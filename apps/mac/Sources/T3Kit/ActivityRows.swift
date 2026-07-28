@@ -238,25 +238,46 @@ public enum ActivityRows {
     /// (~180 chars), so real file edits and long command lines only survive
     /// via the raw input.
     private static func detailFromData(_ payload: JSONValue, itemType: String?) -> String? {
-        guard let data = payload.objectValue?["data"]?.objectValue,
-            let input = data["input"]?.objectValue
-        else { return nil }
+        guard let data = payload.objectValue?["data"]?.objectValue else { return nil }
+        let input = data["input"]?.objectValue
         let toolName = nonEmpty(data["toolName"]?.stringValue) ?? "Tool"
 
         switch itemType {
         case "command_execution":
-            guard let command = nonEmpty((input["command"] ?? input["cmd"])?.stringValue)
-            else { return nil }
+            let item = data["item"]?.objectValue
+            let itemInput = item?["input"]?.objectValue
+            let commandValue =
+                input?["command"] ?? input?["cmd"] ?? data["command"] ?? item?["command"]
+                ?? itemInput?["command"]
+            guard let command = commandString(commandValue) else { return nil }
             return "\(toolName): \(command)"
         case "file_change":
-            let hasPath = ["file_path", "path", "filePath"].contains { input[$0] != nil }
-            guard hasPath else { return nil }
-            var subset: [String: JSONValue] = [:]
-            for key in [
-                "file_path", "path", "filePath", "old_string", "new_string", "content", "edits",
-            ] {
-                if let value = input[key] { subset[key] = value }
+            if let input {
+                let hasPath = ["file_path", "path", "filePath"].contains { input[$0] != nil }
+                guard hasPath else { return nil }
+                var subset: [String: JSONValue] = [:]
+                for key in [
+                    "file_path", "path", "filePath", "old_string", "new_string", "content", "edits",
+                ] {
+                    if let value = input[key] { subset[key] = value }
+                }
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                guard let encoded = try? encoder.encode(JSONValue.object(subset)),
+                    let json = String(data: encoded, encoding: .utf8)
+                else { return nil }
+                return "\(toolName): \(json)"
             }
+
+            // Transport-projected payloads retain bounded path-only file
+            // records. They no longer carry the full patch body, but the row
+            // still keeps its useful file identity.
+            guard let path = data["files"]?.arrayValue?
+                .compactMap({ $0.objectValue?["path"]?.stringValue })
+                .first(where: { !$0.isEmpty })
+            else { return nil }
+            var subset: [String: JSONValue] = [:]
+            subset["file_path"] = .string(path)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             guard let encoded = try? encoder.encode(JSONValue.object(subset)),
@@ -266,6 +287,18 @@ public enum ActivityRows {
         default:
             return nil
         }
+    }
+
+    private static func commandString(_ value: JSONValue?) -> String? {
+        if let string = nonEmpty(value?.stringValue) {
+            return string
+        }
+        guard let parts = value?.arrayValue?
+            .compactMap(\.stringValue)
+            .filter({ !$0.isEmpty }),
+            !parts.isEmpty
+        else { return nil }
+        return parts.joined(separator: " ")
     }
 
     // MARK: - Tool output extraction
@@ -280,6 +313,14 @@ public enum ActivityRows {
     /// (+ `is_error`). Codex: `item.aggregatedOutput` (camelCase wire).
     private static func outputFromData(_ payload: JSONValue) -> ExtractedOutput? {
         guard let data = payload.objectValue?["data"]?.objectValue else { return nil }
+
+        // Transport-projected activities summarize otherwise enormous output
+        // into one meaningful line at the server boundary.
+        if let rawOutput = data["rawOutput"]?.objectValue,
+            let text = nonEmpty(rawOutput["content"]?.stringValue)
+        {
+            return finalizeOutput(text, isError: false)
+        }
 
         // Claude adapter: `{ toolName, input, result }` where result is the
         // raw tool_result content block.

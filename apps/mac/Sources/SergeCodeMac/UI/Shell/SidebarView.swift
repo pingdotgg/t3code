@@ -116,11 +116,12 @@ struct SidebarView: View {
 
         VStack(spacing: 0) {
             SidebarCommandBar(
-                searchText: $searchText,
+                searchText: searchText,
                 locations: locations,
                 scope: machineScope,
                 projectGroups: allGroups,
                 projectScopeID: projectScopeID,
+                onSearchTextChange: { searchText = $0 },
                 onSelectScope: setMachineScope,
                 onSelectProject: { projectScopeID = $0 })
             // Closes the sidebar's header band. Aligned with the dividers under
@@ -818,14 +819,19 @@ struct SidebarView: View {
 }
 
 private struct SidebarCommandBar: View {
-    @Binding var searchText: String
+    let searchText: String
     let locations: [SidebarLocation]
     let scope: SidebarMachineScope
     let projectGroups: [SidebarProjectGroup]
     let projectScopeID: String
+    let onSearchTextChange: (String) -> Void
     let onSelectScope: (SidebarMachineScope) -> Void
     let onSelectProject: (String) -> Void
 
+    /// Keep keystrokes local to the command bar. Publishing every character
+    /// to `SidebarView` synchronously rebuilds and sorts the full cross-device
+    /// project projection before AppKit can draw the next glyph.
+    @UIState private var draftSearchText = ""
     @UIState private var isScopePresented = false
     @UIState private var isProjectScopePresented = false
     @FocusState private var isSearchFocused: Bool
@@ -866,6 +872,23 @@ private struct SidebarCommandBar: View {
         // height) so the bar can grow instead of clipping if its controls ever
         // exceed the band (see AlpineTheme.contentHeaderHeight).
         .frame(minHeight: AlpineTheme.contentHeaderHeight)
+        .onAppear {
+            draftSearchText = searchText
+        }
+        .onChange(of: searchText) {
+            if draftSearchText != searchText {
+                draftSearchText = searchText
+            }
+        }
+        .task(id: draftSearchText) {
+            guard draftSearchText != searchText else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(120))
+            } catch {
+                return
+            }
+            onSearchTextChange(draftSearchText)
+        }
     }
 
     /// The field grows an accent ring on focus rather than swapping its fill:
@@ -877,12 +900,13 @@ private struct SidebarCommandBar: View {
                 .font(.caption)
                 .foregroundStyle(isSearchFocused ? AlpineTheme.accent : Color.secondary)
                 .scaleEffect(isSearchFocused ? 1.1 : 1)
-            TextField("Search tasks", text: $searchText)
+            TextField("Search tasks", text: $draftSearchText)
                 .textFieldStyle(.plain)
                 .focused($isSearchFocused)
-            if !searchText.isEmpty {
+            if !draftSearchText.isEmpty {
                 Button {
-                    searchText = ""
+                    draftSearchText = ""
+                    onSearchTextChange("")
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
@@ -900,7 +924,7 @@ private struct SidebarCommandBar: View {
                 .strokeBorder(AlpineTheme.accent.opacity(isSearchFocused ? 0.65 : 0), lineWidth: 1.5)
         }
         .animation(Motion.feedback, value: isSearchFocused)
-        .animation(Motion.reveal, value: searchText.isEmpty)
+        .animation(Motion.reveal, value: draftSearchText.isEmpty)
         // Search wins space over the project/machine filter labels (they
         // truncate first) so the field stays usable at min/ideal sidebar
         // widths.
@@ -1615,7 +1639,10 @@ private struct SidebarThreadRow: View {
                         .contentTransition(.numericText())
                 }
                 .transition(Motion.pop(from: .trailing))
-                .help("Background agents and commands")
+                .help(
+                    "\(item.thread.backgroundAgentCount) "
+                        + (item.thread.backgroundAgentCount == 1
+                            ? "sub-agent running" : "sub-agents running"))
             }
         }
         .padding(.vertical, 2)
