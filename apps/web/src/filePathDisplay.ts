@@ -1,3 +1,9 @@
+import {
+  isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
+  normalizeProjectPathForDispatch,
+} from "@t3tools/shared/path";
+
 import { splitPathAndPosition } from "./terminal-links";
 
 function normalizePathSeparators(path: string): string {
@@ -5,11 +11,7 @@ function normalizePathSeparators(path: string): string {
 }
 
 function canonicalizeWindowsDrivePath(path: string): string {
-  return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
-}
-
-function trimTrailingPathSeparators(path: string): string {
-  return path.replace(/[\\/]+$/, "");
+  return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
 }
 
 function basenameOfPath(path: string): string {
@@ -21,29 +23,56 @@ function stripRelativePrefixes(path: string): string {
   return path.replace(/^\.\/+/, "").replace(/^\/+/, "");
 }
 
+export function resolveWorkspaceRelativePath(path: string, workspaceRoot: string): string | null {
+  const normalizedPath = canonicalizeWindowsDrivePath(normalizeProjectPathForDispatch(path));
+  const normalizedRoot = canonicalizeWindowsDrivePath(
+    normalizeProjectPathForDispatch(workspaceRoot),
+  );
+  const pathForCompare = normalizeProjectPathForComparison(normalizedPath);
+  const rootForCompare = normalizeProjectPathForComparison(normalizedRoot);
+
+  if (pathForCompare === rootForCompare) return "";
+
+  const separator = isWindowsAbsolutePath(normalizedRoot) ? "\\" : "/";
+  const rootPrefix = rootForCompare.endsWith(separator)
+    ? rootForCompare
+    : `${rootForCompare}${separator}`;
+  if (!pathForCompare.startsWith(rootPrefix)) return null;
+
+  const relativeStart =
+    normalizedRoot.endsWith("/") || normalizedRoot.endsWith("\\")
+      ? normalizedRoot.length
+      : normalizedRoot.length + 1;
+  return normalizePathSeparators(normalizedPath.slice(relativeStart));
+}
+
 export function formatWorkspaceRelativePath(
   pathWithPosition: string,
   workspaceRoot: string | undefined,
 ): string {
   const { path, line, column } = splitPathAndPosition(pathWithPosition);
-  const normalizedPath = canonicalizeWindowsDrivePath(normalizePathSeparators(path));
+  const canonicalPath = canonicalizeWindowsDrivePath(path);
+  const normalizedPath = normalizePathSeparators(canonicalPath);
 
   let displayPath = normalizedPath;
   if (workspaceRoot) {
-    const normalizedWorkspaceRoot = canonicalizeWindowsDrivePath(
-      normalizePathSeparators(trimTrailingPathSeparators(workspaceRoot)),
+    const canonicalWorkspaceRoot = canonicalizeWindowsDrivePath(
+      normalizeProjectPathForDispatch(workspaceRoot),
     );
+    const normalizedWorkspaceRoot = normalizePathSeparators(canonicalWorkspaceRoot);
     const workspaceLabel = basenameOfPath(normalizedWorkspaceRoot);
-    const pathForCompare = normalizedPath.toLowerCase();
-    const workspaceForCompare = normalizedWorkspaceRoot.toLowerCase();
-    const workspaceWithSeparator = `${workspaceForCompare}/`;
-    const workspaceLabelWithSeparator = `${workspaceLabel.toLowerCase()}/`;
+    const workspaceRelativePath = resolveWorkspaceRelativePath(path, workspaceRoot);
+    const caseInsensitive = isWindowsAbsolutePath(canonicalWorkspaceRoot);
+    const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
+    const workspaceLabelForCompare = caseInsensitive
+      ? workspaceLabel.toLowerCase()
+      : workspaceLabel;
+    const workspaceLabelWithSeparator = `${workspaceLabelForCompare}/`;
 
-    if (pathForCompare === workspaceForCompare) {
+    if (workspaceRelativePath === "") {
       displayPath = workspaceLabel;
-    } else if (pathForCompare.startsWith(workspaceWithSeparator)) {
-      const relativeSuffix = normalizedPath.slice(normalizedWorkspaceRoot.length + 1);
-      displayPath = `${workspaceLabel}/${relativeSuffix}`;
+    } else if (workspaceRelativePath !== null) {
+      displayPath = `${workspaceLabel}/${workspaceRelativePath}`;
     } else if (!normalizedPath.startsWith("/")) {
       const relativePath = stripRelativePrefixes(normalizedPath);
       displayPath = pathForCompare.startsWith(workspaceLabelWithSeparator)
