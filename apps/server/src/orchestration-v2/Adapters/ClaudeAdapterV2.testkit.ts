@@ -413,7 +413,6 @@ export function makeReplayQueryRunner(
   let cursor = 0;
   let failure: ClaudeAgentSdkReplayError | null = null;
   let cursorAdvanced = makeCursorSignal();
-  let activeOptions: ClaudeAgentSdkQueryOptions | null = null;
 
   const fail = (error: ClaudeAgentSdkReplayError): never => {
     failure = error;
@@ -428,7 +427,9 @@ export function makeReplayQueryRunner(
     signal.resolve();
   };
 
-  async function* replayMessages(): AsyncGenerator<SDKMessage, void> {
+  async function* replayMessages(
+    options: ClaudeAgentSdkQueryOptions,
+  ): AsyncGenerator<SDKMessage, void> {
     while (true) {
       if (failure !== null) {
         throw failure;
@@ -442,7 +443,7 @@ export function makeReplayQueryRunner(
       if (entry.type === "emit_inbound") {
         if (isClaudePermissionRequestFrame(entry.frame)) {
           const request = entry.frame;
-          const invokeCanUseTool = activeOptions?.canUseTool;
+          const invokeCanUseTool = options.canUseTool;
           if (invokeCanUseTool === undefined) {
             const error = new ClaudeReplayUnexpectedOutboundError({
               scenario: transcript.scenario,
@@ -479,7 +480,7 @@ export function makeReplayQueryRunner(
 
       if (entry.type === "runtime_exit") {
         advance();
-        if (entry.status === "success" || entry.status === "cancelled") {
+        if (entry.status === "success") {
           return;
         }
         fail(
@@ -592,9 +593,8 @@ export function makeReplayQueryRunner(
   return {
     open: (input) => {
       assertNextOutboundFrame(makeClaudeQueryOpenFrame(input));
-      activeOptions = input.options;
       return {
-        messages: Stream.fromAsyncIterable(replayMessages(), (cause) =>
+        messages: Stream.fromAsyncIterable(replayMessages(input.options), (cause) =>
           replayQueryRunnerError(transcript, cause),
         ),
         offer: (message) =>
@@ -993,6 +993,19 @@ async function recordMessagesUntilTurnResult(input: {
     if (replayMessage.type === "result") {
       return true;
     }
+  }
+}
+
+export async function recordMessagesUntilTurnResultAndFinalize(input: {
+  readonly iterator: AsyncIterator<SDKMessage>;
+  readonly entries: Array<ProviderReplayEntry>;
+  readonly scenario: string;
+  readonly finalize: () => void;
+}): Promise<boolean> {
+  try {
+    return await recordMessagesUntilTurnResult(input);
+  } finally {
+    input.finalize();
   }
 }
 
@@ -1593,12 +1606,18 @@ async function recordClaudeResumeAtCursorQuery(input: {
     resumedPromptQueue.offer(resumedMessage);
     resumedPromptQueue.close();
     const resumedIterator = resumedRuntime[Symbol.asyncIterator]();
-    await recordMessagesUntilIteratorDone({
+    const resumed = await recordMessagesUntilTurnResultAndFinalize({
       iterator: resumedIterator,
       entries: input.entries,
       scenario: input.scenario,
+      finalize: () => {
+        resumedPromptQueue.close();
+        resumedRuntime.close();
+      },
     });
-    resumedRuntime.close();
+    if (!resumed) {
+      throw new Error("Claude resumed query ended before prompt 3 completed.");
+    }
     input.entries.push({
       type: "runtime_exit",
       status: "success",
