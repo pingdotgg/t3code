@@ -4,6 +4,7 @@ import {
   canSnooze,
   effectiveSettled,
   effectiveSnoozed,
+  hasUnseenWake,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -101,7 +102,7 @@ import {
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
@@ -426,12 +427,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so unlike Done, a never-visited woke thread still
-  // shows the pill; visiting clears it. An unparseable visit timestamp
-  // counts as never-visited — corrupt local data must not eat the wake
-  // signal.
-  const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
-  const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
-  const isWoke = wokeAtDate !== null && (lastVisitedDate === null || lastVisitedDate < wokeAtDate);
+  // shows the pill; visiting clears it.
+  const isWoke = hasUnseenWake(props.wokeAt, lastVisitedAt);
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, failed, and
@@ -1005,7 +1002,10 @@ export default function SidebarV2() {
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const sidebarV2ThreadGroupOrder = useClientSettings((s) => s.sidebarV2ThreadGroupOrder);
+  const sidebarV2ThreadOrderMode = useClientSettings((s) => s.sidebarV2ThreadOrderMode);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -1407,8 +1407,20 @@ export default function SidebarV2() {
         active.push(thread);
       }
     }
+    const activeThreads =
+      sidebarV2ThreadOrderMode === "automatic"
+        ? sortThreadsForSidebarV2(active, {
+            mode: "automatic",
+            groupOrder: sidebarV2ThreadGroupOrder,
+            getLastVisitedAt: (thread) =>
+              threadLastVisitedAtById[
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+              ],
+            getWokeAt: (thread) => threadWokeAt(thread, { now: preciseNow }),
+          })
+        : sortThreadsForSidebarV2(active);
     return {
-      activeThreads: sortThreadsForSidebarV2(active),
+      activeThreads,
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
@@ -1424,7 +1436,10 @@ export default function SidebarV2() {
     nowMinute,
     scopedProjectKeys,
     serverConfigs,
+    sidebarV2ThreadGroupOrder,
+    sidebarV2ThreadOrderMode,
     snoozeWakeTick,
+    threadLastVisitedAtById,
     threads,
   ]);
 

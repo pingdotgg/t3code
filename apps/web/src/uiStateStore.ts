@@ -220,6 +220,21 @@ export function persistState(state: UiState): void {
   }
 }
 
+export function resolveThreadVisitTimestamp(
+  threadUpdatedAt: string,
+  visitedAt: string,
+): string | null {
+  const threadUpdatedAtMs = Date.parse(threadUpdatedAt);
+  const visitedAtMs = Date.parse(visitedAt);
+  if (!Number.isFinite(threadUpdatedAtMs)) {
+    return Number.isFinite(visitedAtMs) ? visitedAt : null;
+  }
+  if (!Number.isFinite(visitedAtMs) || threadUpdatedAtMs >= visitedAtMs) {
+    return threadUpdatedAt;
+  }
+  return visitedAt;
+}
+
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {

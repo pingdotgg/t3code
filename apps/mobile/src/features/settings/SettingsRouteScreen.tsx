@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Alert,
   Linking,
@@ -28,6 +29,12 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER,
+  DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE,
+  type SidebarV2ThreadGroup,
+  type SidebarV2ThreadGroupOrder,
+} from "@t3tools/contracts";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
@@ -53,6 +60,36 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
+
+const THREAD_GROUP_DETAILS: Record<
+  SidebarV2ThreadGroup,
+  { readonly label: string; readonly description: string }
+> = {
+  review: {
+    label: "Needs review",
+    description: "Finished, blocked, failed, or waiting for you",
+  },
+  working: {
+    label: "Working",
+    description: "Threads with an agent currently running",
+  },
+  ready: {
+    label: "Other active",
+    description: "Ready threads without a current attention signal",
+  },
+};
+
+function moveThreadGroup(
+  groups: SidebarV2ThreadGroupOrder,
+  index: number,
+  direction: -1 | 1,
+): SidebarV2ThreadGroupOrder {
+  const destination = index + direction;
+  if (destination < 0 || destination >= groups.length) return groups;
+  const next = [...groups];
+  [next[index], next[destination]] = [next[destination]!, next[index]!];
+  return next;
+}
 
 // Reflects whether the relay actually accepted this device's registration.
 // The notification and Live Activity switches are gated on this so they can
@@ -557,9 +594,28 @@ function GeneralSettingsSection() {
 function BetaSettingsSection() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const iconColor = useThemeColor("--color-icon");
   const threadListV2Enabled = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.threadListV2Enabled === true
     : false;
+  const threadOrderMode = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadListV2ThreadOrderMode ?? DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE)
+    : DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE;
+  const threadGroupOrder = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadListV2ThreadGroupOrder ??
+      DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER)
+    : DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER;
+  const reorderThreadGroup = (index: number, direction: -1 | 1) => {
+    const nextOrder = moveThreadGroup(threadGroupOrder, index, direction);
+    const destination = index + direction;
+    const movedGroup = nextOrder[destination];
+    savePreferences({ threadListV2ThreadGroupOrder: nextOrder });
+    if (movedGroup) {
+      AccessibilityInfo.announceForAccessibility(
+        `${THREAD_GROUP_DETAILS[movedGroup].label} moved to position ${destination + 1}`,
+      );
+    }
+  };
 
   return (
     <View className="gap-3">
@@ -570,11 +626,82 @@ function BetaSettingsSection() {
           value={threadListV2Enabled}
           onValueChange={(value) => savePreferences({ threadListV2Enabled: value })}
         />
+        {threadListV2Enabled ? (
+          <SettingsSwitchRow
+            icon="arrow.up.arrow.down"
+            label="Automatic status order"
+            value={threadOrderMode === "automatic"}
+            onValueChange={(value) =>
+              savePreferences({
+                threadListV2ThreadOrderMode: value ? "automatic" : "created_at",
+              })
+            }
+          />
+        ) : null}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        One flat thread list in creation order. Active work renders as cards; settled threads
-        collapse to compact rows. Switch back any time.
+        {threadOrderMode === "automatic" && threadListV2Enabled
+          ? "Active threads regroup as their status changes. Recently finished items stay in Needs review until you open them."
+          : "One flat thread list in newest-created-first order. Status changes do not move active threads."}
       </Text>
+      {threadListV2Enabled && threadOrderMode === "automatic" ? (
+        <SettingsSection title="Automatic group priority" card>
+          {threadGroupOrder.map((group, index) => {
+            const details = THREAD_GROUP_DETAILS[group];
+            return (
+              <View key={group} className="flex-row items-center gap-3 px-4 py-3">
+                <View className="size-7 items-center justify-center rounded-full bg-secondary">
+                  <Text className="font-t3-mono text-xs text-foreground-muted">{index + 1}</Text>
+                </View>
+                <View className="min-w-0 flex-1">
+                  <Text className="text-base font-t3-medium text-foreground">{details.label}</Text>
+                  <Text className="text-xs text-foreground-muted">{details.description}</Text>
+                </View>
+                <Pressable
+                  accessibilityLabel={`Move ${details.label} up, currently position ${index + 1} of ${threadGroupOrder.length}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: index === 0 }}
+                  disabled={index === 0}
+                  onPress={() => reorderThreadGroup(index, -1)}
+                  className={
+                    index === 0
+                      ? "size-11 items-center justify-center opacity-30"
+                      : "size-11 items-center justify-center"
+                  }
+                >
+                  <SymbolView
+                    name="arrow.up"
+                    size={17}
+                    tintColor={iconColor}
+                    type="monochrome"
+                    weight="semibold"
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel={`Move ${details.label} down, currently position ${index + 1} of ${threadGroupOrder.length}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: index === threadGroupOrder.length - 1 }}
+                  disabled={index === threadGroupOrder.length - 1}
+                  onPress={() => reorderThreadGroup(index, 1)}
+                  className={
+                    index === threadGroupOrder.length - 1
+                      ? "size-11 items-center justify-center opacity-30"
+                      : "size-11 items-center justify-center"
+                  }
+                >
+                  <SymbolView
+                    name="arrow.down"
+                    size={17}
+                    tintColor={iconColor}
+                    type="monochrome"
+                    weight="semibold"
+                  />
+                </Pressable>
+              </View>
+            );
+          })}
+        </SettingsSection>
+      ) : null}
     </View>
   );
 }

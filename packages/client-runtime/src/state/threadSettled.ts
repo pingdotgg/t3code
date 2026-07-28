@@ -215,6 +215,22 @@ export function threadWokeAt(
 }
 
 /**
+ * Whether a derived wake signal is newer than the client's last visit.
+ *
+ * `threadWokeAt` intentionally keeps returning the historical wake timestamp
+ * after the user opens the thread, so every consumer must compare it with the
+ * device-local visit marker before presenting or prioritising the signal.
+ */
+export function hasUnseenWake(wokeAt: string | null, lastVisitedAt: string | undefined): boolean {
+  if (wokeAt === null) return false;
+  const wokeAtMs = Date.parse(wokeAt);
+  if (Number.isNaN(wokeAtMs)) return false;
+  if (lastVisitedAt === undefined) return true;
+  const lastVisitedAtMs = Date.parse(lastVisitedAt);
+  return Number.isNaN(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs;
+}
+
+/**
  * A merged/closed change request settles its thread only once the thread has
  * been idle this long. Without the idle guard the merge signal is permanent:
  * sending a message to a merged-PR thread would un-settle the row only until

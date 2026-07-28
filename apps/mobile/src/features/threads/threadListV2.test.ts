@@ -74,9 +74,209 @@ describe("sortThreadsForListV2", () => {
     ]);
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
+
+  it("orders configurable groups and keeps review items newest-attention-first", () => {
+    const items = [
+      { id: "ready", createdAt: "2026-06-01T12:00:00.000Z", group: "ready", attention: 0 },
+      {
+        id: "older-review",
+        createdAt: "2026-06-01T11:00:00.000Z",
+        group: "review",
+        attention: 10,
+      },
+      {
+        id: "newer-review",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        group: "review",
+        attention: 20,
+      },
+      {
+        id: "working",
+        createdAt: "2026-06-01T09:00:00.000Z",
+        group: "working",
+        attention: 30,
+      },
+    ] as const;
+
+    const sorted = sortThreadsForListV2(items, {
+      groupOrder: ["review", "working", "ready"],
+      getGroup: (item) => item.group,
+      getAttentionTimestamp: (item) => item.attention,
+    });
+
+    expect(sorted.map((item) => item.id)).toEqual([
+      "newer-review",
+      "older-review",
+      "working",
+      "ready",
+    ]);
+  });
 });
 
 describe("buildThreadListV2Items", () => {
+  it("puts unseen completions above working threads in automatic mode", () => {
+    const completed = makeThread({
+      id: ThreadId.make("completed"),
+      title: "Completed",
+      createdAt: "2026-06-01T08:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("completed-turn"),
+        state: "completed",
+        requestedAt: "2026-06-01T09:00:00.000Z",
+        startedAt: "2026-06-01T09:01:00.000Z",
+        completedAt: "2026-06-01T10:00:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const working = makeThread({
+      id: ThreadId.make("working"),
+      title: "Working",
+      createdAt: "2026-06-01T12:00:00.000Z",
+      session: {
+        threadId: ThreadId.make("working"),
+        status: "running",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-06-01T12:30:00.000Z",
+      },
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [working, completed],
+      environmentId: null,
+      searchQuery: "",
+      threadOrderMode: "automatic",
+      threadGroupOrder: ["review", "working", "ready"],
+      lastVisitedAtByKey: {
+        [`${environmentId}:completed`]: "2026-06-01T09:30:00.000Z",
+      },
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["completed", "working"]);
+  });
+
+  it("moves a reviewed completion back to its configured non-review group", () => {
+    const completed = makeThread({
+      id: ThreadId.make("completed"),
+      title: "Completed",
+      createdAt: "2026-06-01T08:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("completed-turn"),
+        state: "completed",
+        requestedAt: "2026-06-01T09:00:00.000Z",
+        startedAt: "2026-06-01T09:01:00.000Z",
+        completedAt: "2026-06-01T10:00:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const working = makeThread({
+      id: ThreadId.make("working"),
+      title: "Working",
+      createdAt: "2026-06-01T12:00:00.000Z",
+      session: {
+        threadId: ThreadId.make("working"),
+        status: "running",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-06-01T12:30:00.000Z",
+      },
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [completed, working],
+      environmentId: null,
+      searchQuery: "",
+      threadOrderMode: "automatic",
+      threadGroupOrder: ["review", "working", "ready"],
+      lastVisitedAtByKey: {
+        [`${environmentId}:completed`]: "2026-06-01T10:30:00.000Z",
+      },
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["working", "completed"]);
+  });
+
+  it("moves a reviewed wake back to its configured non-review group after a visit", () => {
+    const woken = makeThread({
+      id: ThreadId.make("woken"),
+      title: "Woken",
+      createdAt: "2026-06-01T08:00:00.000Z",
+      snoozedAt: "2026-06-01T09:00:00.000Z",
+      snoozedUntil: "2026-06-01T10:00:00.000Z",
+    });
+    const working = makeThread({
+      id: ThreadId.make("working"),
+      title: "Working",
+      createdAt: "2026-06-01T12:00:00.000Z",
+      session: {
+        threadId: ThreadId.make("working"),
+        status: "running",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-06-01T12:30:00.000Z",
+      },
+    });
+    const build = (lastVisitedAt: string) =>
+      buildThreadListV2Items({
+        threads: [woken, working],
+        environmentId: null,
+        searchQuery: "",
+        threadOrderMode: "automatic",
+        threadGroupOrder: ["review", "working", "ready"],
+        lastVisitedAtByKey: {
+          [`${environmentId}:woken`]: lastVisitedAt,
+        },
+        now: NOW,
+      }).items.map((item) => item.thread.id);
+
+    expect(build("2026-06-01T09:59:59.999Z")).toEqual(["woken", "working"]);
+    expect(build("2026-06-01T10:00:00.000Z")).toEqual(["working", "woken"]);
+  });
+
+  it("honors a user-selected automatic group priority", () => {
+    const review = makeThread({
+      id: ThreadId.make("review"),
+      title: "Review",
+      hasPendingApprovals: true,
+    });
+    const working = makeThread({
+      id: ThreadId.make("working"),
+      title: "Working",
+      session: {
+        threadId: ThreadId.make("working"),
+        status: "running",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [review, working],
+      environmentId: null,
+      searchQuery: "",
+      threadOrderMode: "automatic",
+      threadGroupOrder: ["working", "review", "ready"],
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["working", "review"]);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

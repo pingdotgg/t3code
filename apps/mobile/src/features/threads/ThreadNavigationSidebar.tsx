@@ -7,7 +7,11 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER,
+  DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 import { Platform, Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
@@ -200,6 +204,16 @@ function ThreadNavigationSidebarPane(
   const threadListV2Enabled =
     AsyncResult.isSuccess(preferencesResult) &&
     preferencesResult.value.threadListV2Enabled === true;
+  const threadOrderMode = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadListV2ThreadOrderMode ?? DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE)
+    : DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE;
+  const threadGroupOrder = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadListV2ThreadGroupOrder ??
+      DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER)
+    : DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER;
+  const lastVisitedAtByKey = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadLastVisitedAtByKey ?? {})
+    : {};
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -445,11 +459,15 @@ function ThreadNavigationSidebarPane(
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
+      threadOrderMode,
+      threadGroupOrder,
+      lastVisitedAtByKey,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
     });
   }, [
     changeRequestStateByKey,
+    lastVisitedAtByKey,
     nowMinute,
     snoozeWakeTick,
     options.selectedEnvironmentId,
@@ -457,7 +475,9 @@ function ThreadNavigationSidebarPane(
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    threadGroupOrder,
     threadListV2Enabled,
+    threadOrderMode,
     threads,
     selectedProjectScope,
   ]);

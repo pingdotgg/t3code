@@ -1,14 +1,21 @@
 import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigation/native";
+import {
+  createStaticNavigation,
+  DarkTheme,
+  DefaultTheme,
+  useNavigationContainerRef,
+  type Theme,
+} from "@react-navigation/native";
 
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
@@ -22,6 +29,12 @@ import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
 import { useThemeColor } from "./lib/useThemeColor";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./state/preferences";
+import {
+  recordThreadVisit,
+  threadVisitKeyFromNavigationState,
+  type NavigationStateLike,
+} from "./features/threads/navigationThreadVisit";
 
 import "../global.css";
 
@@ -57,6 +70,64 @@ function SplashScreenCoordinator() {
   return null;
 }
 
+function AppNavigation(props: { readonly theme: Theme }) {
+  const navigationRef = useNavigationContainerRef();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const pendingThreadVisitRef = useRef<{
+    readonly threadKey: string;
+    readonly visitedAt: string;
+  } | null>(null);
+  const writeThreadVisit = useCallback(
+    (current: Readonly<Record<string, string>>, threadKey: string, visitedAt: string) => {
+      savePreferences({
+        threadLastVisitedAtByKey: recordThreadVisit(current, threadKey, visitedAt),
+      });
+    },
+    [savePreferences],
+  );
+  const recordVisibleThread = useCallback(
+    (state: NavigationStateLike | undefined) => {
+      if (state === undefined) return;
+      const threadKey = threadVisitKeyFromNavigationState(state);
+      if (threadKey === null) return;
+      const visitedAt = new Date().toISOString();
+      if (!AsyncResult.isSuccess(preferencesResult)) {
+        pendingThreadVisitRef.current = { threadKey, visitedAt };
+        return;
+      }
+      writeThreadVisit(
+        preferencesResult.value.threadLastVisitedAtByKey ?? {},
+        threadKey,
+        visitedAt,
+      );
+    },
+    [preferencesResult, writeThreadVisit],
+  );
+
+  useEffect(() => {
+    if (!AsyncResult.isSuccess(preferencesResult)) return;
+    const pending = pendingThreadVisitRef.current;
+    if (pending === null) return;
+    pendingThreadVisitRef.current = null;
+    writeThreadVisit(
+      preferencesResult.value.threadLastVisitedAtByKey ?? {},
+      pending.threadKey,
+      pending.visitedAt,
+    );
+  }, [preferencesResult, writeThreadVisit]);
+
+  return (
+    <Navigation
+      ref={navigationRef}
+      linking={appLinking}
+      onReady={() => recordVisibleThread(navigationRef.getRootState())}
+      onStateChange={(state) => recordVisibleThread(state)}
+      theme={props.theme}
+    />
+  );
+}
+
 export default function App() {
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
@@ -75,17 +146,14 @@ export default function App() {
                   translucent
                 />
                 {/* The navigation theme drives the NATIVE header appearance: native-stack
-                    forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
-                    this, React Navigation defaults to its light theme and every native
-                    header (glass buttons, title, materials) is forced light even when
-                    the system is in dark mode. */}
+                  forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
+                  this, React Navigation defaults to its light theme and every native
+                  header (glass buttons, title, materials) is forced light even when
+                  the system is in dark mode. */}
                 {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
                 <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
                   <IncomingShareProvider>
-                    <Navigation
-                      linking={appLinking}
-                      theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-                    />
+                    <AppNavigation theme={colorScheme === "dark" ? DarkTheme : DefaultTheme} />
                   </IncomingShareProvider>
                   <ConfirmDialogHost />
                 </BlurTargetView>

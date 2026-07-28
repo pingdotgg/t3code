@@ -1,6 +1,19 @@
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  effectiveSettled,
+  effectiveSnoozed,
+  hasUnseenWake,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER,
+  DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE,
+  type EnvironmentId,
+  type ProjectId,
+  type SidebarV2ThreadGroup,
+  type SidebarV2ThreadGroupOrder,
+  type SidebarV2ThreadOrderMode,
+} from "@t3tools/contracts";
 
 /**
  * Thread List v2 model, ported from the web sidebar v2
@@ -62,13 +75,79 @@ function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | unde
  */
 export function sortThreadsForListV2<T extends { readonly id: string; readonly createdAt: string }>(
   threads: readonly T[],
+  options?: {
+    readonly groupOrder: SidebarV2ThreadGroupOrder;
+    readonly getGroup: (thread: T) => SidebarV2ThreadGroup;
+    readonly getAttentionTimestamp: (thread: T) => number;
+  },
 ): T[] {
   // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
   // change-by-copy array methods.
-  return [...threads].sort(
-    (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
+  const byCreation = (left: T, right: T) =>
+    parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+    left.id.localeCompare(right.id);
+  if (options === undefined) return [...threads].sort(byCreation);
+
+  const groupRank = new Map(options.groupOrder.map((group, index) => [group, index] as const));
+  return [...threads].sort((left, right) => {
+    const leftGroup = options.getGroup(left);
+    const rightGroup = options.getGroup(right);
+    const byGroup =
+      (groupRank.get(leftGroup) ?? options.groupOrder.length) -
+      (groupRank.get(rightGroup) ?? options.groupOrder.length);
+    if (byGroup !== 0) return byGroup;
+    if (leftGroup === "review") {
+      const byAttention =
+        options.getAttentionTimestamp(right) - options.getAttentionTimestamp(left);
+      if (byAttention !== 0) return byAttention;
+    }
+    return byCreation(left, right);
+  });
+}
+
+function hasUnseenCompletion(
+  thread: Pick<EnvironmentThreadShell, "latestTurn">,
+  lastVisitedAt: string | undefined,
+): boolean {
+  if (thread.latestTurn?.completedAt == null || lastVisitedAt === undefined) return false;
+  const completedAt = Date.parse(thread.latestTurn.completedAt);
+  if (Number.isNaN(completedAt)) return false;
+  const visitedAt = Date.parse(lastVisitedAt);
+  return Number.isNaN(visitedAt) || completedAt > visitedAt;
+}
+
+function resolveAutomaticGroup(
+  thread: EnvironmentThreadShell,
+  lastVisitedAt: string | undefined,
+  now: string,
+): SidebarV2ThreadGroup {
+  const status = resolveThreadListV2Status(thread);
+  const wokeAt = threadWokeAt(thread, { now });
+  if (
+    status === "approval" ||
+    status === "input" ||
+    status === "failed" ||
+    thread.hasActionableProposedPlan ||
+    hasUnseenWake(wokeAt, lastVisitedAt) ||
+    hasUnseenCompletion(thread, lastVisitedAt)
+  ) {
+    return "review";
+  }
+  return status === "working" ? "working" : "ready";
+}
+
+function attentionTimestamp(thread: EnvironmentThreadShell, now: string): number {
+  return Math.max(
+    ...[
+      threadWokeAt(thread, { now }),
+      thread.session?.updatedAt,
+      thread.latestTurn?.completedAt,
+      thread.latestTurn?.startedAt,
+      thread.latestTurn?.requestedAt,
+      thread.latestUserMessageAt,
+      thread.updatedAt,
+      thread.createdAt,
+    ].map((candidate) => (candidate == null ? 0 : parseTimestampMs(candidate))),
   );
 }
 
@@ -119,6 +198,10 @@ export function buildThreadListV2Items(input: {
   readonly autoSettleAfterDays?: number;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
+  /** Device-local active-thread ordering controls. */
+  readonly threadOrderMode?: SidebarV2ThreadOrderMode;
+  readonly threadGroupOrder?: SidebarV2ThreadGroupOrder;
+  readonly lastVisitedAtByKey?: Readonly<Record<string, string>>;
   /** Injectable for tests; defaults to now. */
   readonly now?: string;
   /** Second-precise clock for snooze classification. Callers pass a
@@ -175,7 +258,21 @@ export function buildThreadListV2Items(input: {
     }
   }
 
-  const orderedActive = sortThreadsForListV2(active);
+  const threadOrderMode = input.threadOrderMode ?? DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE;
+  const threadGroupOrder = input.threadGroupOrder ?? DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER;
+  const orderedActive =
+    threadOrderMode === "automatic"
+      ? sortThreadsForListV2(active, {
+          groupOrder: threadGroupOrder,
+          getGroup: (thread) =>
+            resolveAutomaticGroup(
+              thread,
+              input.lastVisitedAtByKey?.[`${thread.environmentId}:${thread.id}`],
+              snoozeNow,
+            ),
+          getAttentionTimestamp: (thread) => attentionTimestamp(thread, snoozeNow),
+        })
+      : sortThreadsForListV2(active);
   const orderedSettled = [...settled].sort(
     (left, right) =>
       firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -

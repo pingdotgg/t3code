@@ -1,4 +1,5 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { hasUnseenWake } from "@t3tools/client-runtime/state/thread-settled";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -11,6 +12,7 @@ import {
   persistState,
   reorderProjects,
   resolveProjectExpanded,
+  resolveThreadVisitTimestamp,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
@@ -29,6 +31,17 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
+  it("records an actual visit after a timer wake when the server did not emit a wake event", () => {
+    const wakeAt = "2026-02-25T12:30:00.000Z";
+    const visitedAt = resolveThreadVisitTimestamp(
+      "2026-02-25T12:00:00.000Z",
+      "2026-02-25T12:30:01.000Z",
+    );
+
+    expect(visitedAt).toBe("2026-02-25T12:30:01.000Z");
+    expect(hasUnseenWake(wakeAt, visitedAt ?? undefined)).toBe(false);
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();

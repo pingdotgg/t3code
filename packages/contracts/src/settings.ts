@@ -21,6 +21,31 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const SidebarV2ThreadOrderMode = Schema.Literals(["created_at", "automatic"]);
+export type SidebarV2ThreadOrderMode = typeof SidebarV2ThreadOrderMode.Type;
+export const DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE: SidebarV2ThreadOrderMode = "created_at";
+
+export const SidebarV2ThreadGroup = Schema.Literals(["review", "working", "ready"]);
+export type SidebarV2ThreadGroup = typeof SidebarV2ThreadGroup.Type;
+const sidebarV2ThreadGroupOrderFilter = Schema.makeFilter(
+  (groups: ReadonlyArray<SidebarV2ThreadGroup>) =>
+    (groups.length === 3 &&
+      new Set(groups).size === 3 &&
+      groups.includes("review") &&
+      groups.includes("working") &&
+      groups.includes("ready")) ||
+    "Sidebar v2 thread group order must contain review, working, and ready exactly once.",
+);
+export const SidebarV2ThreadGroupOrder = Schema.Array(SidebarV2ThreadGroup).check(
+  sidebarV2ThreadGroupOrderFilter,
+);
+export type SidebarV2ThreadGroupOrder = typeof SidebarV2ThreadGroupOrder.Type;
+export const DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER: SidebarV2ThreadGroupOrder = [
+  "review",
+  "working",
+  "ready",
+];
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -115,6 +140,12 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
   sidebarV2Enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarV2ThreadGroupOrder: SidebarV2ThreadGroupOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER)),
+  ),
+  sidebarV2ThreadOrderMode: SidebarV2ThreadOrderMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE)),
+  ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
@@ -636,6 +667,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
+  sidebarV2ThreadGroupOrder: Schema.optionalKey(SidebarV2ThreadGroupOrder),
+  sidebarV2ThreadOrderMode: Schema.optionalKey(SidebarV2ThreadOrderMode),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

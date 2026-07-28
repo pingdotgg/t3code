@@ -678,6 +678,155 @@ describe("sortThreadsForSidebarV2", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
   });
+
+  const automaticThread = (input: {
+    id: string;
+    createdAt: string;
+    completedAt?: string | null;
+    sessionStatus?: "ready" | "running" | "error";
+    sessionUpdatedAt?: string;
+    hasPendingApprovals?: boolean;
+  }) => ({
+    id: input.id,
+    createdAt: input.createdAt,
+    updatedAt: input.sessionUpdatedAt ?? input.createdAt,
+    latestUserMessageAt: null,
+    latestTurn:
+      input.completedAt === undefined
+        ? null
+        : makeLatestTurn({
+            completedAt: input.completedAt,
+            startedAt: input.createdAt,
+          }),
+    session:
+      input.sessionStatus === undefined
+        ? null
+        : {
+            threadId: ThreadId.make(input.id),
+            status: input.sessionStatus,
+            providerName: "Codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            activeTurnId: null,
+            lastError: input.sessionStatus === "error" ? "boom" : null,
+            updatedAt: input.sessionUpdatedAt ?? input.createdAt,
+          },
+    hasPendingApprovals: input.hasPendingApprovals ?? false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+  });
+
+  it("automatically promotes newly finished work above newer working threads", () => {
+    const lastVisitedAtById = new Map([
+      ["done-newer", "2026-03-09T09:00:00.000Z"],
+      ["done-older", "2026-03-09T09:00:00.000Z"],
+    ]);
+    const sorted = sortThreadsForSidebarV2(
+      [
+        automaticThread({
+          id: "working-newest",
+          createdAt: "2026-03-09T13:00:00.000Z",
+          sessionStatus: "running",
+        }),
+        automaticThread({
+          id: "done-older",
+          createdAt: "2026-03-09T08:00:00.000Z",
+          completedAt: "2026-03-09T10:00:00.000Z",
+        }),
+        automaticThread({
+          id: "done-newer",
+          createdAt: "2026-03-09T07:00:00.000Z",
+          completedAt: "2026-03-09T12:00:00.000Z",
+        }),
+      ],
+      {
+        mode: "automatic",
+        groupOrder: ["review", "working", "ready"],
+        getLastVisitedAt: (thread) => lastVisitedAtById.get(thread.id),
+        getWokeAt: () => null,
+      },
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "done-newer",
+      "done-older",
+      "working-newest",
+    ]);
+  });
+
+  it("stops prioritising a woken thread after it is visited", () => {
+    const woken = automaticThread({
+      id: "woken",
+      createdAt: "2026-03-09T08:00:00.000Z",
+    });
+    const working = automaticThread({
+      id: "working",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      sessionStatus: "running",
+    });
+    const sort = (lastVisitedAt: string) =>
+      sortThreadsForSidebarV2([woken, working], {
+        mode: "automatic",
+        groupOrder: ["review", "working", "ready"],
+        getLastVisitedAt: (thread) => (thread.id === "woken" ? lastVisitedAt : undefined),
+        getWokeAt: (thread) => (thread.id === "woken" ? "2026-03-09T12:00:00.000Z" : null),
+      }).map((thread) => thread.id);
+
+    expect(sort("2026-03-09T11:59:59.999Z")).toEqual(["woken", "working"]);
+    expect(sort("2026-03-09T12:00:00.000Z")).toEqual(["working", "woken"]);
+  });
+
+  it("uses the user-selected automatic group priority", () => {
+    const sorted = sortThreadsForSidebarV2(
+      [
+        automaticThread({
+          id: "working",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          sessionStatus: "running",
+        }),
+        automaticThread({
+          id: "approval",
+          createdAt: "2026-03-09T09:00:00.000Z",
+          hasPendingApprovals: true,
+        }),
+        automaticThread({
+          id: "ready",
+          createdAt: "2026-03-09T11:00:00.000Z",
+        }),
+      ],
+      {
+        mode: "automatic",
+        groupOrder: ["working", "ready", "review"],
+        getLastVisitedAt: () => undefined,
+        getWokeAt: () => null,
+      },
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["working", "ready", "approval"]);
+  });
+
+  it("moves a reviewed completion back to the ready group", () => {
+    const reviewed = automaticThread({
+      id: "reviewed",
+      createdAt: "2026-03-09T08:00:00.000Z",
+      completedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const working = automaticThread({
+      id: "working",
+      createdAt: "2026-03-09T09:00:00.000Z",
+      sessionStatus: "running",
+    });
+    const sorted = sortThreadsForSidebarV2([reviewed, working], {
+      mode: "automatic",
+      groupOrder: ["review", "working", "ready"],
+      getLastVisitedAt: (thread) =>
+        thread.id === "reviewed" ? "2026-03-09T10:01:00.000Z" : undefined,
+      getWokeAt: () => null,
+    });
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["working", "reviewed"]);
+  });
 });
 
 describe("sortSettledThreadsForSidebarV2", () => {

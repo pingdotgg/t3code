@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   canSnooze,
   effectiveSnoozed,
+  hasUnseenWake,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   type ThreadSnoozeShell,
@@ -233,5 +234,20 @@ describe("threadWokeAt", () => {
         { now: NOW },
       ),
     ).toBe("2026-04-10T09:30:00.000Z");
+  });
+});
+
+describe("hasUnseenWake", () => {
+  it("clears a valid wake after the thread is visited", () => {
+    expect(hasUnseenWake(PAST_WAKE, undefined)).toBe(true);
+    expect(hasUnseenWake(PAST_WAKE, "2026-04-10T09:59:59.999Z")).toBe(true);
+    expect(hasUnseenWake(PAST_WAKE, PAST_WAKE)).toBe(false);
+    expect(hasUnseenWake(PAST_WAKE, "2026-04-10T10:00:00.001Z")).toBe(false);
+  });
+
+  it("does not manufacture a wake from missing or malformed wake data", () => {
+    expect(hasUnseenWake(null, undefined)).toBe(false);
+    expect(hasUnseenWake("not-a-date", undefined)).toBe(false);
+    expect(hasUnseenWake(PAST_WAKE, "not-a-date")).toBe(true);
   });
 });

@@ -12,6 +12,10 @@ import type {
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
+import {
+  DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER,
+  DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE,
+} from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -184,6 +188,16 @@ export function HomeScreen(props: HomeScreenProps) {
   const threadListV2Enabled =
     AsyncResult.isSuccess(preferencesResult) &&
     preferencesResult.value.threadListV2Enabled === true;
+  const threadOrderMode = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadListV2ThreadOrderMode ?? DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE)
+    : DEFAULT_SIDEBAR_V2_THREAD_ORDER_MODE;
+  const threadGroupOrder = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadListV2ThreadGroupOrder ??
+      DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER)
+    : DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER;
+  const lastVisitedAtByKey = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.threadLastVisitedAtByKey ?? {})
+    : {};
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -520,6 +534,9 @@ export function HomeScreen(props: HomeScreenProps) {
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
+      threadOrderMode,
+      threadGroupOrder,
+      lastVisitedAtByKey,
       now: `${nowMinute}:00.000Z`,
       snoozeNow: new Date().toISOString(),
     });
@@ -533,7 +550,10 @@ export function HomeScreen(props: HomeScreenProps) {
     props.searchQuery,
     props.selectedEnvironmentId,
     props.threads,
+    lastVisitedAtByKey,
+    threadGroupOrder,
     threadListV2Enabled,
+    threadOrderMode,
     v2ScopedProjectGroup,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
@@ -551,7 +571,6 @@ export function HomeScreen(props: HomeScreenProps) {
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const threadListV2Items = threadListV2Layout.items;
-
   const renderV2Item = useCallback(
     ({ item }: { readonly item: ThreadListV2Item }) => (
       <ThreadListV2Row

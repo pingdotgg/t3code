@@ -1,6 +1,12 @@
 import * as React from "react";
+import { hasUnseenWake } from "@t3tools/client-runtime/state/thread-settled";
 import type { ContextMenuItem } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
+  SidebarV2ThreadGroup,
+  SidebarV2ThreadGroupOrder,
+} from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -457,18 +463,121 @@ export function firstValidTimestamp(
   return null;
 }
 
-// v2 sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
-// the screen only moves at lifecycle transitions. Status (including pending
-// approval) is carried by each card's edge strip, not by position.
+type SidebarV2AutomaticSortInput = Pick<
+  SidebarThreadSummary,
+  | "createdAt"
+  | "hasActionableProposedPlan"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "interactionMode"
+  | "latestTurn"
+  | "latestUserMessageAt"
+  | "session"
+  | "updatedAt"
+> & {
+  readonly id: string;
+};
+
+export interface SidebarV2AutomaticSortOptions<T extends SidebarV2AutomaticSortInput> {
+  readonly mode: "automatic";
+  readonly groupOrder: SidebarV2ThreadGroupOrder;
+  readonly getLastVisitedAt: (thread: T) => string | undefined;
+  readonly getWokeAt: (thread: T) => string | null;
+}
+
+function resolveSidebarV2ThreadGroup<T extends SidebarV2AutomaticSortInput>(
+  thread: T,
+  options: SidebarV2AutomaticSortOptions<T>,
+): SidebarV2ThreadGroup {
+  const status = resolveSidebarV2Status(thread);
+  const lastVisitedAt = options.getLastVisitedAt(thread);
+  const needsReview =
+    status === "approval" ||
+    status === "input" ||
+    status === "failed" ||
+    thread.hasActionableProposedPlan ||
+    hasUnseenWake(options.getWokeAt(thread), lastVisitedAt) ||
+    hasUnseenCompletion({
+      ...thread,
+      lastVisitedAt,
+    });
+  if (needsReview) return "review";
+  if (status === "working") return "working";
+  return "ready";
+}
+
+function sidebarV2AttentionTimestamp<T extends SidebarV2AutomaticSortInput>(
+  thread: T,
+  options: SidebarV2AutomaticSortOptions<T>,
+): number {
+  return Math.max(
+    ...[
+      options.getWokeAt(thread),
+      thread.session?.updatedAt,
+      thread.latestTurn?.completedAt,
+      thread.latestTurn?.startedAt,
+      thread.latestTurn?.requestedAt,
+      thread.latestUserMessageAt,
+      thread.updatedAt,
+      thread.createdAt,
+    ].map((candidate) =>
+      candidate === null || candidate === undefined ? 0 : parseTimestampMs(candidate),
+    ),
+  );
+}
+
+// By default v2 keeps its original static creation order: activity never
+// moves a card. Automatic mode instead groups cards by the user's status
+// priority; review cards order by their newest attention event while working
+// and ready cards retain stable creation order inside their groups.
 export function sortThreadsForSidebarV2<
   T extends { readonly id: string; readonly createdAt: string },
->(threads: readonly T[]): T[] {
-  return [...threads].toSorted(
-    (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
+>(threads: readonly T[]): T[];
+export function sortThreadsForSidebarV2<T extends SidebarV2AutomaticSortInput>(
+  threads: readonly T[],
+  options: SidebarV2AutomaticSortOptions<T>,
+): T[];
+export function sortThreadsForSidebarV2<
+  T extends { readonly id: string; readonly createdAt: string },
+>(
+  threads: readonly T[],
+  options?: SidebarV2AutomaticSortOptions<T & SidebarV2AutomaticSortInput>,
+): T[] {
+  return sortThreadsForSidebarV2Implementation(threads, options);
+}
+
+function sortThreadsForSidebarV2Implementation<
+  T extends { readonly id: string; readonly createdAt: string },
+>(
+  threads: readonly T[],
+  options?: SidebarV2AutomaticSortOptions<T & SidebarV2AutomaticSortInput>,
+): T[] {
+  const byCreation = (left: T, right: T) =>
+    parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+    left.id.localeCompare(right.id);
+  if (options === undefined) {
+    return [...threads].toSorted(byCreation);
+  }
+
+  const groupRank = new Map(options.groupOrder.map((group, index) => [group, index] as const));
+  return [...threads].toSorted((left, right) => {
+    const leftGroup = resolveSidebarV2ThreadGroup(left as T & SidebarV2AutomaticSortInput, options);
+    const rightGroup = resolveSidebarV2ThreadGroup(
+      right as T & SidebarV2AutomaticSortInput,
+      options,
+    );
+    const byGroup =
+      (groupRank.get(leftGroup) ?? options.groupOrder.length) -
+      (groupRank.get(rightGroup) ?? options.groupOrder.length);
+    if (byGroup !== 0) return byGroup;
+    if (leftGroup === "review") {
+      const byAttention =
+        sidebarV2AttentionTimestamp(right as T & SidebarV2AutomaticSortInput, options) -
+        sidebarV2AttentionTimestamp(left as T & SidebarV2AutomaticSortInput, options);
+      if (byAttention !== 0) return byAttention;
+    }
+    return byCreation(left, right);
+  });
 }
 
 type SettledTimestampInput = Pick<

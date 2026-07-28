@@ -5,6 +5,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import {
+  DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER,
+  type SidebarV2ThreadGroup,
+  type SidebarV2ThreadOrderMode,
+} from "@t3tools/contracts";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -29,6 +34,13 @@ export interface Preferences {
    * device.
    */
   readonly threadListV2Enabled?: boolean;
+  readonly threadListV2ThreadOrderMode?: SidebarV2ThreadOrderMode;
+  readonly threadListV2ThreadGroupOrder?: readonly SidebarV2ThreadGroup[];
+  /**
+   * Device-local visit markers used by automatic ordering to keep newly
+   * completed threads in Needs review until this device opens them.
+   */
+  readonly threadLastVisitedAtByKey?: Readonly<Record<string, string>>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -80,6 +92,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
     threadListV2Enabled?: boolean;
+    threadListV2ThreadOrderMode?: SidebarV2ThreadOrderMode;
+    threadListV2ThreadGroupOrder?: readonly SidebarV2ThreadGroup[];
+    threadLastVisitedAtByKey?: Readonly<Record<string, string>>;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -111,6 +126,35 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;
+  }
+  if (
+    parsed.threadListV2ThreadOrderMode === "created_at" ||
+    parsed.threadListV2ThreadOrderMode === "automatic"
+  ) {
+    preferences.threadListV2ThreadOrderMode = parsed.threadListV2ThreadOrderMode;
+  }
+  if (
+    Array.isArray(parsed.threadListV2ThreadGroupOrder) &&
+    parsed.threadListV2ThreadGroupOrder.length === DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER.length &&
+    new Set(parsed.threadListV2ThreadGroupOrder).size ===
+      DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER.length &&
+    DEFAULT_SIDEBAR_V2_THREAD_GROUP_ORDER.every((group) =>
+      parsed.threadListV2ThreadGroupOrder?.includes(group),
+    )
+  ) {
+    preferences.threadListV2ThreadGroupOrder = parsed.threadListV2ThreadGroupOrder;
+  }
+  if (
+    typeof parsed.threadLastVisitedAtByKey === "object" &&
+    parsed.threadLastVisitedAtByKey !== null &&
+    !Array.isArray(parsed.threadLastVisitedAtByKey)
+  ) {
+    preferences.threadLastVisitedAtByKey = Object.fromEntries(
+      Object.entries(parsed.threadLastVisitedAtByKey).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === "string" && !Number.isNaN(Date.parse(entry[1])),
+      ),
+    );
   }
   return preferences;
 }

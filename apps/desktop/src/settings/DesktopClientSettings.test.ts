@@ -30,6 +30,8 @@ const clientSettings: ClientSettings = {
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
   sidebarV2Enabled: false,
+  sidebarV2ThreadGroupOrder: ["review", "working", "ready"],
+  sidebarV2ThreadOrderMode: "created_at",
   timestampFormat: "24-hour",
   wordWrap: true,
 };

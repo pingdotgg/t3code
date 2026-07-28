@@ -50,10 +50,12 @@ describe("ClientSettings glass opacity", () => {
 });
 
 describe("ClientSettings sidebar v2", () => {
-  it("defaults the beta off with a three-day auto-settle threshold", () => {
+  it("defaults the beta off with static ordering and a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});
     expect(settings.sidebarV2Enabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarV2ThreadOrderMode).toBe("created_at");
+    expect(settings.sidebarV2ThreadGroupOrder).toEqual(["review", "working", "ready"]);
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {
@@ -65,6 +67,26 @@ describe("ClientSettings sidebar v2", () => {
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
     expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
     expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+  });
+
+  it("accepts automatic ordering with a custom group priority", () => {
+    const input = {
+      sidebarV2ThreadOrderMode: "automatic",
+      sidebarV2ThreadGroupOrder: ["working", "review", "ready"],
+    } as const;
+
+    expect(decodeClientSettings(input)).toMatchObject(input);
+    expect(decodeClientSettingsPatch(input)).toEqual(input);
+  });
+
+  it.each([
+    { value: [] },
+    { value: ["review", "working"] },
+    { value: ["review", "review", "ready"] },
+    { value: ["review", "working", "ready", "review"] },
+  ])("rejects an invalid automatic group order: $value", ({ value }) => {
+    expect(() => decodeClientSettings({ sidebarV2ThreadGroupOrder: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarV2ThreadGroupOrder: value })).toThrow();
   });
 });
 
