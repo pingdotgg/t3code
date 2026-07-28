@@ -89,4 +89,68 @@ describe("HostPowerMonitor", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect(
+    "subscribes before reading the desktop snapshot so concurrent power updates survive",
+    () =>
+      Effect.gen(function* () {
+        const sampledAt = DateTime.makeUnsafe("2026-06-17T12:00:00.000Z");
+        const initial: DesktopHostTelemetrySnapshot = {
+          version: 1,
+          type: "desktopTelemetry",
+          sequence: 1,
+          sampledAtUnixMs: DateTime.toEpochMillis(sampledAt),
+          electronPid: 100,
+          power: {
+            source: "electron-main",
+            idle: "false",
+            idleSeconds: 0,
+            locked: "false",
+            suspended: false,
+            onBattery: "false",
+            lowPowerMode: "unknown",
+            thermalState: "nominal",
+            stale: false,
+            updatedAt: sampledAt,
+          },
+          speedLimitPercent: Option.none(),
+          electronProcesses: [],
+        };
+        const updated: DesktopHostTelemetrySnapshot = {
+          ...initial,
+          sequence: 2,
+          power: {
+            ...initial.power,
+            onBattery: "true",
+            updatedAt: DateTime.makeUnsafe("2026-06-17T12:00:01.000Z"),
+          },
+        };
+        const desktopChanges = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(1);
+        const receiverLayer = DesktopTelemetryReceiver.layerTest({
+          latest: Effect.succeedSome(initial),
+          changes: Stream.empty,
+          subscribe: Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(desktopChanges);
+            yield* PubSub.publish(desktopChanges, updated);
+            return {
+              latest: Option.some(initial),
+              changes: Stream.fromSubscription(subscription),
+            };
+          }),
+        });
+        const layer = HostPowerMonitor.layer.pipe(Layer.provide(receiverLayer));
+
+        yield* Effect.gen(function* () {
+          const monitor = yield* HostPowerMonitor.HostPowerMonitor;
+          for (
+            let attempt = 0;
+            attempt < 100 && (yield* monitor.snapshot).onBattery !== "true";
+            attempt += 1
+          ) {
+            yield* Effect.yieldNow;
+          }
+          expect((yield* monitor.snapshot).onBattery).toBe("true");
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 });

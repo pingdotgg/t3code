@@ -373,4 +373,68 @@ describe("serverSettings helpers", () => {
       overrides: {},
     });
   });
+
+  it("replaces the complete background override record", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "custom",
+        baseProfile: "balanced",
+        overrides: {
+          automaticGitFetchInterval: Duration.seconds(15),
+          providerHealthRefreshInterval: Duration.minutes(3),
+        },
+      },
+    });
+
+    const next = applyServerSettingsPatch(current, {
+      backgroundActivity: {
+        overrides: {
+          automaticGitFetchInterval: Duration.seconds(10),
+        },
+      },
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "balanced",
+      overrides: {
+        automaticGitFetchInterval: Duration.seconds(10),
+      },
+    });
+  });
+
+  it("keeps interval overrides supplied with a profile patch", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      backgroundActivityProfile: "performance",
+      automaticGitFetchInterval: Duration.seconds(0),
+      providerHealthRefreshInterval: Duration.minutes(4),
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "performance",
+      overrides: {
+        automaticGitFetchInterval: Duration.seconds(0),
+        providerHealthRefreshInterval: Duration.minutes(4),
+      },
+    });
+  });
+
+  it("ignores overrides attached to a concrete background profile", () => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "balanced",
+        overrides: {
+          pauseWhenOnBattery: true,
+        },
+      },
+    });
+
+    expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
 });

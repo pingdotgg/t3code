@@ -164,4 +164,87 @@ describe("buildResourceTelemetryHistory", () => {
     expect(electron?.currentRssBytes).toBe(1_024);
     expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(4_000);
   });
+
+  it("uses the preceding sample as a delta baseline and excludes future samples", () => {
+    const readAtMs = STARTED_AT_MS + 10_000;
+    const history = buildResourceTelemetryHistory({
+      readAt: DateTime.makeUnsafe(readAtMs),
+      windowMs: 5_000,
+      bucketMs: 5_000,
+      sampleIntervalMs: 1_000,
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      desktopSnapshot: Option.none(),
+      snapshots: [
+        snapshot(1, STARTED_AT_MS, 100, 1_000),
+        snapshot(2, STARTED_AT_MS + 5_000, 600, 6_000),
+        snapshot(3, readAtMs + 1_000, 10_000, 20_000),
+      ],
+      health,
+    });
+
+    const child = history.topProcesses.find((process) => process.identity.pid === CHILD_PID);
+    expect(child?.sampleCount).toBe(1);
+    expect(child?.cpuTimeMs).toBe(500);
+    expect(child?.ioWriteBytes).toBe(5_000);
+    expect(
+      history.buckets.every((bucket) => DateTime.toEpochMillis(bucket.startedAt) <= readAtMs),
+    ).toBe(true);
+  });
+
+  it("replays the Electron root identity recorded with each native sample", () => {
+    const oldElectron = snapshot(1, STARTED_AT_MS, 100, 1_000);
+    const restartedElectron = snapshot(2, STARTED_AT_MS + 1_000, 200, 2_000);
+    const history = buildResourceTelemetryHistory({
+      readAt: DateTime.makeUnsafe(STARTED_AT_MS + 2_000),
+      windowMs: 10_000,
+      bucketMs: 10_000,
+      sampleIntervalMs: 1_000,
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      desktopSnapshot: Option.none(),
+      snapshots: [
+        {
+          ...oldElectron,
+          externalProcesses: [{ pid: ELECTRON_PID, startTimeMs: 20 }],
+        },
+        {
+          ...restartedElectron,
+          externalProcesses: [{ pid: 201, startTimeMs: 40 }],
+          processes: [
+            ...restartedElectron.processes.filter((process) => process.pid !== ELECTRON_PID),
+            processSample({
+              pid: ELECTRON_PID,
+              ppid: SERVER_PID,
+              startTimeMs: 999,
+              name: "reused",
+              command: "unrelated process",
+            }),
+            processSample({
+              pid: 201,
+              ppid: 1,
+              startTimeMs: 40,
+              name: "electron",
+              command: "electron",
+            }),
+          ],
+        },
+      ],
+      health,
+    });
+
+    expect(
+      history.topProcesses.find(
+        (process) => process.identity.pid === ELECTRON_PID && process.identity.startTimeMs === 20,
+      )?.category,
+    ).toBe("electron-main");
+    expect(
+      history.topProcesses.find(
+        (process) => process.identity.pid === ELECTRON_PID && process.identity.startTimeMs === 999,
+      )?.category,
+    ).toBe("server-child");
+    expect(history.topProcesses.find((process) => process.identity.pid === 201)?.category).toBe(
+      "electron-main",
+    );
+  });
 });

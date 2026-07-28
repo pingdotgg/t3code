@@ -1,8 +1,14 @@
 import { describe, it, assert } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -215,6 +221,90 @@ describe("makeManagedServerProvider", () => {
         assert.strictEqual(yield* Ref.get(checkCalls), 1);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NeverRunTestLayer, TestClock.layer()))),
+  );
+
+  it.effect("disables periodic provider refreshes when the explicit interval is zero", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap(() => Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)),
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: 0,
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* TestClock.adjust("5 minutes");
+        yield* Effect.yieldNow;
+
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(AlwaysRunTestLayer, TestClock.layer()))),
+  );
+
+  it.effect("wakes a sleeping provider refresh loop when its interval changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const initialServerSettings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerHealthRefreshInterval: Duration.hours(1),
+        };
+        const serverSettingsRef = yield* Ref.make(initialServerSettings);
+        const serverSettingsChanges = yield* PubSub.unbounded<typeof initialServerSettings>();
+        const serverSettingsLayer = Layer.succeed(
+          ServerSettingsService,
+          ServerSettingsService.of({
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Ref.get(serverSettingsRef),
+            updateSettings: () => Effect.die(new Error("unused in this test")),
+            streamChanges: Stream.fromPubSub(serverSettingsChanges),
+          }),
+        );
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const periodicCheckDone = yield* Deferred.make<void>();
+
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Deferred.succeed(periodicCheckDone, undefined).pipe(Effect.ignore),
+            ),
+            Effect.as(refreshedSnapshot),
+          ),
+        }).pipe(Effect.provide(Layer.merge(BackgroundPolicyAlwaysRunLayer, serverSettingsLayer)));
+
+        yield* Deferred.await(initialCheckDone);
+        const nextServerSettings = {
+          ...initialServerSettings,
+          providerHealthRefreshInterval: Duration.seconds(1),
+        };
+        yield* Ref.set(serverSettingsRef, nextServerSettings);
+        yield* PubSub.publish(serverSettingsChanges, nextServerSettings);
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust("999 millis");
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(periodicCheckDone);
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("reruns the provider check when streamed settings change", () =>

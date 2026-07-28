@@ -39,6 +39,7 @@ export interface DesktopBackendOutputLogShape {
     streamName: "stdout" | "stderr",
     chunk: Uint8Array,
   ) => Effect.Effect<void>;
+  readonly persistFailureSnapshot: (input: { readonly details: string }) => Effect.Effect<void>;
   readonly persistFailure: (input: { readonly details: string }) => Effect.Effect<void>;
   readonly discardSession: Effect.Effect<void>;
 }
@@ -130,6 +131,7 @@ const encodeDesktopBackendChildLogRecord = Schema.encodeEffect(
 const DesktopBackendOutputLogNoop: DesktopBackendOutputLogShape = {
   beginSession: () => Effect.void,
   writeOutputChunk: () => Effect.void,
+  persistFailureSnapshot: () => Effect.void,
   persistFailure: () => Effect.void,
   discardSession: Effect.void,
 };
@@ -418,6 +420,45 @@ const makeBackendOutputLogShape = (
     onSome: (logFile) =>
       Effect.gen(function* () {
         const sessionRef = yield* Ref.make(Option.none<BackendOutputSession>());
+        const writeFailure = Effect.fn("desktop.observability.backendOutput.writeFailure")(
+          function* (session: BackendOutputSession, details: string) {
+            yield* writeBackendChildLogRecord(logFile, {
+              message: "backend child process failure output start",
+              level: "ERROR",
+              annotations: {
+                component: "desktop-backend-child",
+                runId: session.runId,
+                instanceId: id,
+                phase: "START",
+                details: session.startDetails,
+              },
+            });
+            for (const output of session.chunks) {
+              yield* writeBackendChildLogRecord(logFile, {
+                message: "backend child process output",
+                level: output.streamName === "stderr" ? "ERROR" : "INFO",
+                annotations: {
+                  component: "desktop-backend-child",
+                  runId: session.runId,
+                  instanceId: id,
+                  stream: output.streamName,
+                  text: textDecoder.decode(output.chunk),
+                },
+              });
+            }
+            yield* writeBackendChildLogRecord(logFile, {
+              message: "backend child process failure output end",
+              level: "ERROR",
+              annotations: {
+                component: "desktop-backend-child",
+                runId: session.runId,
+                instanceId: id,
+                phase: "END",
+                details: sanitizeLogValue(details),
+              },
+            });
+          },
+        );
         return {
           beginSession: Effect.fn("desktop.observability.backendOutput.beginSession")(function* ({
             details,
@@ -442,49 +483,19 @@ const makeBackendOutputLogShape = (
               Option.map((session) => appendBoundedOutputChunk(session, streamName, chunk)),
             );
           }),
+          persistFailureSnapshot: Effect.fn(
+            "desktop.observability.backendOutput.persistFailureSnapshot",
+          )(function* ({ details }) {
+            const session = yield* Ref.get(sessionRef);
+            if (Option.isSome(session)) {
+              yield* writeFailure(session.value, details);
+            }
+          }),
           persistFailure: Effect.fn("desktop.observability.backendOutput.persistFailure")(
             function* ({ details }) {
-              const session = yield* Ref.modify(sessionRef, (current) => [
-                current,
-                Option.map(current, (value) => ({ ...value, chunks: [], byteLength: 0 })),
-              ]);
+              const session = yield* Ref.modify(sessionRef, (current) => [current, Option.none()]);
               if (Option.isNone(session)) return;
-
-              yield* writeBackendChildLogRecord(logFile, {
-                message: "backend child process failure output start",
-                level: "ERROR",
-                annotations: {
-                  component: "desktop-backend-child",
-                  runId: session.value.runId,
-                  instanceId: id,
-                  phase: "START",
-                  details: session.value.startDetails,
-                },
-              });
-              for (const output of session.value.chunks) {
-                yield* writeBackendChildLogRecord(logFile, {
-                  message: "backend child process output",
-                  level: output.streamName === "stderr" ? "ERROR" : "INFO",
-                  annotations: {
-                    component: "desktop-backend-child",
-                    runId: session.value.runId,
-                    instanceId: id,
-                    stream: output.streamName,
-                    text: textDecoder.decode(output.chunk),
-                  },
-                });
-              }
-              yield* writeBackendChildLogRecord(logFile, {
-                message: "backend child process failure output end",
-                level: "ERROR",
-                annotations: {
-                  component: "desktop-backend-child",
-                  runId: session.value.runId,
-                  instanceId: id,
-                  phase: "END",
-                  details: sanitizeLogValue(details),
-                },
-              });
+              yield* writeFailure(session.value, details);
             },
           ),
           discardSession: Ref.set(sessionRef, Option.none()),

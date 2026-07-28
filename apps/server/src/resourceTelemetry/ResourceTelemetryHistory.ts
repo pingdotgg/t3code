@@ -146,36 +146,63 @@ export function buildResourceTelemetryHistory(
   const readAtMs = DateTime.toEpochMillis(input.readAt);
   const { windowMs, bucketMs } = normalizeResourceTelemetryHistoryInput(input);
   const windowStartMs = readAtMs - windowMs;
-  const snapshots = input.snapshots
-    .filter((snapshot) => snapshot.sampledAtUnixMs >= windowStartMs)
+  const eligibleSnapshots = input.snapshots
+    .filter((snapshot) => snapshot.sampledAtUnixMs <= readAtMs)
     .toSorted((left, right) => left.sampledAtUnixMs - right.sampledAtUnixMs);
-  const electronRootPids = Option.match(input.desktopSnapshot, {
-    onNone: () => new Set<number>(),
-    onSome: (snapshot) => new Set([snapshot.electronPid]),
-  });
-  const desktopIdentity = Option.map(input.desktopSnapshot, (snapshot) => ({
-    ...snapshot,
-    electronProcesses: [],
-  }));
+  const snapshotsInWindow = eligibleSnapshots.filter(
+    (snapshot) => snapshot.sampledAtUnixMs >= windowStartMs,
+  );
+  const precedingSnapshot = eligibleSnapshots.findLast(
+    (snapshot) => snapshot.sampledAtUnixMs < windowStartMs,
+  );
+  const snapshots = precedingSnapshot
+    ? [precedingSnapshot, ...snapshotsInWindow]
+    : snapshotsInWindow;
   const aggregateSamples: AggregateSample[] = [];
   const processSamples: ProcessSample[] = [];
   let previous: ReadonlyMap<string, ProcessState> = new Map();
   let counters: TelemetryCounters = emptyTelemetryCounters();
 
   for (const snapshot of snapshots) {
+    const recordedExternalProcesses =
+      snapshot.externalProcesses ??
+      Option.match(input.desktopSnapshot, {
+        onNone: () => [],
+        onSome: (desktopSnapshot) =>
+          snapshot.sampledAtUnixMs >= desktopSnapshot.sampledAtUnixMs
+            ? [
+                {
+                  pid: desktopSnapshot.electronPid,
+                  startTimeMs: desktopSnapshot.electronProcesses.find(
+                    (metric) => metric.pid === desktopSnapshot.electronPid,
+                  )?.creationTimeMs,
+                },
+              ]
+            : [],
+      });
+    const electronRootPids = new Set(recordedExternalProcesses.map((process) => process.pid));
+    const electronRootStartTimes = new Map(
+      recordedExternalProcesses.flatMap((process) =>
+        process.startTimeMs === undefined ? [] : [[process.pid, process.startTimeMs] as const],
+      ),
+    );
     const merged = mergeProcesses({
       serverPid: input.serverPid,
       sidecarPid: input.sidecarPid,
       fallbackSampledAtMs: snapshot.sampledAtUnixMs,
       nativeSnapshot: Option.some(snapshot),
-      desktopSnapshot: desktopIdentity,
+      desktopSnapshot: Option.none(),
       electronRootPids,
+      electronRootStartTimes,
       previous,
       counters,
       updatePrevious: true,
     });
     previous = merged.previous;
     counters = merged.counters;
+    if (snapshot.sampledAtUnixMs < windowStartMs) {
+      continue;
+    }
     const deltasByIdentity = new Map(
       merged.deltas.map((processDelta) => [processDelta.identityKey, processDelta]),
     );

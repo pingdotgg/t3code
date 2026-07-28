@@ -14,14 +14,12 @@ export interface ResourceAttributionRecord {
   readonly durationMs?: number;
 }
 
-export interface ResourceAttributionShape {
-  readonly record: (input: ResourceAttributionRecord) => Effect.Effect<void>;
-  readonly snapshot: Effect.Effect<ResourceAttributionSnapshot>;
-}
-
 export class ResourceAttribution extends Context.Service<
   ResourceAttribution,
-  ResourceAttributionShape
+  {
+    readonly record: (input: ResourceAttributionRecord) => Effect.Effect<void>;
+    readonly snapshot: Effect.Effect<ResourceAttributionSnapshot>;
+  }
 >()("t3/resourceTelemetry/ResourceAttribution") {}
 
 function key(input: Pick<ResourceAttributionRecord, "component" | "operation">): string {
@@ -37,7 +35,7 @@ function nonNegativeInteger(value: number | undefined, fallback: number): number
 export const make = Effect.fn("resourceTelemetry.resourceAttribution.make")(function* () {
   const entries = yield* Ref.make(new Map<string, ResourceAttributionEntry>());
 
-  const record: ResourceAttributionShape["record"] = (input) =>
+  const record: ResourceAttribution["Service"]["record"] = (input) =>
     Ref.update(entries, (current) => {
       const next = new Map(current);
       const entryKey = key(input);

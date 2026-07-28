@@ -880,21 +880,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   ? (params["metadata"] as Record<string, unknown>)
                   : {};
               if (tabId && typeof params["data"] === "string") {
-                const receivedAt = yield* currentIso;
-                const listeners = yield* Ref.get(recordingFrameListenersRef);
-                const frame: DesktopPreviewRecordingFrame = {
+                const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(
                   tabId,
-                  data: params["data"],
-                  width: typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0,
-                  height:
-                    typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0,
-                  receivedAt,
-                };
-                yield* Effect.forEach(
-                  listeners,
-                  (listener) => deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
-                  { discard: true },
                 );
+                if (captureSession?.consumers.has("recording")) {
+                  const receivedAt = yield* currentIso;
+                  const listeners = yield* Ref.get(recordingFrameListenersRef);
+                  const frame: DesktopPreviewRecordingFrame = {
+                    tabId,
+                    data: params["data"],
+                    width:
+                      typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0,
+                    height:
+                      typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0,
+                    receivedAt,
+                  };
+                  yield* Effect.forEach(
+                    listeners,
+                    (listener) =>
+                      deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
+                    { discard: true },
+                  );
+                }
               }
             }
             yield* captureDiagnosticMessage(wc.id, method, params);

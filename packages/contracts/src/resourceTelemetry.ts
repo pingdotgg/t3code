@@ -162,6 +162,7 @@ export const ResourceMonitorSnapshotEvent = Schema.Struct({
   retainedProcessCount: NonNegativeInt,
   inaccessibleProcessCount: NonNegativeInt,
   requestId: Schema.optionalKey(TrimmedNonEmptyString),
+  externalProcesses: Schema.optionalKey(Schema.Array(ResourceMonitorExternalProcess)),
   processes: Schema.Array(ResourceMonitorProcessSample),
 });
 export type ResourceMonitorSnapshotEvent = typeof ResourceMonitorSnapshotEvent.Type;

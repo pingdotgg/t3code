@@ -52,6 +52,26 @@ describe("ProcessResourceMonitor", () => {
             ioSemantics: "storage",
             sampleCount: 2,
           },
+          {
+            identity: { pid: 5_000, startTimeMs: 200 },
+            ppid: 1,
+            depth: 0,
+            name: "electron",
+            command: "electron",
+            category: "electron-main",
+            firstSeenAt: DateTime.makeUnsafe("2026-05-05T09:59:55.000Z"),
+            lastSeenAt: readAt,
+            currentCpuPercent: 50,
+            avgCpuPercent: 40,
+            maxCpuPercent: 80,
+            cpuTimeMs: 15_000,
+            currentRssBytes: 20_480,
+            peakRssBytes: 40_960,
+            ioReadBytes: 10_240,
+            ioWriteBytes: 20_480,
+            ioSemantics: "storage",
+            sampleCount: 2,
+          },
         ],
         health: {
           native: {
@@ -73,9 +93,10 @@ describe("ProcessResourceMonitor", () => {
           inaccessibleProcessCount: 0,
         },
       };
-      const telemetry: ResourceTelemetry.ResourceTelemetryShape = {
+      const telemetry: ResourceTelemetry.ResourceTelemetry["Service"] = {
         latest: Effect.die("unused"),
         changes: Stream.empty,
+        subscribe: Effect.die("unused"),
         readHistory: () => Effect.succeed(history),
         refresh: Effect.die("unused"),
         validateProcessIdentity: () => Effect.die("unused"),

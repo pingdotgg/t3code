@@ -10,15 +10,14 @@ import * as Stream from "effect/Stream";
 
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
-export interface HostPowerMonitorShape {
-  readonly snapshot: Effect.Effect<HostPowerSnapshot>;
-  readonly report: (snapshot: HostPowerSnapshot) => Effect.Effect<void>;
-  readonly streamChanges: Stream.Stream<HostPowerSnapshot>;
-}
-
-export class HostPowerMonitor extends Context.Service<HostPowerMonitor, HostPowerMonitorShape>()(
-  "t3/background/HostPowerMonitor",
-) {}
+export class HostPowerMonitor extends Context.Service<
+  HostPowerMonitor,
+  {
+    readonly snapshot: Effect.Effect<HostPowerSnapshot>;
+    readonly report: (snapshot: HostPowerSnapshot) => Effect.Effect<void>;
+    readonly streamChanges: Stream.Stream<HostPowerSnapshot>;
+  }
+>()("t3/background/HostPowerMonitor") {}
 
 export const makeUnknownSnapshot = (
   source: HostPowerSnapshot["source"],
@@ -56,7 +55,7 @@ export const make = Effect.fn("background.hostPower.make")(function* (
   const latestRef = yield* Ref.make(initial);
   const changes = yield* PubSub.sliding<HostPowerSnapshot>(1);
 
-  const report: HostPowerMonitorShape["report"] = (snapshot) =>
+  const report: HostPowerMonitor["Service"]["report"] = (snapshot) =>
     Ref.modify(latestRef, (current) => [!samePowerState(current, snapshot), snapshot]).pipe(
       Effect.flatMap((changed) => (changed ? PubSub.publish(changes, snapshot) : Effect.void)),
       Effect.asVoid,
@@ -73,7 +72,8 @@ export const layer = Layer.effect(
   HostPowerMonitor,
   Effect.gen(function* () {
     const desktopTelemetry = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
-    const initial = yield* desktopTelemetry.latest;
+    const desktopSubscription = yield* desktopTelemetry.subscribe;
+    const initial = desktopSubscription.latest;
     const monitor = yield* make(
       Option.match(initial, {
         onNone: () => "unknown" as const,
@@ -83,7 +83,7 @@ export const layer = Layer.effect(
     if (Option.isSome(initial)) {
       yield* monitor.report(initial.value.power);
     }
-    yield* desktopTelemetry.changes.pipe(
+    yield* desktopSubscription.changes.pipe(
       Stream.map((snapshot) => snapshot.power),
       Stream.runForEach(monitor.report),
       Effect.forkScoped,

@@ -80,7 +80,7 @@ export function resolveBackgroundActivitySettings(
 ): ResolvedBackgroundActivitySettings {
   const baseProfile = getBackgroundActivityBaseProfile(backgroundActivity);
   const preset = PRESET_SETTINGS[baseProfile];
-  const { overrides } = backgroundActivity;
+  const overrides = backgroundActivity.profile === "custom" ? backgroundActivity.overrides : {};
   return {
     profile: baseProfile,
     automaticGitFetchInterval:

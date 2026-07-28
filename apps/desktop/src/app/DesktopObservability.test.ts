@@ -190,6 +190,46 @@ describe("DesktopObservability", () => {
     ),
   );
 
+  it.effect("keeps buffering output after a non-terminal failure snapshot", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-output-snapshot-test-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir, false);
+      const logPath = yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        return environment.path.join(environment.logDir, "server-child.log");
+      }).pipe(Effect.provide(environmentLayer));
+
+      yield* Effect.gen(function* () {
+        const factory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
+        const outputLog = yield* factory.forInstance("primary");
+        yield* outputLog.beginSession({ details: "pid=123" });
+        yield* outputLog.writeOutputChunk("stdout", new TextEncoder().encode("before timeout\n"));
+        yield* outputLog.persistFailureSnapshot({ details: "readiness timeout" });
+        yield* outputLog.writeOutputChunk("stderr", new TextEncoder().encode("after timeout\n"));
+        yield* outputLog.persistFailure({ details: "code=1" });
+      }).pipe(
+        Effect.annotateLogs({ runId: "test-run" }),
+        Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+      );
+
+      const records = yield* Effect.forEach(
+        (yield* fileSystem.readFileString(logPath)).trimEnd().split("\n"),
+        (line) => decodeDesktopBackendChildLogRecord(line),
+      );
+      assert.equal(
+        records.some((record) => record.annotations.text === "after timeout\n"),
+        true,
+      );
+      assert.equal(records.at(-1)?.annotations.details, "code=1");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
+    ),
+  );
+
   it.effect("retains only the last mebibyte of backend child output", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

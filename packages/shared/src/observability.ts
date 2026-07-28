@@ -283,6 +283,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     filePath: options.filePath,
     maxBytes: options.maxBytes,
     maxFiles: options.maxFiles,
+    throwOnError: true,
   });
 
   let buffer: Array<string> = [];
@@ -434,6 +435,7 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
       maxBytes: options.maxBytes,
       maxFiles: options.maxFiles,
       batchWindowMs: options.batchWindowMs,
+      ...(options.onFlush ? { onFlush: options.onFlush } : {}),
     }));
 
   const delegate =

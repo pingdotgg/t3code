@@ -132,6 +132,7 @@ interface CachedVcsStatus {
 interface ActiveRemotePoller {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly subscriberCount: number;
+  readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
 }
 
 interface StreamStatusOptions {
@@ -380,6 +381,7 @@ export const make = Effect.gen(function* () {
 
   const makeRemoteRefreshLoop = (
     cwd: string,
+    demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
   ) => {
@@ -396,10 +398,18 @@ export const make = Effect.gen(function* () {
           return activeInterval;
         }
 
-        const shouldRun = yield* backgroundPolicy.shouldRunScopeWork({
-          type: "vcs-status",
-          cwd,
-        });
+        const demandCwds = yield* Ref.get(demandCwdsRef);
+        const shouldRun =
+          needsInitialRefresh ||
+          (yield* Effect.all(
+            [...demandCwds.keys()].map((demandCwd) =>
+              backgroundPolicy.shouldRunScopeWork({
+                type: "vcs-status",
+                cwd: demandCwd,
+              }),
+            ),
+            { concurrency: "unbounded" },
+          )).some(Boolean);
         if (!shouldRun) {
           return activeInterval;
         }
@@ -454,55 +464,88 @@ export const make = Effect.gen(function* () {
 
   const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
     cwd: string,
+    demandCwd: string,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
   ) {
     yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
       if (existing) {
-        const nextPollers = new Map(activePollers);
-        nextPollers.set(cwd, {
-          ...existing,
-          subscriberCount: existing.subscriberCount + 1,
-        });
-        return Effect.succeed([undefined, nextPollers] as const);
+        return Ref.update(existing.demandCwds, (demandCwds) => {
+          const next = new Map(demandCwds);
+          next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
+          return next;
+        }).pipe(
+          Effect.map(() => {
+            const nextPollers = new Map(activePollers);
+            nextPollers.set(cwd, {
+              ...existing,
+              subscriberCount: existing.subscriberCount + 1,
+            });
+            return [undefined, nextPollers] as const;
+          }),
+        );
       }
 
-      return makeRemoteRefreshLoop(cwd, automaticRemoteRefreshInterval, refreshImmediately).pipe(
-        Effect.forkIn(broadcasterScope),
-        Effect.map((fiber) => {
-          const nextPollers = new Map(activePollers);
-          nextPollers.set(cwd, {
-            fiber,
-            subscriberCount: 1,
-          });
-          return [undefined, nextPollers] as const;
-        }),
+      return Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])).pipe(
+        Effect.flatMap((demandCwds) =>
+          makeRemoteRefreshLoop(
+            cwd,
+            demandCwds,
+            automaticRemoteRefreshInterval,
+            refreshImmediately,
+          ).pipe(
+            Effect.forkIn(broadcasterScope),
+            Effect.map((fiber) => {
+              const nextPollers = new Map(activePollers);
+              nextPollers.set(cwd, {
+                fiber,
+                subscriberCount: 1,
+                demandCwds,
+              });
+              return [undefined, nextPollers] as const;
+            }),
+          ),
+        ),
       );
     });
   });
 
   const releaseRemotePoller = Effect.fn("VcsStatusBroadcaster.releaseRemotePoller")(function* (
     cwd: string,
+    demandCwd: string,
   ) {
-    const pollerToInterrupt = yield* SynchronizedRef.modify(pollersRef, (activePollers) => {
+    const pollerToInterrupt = yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
       if (!existing) {
-        return [null, activePollers] as const;
+        return Effect.succeed([null, activePollers] as const);
       }
 
       if (existing.subscriberCount > 1) {
-        const nextPollers = new Map(activePollers);
-        nextPollers.set(cwd, {
-          ...existing,
-          subscriberCount: existing.subscriberCount - 1,
-        });
-        return [null, nextPollers] as const;
+        return Ref.update(existing.demandCwds, (demandCwds) => {
+          const nextDemandCwds = new Map(demandCwds);
+          const count = nextDemandCwds.get(demandCwd) ?? 0;
+          if (count <= 1) {
+            nextDemandCwds.delete(demandCwd);
+          } else {
+            nextDemandCwds.set(demandCwd, count - 1);
+          }
+          return nextDemandCwds;
+        }).pipe(
+          Effect.as([
+            null,
+            new Map(activePollers).set(cwd, {
+              ...existing,
+              subscriberCount: existing.subscriberCount - 1,
+            }),
+          ] as const),
+        );
       }
 
-      const nextPollers = new Map(activePollers);
-      nextPollers.delete(cwd);
-      return [existing.fiber, nextPollers] as const;
+      return Effect.succeed([
+        existing.fiber,
+        new Map([...activePollers].filter(([activeCwd]) => activeCwd !== cwd)),
+      ] as const);
     });
 
     if (pollerToInterrupt) {
@@ -520,12 +563,13 @@ export const make = Effect.gen(function* () {
         const initialRemote = cachedStatus?.remote?.value ?? null;
         yield* retainRemotePoller(
           cwd,
+          input.cwd,
           options?.automaticRemoteRefreshInterval ??
             Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
         );
 
-        const release = releaseRemotePoller(cwd).pipe(Effect.ignore, Effect.asVoid);
+        const release = releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
 
         return Stream.concat(
           Stream.make({

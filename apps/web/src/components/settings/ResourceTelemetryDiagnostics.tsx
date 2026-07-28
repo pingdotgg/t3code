@@ -46,6 +46,7 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { shouldShowResourceMonitorRetry } from "./ResourceTelemetryDiagnostics.logic";
 import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 
 const HISTORY_WINDOWS = [
@@ -83,6 +84,14 @@ function formatDurationMicros(value: number): string {
   if (value < 1_000) return `${Math.round(value)} µs`;
   if (value < 1_000_000) return `${(value / 1_000).toFixed(2)} ms`;
   return `${(value / 1_000_000).toFixed(2)} s`;
+}
+
+function formatSampleInterval(valueMs: number): string {
+  if (valueMs < 1_000) return `${Math.max(0, Math.round(valueMs))} ms`;
+  const seconds = valueMs / 1_000;
+  return `${seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${
+    seconds === 1 ? "second" : "seconds"
+  }`;
 }
 
 function processIdentityKey(process: ResourceTelemetryProcess): string {
@@ -496,17 +505,17 @@ function canSignalProcess(process: ResourceTelemetryProcess): boolean {
 
 function ProcessActions({
   process,
-  signalingKey,
+  signalingKeys,
   onSignal,
 }: {
   process: ResourceTelemetryProcess;
-  signalingKey: string | null;
+  signalingKeys: ReadonlySet<string>;
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   if (!canSignalProcess(process)) {
     return <span className="text-[10px] text-muted-foreground/35">—</span>;
   }
-  const isSignaling = signalingKey === processIdentityKey(process);
+  const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
     <div className="flex items-center justify-end gap-1.5">
       <button
@@ -531,11 +540,11 @@ function ProcessActions({
 
 function ProcessTable({
   processes,
-  signalingKey,
+  signalingKeys,
   onSignal,
 }: {
   processes: ReadonlyArray<ResourceTelemetryProcess>;
-  signalingKey: string | null;
+  signalingKeys: ReadonlySet<string>;
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -651,7 +660,11 @@ function ProcessTable({
                 {process.identity.pid}
               </td>
               <td className="px-2 py-2 text-right sm:pr-4">
-                <ProcessActions process={process} signalingKey={signalingKey} onSignal={onSignal} />
+                <ProcessActions
+                  process={process}
+                  signalingKeys={signalingKeys}
+                  onSignal={onSignal}
+                />
               </td>
             </tr>
           ))}
@@ -825,7 +838,7 @@ export function ResourceTelemetryDiagnostics() {
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
-  const [signalingKey, setSignalingKey] = useState<string | null>(null);
+  const [signalingKeys, setSignalingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
@@ -845,7 +858,7 @@ export function ResourceTelemetryDiagnostics() {
       if (environmentId === undefined) {
         return;
       }
-      setSignalingKey(identityKey);
+      setSignalingKeys((current) => new Set(current).add(identityKey));
       void signalServerProcess({
         environmentId,
         input: {
@@ -877,7 +890,12 @@ export function ResourceTelemetryDiagnostics() {
           });
         })
         .finally(() => {
-          setSignalingKey((current) => (current === identityKey ? null : current));
+          setSignalingKeys((current) => {
+            if (!current.has(identityKey)) return current;
+            const next = new Set(current);
+            next.delete(identityKey);
+            return next;
+          });
         });
     },
     [primaryEnvironment?.environmentId, signalServerProcess],
@@ -900,10 +918,10 @@ export function ResourceTelemetryDiagnostics() {
   }, [retryTelemetry]);
 
   const speedLimit = snapshot ? Option.getOrNull(snapshot.speedLimitPercent) : null;
-  const collectorNeedsRetry =
-    snapshot?.health.native.status === "degraded" ||
-    snapshot?.health.native.status === "unavailable" ||
-    snapshot?.health.native.status === "stopped";
+  const collectorNeedsRetry = shouldShowResourceMonitorRetry({
+    nativeStatus: snapshot?.health.native.status ?? null,
+    error: telemetry.error,
+  });
   const hasHostPowerSignal =
     snapshot !== null &&
     (snapshot.power.onBattery !== "unknown" ||
@@ -958,7 +976,7 @@ export function ResourceTelemetryDiagnostics() {
             </div>
             <div className="flex items-center gap-2 text-[10px] text-muted-foreground/65">
               <span className="size-1.5 rounded-full bg-emerald-500" />
-              Sampling every 5 seconds
+              Sampling every {snapshot ? formatSampleInterval(snapshot.sampleIntervalMs) : "..."}
             </div>
           </div>
           <div className="grid grid-cols-2 divide-x divide-y divide-border/55 md:grid-cols-3">
@@ -1217,7 +1235,7 @@ export function ResourceTelemetryDiagnostics() {
         <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_1px_1px_rgb(0_0_0/0.03)]">
           <ProcessTable
             processes={snapshot?.processes ?? []}
-            signalingKey={signalingKey}
+            signalingKeys={signalingKeys}
             onSignal={signalProcess}
           />
         </div>

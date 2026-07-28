@@ -32,11 +32,6 @@ import { ServerConfig } from "../../config.ts";
 import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
 import * as EventNdjsonLogger from "./EventNdjsonLogger.ts";
 
-export interface ProviderEventLoggersShape {
-  readonly native: EventNdjsonLogger.EventNdjsonLogger | undefined;
-  readonly canonical: EventNdjsonLogger.EventNdjsonLogger | undefined;
-}
-
 /**
  * Shared logger pair for native + canonical provider event streams.
  *
@@ -47,7 +42,10 @@ export interface ProviderEventLoggersShape {
  */
 export class ProviderEventLoggers extends Context.Service<
   ProviderEventLoggers,
-  ProviderEventLoggersShape
+  {
+    readonly native: EventNdjsonLogger.EventNdjsonLogger | undefined;
+    readonly canonical: EventNdjsonLogger.EventNdjsonLogger | undefined;
+  }
 >()("t3/provider/Layers/ProviderEventLoggers") {}
 
 /**
@@ -55,7 +53,7 @@ export class ProviderEventLoggers extends Context.Service<
  * + canonical logging entirely. Keeps the tag non-optional in the type
  * system while letting the runtime treat absence as a no-op.
  */
-export const NoOpProviderEventLoggers: ProviderEventLoggersShape = {
+export const NoOpProviderEventLoggers: ProviderEventLoggers["Service"] = {
   native: undefined,
   canonical: undefined,
 };

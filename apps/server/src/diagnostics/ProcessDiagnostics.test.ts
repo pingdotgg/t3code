@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
@@ -35,7 +36,7 @@ function makeTelemetryLayer(
   desktopSnapshot?: DesktopHostTelemetrySnapshot,
 ) {
   const nativeLayer = NativeTelemetryClient.layerTest({
-    sampleNow: Effect.succeed(snapshot),
+    sampleNow: Effect.succeed({ generation: 0, snapshot }),
     health: Effect.succeed({
       status: "healthy",
       hello: Option.none(),
@@ -101,9 +102,7 @@ describe("ProcessDiagnostics", () => {
       const layer = ProcessDiagnostics.layer.pipe(Layer.provideMerge(telemetryLayer));
 
       const diagnostics = yield* Effect.gen(function* () {
-        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
         const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
-        yield* telemetry.refresh;
         return yield* processDiagnostics.read;
       }).pipe(Effect.provide(layer));
 
@@ -136,6 +135,71 @@ describe("ProcessDiagnostics", () => {
         signal: "SIGINT",
         signaled: false,
         message: Option.some("Process 4242 no longer matches the selected process identity."),
+      });
+    }),
+  );
+
+  it.effect("refuses to signal when a fresh identity check cannot be collected", () =>
+    Effect.gen(function* () {
+      const snapshot = makeNativeSnapshot([
+        {
+          pid: 4_242,
+          ppid: process.pid,
+          startTimeMs: 2_000,
+          runTimeMs: 4_000,
+          name: "agent",
+          command: "codex app-server",
+          status: "Running",
+          cpuPercent: 1.5,
+          cpuTimeMs: 60,
+          residentBytes: 2_048,
+          virtualBytes: 4_096,
+          ioReadBytes: 300,
+          ioWriteBytes: 400,
+          ioSemantics: "storage",
+        },
+      ]);
+      const staleTelemetry = yield* Effect.service(ResourceTelemetry.ResourceTelemetry).pipe(
+        Effect.flatMap((telemetry) => telemetry.latest),
+        Effect.provide(makeTelemetryLayer(snapshot)),
+      );
+      const telemetryLayer = Layer.succeed(
+        ResourceTelemetry.ResourceTelemetry,
+        ResourceTelemetry.ResourceTelemetry.of({
+          latest: Effect.succeed(staleTelemetry),
+          changes: Stream.empty,
+          subscribe: Effect.die("unused"),
+          readHistory: () => Effect.die("unused"),
+          refresh: Effect.fail(
+            new ResourceTelemetry.ResourceTelemetryRefreshFailed({
+              operation: "refresh",
+              cause: new Error("collector unavailable"),
+            }),
+          ),
+          validateProcessIdentity: () => Effect.die("unused"),
+          retry: Effect.die("unused"),
+        }),
+      );
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(telemetryLayer));
+
+      const result = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+        Effect.flatMap((processDiagnostics) =>
+          processDiagnostics.signal({
+            pid: 4_242,
+            startTimeMs: 2_000,
+            signal: "SIGINT",
+          }),
+        ),
+        Effect.provide(layer),
+      );
+
+      expect(result).toEqual({
+        pid: 4_242,
+        signal: "SIGINT",
+        signaled: false,
+        message: Option.some(
+          "Could not refresh process 4242; refusing to signal a stale identity.",
+        ),
       });
     }),
   );
@@ -215,6 +279,15 @@ describe("ProcessDiagnostics", () => {
         signaled: false,
         message: Option.some("Process 4242 is not a signalable T3 backend descendant."),
       });
+
+      const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(
+        Effect.flatMap((processDiagnostics) => processDiagnostics.read),
+        Effect.provide(layer),
+      );
+      expect(diagnostics.processes).toEqual([]);
+      expect(diagnostics.processCount).toBe(0);
+      expect(diagnostics.totalCpuPercent).toBe(0);
+      expect(diagnostics.totalRssBytes).toBe(0);
     }),
   );
 });

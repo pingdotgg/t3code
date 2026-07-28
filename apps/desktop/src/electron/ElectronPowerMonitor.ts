@@ -8,29 +8,27 @@ import * as Electron from "electron";
 export type ElectronThermalState = ReturnType<Electron.PowerMonitor["getCurrentThermalState"]>;
 export type ElectronIdleState = ReturnType<Electron.PowerMonitor["getSystemIdleState"]>;
 
-export interface ElectronPowerMonitorShape {
-  readonly isOnBatteryPower: Effect.Effect<boolean>;
-  readonly getSystemIdleTime: Effect.Effect<number>;
-  readonly getSystemIdleState: (idleThresholdSeconds: number) => Effect.Effect<ElectronIdleState>;
-  readonly getCurrentThermalState: Effect.Effect<ElectronThermalState>;
-  readonly onSimpleEvent: (
-    eventName: "lock-screen" | "unlock-screen" | "on-ac" | "on-battery" | "suspend" | "resume",
-    listener: () => void,
-  ) => Effect.Effect<void, never, Scope.Scope>;
-  readonly onThermalStateChange: (
-    listener: (state: ElectronThermalState) => void,
-  ) => Effect.Effect<void, never, Scope.Scope>;
-  readonly onSpeedLimitChange: (
-    listener: (limit: number) => void,
-  ) => Effect.Effect<void, never, Scope.Scope>;
-}
-
 export class ElectronPowerMonitor extends Context.Service<
   ElectronPowerMonitor,
-  ElectronPowerMonitorShape
+  {
+    readonly isOnBatteryPower: Effect.Effect<boolean>;
+    readonly getSystemIdleTime: Effect.Effect<number>;
+    readonly getSystemIdleState: (idleThresholdSeconds: number) => Effect.Effect<ElectronIdleState>;
+    readonly getCurrentThermalState: Effect.Effect<ElectronThermalState>;
+    readonly onSimpleEvent: (
+      eventName: "lock-screen" | "unlock-screen" | "on-ac" | "on-battery" | "suspend" | "resume",
+      listener: () => void,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly onThermalStateChange: (
+      listener: (state: ElectronThermalState) => void,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly onSpeedLimitChange: (
+      listener: (limit: number) => void,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+  }
 >()("@t3tools/desktop/electron/ElectronPowerMonitor") {}
 
-const onSimpleEvent: ElectronPowerMonitorShape["onSimpleEvent"] = (eventName, listener) =>
+const onSimpleEvent: ElectronPowerMonitor["Service"]["onSimpleEvent"] = (eventName, listener) =>
   Effect.acquireRelease(
     Effect.sync(() => {
       Electron.powerMonitor.on(eventName as any, listener as any);
@@ -41,7 +39,9 @@ const onSimpleEvent: ElectronPowerMonitorShape["onSimpleEvent"] = (eventName, li
       }),
   ).pipe(Effect.asVoid);
 
-const onThermalStateChange: ElectronPowerMonitorShape["onThermalStateChange"] = (listener) => {
+const onThermalStateChange: ElectronPowerMonitor["Service"]["onThermalStateChange"] = (
+  listener,
+) => {
   const wrapped = (
     event: Electron.Event<Electron.PowerMonitorThermalStateChangeEventParams>,
   ): void => {
@@ -58,7 +58,7 @@ const onThermalStateChange: ElectronPowerMonitorShape["onThermalStateChange"] = 
   ).pipe(Effect.asVoid);
 };
 
-const onSpeedLimitChange: ElectronPowerMonitorShape["onSpeedLimitChange"] = (listener) => {
+const onSpeedLimitChange: ElectronPowerMonitor["Service"]["onSpeedLimitChange"] = (listener) => {
   const wrapped = (
     event: Electron.Event<Electron.PowerMonitorSpeedLimitChangeEventParams>,
   ): void => {

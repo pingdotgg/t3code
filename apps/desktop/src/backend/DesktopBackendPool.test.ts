@@ -60,6 +60,7 @@ function makePoolLayer(
             Effect.succeed({
               beginSession: () => Effect.void,
               writeOutputChunk: () => Effect.void,
+              persistFailureSnapshot: () => Effect.void,
               persistFailure: () => Effect.void,
               discardSession: Effect.void,
             } satisfies DesktopObservability.DesktopBackendOutputLogShape),
@@ -69,6 +70,7 @@ function makePoolLayer(
           changes: Stream.empty,
           encoded: Stream.empty,
           handleControl: () => Effect.void,
+          handleControlForSource: () => Effect.void,
         }),
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
           resolvePrimary: Effect.die("unexpected primary config resolve"),

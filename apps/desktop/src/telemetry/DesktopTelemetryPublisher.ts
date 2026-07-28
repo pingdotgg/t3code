@@ -42,16 +42,18 @@ interface PowerState {
   readonly speedLimitPercent: Option.Option<number>;
 }
 
-export interface DesktopTelemetryPublisherShape {
-  readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
-  readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
-  readonly encoded: Stream.Stream<Uint8Array>;
-  readonly handleControl: (message: DesktopTelemetryControlMessage) => Effect.Effect<void>;
-}
-
 export class DesktopTelemetryPublisher extends Context.Service<
   DesktopTelemetryPublisher,
-  DesktopTelemetryPublisherShape
+  {
+    readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
+    readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
+    readonly encoded: Stream.Stream<Uint8Array>;
+    readonly handleControl: (message: DesktopTelemetryControlMessage) => Effect.Effect<void>;
+    readonly handleControlForSource: (
+      sourceId: string,
+      message: DesktopTelemetryControlMessage,
+    ) => Effect.Effect<void>;
+  }
 >()("@t3tools/desktop/telemetry/DesktopTelemetryPublisher") {}
 
 function booleanState(value: boolean): HostPowerSnapshot["onBattery"] {
@@ -114,7 +116,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const powerState = yield* Ref.make(initialPowerState);
   const powerEvents = yield* Queue.unbounded<PowerEvent>();
   const sampleTriggers = yield* Queue.sliding<void>(1);
-  const diagnosticsDemand = yield* Ref.make(false);
+  const diagnosticsDemandSources = yield* Ref.make<ReadonlySet<string>>(new Set());
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const sequence = yield* Ref.make(0);
@@ -145,7 +147,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const sampleOnce = Effect.gen(function* () {
     const sampledAt = yield* DateTime.now;
     const sampledAtUnixMs = DateTime.toEpochMillis(sampledAt);
-    const demand = yield* Ref.get(diagnosticsDemand);
+    const demand = (yield* Ref.get(diagnosticsDemandSources)).size > 0;
     const [currentPower, idleSeconds, systemIdleState, onBattery, metrics] = yield* Effect.all(
       [
         Ref.get(powerState),
@@ -208,7 +210,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     while (true) {
       const [currentPower, demand] = yield* Effect.all([
         Ref.get(powerState),
-        Ref.get(diagnosticsDemand),
+        Ref.get(diagnosticsDemandSources).pipe(Effect.map((sources) => sources.size > 0)),
       ]);
       yield* Effect.raceFirst(
         Queue.take(sampleTriggers),
@@ -218,31 +220,45 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     }
   }).pipe(Effect.forkScoped);
 
-  const handleControl: DesktopTelemetryPublisherShape["handleControl"] = (message) => {
+  const handleControlForSource: DesktopTelemetryPublisher["Service"]["handleControlForSource"] = (
+    sourceId,
+    message,
+  ) => {
     switch (message.type) {
       case "setDiagnosticsDemand":
-        return Ref.getAndSet(diagnosticsDemand, message.enabled).pipe(
-          Effect.flatMap((previous) =>
-            previous === message.enabled
+        return Ref.modify(diagnosticsDemandSources, (sources) => {
+          const previous = sources.size > 0;
+          const next = new Set(sources);
+          if (message.enabled) {
+            next.add(sourceId);
+          } else {
+            next.delete(sourceId);
+          }
+          return [[previous, next.size > 0] as const, next] as const;
+        }).pipe(
+          Effect.flatMap(([previous, enabled]) =>
+            previous === enabled
               ? Effect.void
               : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
           ),
         );
     }
   };
+  const handleControl: DesktopTelemetryPublisher["Service"]["handleControl"] = (message) =>
+    handleControlForSource("legacy", message);
 
-  const snapshots = Stream.concat(
-    Stream.unwrap(
-      Ref.get(latest).pipe(
-        Effect.map(
-          Option.match({
-            onNone: () => Stream.empty,
-            onSome: Stream.make,
-          }),
-        ),
-      ),
-    ),
-    Stream.fromPubSub(changes),
+  const snapshots = Stream.unwrap(
+    Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(changes);
+      const initial = yield* Ref.get(latest);
+      return Stream.concat(
+        Option.match(initial, {
+          onNone: () => Stream.empty,
+          onSome: Stream.make,
+        }),
+        Stream.fromSubscription(subscription),
+      );
+    }),
   );
   const encoded = Stream.concat(
     Stream.make({
@@ -258,6 +274,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     changes: Stream.fromPubSub(changes),
     encoded,
     handleControl,
+    handleControlForSource,
   });
 });
 

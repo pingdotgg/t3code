@@ -65,7 +65,7 @@ const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
-const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.millis(250);
+const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-process");
@@ -222,6 +222,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
     message: DesktopTelemetryControlMessageValue,
   ) => Effect.Effect<void>;
   readonly readinessTimeout?: Duration.Duration;
+  readonly outputDrainTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onReady?: () => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
@@ -570,7 +571,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   yield* Effect.forEach(outputFibers, Fiber.await, {
     concurrency: "unbounded",
     discard: true,
-  }).pipe(Effect.timeout(DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT), Effect.ignore);
+  }).pipe(
+    Effect.timeout(options.outputDrainTimeout ?? DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
+    Effect.ignore,
+  );
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
   }
@@ -837,7 +841,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const program = runBackendProcess({
           ...config.value,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
-          onDesktopTelemetryControl: desktopTelemetryPublisher.handleControl,
+          onDesktopTelemetryControl: (message) =>
+            desktopTelemetryPublisher.handleControlForSource(spec.id, message),
           onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,
@@ -874,7 +879,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* logInstanceWarning("backend readiness check failed during bootstrap", {
                 error: error.message,
               });
-              yield* backendOutputLog.persistFailure({
+              yield* backendOutputLog.persistFailureSnapshot({
                 details: error.message,
               });
             },

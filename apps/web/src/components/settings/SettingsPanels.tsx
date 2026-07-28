@@ -121,10 +121,12 @@ import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
+  resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -211,19 +213,11 @@ function durationToSeconds(duration: Duration.Duration): number {
   return Math.round(Duration.toMillis(duration) / 1_000);
 }
 
-function normalizeIntervalSeconds(value: number | null): number {
+function normalizeIntervalSeconds(value: number | null, minimum = 0): number {
   if (value === null || !Number.isFinite(value)) {
-    return 0;
+    return minimum;
   }
-  return Math.max(0, Math.round(value));
-}
-
-function resolveBackgroundActivityProfileOption(settings: {
-  readonly backgroundActivity: BackgroundActivitySettings;
-}): BackgroundActivityProfileOption {
-  return settings.backgroundActivity.profile === "custom"
-    ? "advanced"
-    : settings.backgroundActivity.profile;
+  return Math.max(minimum, Math.round(value));
 }
 
 function resetBackgroundActivitySettings() {
@@ -244,10 +238,19 @@ function backgroundActivityProfileSettings(profile: BackgroundActivityProfile) {
 
 function backgroundActivityOverrideSettings(
   current: BackgroundActivitySettings,
+  resolved: ReturnType<typeof resolveServerBackgroundActivitySettings>,
   overrides: BackgroundActivityOverridePatch,
 ) {
   const nextOverrides: BackgroundActivityOverridePatch = {
-    ...current.overrides,
+    automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+    providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+    hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
+    hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
+    idleClientTtl: resolved.idleClientTtl,
+    pauseWhenHostLocked: resolved.pauseWhenHostLocked,
+    pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
+    pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
+    pauseWhenOnBattery: resolved.pauseWhenOnBattery,
     ...overrides,
   };
   for (const [key, value] of Object.entries(nextOverrides)) {
@@ -560,6 +563,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -593,9 +597,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
-      ...(!Equal.equals(settings.backgroundActivity, DEFAULT_UNIFIED_SETTINGS.backgroundActivity)
-        ? ["Background activity"]
-        : []),
+      ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -616,6 +618,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ],
     [
       isTextGenerationModelDirty,
+      isBackgroundActivityDirty,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -625,7 +628,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
       settings.glassOpacity,
-      settings.backgroundActivity,
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
@@ -659,6 +661,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+      backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+      providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -685,7 +690,7 @@ function BackgroundActivityAdvancedDialog({
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
-  const activeProfile = getBackgroundActivityBaseProfile(settings.backgroundActivity);
+  const activeProfile = resolvedBackgroundActivity.profile;
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
   );
@@ -762,11 +767,15 @@ function BackgroundActivityAdvancedDialog({
                   className="w-32"
                   onValueChange={(value) =>
                     updateSettings(
-                      backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                        automaticGitFetchInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
-                        ),
-                      }),
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          automaticGitFetchInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
+                      ),
                     )
                   }
                 >
@@ -796,11 +805,15 @@ function BackgroundActivityAdvancedDialog({
                   className="w-32"
                   onValueChange={(value) =>
                     updateSettings(
-                      backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                        providerHealthRefreshInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
-                        ),
-                      }),
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          providerHealthRefreshInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
+                      ),
                     )
                   }
                 >
@@ -830,11 +843,15 @@ function BackgroundActivityAdvancedDialog({
                   className="w-32"
                   onValueChange={(value) =>
                     updateSettings(
-                      backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                        hostPowerMonitorActiveInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
-                        ),
-                      }),
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          hostPowerMonitorActiveInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value, 5),
+                          ),
+                        },
+                      ),
                     )
                   }
                 >
@@ -864,11 +881,15 @@ function BackgroundActivityAdvancedDialog({
                   className="w-32"
                   onValueChange={(value) =>
                     updateSettings(
-                      backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                        hostPowerMonitorIdleInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
-                        ),
-                      }),
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          hostPowerMonitorIdleInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value, 5),
+                          ),
+                        },
+                      ),
                     )
                   }
                 >
@@ -893,9 +914,13 @@ function BackgroundActivityAdvancedDialog({
                     checked={resolvedBackgroundActivity[key]}
                     onCheckedChange={(checked) =>
                       updateSettings(
-                        backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                          [key]: Boolean(checked),
-                        }),
+                        backgroundActivityOverrideSettings(
+                          settings.backgroundActivity,
+                          resolvedBackgroundActivity,
+                          {
+                            [key]: Boolean(checked),
+                          },
+                        ),
                       )
                     }
                     aria-label={label}
@@ -1125,9 +1150,7 @@ export function GeneralSettingsPanel() {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
-  const activeBackgroundActivityProfile = getBackgroundActivityBaseProfile(
-    settings.backgroundActivity,
-  );
+  const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
@@ -1702,7 +1725,7 @@ export function ProviderSettingsPanel() {
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const providerHealthPreset = getBackgroundActivityPresetSettings(
-    getBackgroundActivityBaseProfile(settings.backgroundActivity),
+    resolvedBackgroundActivity.profile,
   ).providerHealthRefreshInterval;
   const providerHealthRefreshIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.providerHealthRefreshInterval,
@@ -2027,9 +2050,13 @@ export function ProviderSettingsPanel() {
                 label="provider health check interval"
                 onClick={() =>
                   updateSettings(
-                    backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                      providerHealthRefreshInterval: undefined,
-                    }),
+                    backgroundActivityOverrideSettings(
+                      settings.backgroundActivity,
+                      resolvedBackgroundActivity,
+                      {
+                        providerHealthRefreshInterval: undefined,
+                      },
+                    ),
                   )
                 }
               />
@@ -2045,11 +2072,15 @@ export function ProviderSettingsPanel() {
                 className="w-32"
                 onValueChange={(value) =>
                   updateSettings(
-                    backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                      providerHealthRefreshInterval: Duration.seconds(
-                        normalizeIntervalSeconds(value),
-                      ),
-                    }),
+                    backgroundActivityOverrideSettings(
+                      settings.backgroundActivity,
+                      resolvedBackgroundActivity,
+                      {
+                        providerHealthRefreshInterval: Duration.seconds(
+                          normalizeIntervalSeconds(value),
+                        ),
+                      },
+                    ),
                   )
                 }
               >

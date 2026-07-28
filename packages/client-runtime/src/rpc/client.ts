@@ -222,6 +222,7 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                         input,
                       });
                       return method(input).pipe(
+                        Stream.ensuring(completeObservation),
                         Stream.catchCause((cause) => {
                           const hasOnlyExpectedFailures =
                             cause.reasons.length > 0 &&
@@ -261,7 +262,6 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                           }
                           return Stream.failCause(cause);
                         }),
-                        Stream.ensuring(completeObservation),
                       );
                     }),
                   ),

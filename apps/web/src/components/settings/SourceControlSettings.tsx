@@ -92,6 +92,29 @@ function normalizeFetchIntervalSeconds(value: number | null): number {
   return Math.max(0, Math.round(value));
 }
 
+function backgroundActivityOverrideSettings(
+  current: BackgroundActivitySettings,
+  overrides: BackgroundActivityOverridePatch,
+) {
+  const nextOverrides: BackgroundActivityOverridePatch = {
+    ...current.overrides,
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(nextOverrides)) {
+    if (value === undefined) {
+      delete nextOverrides[key as keyof typeof nextOverrides];
+    }
+  }
+  return {
+    backgroundActivity: {
+      schemaVersion: 1 as const,
+      profile: "custom" as const,
+      baseProfile: getBackgroundActivityBaseProfile(current),
+      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
+    },
+  };
+}
+
 function BackgroundPolicyTooltip({ children }: { readonly children: string }) {
   return (
     <Tooltip>
@@ -336,28 +359,6 @@ function GitFetchIntervalSettings() {
   );
   const canResetFetchInterval =
     automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
-  const backgroundActivityOverrideSettings = (
-    current: BackgroundActivitySettings,
-    overrides: BackgroundActivityOverridePatch,
-  ) => {
-    const nextOverrides: BackgroundActivityOverridePatch = {
-      ...current.overrides,
-      ...overrides,
-    };
-    for (const [key, value] of Object.entries(nextOverrides)) {
-      if (value === undefined) {
-        delete nextOverrides[key as keyof typeof nextOverrides];
-      }
-    }
-    return {
-      backgroundActivity: {
-        schemaVersion: 1 as const,
-        profile: "custom" as const,
-        baseProfile: getBackgroundActivityBaseProfile(current),
-        overrides: nextOverrides as BackgroundActivitySettings["overrides"],
-      },
-    };
-  };
 
   return (
     <div className="grid gap-3">

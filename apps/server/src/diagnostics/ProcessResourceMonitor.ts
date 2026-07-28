@@ -1,4 +1,5 @@
 import type {
+  ResourceTelemetryProcessCategory,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
 } from "@t3tools/contracts";
@@ -9,39 +10,48 @@ import * as Option from "effect/Option";
 
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 
-export interface ProcessResourceMonitorShape {
-  readonly readHistory: (
-    input: ServerProcessResourceHistoryInput,
-  ) => Effect.Effect<ServerProcessResourceHistoryResult>;
-}
-
 export class ProcessResourceMonitor extends Context.Service<
   ProcessResourceMonitor,
-  ProcessResourceMonitorShape
+  {
+    readonly readHistory: (
+      input: ServerProcessResourceHistoryInput,
+    ) => Effect.Effect<ServerProcessResourceHistoryResult>;
+  }
 >()("t3/diagnostics/ProcessResourceMonitor") {}
+
+function isLegacyBackendCategory(category: ResourceTelemetryProcessCategory): boolean {
+  return (
+    category === "server" ||
+    category === "server-child" ||
+    category === "provider-root" ||
+    category === "terminal-root"
+  );
+}
 
 export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
   const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-  const readHistory: ProcessResourceMonitorShape["readHistory"] = (input) =>
+  const readHistory: ProcessResourceMonitor["Service"]["readHistory"] = (input) =>
     telemetry.readHistory(input).pipe(
       Effect.map((history) => {
-        const topProcesses = history.topProcesses.map((entry) => ({
-          processKey: `${entry.identity.pid}:${entry.identity.startTimeMs}`,
-          pid: entry.identity.pid,
-          ppid: entry.ppid,
-          command: entry.command || entry.name || "unknown",
-          depth: entry.depth,
-          isServerRoot: entry.category === "server",
-          firstSeenAt: entry.firstSeenAt,
-          lastSeenAt: entry.lastSeenAt,
-          currentCpuPercent: entry.currentCpuPercent,
-          avgCpuPercent: entry.avgCpuPercent,
-          maxCpuPercent: entry.maxCpuPercent,
-          cpuSecondsApprox: entry.cpuTimeMs / 1_000,
-          currentRssBytes: entry.currentRssBytes,
-          maxRssBytes: entry.peakRssBytes,
-          sampleCount: entry.sampleCount,
-        }));
+        const topProcesses = history.topProcesses
+          .filter((entry) => isLegacyBackendCategory(entry.category))
+          .map((entry) => ({
+            processKey: `${entry.identity.pid}:${entry.identity.startTimeMs}`,
+            pid: entry.identity.pid,
+            ppid: entry.ppid,
+            command: entry.command || entry.name || "unknown",
+            depth: entry.depth,
+            isServerRoot: entry.category === "server",
+            firstSeenAt: entry.firstSeenAt,
+            lastSeenAt: entry.lastSeenAt,
+            currentCpuPercent: entry.currentCpuPercent,
+            avgCpuPercent: entry.avgCpuPercent,
+            maxCpuPercent: entry.maxCpuPercent,
+            cpuSecondsApprox: entry.cpuTimeMs / 1_000,
+            currentRssBytes: entry.currentRssBytes,
+            maxRssBytes: entry.peakRssBytes,
+            sampleCount: entry.sampleCount,
+          }));
         return {
           readAt: history.readAt,
           windowMs: history.windowMs,

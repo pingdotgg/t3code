@@ -366,6 +366,21 @@ const makeWsRpcLayer = (
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
+      const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
+      yield* Effect.addFinalizer(() =>
+        Ref.get(rpcClientIds).pipe(
+          Effect.flatMap((clientIds) =>
+            Effect.forEach(
+              clientIds,
+              (clientId) => backgroundPolicy.removeRpcClient(currentSessionId, clientId),
+              {
+                discard: true,
+              },
+            ),
+          ),
+          Effect.ignore,
+        ),
+      );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
@@ -1435,14 +1450,22 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
-          observeRpcEffect(
-            WS_METHODS.serverReportClientActivity,
-            backgroundPolicy.reportClientActivity(
-              currentSessionId,
-              RpcClientId.make(metadata.client.id),
-              input,
+          Ref.update(rpcClientIds, (clientIds) => {
+            const next = new Set(clientIds);
+            next.add(RpcClientId.make(metadata.client.id));
+            return next;
+          }).pipe(
+            Effect.andThen(
+              observeRpcEffect(
+                WS_METHODS.serverReportClientActivity,
+                backgroundPolicy.reportClientActivity(
+                  currentSessionId,
+                  RpcClientId.make(metadata.client.id),
+                  input,
+                ),
+                { "rpc.aggregate": "server" },
+              ),
             ),
-            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverReportHostPowerState]: (input) =>
           observeRpcEffect(
@@ -1980,18 +2003,20 @@ const makeWsRpcLayer = (
         [WS_METHODS.subscribeBackgroundPolicy]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeBackgroundPolicy,
-            Stream.concat(
-              Stream.unwrap(Effect.map(backgroundPolicy.snapshot, Stream.make)),
-              backgroundPolicy.streamChanges,
+            Stream.unwrap(
+              Effect.map(backgroundPolicy.subscribe, ({ latest, changes }) =>
+                Stream.concat(Stream.make(latest), changes),
+              ),
             ),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.subscribeResourceTelemetry]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeResourceTelemetry,
-            Stream.concat(
-              Stream.unwrap(Effect.map(resourceTelemetry.latest, Stream.make)),
-              resourceTelemetry.changes,
+            Stream.unwrap(
+              Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
+                Stream.concat(Stream.make(latest), changes),
+              ),
             ),
             { "rpc.aggregate": "server" },
           ),

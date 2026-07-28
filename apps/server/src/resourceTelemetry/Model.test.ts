@@ -195,6 +195,93 @@ describe("resource telemetry process model", () => {
     expect(result.groups.electron.processCount).toBe(0);
   });
 
+  it("derives cumulative CPU time for synthetic Electron-only processes", () => {
+    const first = merge({
+      native: nativeSnapshot(BASE_TIME_MS, [
+        processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 }),
+      ]),
+      desktop: desktopSnapshot(BASE_TIME_MS, [
+        electronMetric({
+          pid: 300,
+          creationTimeMs: 10_000,
+          type: "Browser",
+          cpuPercent: 50,
+        }),
+      ]),
+    });
+    const second = merge({
+      previous: first,
+      native: nativeSnapshot(
+        BASE_TIME_MS + 1_000,
+        [processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 })],
+        2,
+      ),
+      desktop: desktopSnapshot(BASE_TIME_MS + 1_000, [
+        electronMetric({
+          pid: 300,
+          creationTimeMs: 10_000,
+          type: "Browser",
+          cpuPercent: 50,
+        }),
+      ]),
+    });
+
+    expect(second.processes.find((process) => process.identity.pid === 300)?.cpuTimeMs).toBe(500);
+    expect(second.groups.electron.cpuTimeMs).toBe(500);
+  });
+
+  it("does not apply an explicit Electron root to a reused PID", () => {
+    const first = mergeProcesses({
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      electronRootPids: new Set([300]),
+      fallbackSampledAtMs: BASE_TIME_MS,
+      nativeSnapshot: Option.some(
+        nativeSnapshot(BASE_TIME_MS, [
+          processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 }),
+          processSample({ pid: 300, ppid: 1, startTimeMs: 10_000 }),
+        ]),
+      ),
+      desktopSnapshot: Option.some(
+        desktopSnapshot(BASE_TIME_MS, [
+          electronMetric({
+            pid: 300,
+            creationTimeMs: 10_000,
+            type: "Browser",
+          }),
+        ]),
+      ),
+      previous: new Map(),
+      counters: emptyTelemetryCounters(),
+      updatePrevious: true,
+    });
+    const reused = mergeProcesses({
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      electronRootPids: new Set([300]),
+      fallbackSampledAtMs: BASE_TIME_MS + 1_000,
+      nativeSnapshot: Option.some(
+        nativeSnapshot(
+          BASE_TIME_MS + 1_000,
+          [
+            processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 }),
+            processSample({ pid: 300, ppid: SERVER_PID, startTimeMs: 20_000 }),
+          ],
+          2,
+        ),
+      ),
+      desktopSnapshot: Option.none(),
+      previous: first.previous,
+      counters: first.counters,
+      updatePrevious: true,
+    });
+
+    expect(reused.processes.find((process) => process.identity.pid === 300)?.category).toBe(
+      "server-child",
+    );
+    expect(reused.groups.electron.processCount).toBe(0);
+  });
+
   it("derives rates from cumulative counters and preserves I/O semantics", () => {
     const first = merge({
       native: nativeSnapshot(BASE_TIME_MS, [
@@ -336,6 +423,7 @@ describe("resource telemetry process model", () => {
     expect(desktopOnly.processes[0]?.cpuPercent).toBe(25);
     expect(desktopOnly.processes[0]?.ioReadBytesPerSecond).toBe(2_000);
     expect(desktopOnly.processes[0]?.ioWriteBytesPerSecond).toBe(3_000);
+    expect(desktopOnly.sampledAtMs).toBe(BASE_TIME_MS + 1_500);
   });
 
   it("resets deltas when counters decrease or the sampling gap is unsafe", () => {

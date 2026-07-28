@@ -127,6 +127,41 @@ describe("DesktopTelemetryPublisher", () => {
         assert.equal(demandedSnapshot.electronProcesses[0]?.cpuPercent, 12.5);
         assert.equal(demandedSnapshot.electronProcesses[0]?.workingSetBytes, 2_048 * 1_024);
         assert.equal(metricsReadCount, 1);
+        yield* publisher.handleControlForSource("secondary-backend", {
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: true,
+        });
+        yield* publisher.handleControl({
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: false,
+        });
+        yield* publisher.handleControlForSource("old-backend", {
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: true,
+        });
+        yield* publisher.handleControlForSource("secondary-backend", {
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: false,
+        });
+        yield* Effect.all(
+          [
+            publisher.handleControlForSource("old-backend", {
+              version: 1,
+              type: "setDiagnosticsDemand",
+              enabled: false,
+            }),
+            publisher.handleControlForSource("replacement-backend", {
+              version: 1,
+              type: "setDiagnosticsDemand",
+              enabled: true,
+            }),
+          ],
+          { concurrency: "unbounded", discard: true },
+        );
 
         const batterySnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(
           Effect.forkChild,
@@ -165,11 +200,19 @@ describe("DesktopTelemetryPublisher", () => {
         const speedLimitSnapshot = Option.getOrThrow(yield* Fiber.join(speedLimitSnapshotFiber));
         assert.equal(Option.getOrNull(speedLimitSnapshot.speedLimitPercent), 65);
 
+        const metricsBeforeSecondaryOnlySample = metricsReadCount;
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.equal(metricsReadCount, metricsBeforeSecondaryOnlySample + 1);
+        assert.equal(
+          (yield* publisher.latest).pipe(Option.getOrThrow).electronProcesses[0]?.pid,
+          4_242,
+        );
+
         const stoppedSnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(
           Effect.forkChild,
         );
         yield* Effect.yieldNow;
-        yield* publisher.handleControl({
+        yield* publisher.handleControlForSource("replacement-backend", {
           version: 1,
           type: "setDiagnosticsDemand",
           enabled: false,

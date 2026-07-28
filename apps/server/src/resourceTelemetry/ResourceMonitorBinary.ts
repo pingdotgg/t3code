@@ -55,13 +55,11 @@ export type ResourceMonitorBinaryError =
   | ResourceMonitorBinaryNotFound
   | ResourceMonitorBinaryNotExecutable;
 
-export interface ResourceMonitorBinaryShape {
-  readonly resolve: Effect.Effect<string, ResourceMonitorBinaryError>;
-}
-
 export class ResourceMonitorBinary extends Context.Service<
   ResourceMonitorBinary,
-  ResourceMonitorBinaryShape
+  {
+    readonly resolve: Effect.Effect<string, ResourceMonitorBinaryError>;
+  }
 >()("t3/resourceTelemetry/ResourceMonitorBinary") {}
 
 function binaryName(platform: NodeJS.Platform): string {
@@ -162,7 +160,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
     ),
   ].filter((candidate): candidate is string => Boolean(candidate));
 
-  const resolve: ResourceMonitorBinaryShape["resolve"] = Effect.gen(function* () {
+  const resolve: ResourceMonitorBinary["Service"]["resolve"] = Effect.gen(function* () {
     for (const candidate of candidates) {
       const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
       if (!exists) continue;

@@ -13,20 +13,6 @@ import * as Schema from "effect/Schema";
 
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 
-export interface ProcessDiagnosticsShape {
-  readonly read: Effect.Effect<ServerProcessDiagnosticsResult>;
-  readonly signal: (input: {
-    readonly pid: number;
-    readonly startTimeMs: number;
-    readonly signal: ServerProcessSignal;
-  }) => Effect.Effect<ServerSignalProcessResult>;
-}
-
-export class ProcessDiagnostics extends Context.Service<
-  ProcessDiagnostics,
-  ProcessDiagnosticsShape
->()("t3/diagnostics/ProcessDiagnostics") {}
-
 export class ProcessIdentityChanged extends Schema.TaggedErrorClass<ProcessIdentityChanged>()(
   "ProcessIdentityChanged",
   {
@@ -54,6 +40,18 @@ export class ProcessSignalFailed extends Schema.TaggedErrorClass<ProcessSignalFa
 
 export type ProcessDiagnosticsError = ProcessIdentityChanged | ProcessSignalFailed;
 
+export class ProcessDiagnostics extends Context.Service<
+  ProcessDiagnostics,
+  {
+    readonly read: Effect.Effect<ServerProcessDiagnosticsResult>;
+    readonly signal: (input: {
+      readonly pid: number;
+      readonly startTimeMs: number;
+      readonly signal: ServerProcessSignal;
+    }) => Effect.Effect<ServerSignalProcessResult>;
+  }
+>()("t3/diagnostics/ProcessDiagnostics") {}
+
 function formatElapsed(runTimeMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(runTimeMs / 1_000));
   const hours = Math.floor(totalSeconds / 3_600);
@@ -72,10 +70,11 @@ function canSignalCategory(category: ResourceTelemetryProcessCategory): boolean 
 
 export const make = Effect.fn("makeProcessDiagnostics")(function* () {
   const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-  const read: ProcessDiagnosticsShape["read"] = telemetry.latest.pipe(
+  const refreshedTelemetry = telemetry.refresh.pipe(Effect.catch(() => telemetry.latest));
+  const read: ProcessDiagnostics["Service"]["read"] = refreshedTelemetry.pipe(
     Effect.map((snapshot) => {
       const processes = snapshot.processes
-        .filter((entry) => entry.identity.pid !== process.pid)
+        .filter((entry) => canSignalCategory(entry.category))
         .map(
           (entry): ServerProcessDiagnosticsEntry => ({
             pid: entry.identity.pid,
@@ -103,7 +102,7 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
     }),
   );
 
-  const signal: ProcessDiagnosticsShape["signal"] = Effect.fn("ProcessDiagnostics.signal")(
+  const signal: ProcessDiagnostics["Service"]["signal"] = Effect.fn("ProcessDiagnostics.signal")(
     function* (input) {
       if (input.pid === process.pid) {
         return {
@@ -113,8 +112,18 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
           message: Option.some("Refusing to signal the T3 server process."),
         };
       }
-      const current = yield* telemetry.latest;
-      const selected = current.processes.find(
+      const current = yield* telemetry.refresh.pipe(Effect.option);
+      if (Option.isNone(current)) {
+        return {
+          pid: input.pid,
+          signal: input.signal,
+          signaled: false,
+          message: Option.some(
+            `Could not refresh process ${input.pid}; refusing to signal a stale identity.`,
+          ),
+        };
+      }
+      const selected = current.value.processes.find(
         (entry) =>
           entry.identity.pid === input.pid && entry.identity.startTimeMs === input.startTimeMs,
       );
@@ -136,52 +145,34 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
           message: Option.some(`Process ${input.pid} is not a signalable T3 backend descendant.`),
         };
       }
-      return yield* telemetry
-        .validateProcessIdentity({
-          pid: input.pid,
-          startTimeMs: input.startTimeMs,
-        })
-        .pipe(
-          Effect.flatMap((valid) =>
-            valid
-              ? Effect.void
-              : Effect.fail(
-                  new ProcessIdentityChanged({
-                    pid: input.pid,
-                    startTimeMs: input.startTimeMs,
-                  }),
-                ),
-          ),
-          Effect.flatMap(() =>
-            Effect.try({
-              try: () => {
-                process.kill(input.pid, input.signal);
-                return {
-                  pid: input.pid,
-                  signal: input.signal,
-                  signaled: true,
-                  message: Option.none(),
-                };
-              },
-              catch: (cause) =>
-                new ProcessSignalFailed({
-                  pid: input.pid,
-                  signal: input.signal,
-                  cause,
-                }),
-            }),
-          ),
-          Effect.catch((error) =>
-            Effect.succeed({
-              pid: input.pid,
-              signal: input.signal,
-              signaled: false,
-              message: Option.some(
-                error instanceof Error ? error.message : "Failed to signal process.",
-              ),
-            }),
-          ),
-        );
+      return yield* Effect.try({
+        try: () => {
+          process.kill(input.pid, input.signal);
+          return {
+            pid: input.pid,
+            signal: input.signal,
+            signaled: true,
+            message: Option.none(),
+          };
+        },
+        catch: (cause) =>
+          new ProcessSignalFailed({
+            pid: input.pid,
+            signal: input.signal,
+            cause,
+          }),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.succeed({
+            pid: input.pid,
+            signal: input.signal,
+            signaled: false,
+            message: Option.some(
+              error instanceof Error ? error.message : "Failed to signal process.",
+            ),
+          }),
+        ),
+      );
     },
   );
 

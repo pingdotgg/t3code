@@ -136,8 +136,19 @@ export function applyServerSettingsPatch(
     backgroundActivityProfile !== undefined
       ? {
           schemaVersion: 1 as const,
-          profile: backgroundActivityProfile,
-          overrides: {},
+          profile:
+            automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
+              ? ("custom" as const)
+              : backgroundActivityProfile,
+          ...(automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
+            ? { baseProfile: backgroundActivityProfile }
+            : {}),
+          overrides: {
+            ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+            ...(providerHealthRefreshInterval !== undefined
+              ? { providerHealthRefreshInterval }
+              : {}),
+          },
         }
       : automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
         ? {
@@ -157,7 +168,14 @@ export function applyServerSettingsPatch(
   const nextWithReplacementsBase = {
     ...next,
     ...(backgroundActivity !== undefined
-      ? { backgroundActivity: deepMerge(current.backgroundActivity, backgroundActivity) }
+      ? {
+          backgroundActivity: {
+            ...deepMerge(current.backgroundActivity, backgroundActivity),
+            ...(backgroundActivity.overrides !== undefined
+              ? { overrides: backgroundActivity.overrides }
+              : {}),
+          },
+        }
       : {}),
     ...(backgroundActivityPatch !== undefined
       ? { backgroundActivity: backgroundActivityPatch }

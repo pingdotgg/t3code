@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -156,15 +157,30 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     return genericDemand || instanceDemand;
   });
 
-  const getRefreshInterval = input.refreshInterval
-    ? Effect.succeed(input.refreshInterval)
-    : serverSettings.getSettings.pipe(
-        Effect.map(
-          (settings) =>
-            resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+  const getRefreshInterval =
+    input.refreshInterval !== undefined
+      ? Effect.succeed(input.refreshInterval)
+      : serverSettings.getSettings.pipe(
+          Effect.map(
+            (settings) =>
+              resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+          ),
+          Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
+        );
+
+  const refreshIntervalChanges = yield* Queue.sliding<void>(1);
+  if (input.refreshInterval === undefined) {
+    yield* serverSettings.streamChanges.pipe(
+      Stream.map((settings) =>
+        Duration.toMillis(
+          resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
         ),
-        Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
-      );
+      ),
+      Stream.changes,
+      Stream.runForEach(() => Queue.offer(refreshIntervalChanges, undefined).pipe(Effect.asVoid)),
+      Effect.forkScoped,
+    );
+  }
 
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
     Effect.asVoid(applySnapshot(nextSettings)),
@@ -173,17 +189,24 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   yield* Effect.forever(
     getRefreshInterval.pipe(
       Effect.flatMap((refreshInterval) =>
-        Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
-          ? Effect.sleep("60 seconds")
-          : Effect.sleep(refreshInterval).pipe(
-              Effect.flatMap(() =>
-                hasProviderStatusDemand.pipe(
+        Effect.raceFirst(
+          Effect.sleep(
+            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
+              ? "60 seconds"
+              : refreshInterval,
+          ).pipe(Effect.as(true)),
+          Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
+        ).pipe(
+          Effect.flatMap((intervalElapsed) =>
+            intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
+              ? hasProviderStatusDemand.pipe(
                   Effect.flatMap((shouldRefresh) =>
                     shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
                   ),
-                ),
-              ),
-            ),
+                )
+              : Effect.void,
+          ),
+        ),
       ),
       Effect.ignoreCause({ log: true }),
     ),

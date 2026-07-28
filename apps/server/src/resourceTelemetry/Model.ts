@@ -48,6 +48,7 @@ export interface MergeProcessesInput {
   readonly nativeSnapshot: Option.Option<ResourceMonitorSnapshotEvent>;
   readonly desktopSnapshot: Option.Option<DesktopHostTelemetrySnapshot>;
   readonly electronRootPids?: ReadonlySet<number>;
+  readonly electronRootStartTimes?: ReadonlyMap<number, number>;
   readonly previous: ReadonlyMap<string, ProcessState>;
   readonly counters: TelemetryCounters;
   readonly updatePrevious: boolean;
@@ -134,7 +135,15 @@ function matchElectronMetric(
 function syntheticNativeSample(
   metric: DesktopElectronProcessMetric,
   sampledAtMs: number,
+  previous: ProcessState | undefined,
 ): ResourceMonitorProcessSample {
+  const cpuTimeMs =
+    metric.cumulativeCpuSeconds !== undefined
+      ? Math.max(0, Math.round(metric.cumulativeCpuSeconds * 1_000))
+      : previous
+        ? previous.process.cpuTimeMs +
+          Math.max(0, ((sampledAtMs - previous.sampledAtMs) * metric.cpuPercent) / 100)
+        : 0;
   return {
     pid: metric.pid,
     ppid: 0,
@@ -144,7 +153,7 @@ function syntheticNativeSample(
     command: metric.name ?? metric.serviceName ?? metric.type,
     status: "Running",
     cpuPercent: metric.cpuPercent,
-    cpuTimeMs: Math.max(0, Math.round((metric.cumulativeCpuSeconds ?? 0) * 1_000)),
+    cpuTimeMs,
     residentBytes: metric.workingSetBytes,
     virtualBytes: 0,
     ioReadBytes: 0,
@@ -377,14 +386,25 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
         onNone: () => input.fallbackSampledAtMs,
         onSome: (snapshot) => snapshot.sampledAtUnixMs,
       }),
-    onSome: (snapshot) => snapshot.sampledAtUnixMs,
+    onSome: (native) =>
+      Option.match(input.desktopSnapshot, {
+        onNone: () => native.sampledAtUnixMs,
+        onSome: (desktop) => Math.max(native.sampledAtUnixMs, desktop.sampledAtUnixMs),
+      }),
   });
   const nativeByPid = new Map(nativeProcesses.map((process) => [process.pid, process]));
   const metricsByPid = new Map<number, DesktopElectronProcessMetric>();
   for (const metric of electronMetrics) {
     const nativeProcess = nativeByPid.get(metric.pid);
     if (!nativeProcess) {
-      nativeByPid.set(metric.pid, syntheticNativeSample(metric, sampledAtMs));
+      nativeByPid.set(
+        metric.pid,
+        syntheticNativeSample(
+          metric,
+          sampledAtMs,
+          input.previous.get(processIdentityKey(metric.pid, metric.creationTimeMs)),
+        ),
+      );
       metricsByPid.set(metric.pid, metric);
       continue;
     }
@@ -396,7 +416,24 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
   }
   const processes = [...nativeByPid.values()];
   const processesByPid = new Map(processes.map((process) => [process.pid, process]));
-  const explicitElectronRootPids = input.electronRootPids ?? new Set<number>();
+  const requestedElectronRootPids = input.electronRootPids ?? new Set<number>();
+  const explicitElectronRootPids = new Set(
+    [...requestedElectronRootPids].filter((pid) => {
+      const process = processesByPid.get(pid);
+      if (!process) return false;
+      const expectedStartTime = input.electronRootStartTimes?.get(pid);
+      if (expectedStartTime !== undefined) {
+        return Math.abs(process.startTimeMs - expectedStartTime) <= ELECTRON_IDENTITY_TOLERANCE_MS;
+      }
+      if (metricsByPid.has(pid)) return true;
+      return [...input.previous.values()].some(
+        (previous) =>
+          previous.process.category === "electron-main" &&
+          previous.process.identity.pid === pid &&
+          previous.process.identity.startTimeMs === process.startTimeMs,
+      );
+    }),
+  );
   const electronPids = new Set([...metricsByPid.keys(), ...explicitElectronRootPids]);
   const electronRootPids = [
     ...explicitElectronRootPids,

@@ -12,9 +12,21 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttribution.ts";
-import { makeEventNdjsonLogger, makeEventNdjsonLogStore } from "./EventNdjsonLogger.ts";
+import {
+  makeEventNdjsonLogger,
+  makeEventNdjsonLogStore,
+  type PendingRecord,
+  writeBatchedMessages,
+} from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+
+function ownedLogPath(basePath: string, segment: string): string {
+  const basename = NodePath.basename(basePath);
+  const extension = NodePath.extname(basename);
+  const stem = extension.length > 0 ? basename.slice(0, -extension.length) : basename;
+  return NodePath.join(NodePath.dirname(basePath), `${stem}.${segment}.log`);
+}
 
 function parseLogLine(line: string) {
   const match = /^\[([^\]]+)\] ([A-Z]+): (.+)$/.exec(line);
@@ -90,8 +102,8 @@ describe("EventNdjsonLogger", () => {
         );
         yield* logger.close();
 
-        const threadOnePath = NodePath.join(tempDir, "thread-1.log");
-        const threadTwoPath = NodePath.join(tempDir, "thread-2.log");
+        const threadOnePath = ownedLogPath(basePath, "thread-1");
+        const threadTwoPath = ownedLogPath(basePath, "thread-2");
         assert.equal(NodeFS.existsSync(threadOnePath), true);
         assert.equal(NodeFS.existsSync(threadTwoPath), true);
 
@@ -132,7 +144,7 @@ describe("EventNdjsonLogger", () => {
           yield* logger.write({ id: "evt-invalid-thread" }, "!!!" as unknown as ThreadId);
           yield* logger.close();
 
-          const globalPath = NodePath.join(tempDir, "_global.log");
+          const globalPath = ownedLogPath(basePath, "_global");
           assert.equal(NodeFS.existsSync(globalPath), true);
           const lines = NodeFS.readFileSync(globalPath, "utf8")
             .trim()
@@ -141,9 +153,9 @@ describe("EventNdjsonLogger", () => {
           assert.equal(lines.length, 2);
           assert.equal(Number.isNaN(Date.parse(lines[0]?.observedAt ?? "")), false);
           assert.equal(Number.isNaN(Date.parse(lines[1]?.observedAt ?? "")), false);
-          assert.equal(lines[0]?.stream, "CANON");
+          assert.equal(lines[0]?.stream, "ORCH");
           assert.equal(lines[0]?.payload, '{"id":"evt-no-thread"}');
-          assert.equal(lines[1]?.stream, "CANON");
+          assert.equal(lines[1]?.stream, "ORCH");
           assert.equal(lines[1]?.payload, '{"id":"evt-invalid-thread"}');
         } finally {
           NodeFS.rmSync(tempDir, { recursive: true, force: true });
@@ -166,7 +178,7 @@ describe("EventNdjsonLogger", () => {
         yield* canonical.write({ type: "item.completed", id: "canonical-event" }, threadId);
         yield* store.close();
 
-        const lines = NodeFS.readFileSync(NodePath.join(tempDir, "thread-shared.log"), "utf8")
+        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-shared"), "utf8")
           .trim()
           .split("\n")
           .map(parseLogLine);
@@ -187,11 +199,48 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("keeps shared store views non-owning when one adapter closes", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const native = store.logger("native");
+        const canonical = store.logger("canonical");
+        const threadId = ThreadId.make("thread-shared-close");
+
+        yield* native.write({ id: "before-close" }, threadId);
+        yield* native.close();
+        yield* canonical.write({ type: "item.completed", id: "after-close" }, threadId);
+        yield* store.close();
+
+        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-shared-close"), "utf8")
+          .trim()
+          .split("\n")
+          .map(parseLogLine);
+
+        assert.deepEqual(
+          lines.map(({ stream, payload }) => ({ stream, payload })),
+          [
+            { stream: "NTIVE", payload: '{"id":"before-close"}' },
+            {
+              stream: "CANON",
+              payload: '{"type":"item.completed","id":"after-close"}',
+            },
+          ],
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("flushes an active batch without a permanent polling loop", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
       const basePath = NodePath.join(tempDir, "events.log");
-      const threadPath = NodePath.join(tempDir, "thread-batched.log");
+      const threadPath = ownedLogPath(basePath, "thread-batched");
 
       try {
         const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
@@ -227,7 +276,7 @@ describe("EventNdjsonLogger", () => {
         yield* native.write({ type: "content.delta", id: "native-delta" }, threadId);
         yield* store.close();
 
-        const lines = NodeFS.readFileSync(NodePath.join(tempDir, "thread-filtered.log"), "utf8")
+        const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-filtered"), "utf8")
           .trim()
           .split("\n")
           .map(parseLogLine);
@@ -269,7 +318,7 @@ describe("EventNdjsonLogger", () => {
         );
         yield* logger.close();
 
-        const globalPath = NodePath.join(tempDir, "_global.log");
+        const globalPath = ownedLogPath(basePath, "_global");
         assert.equal(NodeFS.existsSync(globalPath), true);
         const lines = NodeFS.readFileSync(globalPath, "utf8")
           .trim()
@@ -315,7 +364,7 @@ describe("EventNdjsonLogger", () => {
         }
         yield* store.close();
 
-        const fileStem = "thread-rotate.log";
+        const fileStem = NodePath.basename(ownedLogPath(basePath, "thread-rotate"));
         const matchingFiles = NodeFS.readdirSync(tempDir)
           .filter((entry) => entry === fileStem || entry.startsWith(`${fileStem}.`))
           .toSorted();
@@ -342,18 +391,25 @@ describe("EventNdjsonLogger", () => {
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
       const basePath = NodePath.join(tempDir, "events.log");
-      const expiredPath = NodePath.join(tempDir, "expired.log");
-      const oldPath = NodePath.join(tempDir, "old.log");
-      const newPath = NodePath.join(tempDir, "new.log");
+      const expiredPath = ownedLogPath(basePath, "expired");
+      const oldPath = ownedLogPath(basePath, "old");
+      const newPath = ownedLogPath(basePath, "new");
+      const unrelatedLogPath = NodePath.join(tempDir, "unrelated.log");
+      const legacyLogPath = NodePath.join(tempDir, "legacy-thread.log");
       const ignoredPath = NodePath.join(tempDir, "ignored.txt");
 
       try {
         yield* TestClock.setTime(1_800_000_000_000);
         const now = yield* Clock.currentTimeMillis;
-        for (const filePath of [expiredPath, oldPath, newPath, ignoredPath]) {
+        for (const filePath of [expiredPath, oldPath, newPath, unrelatedLogPath, ignoredPath]) {
           NodeFS.writeFileSync(filePath, "x".repeat(40));
         }
+        NodeFS.writeFileSync(
+          legacyLogPath,
+          "[2026-01-01T00:00:00.000Z] CANON: legacy provider event\n",
+        );
         NodeFS.utimesSync(expiredPath, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
+        NodeFS.utimesSync(legacyLogPath, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
         NodeFS.utimesSync(oldPath, (now - 5_000) / 1_000, (now - 5_000) / 1_000);
         NodeFS.utimesSync(newPath, now / 1_000, now / 1_000);
 
@@ -364,14 +420,79 @@ describe("EventNdjsonLogger", () => {
         yield* store.close();
 
         assert.equal(NodeFS.existsSync(expiredPath), false);
+        assert.equal(NodeFS.existsSync(legacyLogPath), false);
         assert.equal(NodeFS.existsSync(oldPath), false);
         assert.equal(NodeFS.existsSync(newPath), true);
+        assert.equal(NodeFS.existsSync(unrelatedLogPath), true);
         assert.equal(NodeFS.existsSync(ignoredPath), true);
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }),
   );
+
+  it.effect("does not prune an active thread sink during an unrelated flush", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const activePath = ownedLogPath(basePath, "active");
+
+      try {
+        yield* TestClock.setTime(1_800_000_000_000);
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          maxAgeMs: 1,
+          retentionCheckIntervalMs: 1,
+        });
+        const logger = store.logger("native");
+
+        yield* logger.write({ id: "active-before-retention" }, ThreadId.make("active"));
+        assert.equal(NodeFS.existsSync(activePath), true);
+
+        yield* TestClock.adjust("2 millis");
+        yield* logger.write({ id: "retention-trigger" }, ThreadId.make("other"));
+
+        assert.equal(NodeFS.existsSync(activePath), true);
+        yield* store.close();
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it("attributes batches that were written before a later chunk fails", () => {
+    const records: ReadonlyArray<PendingRecord> = [
+      {
+        stream: "native",
+        threadSegment: "thread",
+        line: "first",
+        bytes: 5,
+      },
+      {
+        stream: "canonical",
+        threadSegment: "thread",
+        line: "second",
+        bytes: 6,
+      },
+    ];
+    const attributed: Array<PendingRecord> = [];
+    let writes = 0;
+
+    assert.throws(() =>
+      writeBatchedMessages(
+        {
+          write: () => {
+            writes += 1;
+            if (writes === 2) throw new Error("simulated disk exhaustion");
+          },
+        },
+        records,
+        5,
+        (written) => attributed.push(...written),
+      ),
+    );
+    assert.deepEqual(attributed, [records[0]]);
+  });
 
   it.effect("reports logical provider log writes to resource attribution", () =>
     Effect.gen(function* () {
