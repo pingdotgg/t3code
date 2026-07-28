@@ -1616,7 +1616,10 @@ private struct SidebarThreadRow: View {
                         .contentTransition(.numericText())
                 }
                 .transition(Motion.pop(from: .trailing))
-                .help("Background agents and commands")
+                .help(
+                    "\(item.thread.backgroundAgentCount) "
+                        + (item.thread.backgroundAgentCount == 1
+                            ? "sub-agent running" : "sub-agents running"))
             }
         }
         .padding(.vertical, 2)

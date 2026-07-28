@@ -126,6 +126,20 @@ struct SidebarPresentationTests {
         #expect(Set(active.map(\.id)).isDisjoint(with: Set(pins.map(\.id))))
     }
 
+    @Test("thread status announces the exact running sub-agent count")
+    func statusIncludesSubagentCount() {
+        let projectID = "project-agents"
+        let thread = makeThread(
+            id: "parent", projectID: projectID, status: .running, backgroundAgentCount: 2)
+        let local = makeModel(
+            projects: [Project(id: projectID, name: "Agents", path: "/agents")],
+            threads: [thread])
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        #expect(groups[0].threads[0].statusLabel == "Running, 2 sub-agents running")
+    }
+
     @Test("delegated agent threads are hidden from the sidebar")
     func delegatedAgentThreadsAreHidden() {
         let projectID = "project-nest"
@@ -348,6 +362,7 @@ struct SidebarPresentationTests {
         status: ThreadStatus = .idle,
         at timestamp: TimeInterval = 1,
         parentThreadId: String? = nil,
+        backgroundAgentCount: Int = 0,
         settledOverride: String? = nil,
         settledAt: Date? = nil
     ) -> ChatThread {
@@ -360,6 +375,7 @@ struct SidebarPresentationTests {
             updatedAt: Date(timeIntervalSince1970: timestamp),
             settledOverride: settledOverride,
             settledAt: settledAt,
+            backgroundAgentCount: backgroundAgentCount,
             parentThreadId: parentThreadId)
     }
 }

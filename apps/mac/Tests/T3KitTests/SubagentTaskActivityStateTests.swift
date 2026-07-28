@@ -772,6 +772,7 @@ struct SubagentTaskActivityStateTests {
         let foreground = try #require(startedResult)
         #expect(foreground.producesTimelineRow == false)
         #expect(state.activeTaskCount == 1)
+        #expect(state.activeSubagentCount == 0)
         #expect(state.activeBackgroundWorkCount == 0)
 
         let backgroundedResult = state.apply(
@@ -779,6 +780,7 @@ struct SubagentTaskActivityStateTests {
         let detached = try #require(backgroundedResult)
         #expect(detached.isBackgrounded)
         #expect(detached.producesTimelineRow)
+        #expect(state.activeSubagentCount == 0)
         #expect(state.activeBackgroundWorkCount == 1)
     }
 
@@ -840,6 +842,7 @@ struct SubagentTaskActivityStateTests {
 
         #expect(agentItem.producesTimelineRow)
         #expect(workflowItem.producesTimelineRow)
+        #expect(state.activeSubagentCount == 1)
         #expect(state.activeBackgroundWorkCount == 2)
     }
 }

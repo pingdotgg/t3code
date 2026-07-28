@@ -164,6 +164,13 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
         activeTaskIDsStorage.count
     }
 
+    /// Currently running provider-native or product-delegated sub-agents.
+    /// Commands and workflow rows stay visible in the timeline but never
+    /// inflate the sidebar's agent count.
+    public var activeSubagentCount: Int {
+        activeTaskIDsStorage.lazy.filter { tasksByID[$0]?.entityKind == .subagent }.count
+    }
+
     /// Active tasks that represent background work a user tracks: sub-agents,
     /// workflows, and backgrounded commands.
     ///
