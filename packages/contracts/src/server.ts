@@ -425,6 +425,36 @@ export const ServerListClaudeResumableSessionsResult = Schema.Struct({
 export type ServerListClaudeResumableSessionsResult =
   typeof ServerListClaudeResumableSessionsResult.Type;
 
+/**
+ * One historical text message read back from a resumable Claude Code
+ * session's on-disk transcript, for display-only import into T3's own
+ * thread view. Deliberately not a `OrchestrationMessage` — these never pass
+ * through the orchestration event log (see `ClaudeSessionHistory.ts`'s
+ * `getTranscript`); only text content is extracted (tool calls, thinking
+ * blocks, and attachments in the original transcript are dropped).
+ */
+export const ServerClaudeResumableSessionMessage = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  role: Schema.Literals(["user", "assistant"]),
+  text: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type ServerClaudeResumableSessionMessage = typeof ServerClaudeResumableSessionMessage.Type;
+
+export const ServerGetClaudeResumableSessionTranscriptInput = Schema.Struct({
+  workspaceRoot: TrimmedNonEmptyString,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  sessionId: TrimmedNonEmptyString,
+});
+export type ServerGetClaudeResumableSessionTranscriptInput =
+  typeof ServerGetClaudeResumableSessionTranscriptInput.Type;
+
+export const ServerGetClaudeResumableSessionTranscriptResult = Schema.Struct({
+  messages: Schema.Array(ServerClaudeResumableSessionMessage),
+});
+export type ServerGetClaudeResumableSessionTranscriptResult =
+  typeof ServerGetClaudeResumableSessionTranscriptResult.Type;
+
 export const ServerSignalProcessInput = Schema.Struct({
   pid: PositiveInt,
   signal: ServerProcessSignal,

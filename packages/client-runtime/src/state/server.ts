@@ -302,6 +302,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:list-claude-resumable-sessions",
       tag: WS_METHODS.serverListClaudeResumableSessions,
     }),
+    getClaudeResumableSessionTranscript: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-claude-resumable-session-transcript",
+      tag: WS_METHODS.serverGetClaudeResumableSessionTranscript,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

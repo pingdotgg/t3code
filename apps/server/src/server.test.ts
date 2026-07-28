@@ -612,6 +612,7 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(ClaudeSessionHistory.ClaudeSessionHistory)({
             list: () => Effect.succeed({ sessions: [] }),
+            getTranscript: () => Effect.succeed({ messages: [] }),
             bindResumeSession: () => Effect.void,
           }),
         ),

@@ -36,6 +36,8 @@ import type {
   ServerConfig,
   ServerListClaudeResumableSessionsInput,
   ServerListClaudeResumableSessionsResult,
+  ServerGetClaudeResumableSessionTranscriptInput,
+  ServerGetClaudeResumableSessionTranscriptResult,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
@@ -1159,6 +1161,9 @@ export interface LocalApi {
     listClaudeResumableSessions: (
       input: ServerListClaudeResumableSessionsInput,
     ) => Promise<ServerListClaudeResumableSessionsResult>;
+    getClaudeResumableSessionTranscript: (
+      input: ServerGetClaudeResumableSessionTranscriptInput,
+    ) => Promise<ServerGetClaudeResumableSessionTranscriptResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
   };
 }

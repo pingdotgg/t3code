@@ -3,7 +3,7 @@ import {
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   type ProjectScript,
   type ProjectId,
@@ -178,6 +178,10 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import {
+  type ResumeSessionHistoryMessage,
+  useResumeSessionHistoryStore,
+} from "../resumeSessionHistoryStore";
 import { useResumeSessionIntentStore } from "../resumeSessionIntentStore";
 import {
   appendTerminalContextsToPrompt,
@@ -452,6 +456,7 @@ function formatOutgoingPrompt(params: {
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+const EMPTY_RESUME_HISTORY: ReadonlyArray<ResumeSessionHistoryMessage> = [];
 
 type ChatViewProps =
   | {
@@ -2259,10 +2264,36 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  const importedResumeHistoryMessages = useResumeSessionHistoryStore((store) =>
+    activeThread
+      ? (store.historyByThreadId[activeThread.id] ?? EMPTY_RESUME_HISTORY)
+      : EMPTY_RESUME_HISTORY,
+  );
+  const timelineMessagesWithImportedHistory = useMemo(() => {
+    if (importedResumeHistoryMessages.length === 0) return timelineMessages;
+    // Imported history is display-only — it never passed through the
+    // orchestration event log (see resumeSessionHistoryStore.ts) — so
+    // `turnId: null` degrades gracefully to plain unfolded rows, same as any
+    // other message without a live turn.
+    const importedChatMessages: ChatMessage[] = importedResumeHistoryMessages.map((message) => ({
+      id: MessageId.make(message.id),
+      role: message.role,
+      text: message.text,
+      turnId: null,
+      streaming: false,
+      createdAt: message.createdAt,
+      updatedAt: message.createdAt,
+    }));
+    return [...importedChatMessages, ...timelineMessages];
+  }, [importedResumeHistoryMessages, timelineMessages]);
   const timelineEntries = useMemo(
     () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
+      deriveTimelineEntries(
+        timelineMessagesWithImportedHistory,
+        activeThread?.proposedPlans ?? [],
+        workLogEntries,
+      ),
+    [activeThread?.proposedPlans, timelineMessagesWithImportedHistory, workLogEntries],
   );
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =

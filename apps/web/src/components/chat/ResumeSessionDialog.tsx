@@ -17,10 +17,12 @@ import {
   getDefaultProviderInstanceModel,
   resolveSelectableProviderInstance,
 } from "~/providerInstances";
+import { useResumeSessionHistoryStore } from "~/resumeSessionHistoryStore";
 import { useResumeSessionIntentStore } from "~/resumeSessionIntentStore";
 import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -45,6 +47,13 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const setResumeSessionIntent = useResumeSessionIntentStore(
     (store) => store.setResumeSessionIntent,
+  );
+  const setResumeSessionHistory = useResumeSessionHistoryStore(
+    (store) => store.setResumeSessionHistory,
+  );
+  const getClaudeResumableSessionTranscript = useAtomCommand(
+    serverEnvironment.getClaudeResumableSessionTranscript,
+    { reportFailure: false },
   );
   const [selectedProject, setSelectedProject] = useState<EnvironmentProject | null>(null);
   const [isResuming, setIsResuming] = useState(false);
@@ -144,6 +153,20 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
           resumeExternalSessionId: sessionId,
           label: session?.label ?? null,
         });
+        // Best-effort: the resume itself (above) is already fully wired up
+        // server-side, so a failure fetching the display-only transcript
+        // here should never block navigating into the resumed draft.
+        const transcriptResult = await getClaudeResumableSessionTranscript({
+          environmentId: selectedProject.environmentId,
+          input: {
+            workspaceRoot: selectedProject.workspaceRoot,
+            providerInstanceId: claudeInstanceId,
+            sessionId,
+          },
+        });
+        if (transcriptResult._tag === "Success") {
+          setResumeSessionHistory(threadId, transcriptResult.value.messages);
+        }
         await router.navigate({ to: "/draft/$draftId", params: { draftId } });
         handleClose(false);
       } catch (error) {
@@ -167,6 +190,8 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
       router,
       sessions,
       setResumeSessionIntent,
+      setResumeSessionHistory,
+      getClaudeResumableSessionTranscript,
       handleClose,
     ],
   );

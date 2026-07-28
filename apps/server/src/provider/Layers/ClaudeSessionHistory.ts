@@ -32,6 +32,9 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerClaudeResumableSession,
+  type ServerClaudeResumableSessionMessage,
+  type ServerGetClaudeResumableSessionTranscriptInput,
+  type ServerGetClaudeResumableSessionTranscriptResult,
   type ServerListClaudeResumableSessionsInput,
   type ServerListClaudeResumableSessionsResult,
   type ThreadId,
@@ -58,6 +61,7 @@ const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 
 const JSONL_EXTENSION = ".jsonl";
 const MAX_LABEL_LENGTH = 80;
+const MAX_TRANSCRIPT_MESSAGES = 200;
 
 function encodeCwdForClaudeProjectDir(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
@@ -86,6 +90,34 @@ function extractTextFromUserContent(content: unknown): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Concatenates every `type: "text"` block in a message's `content` (string
+ * or content-block array), skipping `tool_use`/`tool_result`/`thinking`/
+ * image blocks. Used for full transcript import, where an assistant turn
+ * may interleave several text blocks around tool calls — unlike
+ * `extractTextFromUserContent` (label extraction only, first block wins),
+ * this collects all of them so imported history reads coherently.
+ */
+function extractAllTextBlocks(content: unknown): string | undefined {
+  if (typeof content === "string") {
+    return content.trim().length > 0 ? content : undefined;
+  }
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string"
+    ) {
+      const text = (block as { text: string }).text;
+      if (text.trim().length > 0) parts.push(text);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
 interface TranscriptSummary {
@@ -140,6 +172,54 @@ function summarizeTranscript(raw: string): TranscriptSummary {
   return { latestTimestampMs, label, messageCount };
 }
 
+/**
+ * Parses a full transcript into flat, chronological, text-only messages for
+ * display-only import (see `getTranscript`). Plain (non-Effect) function so
+ * its `JSON.parse` calls stay outside any Effect generator.
+ */
+function parseTranscriptMessages(
+  raw: string,
+  sessionId: string,
+): ServerClaudeResumableSessionMessage[] {
+  const messages: ServerClaudeResumableSessionMessage[] = [];
+
+  for (const line of raw.split("\n")) {
+    const trimmedLine = line.trim();
+    if (trimmedLine.length === 0) continue;
+
+    let entry: unknown;
+    try {
+      entry = JSON.parse(trimmedLine);
+    } catch {
+      continue;
+    }
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const type = record.type;
+    if (type !== "user" && type !== "assistant") continue;
+    const timestamp = record.timestamp;
+    if (typeof timestamp !== "string") continue;
+
+    const message = record.message;
+    const content =
+      message && typeof message === "object"
+        ? (message as Record<string, unknown>).content
+        : undefined;
+    const text = extractAllTextBlocks(content);
+    if (text === undefined) continue;
+
+    const id =
+      typeof record.uuid === "string" && record.uuid.length > 0
+        ? record.uuid
+        : `${sessionId}-${messages.length}`;
+
+    messages.push({ id, role: type, text, createdAt: timestamp });
+  }
+
+  messages.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return messages;
+}
+
 export interface ClaudeSessionHistoryBindResumeSessionInput {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
@@ -152,6 +232,15 @@ export class ClaudeSessionHistory extends Context.Service<
     readonly list: (
       input: ServerListClaudeResumableSessionsInput,
     ) => Effect.Effect<ServerListClaudeResumableSessionsResult>;
+    /**
+     * Reads a specific resumable session's on-disk transcript back as a flat,
+     * text-only message list, for display-only import into T3's own thread
+     * view (see `ResumeSessionDialog.tsx`). These never become real
+     * orchestration events/messages.
+     */
+    readonly getTranscript: (
+      input: ServerGetClaudeResumableSessionTranscriptInput,
+    ) => Effect.Effect<ServerGetClaudeResumableSessionTranscriptResult>;
     /**
      * Binds a picked on-disk Claude session to a thread's provider session
      * directory entry, so the next turn resumes it via `--resume <uuid>`.
@@ -196,14 +285,23 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const list: ClaudeSessionHistory["Service"]["list"] = Effect.fn("ClaudeSessionHistory.list")(
-    function* (input) {
+  const resolveProjectDirPath = Effect.fn("ClaudeSessionHistory.resolveProjectDirPath")(
+    function* (input: {
+      readonly workspaceRoot: string;
+      readonly providerInstanceId?: ProviderInstanceId | undefined;
+    }) {
       const configDirPath = yield* resolveConfigDirPathForInstance(input.providerInstanceId);
-      const projectDirPath = path.join(
+      return path.join(
         configDirPath,
         "projects",
         encodeCwdForClaudeProjectDir(input.workspaceRoot),
       );
+    },
+  );
+
+  const list: ClaudeSessionHistory["Service"]["list"] = Effect.fn("ClaudeSessionHistory.list")(
+    function* (input) {
+      const projectDirPath = yield* resolveProjectDirPath(input);
 
       const entries = yield* fileSystem
         .readDirectory(projectDirPath)
@@ -249,6 +347,21 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const getTranscript: ClaudeSessionHistory["Service"]["getTranscript"] = Effect.fn(
+    "ClaudeSessionHistory.getTranscript",
+  )(function* (input) {
+    const projectDirPath = yield* resolveProjectDirPath(input);
+    const filePath = path.join(projectDirPath, `${input.sessionId}${JSONL_EXTENSION}`);
+    const raw = yield* fileSystem.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
+
+    const messages = parseTranscriptMessages(raw, input.sessionId);
+    const trimmedMessages =
+      messages.length > MAX_TRANSCRIPT_MESSAGES
+        ? messages.slice(messages.length - MAX_TRANSCRIPT_MESSAGES)
+        : messages;
+    return { messages: trimmedMessages };
+  });
+
   const bindResumeSession: ClaudeSessionHistory["Service"]["bindResumeSession"] = Effect.fn(
     "ClaudeSessionHistory.bindResumeSession",
   )(function* (input) {
@@ -273,7 +386,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  return ClaudeSessionHistory.of({ list, bindResumeSession });
+  return ClaudeSessionHistory.of({ list, getTranscript, bindResumeSession });
 });
 
 export const layer = Layer.effect(ClaudeSessionHistory, make);

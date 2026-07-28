@@ -131,6 +131,8 @@ import {
   ServerProcessResourceHistoryResult,
   ServerListClaudeResumableSessionsInput,
   ServerListClaudeResumableSessionsResult,
+  ServerGetClaudeResumableSessionTranscriptInput,
+  ServerGetClaudeResumableSessionTranscriptResult,
   ServerSignalProcessInput,
   ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
@@ -220,6 +222,7 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverListClaudeResumableSessions: "server.listClaudeResumableSessions",
+  serverGetClaudeResumableSessionTranscript: "server.getClaudeResumableSessionTranscript",
   serverSignalProcess: "server.signalProcess",
 
   // Cloud environment methods
@@ -336,6 +339,15 @@ export const WsServerListClaudeResumableSessionsRpc = Rpc.make(
   {
     payload: ServerListClaudeResumableSessionsInput,
     success: ServerListClaudeResumableSessionsResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+export const WsServerGetClaudeResumableSessionTranscriptRpc = Rpc.make(
+  WS_METHODS.serverGetClaudeResumableSessionTranscript,
+  {
+    payload: ServerGetClaudeResumableSessionTranscriptInput,
+    success: ServerGetClaudeResumableSessionTranscriptResult,
     error: EnvironmentAuthorizationError,
   },
 );
@@ -725,6 +737,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerListClaudeResumableSessionsRpc,
+  WsServerGetClaudeResumableSessionTranscriptRpc,
   WsServerSignalProcessRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
