@@ -126,37 +126,34 @@ const RelayClientLive = Layer.unwrap(
   }),
 );
 
-const HttpServerPlatformLive = Layer.unwrap(
+const HttpServerLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     if (typeof Bun !== "undefined") {
       const BunHttpServer = yield* Effect.promise(
         () => import("@effect/platform-bun/BunHttpServer"),
       );
-      return Layer.merge(
-        BunHttpServer.layer({
-          port: config.port,
-          hostname: config.host ?? "127.0.0.1",
-          gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-        }),
-        HttpResponseCompression.layerBun,
-      );
+      return BunHttpServer.layer({
+        port: config.port,
+        hostname: config.host ?? "127.0.0.1",
+        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
+      });
     } else {
       const [NodeHttpServer, NodeHttp] = yield* Effect.all([
         Effect.promise(() => import("@effect/platform-node/NodeHttpServer")),
         Effect.promise(() => import("node:http")),
       ]);
-      return Layer.merge(
-        NodeHttpServer.layer(NodeHttp.createServer, {
-          host: config.host ?? "127.0.0.1",
-          port: config.port,
-          gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-        }),
-        HttpResponseCompression.layerNode,
-      );
+      return NodeHttpServer.layer(NodeHttp.createServer, {
+        host: config.host ?? "127.0.0.1",
+        port: config.port,
+        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
+      });
     }
   }),
 );
+
+const HttpResponseCompressionLive =
+  typeof Bun !== "undefined" ? HttpResponseCompression.layerBun : HttpResponseCompression.layerNode;
 
 const PlatformServicesLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -523,7 +520,8 @@ export const makeServerLayer = Layer.unwrap(
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
-      Layer.provideMerge(HttpServerPlatformLive),
+      Layer.provideMerge(HttpResponseCompressionLive),
+      Layer.provideMerge(HttpServerLive),
       Layer.provide(ObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(VcsProcess.layer),
