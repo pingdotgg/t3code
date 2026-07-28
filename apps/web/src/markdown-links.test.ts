@@ -143,6 +143,13 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta("/Users/julius/project/AGENTS.md")).toMatchObject({
       targetPath: "/Users/julius/project/AGENTS.md",
     });
+    expect(resolveInlineCodeFileLinkMeta("/usr/local/bin/tool")).toMatchObject({
+      targetPath: "/usr/local/bin/tool",
+    });
+    expect(resolveInlineCodeFileLinkMeta("/workspace/Makefile")).toMatchObject({
+      basename: "Makefile",
+    });
+    expect(resolveInlineCodeFileLinkMeta("/chat/settings")).toBeNull();
   });
 
   it("links windows drive paths", () => {

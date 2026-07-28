@@ -9,6 +9,8 @@ const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d
 const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+// Standard OS and dev-container roots; deliberately excludes app-route-ish
+// prefixes like /app/ or /chat/ so SPA routes never read as files.
 const POSIX_FILE_ROOT_PREFIXES = [
   "/Users/",
   "/home/",
@@ -20,6 +22,20 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/Volumes/",
   "/private/",
   "/root/",
+  "/usr/",
+  "/bin/",
+  "/sbin/",
+  "/lib/",
+  "/lib64/",
+  "/srv/",
+  "/dev/",
+  "/proc/",
+  "/sys/",
+  "/run/",
+  "/boot/",
+  "/media/",
+  "/workspace/",
+  "/workspaces/",
 ] as const;
 
 export interface MarkdownFileLinkMeta {
