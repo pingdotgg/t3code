@@ -514,6 +514,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const next = yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "  ~/Development  ",
+        worktreePathTemplate: "  {repoRoot}/.worktrees/{branch}  ",
         observability: {
           otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
           otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
@@ -521,6 +522,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.equal(next.addProjectBaseDirectory, "~/Development");
+      assert.equal(next.worktreePathTemplate, "{repoRoot}/.worktrees/{branch}");
       assert.deepEqual(next.observability, {
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
@@ -555,6 +557,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const next = yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "~/Development",
+        worktreePathTemplate: "{repoRoot}/.worktrees/{branch}",
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
@@ -577,6 +580,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.deepEqual(JSON.parse(raw), {
         addProjectBaseDirectory: "~/Development",
+        worktreePathTemplate: "{repoRoot}/.worktrees/{branch}",
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",

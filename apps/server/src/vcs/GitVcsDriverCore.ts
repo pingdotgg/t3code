@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  DEFAULT_WORKTREE_PATH_TEMPLATE,
   GitCommandError,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
@@ -36,6 +37,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { resolveWorktreePathTemplate } from "./worktreePathTemplate.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -2265,9 +2267,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     "createWorktree",
   )(function* (input) {
     const targetBranch = input.newRefName ?? input.refName;
-    const sanitizedBranch = targetBranch.replace(/\//g, "-");
-    const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    const worktreePath =
+      input.path ??
+      (yield* fileSystem.realPath(path.resolve(input.cwd)).pipe(
+        Effect.map((resolvedRepoRoot) =>
+          resolveWorktreePathTemplate(path, {
+            cwd: input.cwd,
+            resolvedRepoRoot,
+            worktreesDir,
+            template: input.pathTemplate ?? DEFAULT_WORKTREE_PATH_TEMPLATE,
+            branch: targetBranch,
+          }),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.createWorktree",
+              command: "git worktree add",
+              cwd: input.cwd,
+              detail: "Failed to resolve the repository root before creating a worktree.",
+              cause,
+            }),
+        ),
+      ));
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];

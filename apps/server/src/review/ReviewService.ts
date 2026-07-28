@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import {
+  DEFAULT_WORKTREE_PATH_TEMPLATE,
   VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
   type ReviewDiffPreviewError,
@@ -14,14 +15,19 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { matchesWorktreePathTemplate } from "../vcs/worktreePathTemplate.ts";
 
 export class ReviewService extends Context.Service<
   ReviewService,
   {
     readonly getDiffPreview: (
-      input: ReviewDiffPreviewInput,
+      input: ReviewDiffPreviewInput & {
+        readonly repositoryRoots?: ReadonlyArray<string>;
+        readonly knownWorktreePaths?: ReadonlyArray<string>;
+      },
     ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
   }
 >()("t3/review/ReviewService") {}
@@ -30,6 +36,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
 
@@ -58,15 +65,74 @@ export const make = Effect.gen(function* () {
   };
 
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
-    cwd: string,
+    input: ReviewDiffPreviewInput & {
+      readonly repositoryRoots?: ReadonlyArray<string>;
+      readonly knownWorktreePaths?: ReadonlyArray<string>;
+    },
   ) {
+    const { cwd } = input;
     const [candidate, workspaceRoot, worktreesRoot] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
       canonicalizePath(config.worktreesDir),
     ]);
 
-    if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
+    const worktreePathTemplate = yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.worktreePathTemplate),
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to read worktree path template for review validation", {
+          cause,
+        }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
+      ),
+    );
+    const repositoryRoots = yield* Effect.forEach(
+      input.repositoryRoots ?? [],
+      (repositoryRoot) =>
+        canonicalizePath(repositoryRoot).pipe(
+          Effect.map((resolvedRepoRoot) => ({ repositoryRoot, resolvedRepoRoot })),
+          Effect.catch((cause) =>
+            Effect.logWarning("Skipping repository root that could not be resolved", {
+              cause,
+              repositoryRoot,
+            }).pipe(Effect.as(null)),
+          ),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const knownWorktreePaths = yield* Effect.forEach(
+      input.knownWorktreePaths ?? [],
+      (worktreePath) =>
+        canonicalizePath(worktreePath).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Skipping worktree path that could not be resolved", {
+              cause,
+              worktreePath,
+            }).pipe(Effect.as(null)),
+          ),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const matchesKnownWorktreePath = knownWorktreePaths.some(
+      (worktreePath) => worktreePath !== null && isWithinRoot(candidate, worktreePath),
+    );
+    const matchesConfiguredWorktreePath = repositoryRoots.some((repositoryRoot) =>
+      repositoryRoot === null
+        ? false
+        : matchesWorktreePathTemplate(path, {
+            candidate,
+            cwd: repositoryRoot.repositoryRoot,
+            resolvedRepoRoot: repositoryRoot.resolvedRepoRoot,
+            worktreesDir: worktreesRoot,
+            template: worktreePathTemplate,
+          }),
+    );
+
+    if (
+      isWithinRoot(candidate, workspaceRoot) ||
+      isWithinRoot(candidate, worktreesRoot) ||
+      matchesKnownWorktreePath ||
+      matchesConfiguredWorktreePath
+    ) {
       return;
     }
 
@@ -80,7 +146,7 @@ export const make = Effect.gen(function* () {
   const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
     "ReviewService.getDiffPreview",
   )(function* (input) {
-    yield* assertWorkspaceBoundCwd(input.cwd);
+    yield* assertWorkspaceBoundCwd(input);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (!handle) {

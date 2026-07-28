@@ -193,10 +193,17 @@ describe("ServerSettingsPatch.providerInstances", () => {
   });
 });
 
+describe("ServerSettings worktree path template", () => {
+  it("defaults to the existing centralized worktree layout", () => {
+    expect(DEFAULT_SERVER_SETTINGS.worktreePathTemplate).toBe("{worktreesDir}/{repoName}/{branch}");
+  });
+});
+
 describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",
+      worktreePathTemplate: "  {repoRoot}/.worktrees/{branch}  ",
       textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
       observability: {
         otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
@@ -218,6 +225,7 @@ describe("ServerSettingsPatch string normalization", () => {
     });
 
     expect(patch.addProjectBaseDirectory).toBe("~/Development");
+    expect(patch.worktreePathTemplate).toBe("{repoRoot}/.worktrees/{branch}");
     expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
     expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
@@ -239,6 +247,7 @@ describe("ServerSettingsPatch string normalization", () => {
     const encoded = encodeServerSettings({
       ...defaultSettings,
       addProjectBaseDirectory: "  ~/Development  ",
+      worktreePathTemplate: "  {repoRoot}/.worktrees/{branch}  ",
       providers: {
         ...defaultSettings.providers,
         codex: {
@@ -250,6 +259,7 @@ describe("ServerSettingsPatch string normalization", () => {
     });
 
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
+    expect(encoded.worktreePathTemplate).toBe("{repoRoot}/.worktrees/{branch}");
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });

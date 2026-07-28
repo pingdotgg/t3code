@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  DEFAULT_WORKTREE_PATH_TEMPLATE,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthReviewWriteScope,
@@ -57,6 +58,7 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  VcsRepositoryDetectionError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -452,6 +454,14 @@ const makeWsRpcLayer = (
           Effect.logWarning("Failed to read automatic Git fetch interval setting", {
             detail: cause.message,
           }).pipe(Effect.as(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
+        ),
+      );
+      const worktreePathTemplate = serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.worktreePathTemplate),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to read worktree path template; using the default", {
+            detail: cause.message,
+          }).pipe(Effect.as(DEFAULT_WORKTREE_PATH_TEMPLATE)),
         ),
       );
       const sourceControlRepositories =
@@ -1028,6 +1038,7 @@ const makeWsRpcLayer = (
                 newRefName: bootstrap.prepareWorktree.branch,
                 baseRefName: bootstrap.prepareWorktree.baseBranch,
                 path: null,
+                pathTemplate: yield* worktreePathTemplate,
               });
               targetWorktreePath = worktree.worktree.path;
               yield* orchestrationEngine.dispatch({
@@ -1838,7 +1849,12 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            worktreePathTemplate.pipe(
+              Effect.flatMap((pathTemplate) =>
+                gitWorkflow.createWorktree({ ...input, pathTemplate }),
+              ),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
@@ -1868,9 +1884,34 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
-          observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
-            "rpc.aggregate": "review",
-          }),
+          observeRpcEffect(
+            WS_METHODS.reviewGetDiffPreview,
+            Effect.gen(function* () {
+              const [repositoryRoots, knownWorktreePaths] = yield* Effect.all([
+                projectionSnapshotQuery.getActiveProjectWorkspaceRoots(),
+                projectionSnapshotQuery.getActiveThreadWorktreePaths(),
+              ]).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new VcsRepositoryDetectionError({
+                      operation: "review.getDiffPreview",
+                      cwd: input.cwd,
+                      detail:
+                        "Failed to load project paths required to validate the review workspace.",
+                      cause,
+                    }),
+                ),
+              );
+              return yield* review.getDiffPreview({
+                ...input,
+                repositoryRoots,
+                knownWorktreePaths,
+              });
+            }),
+            {
+              "rpc.aggregate": "review",
+            },
+          ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",
