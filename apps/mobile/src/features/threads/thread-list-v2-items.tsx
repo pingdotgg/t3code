@@ -14,6 +14,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadListV2Status, type ThreadListV2Status } from "./threadListV2";
@@ -68,7 +69,9 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 /** Rounded-row radius shared with the v1 sidebar rows. */
 const SIDEBAR_V2_ROW_RADIUS = 12;
 
-export const ThreadListV2SettledDivider = memo(function ThreadListV2SettledDivider(props: {
+/** Section label + rule: the only structure in an otherwise flat list. */
+export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
+  readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
   const borderColor = useThemeColor("--color-border");
@@ -79,9 +82,124 @@ export const ThreadListV2SettledDivider = memo(function ThreadListV2SettledDivid
         props.pane === "sidebar" ? "px-3" : "px-5",
       )}
     >
-      <Text className="text-xs font-t3-medium text-foreground-tertiary">Settled</Text>
+      <Text className="text-xs font-t3-medium text-foreground-tertiary">{props.label}</Text>
       <View className="h-px flex-1" style={{ backgroundColor: borderColor }} />
     </View>
+  );
+});
+
+const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
+  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+];
+
+/**
+ * A queued new task, in the same idiom as an active v2 row: it is work the
+ * user wrote, so it reads like the threads it will become. "Queued" takes
+ * the status slot — the state is the one thing that differs — and stays
+ * uncolored because nothing is asked of the user; the environment is simply
+ * not reachable yet.
+ */
+export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props: {
+  readonly pendingTask: PendingNewTask;
+  readonly project: EnvironmentProject | null;
+  readonly projectTitle?: string;
+  readonly environmentLabel: string | null;
+  readonly pane?: "screen" | "sidebar";
+  /** Draws the "Pending" divider above the first queued row. */
+  readonly showPendingDivider: boolean;
+  readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
+  readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
+}) {
+  const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
+  const drawerColor = useThemeColor("--color-drawer");
+  const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const sidebarPane = props.pane === "sidebar";
+  const projectTitle =
+    props.projectTitle ?? props.project?.title ?? pendingTask.creation.projectTitle ?? "";
+  const branch = pendingTask.creation.branch;
+
+  const handleMenuAction = useCallback(
+    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "delete") onDeletePendingTask(pendingTask);
+    },
+    [onDeletePendingTask, pendingTask],
+  );
+
+  const rowContent = (
+    <>
+      <View className="flex-row items-center gap-1.5">
+        {props.project ? (
+          <ProjectFavicon
+            environmentId={pendingTask.message.environmentId}
+            size={15}
+            projectTitle={projectTitle}
+            workspaceRoot={props.project.workspaceRoot}
+          />
+        ) : null}
+        <Text className="flex-1 text-sm font-t3-medium text-foreground-muted" numberOfLines={1}>
+          {projectTitle}
+        </Text>
+        <Text className="text-xs text-foreground-tertiary">Queued</Text>
+      </View>
+      {/* One line, unlike the two an active row allows: a queued title is
+          derived from the whole prompt rather than written as a title, so the
+          second line is usually a stray word or emoji rather than meaning. */}
+      <Text className="mt-1 text-base font-t3-medium text-foreground" numberOfLines={1}>
+        {pendingTask.title}
+      </Text>
+      {branch || props.environmentLabel ? (
+        <Text className="mt-1 text-xs text-foreground-muted" numberOfLines={1}>
+          {branch ? (
+            <Text className="text-xs text-foreground-muted" style={{ fontFamily: MONO_FONT }}>
+              {branch}
+            </Text>
+          ) : null}
+          {branch && props.environmentLabel ? "  ·  " : null}
+          {props.environmentLabel ? (
+            <Text className="text-xs text-foreground-tertiary">{props.environmentLabel}</Text>
+          ) : null}
+        </Text>
+      ) : null}
+    </>
+  );
+
+  return (
+    <>
+      {props.showPendingDivider ? (
+        <ThreadListV2SectionDivider label="Pending" pane={props.pane} />
+      ) : null}
+      <ControlPillMenu
+        actions={PENDING_TASK_MENU_ACTIONS}
+        onPressAction={handleMenuAction}
+        shouldOpenOnLongPress
+      >
+        <Pressable
+          accessibilityHint="Opens the queued task for editing"
+          accessibilityLabel={pendingTask.title}
+          accessibilityRole="button"
+          onPress={() => onSelectPendingTask(pendingTask)}
+          style={
+            sidebarPane
+              ? ({ pressed }) => ({
+                  backgroundColor: pressed ? pressedBackgroundColor : drawerColor,
+                  borderRadius: SIDEBAR_V2_ROW_RADIUS,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                })
+              : ({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })
+          }
+        >
+          {sidebarPane ? (
+            rowContent
+          ) : (
+            <View className="bg-screen">
+              <View className="px-5 py-2.5">{rowContent}</View>
+              <View className="ml-5 h-px bg-border-subtle" />
+            </View>
+          )}
+        </Pressable>
+      </ControlPillMenu>
+    </>
   );
 });
 
@@ -423,7 +541,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   return (
     <>
-      {props.showSettledDivider ? <ThreadListV2SettledDivider pane={props.pane} /> : null}
+      {props.showSettledDivider ? (
+        <ThreadListV2SectionDivider label="Settled" pane={props.pane} />
+      ) : null}
       <ThreadSwipeable
         backgroundColor={sidebarPane ? drawerColor : screenColor}
         compactActions={variant === "slim"}

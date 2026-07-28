@@ -36,12 +36,13 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
-import { ThreadListV2Row } from "../threads/thread-list-v2-items";
+import { ThreadListV2PendingRow, ThreadListV2Row } from "../threads/thread-list-v2-items";
 import {
   buildThreadListV2Items,
+  buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2Item,
+  type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
@@ -549,50 +550,100 @@ export function HomeScreen(props: HomeScreenProps) {
     // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
-  const threadListV2Items = threadListV2Layout.items;
+  // Queued tasks are not thread shells, so the v2 partition never sees them;
+  // they are spliced in below the active block and stay visible and deletable
+  // while their environment is offline. Same environment scope and search
+  // filter as the list itself.
+  const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
+  const v2PendingTasks = useMemo(
+    () =>
+      props.pendingTasks.filter(
+        (pendingTask) =>
+          (props.selectedEnvironmentId === null ||
+            pendingTask.message.environmentId === props.selectedEnvironmentId) &&
+          (v2ScopedProjectKeys === null ||
+            v2ScopedProjectKeys.has(
+              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+            )) &&
+          (v2SearchQuery.length === 0 ||
+            pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
+      ),
+    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+  );
+  const threadListV2Items = useMemo(
+    () =>
+      buildThreadListV2ListItems({
+        items: threadListV2Layout.items,
+        pendingTasks: v2PendingTasks,
+      }),
+    [threadListV2Layout.items, v2PendingTasks],
+  );
 
   const renderV2Item = useCallback(
-    ({ item }: { readonly item: ThreadListV2Item }) => (
-      <ThreadListV2Row
-        thread={item.thread}
-        variant={item.variant}
-        showSettledDivider={item.showSettledDivider}
-        project={
-          projectByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
-          null
-        }
-        projectTitle={v2ProjectTitleByProjectKey.get(
-          scopedProjectKey(item.thread.environmentId, item.thread.projectId),
-        )}
-        providerDriver={
-          serverConfigs
-            .get(item.thread.environmentId)
-            ?.providers.find(
-              (provider) =>
-                provider.instanceId ===
-                (item.thread.session?.providerInstanceId ?? item.thread.modelSelection.instanceId),
-            )?.driver ?? null
-        }
-        environmentLabel={
-          Object.keys(props.savedConnectionsById).length > 1
-            ? (props.savedConnectionsById[item.thread.environmentId]?.environmentLabel ?? null)
-            : null
-        }
-        onSelectThread={props.onSelectThread}
-        onDeleteThread={handleDeleteThread}
-        onArchiveThread={props.onArchiveThread}
-        settlementSupported={settlementEnvironmentIds.has(item.thread.environmentId)}
-        onSettleThread={handleSettleThread}
-        onUnsettleThread={handleUnsettleThread}
-        onChangeRequestState={handleChangeRequestState}
-        projectCwd={
-          projectCwdByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
-          null
-        }
-        onSwipeableClose={handleSwipeableClose}
-        onSwipeableWillOpen={handleSwipeableWillOpen}
-      />
-    ),
+    ({ item }: { readonly item: ThreadListV2ListItem }) => {
+      if (item.type === "v2-pending") {
+        const pendingScopeKey = scopedProjectKey(
+          item.pendingTask.message.environmentId,
+          item.pendingTask.creation.projectId,
+        );
+        return (
+          <ThreadListV2PendingRow
+            pendingTask={item.pendingTask}
+            project={projectByKey.get(pendingScopeKey) ?? null}
+            projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
+            environmentLabel={
+              Object.keys(props.savedConnectionsById).length > 1
+                ? (props.savedConnectionsById[item.pendingTask.message.environmentId]
+                    ?.environmentLabel ?? null)
+                : null
+            }
+            showPendingDivider={item.showPendingDivider}
+            onSelectPendingTask={props.onSelectPendingTask}
+            onDeletePendingTask={props.onDeletePendingTask}
+          />
+        );
+      }
+      const thread = item.item.thread;
+      return (
+        <ThreadListV2Row
+          thread={thread}
+          variant={item.item.variant}
+          showSettledDivider={item.item.showSettledDivider}
+          project={
+            projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
+          }
+          projectTitle={v2ProjectTitleByProjectKey.get(
+            scopedProjectKey(thread.environmentId, thread.projectId),
+          )}
+          providerDriver={
+            serverConfigs
+              .get(thread.environmentId)
+              ?.providers.find(
+                (provider) =>
+                  provider.instanceId ===
+                  (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
+              )?.driver ?? null
+          }
+          environmentLabel={
+            Object.keys(props.savedConnectionsById).length > 1
+              ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
+              : null
+          }
+          onSelectThread={props.onSelectThread}
+          onDeleteThread={handleDeleteThread}
+          onArchiveThread={props.onArchiveThread}
+          settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
+          onSettleThread={handleSettleThread}
+          onUnsettleThread={handleUnsettleThread}
+          onChangeRequestState={handleChangeRequestState}
+          projectCwd={
+            projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
+          }
+          onSwipeableClose={handleSwipeableClose}
+          onSwipeableWillOpen={handleSwipeableWillOpen}
+        />
+      );
+    },
     [
       handleChangeRequestState,
       handleDeleteThread,
@@ -603,6 +654,8 @@ export function HomeScreen(props: HomeScreenProps) {
       projectByKey,
       projectCwdByKey,
       props.onArchiveThread,
+      props.onDeletePendingTask,
+      props.onSelectPendingTask,
       props.onSelectThread,
       props.savedConnectionsById,
       serverConfigs,
@@ -610,10 +663,7 @@ export function HomeScreen(props: HomeScreenProps) {
       v2ProjectTitleByProjectKey,
     ],
   );
-  const v2KeyExtractor = useCallback(
-    (item: ThreadListV2Item) => `${item.thread.environmentId}:${item.thread.id}`,
-    [],
-  );
+  const v2KeyExtractor = useCallback((item: ThreadListV2ListItem) => item.key, []);
 
   const extraData = useMemo(
     () => ({ savedConnectionsById: props.savedConnectionsById, projectCwdByKey }),
@@ -788,41 +838,9 @@ export function HomeScreen(props: HomeScreenProps) {
     </>
   );
 
-  // v2 renders queued offline tasks above the thread cards — they are not
-  // thread shells, so the v2 item builder never sees them, but they must
-  // stay visible and deletable while their environment is offline. They
-  // respect the same environment scope and search filter as the list.
-  const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-  const v2PendingTasks = props.pendingTasks.filter(
-    (pendingTask) =>
-      (props.selectedEnvironmentId === null ||
-        pendingTask.message.environmentId === props.selectedEnvironmentId) &&
-      (v2ScopedProjectKeys === null ||
-        v2ScopedProjectKeys.has(
-          scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
-        )) &&
-      (v2SearchQuery.length === 0 || pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-  );
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
-  const v2ListHeader = (
-    <>
-      {listHeader}
-      {v2PendingTasks.map((pendingTask, index) => (
-        <PendingTaskListRow
-          key={pendingTask.message.messageId}
-          variant="compact"
-          pendingTask={pendingTask}
-          environmentLabel={
-            props.savedConnectionsById[pendingTask.message.environmentId]?.environmentLabel ?? null
-          }
-          isLast={index === v2PendingTasks.length - 1}
-          onSelectPendingTask={props.onSelectPendingTask}
-          onDeletePendingTask={props.onDeletePendingTask}
-        />
-      ))}
-    </>
-  );
+  const v2ListHeader = listHeader;
 
   const listEmpty = !hasResults ? (
     hasSearchQuery ? (
@@ -846,37 +864,33 @@ export function HomeScreen(props: HomeScreenProps) {
   // is empty. Search outranks the scope — "No results" names the actionable
   // fact when a query is active. Snoozed threads outrank the rest: "No
   // threads yet" over an inbox that is merely all-snoozed reads as data
-  // loss. Pending tasks render in the header, so the list showing them
-  // isn't empty in the user's eyes.
+  // loss.
   const v2SnoozedCount = threadListV2Layout.snoozedCount;
-  const v2ListEmpty =
-    v2PendingTasks.length > 0 ? null : hasSearchQuery ? (
-      v2SnoozedCount > 0 ? (
-        // The snoozed threads already passed this search filter: "No
-        // results" would claim nothing matched when matches are merely
-        // parked.
-        <EmptyState
-          title={
-            v2SnoozedCount === 1 ? "1 matching thread snoozed" : `All matching threads snoozed`
-          }
-          detail={`Threads matching "${props.searchQuery}" are snoozed and return when their wake time passes.`}
-        />
-      ) : (
-        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-      )
-    ) : v2SnoozedCount > 0 ? (
+  const v2ListEmpty = hasSearchQuery ? (
+    v2SnoozedCount > 0 ? (
+      // The snoozed threads already passed this search filter: "No
+      // results" would claim nothing matched when matches are merely
+      // parked.
       <EmptyState
-        title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}
-        detail="Snoozed threads return when their wake time passes."
-      />
-    ) : v2ScopedProjectGroup !== null ? (
-      <EmptyState
-        title={`No threads in ${v2ScopedProjectGroup.title}`}
-        detail="Choose another project or create a new task."
+        title={v2SnoozedCount === 1 ? "1 matching thread snoozed" : `All matching threads snoozed`}
+        detail={`Threads matching "${props.searchQuery}" are snoozed and return when their wake time passes.`}
       />
     ) : (
-      listEmpty
-    );
+      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+    )
+  ) : v2SnoozedCount > 0 ? (
+    <EmptyState
+      title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}
+      detail="Snoozed threads return when their wake time passes."
+    />
+  ) : v2ScopedProjectGroup !== null ? (
+    <EmptyState
+      title={`No threads in ${v2ScopedProjectGroup.title}`}
+      detail="Choose another project or create a new task."
+    />
+  ) : (
+    listEmpty
+  );
 
   if (threadListV2Enabled) {
     return (
@@ -888,6 +902,8 @@ export function HomeScreen(props: HomeScreenProps) {
             keyExtractor={v2KeyExtractor}
             extraData={{
               projectByKey,
+              projectCwdByKey,
+              projectTitleByProjectKey: v2ProjectTitleByProjectKey,
               serverConfigs,
               savedConnectionsById: props.savedConnectionsById,
             }}

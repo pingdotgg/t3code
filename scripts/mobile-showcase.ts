@@ -1338,7 +1338,12 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   void main().catch((error: unknown) => {
-    NodeProcess.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    // Stack over message: the harness only fails in CI, where the line that
+    // threw is the whole diagnosis and there is nobody at a terminal to
+    // re-run it with more output.
+    NodeProcess.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
     NodeProcess.exit(1);
   });
 }

@@ -1,9 +1,19 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
+  buildThreadListV2ListItems,
   resolveThreadListV2Enabled,
   resolveThreadListV2Status,
   sortThreadsForListV2,
@@ -337,6 +347,91 @@ describe("buildThreadListV2Items settled paging", () => {
       "active",
       "settled-3",
       "settled-2",
+    ]);
+  });
+});
+
+function makePendingTask(id: string): PendingNewTask {
+  return {
+    message: {
+      environmentId,
+      threadId: ThreadId.make(`thread-${id}`),
+      messageId: MessageId.make(id),
+      commandId: CommandId.make(`command-${id}`),
+      text: id,
+      attachments: [],
+      createdAt: NOW,
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "worktree",
+        branch: null,
+        worktreePath: null,
+      },
+    },
+    creation: {
+      projectId: ProjectId.make("project-1"),
+      workspaceMode: "worktree",
+      branch: null,
+      worktreePath: null,
+    },
+    title: id,
+  };
+}
+
+describe("buildThreadListV2ListItems", () => {
+  const layout = buildThreadListV2Items({
+    threads: [
+      makeThread({ id: ThreadId.make("active"), title: "active" }),
+      makeThread({
+        id: ThreadId.make("settled"),
+        title: "settled",
+        settledOverride: "settled",
+        settledAt: NOW,
+      }),
+    ],
+    environmentId: null,
+    searchQuery: "",
+    now: NOW,
+  });
+
+  it("splices queued tasks between the active block and the settled tail", () => {
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [makePendingTask("queued-1"), makePendingTask("queued-2")],
+    });
+
+    expect(
+      items.map((item) =>
+        item.type === "v2-pending" ? item.pendingTask.title : item.item.thread.id,
+      ),
+    ).toEqual(["active", "queued-1", "queued-2", "settled"]);
+    // Only the leading queued row labels the section, exactly like Settled.
+    expect(
+      items.filter((item) => item.type === "v2-pending" && item.showPendingDivider),
+    ).toHaveLength(1);
+  });
+
+  it("ends the list with queued tasks when nothing has settled yet", () => {
+    const activeOnly = buildThreadListV2Items({
+      threads: [makeThread({ id: ThreadId.make("active"), title: "active" })],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const items = buildThreadListV2ListItems({
+      items: activeOnly.items,
+      pendingTasks: [makePendingTask("queued-1")],
+    });
+
+    expect(items.map((item) => item.type)).toEqual(["v2-thread", "v2-pending"]);
+  });
+
+  it("leaves the thread order untouched when nothing is queued", () => {
+    const items = buildThreadListV2ListItems({ items: layout.items, pendingTasks: [] });
+
+    expect(items.map((item) => item.key)).toEqual([
+      `v2-thread:${environmentId}:active`,
+      `v2-thread:${environmentId}:settled`,
     ]);
   });
 });
