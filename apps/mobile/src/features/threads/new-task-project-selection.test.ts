@@ -50,14 +50,14 @@ describe("getOnlySelectableProject", () => {
 describe("resolveDraftProjectSelection", () => {
   it("preserves an explicit project selection", () => {
     const project = makeProject("t3code");
-    expect(resolveDraftProjectSelection("environment:t3code", [makeScope([project])])).toEqual({
-      kind: "preserve",
-    });
+    expect(
+      resolveDraftProjectSelection("environment:t3code", [project], [makeScope([project])]),
+    ).toEqual({ kind: "preserve" });
   });
 
   it("selects the only physical project when no project was explicitly selected", () => {
     const project = makeProject("t3code");
-    expect(resolveDraftProjectSelection(null, [makeScope([project])])).toEqual({
+    expect(resolveDraftProjectSelection(null, [project], [makeScope([project])])).toEqual({
       kind: "select",
       project,
     });
@@ -65,6 +65,18 @@ describe("resolveDraftProjectSelection", () => {
 
   it("opens the picker for multiple physical projects in one logical group", () => {
     const projects = [makeProject("t3code"), makeProject("t3code-2"), makeProject("t3code-3")];
-    expect(resolveDraftProjectSelection(null, [makeScope(projects)])).toEqual({ kind: "pick" });
+    expect(resolveDraftProjectSelection(null, projects, [makeScope(projects)])).toEqual({
+      kind: "pick",
+    });
+  });
+
+  it("does not preserve a project key that is missing from the catalog", () => {
+    const project = makeProject("t3code");
+    expect(
+      resolveDraftProjectSelection("environment:removed", [project], [makeScope([project])]),
+    ).toEqual({
+      kind: "select",
+      project,
+    });
   });
 });

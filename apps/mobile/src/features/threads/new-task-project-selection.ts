@@ -1,5 +1,6 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
+import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
 
 export type DraftProjectSelectionResolution =
@@ -16,9 +17,15 @@ export function getOnlySelectableProject(
 
 export function resolveDraftProjectSelection(
   selectedProjectKey: string | null,
+  projects: ReadonlyArray<EnvironmentProject>,
   projectScopes: ReadonlyArray<HomeProjectScope>,
 ): DraftProjectSelectionResolution {
-  if (selectedProjectKey !== null) {
+  const hasExplicitProjectSelection =
+    selectedProjectKey !== null &&
+    projects.some(
+      (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
+    );
+  if (hasExplicitProjectSelection) {
     return { kind: "preserve" };
   }
 
