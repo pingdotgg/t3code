@@ -3,6 +3,7 @@ import { EnvironmentId, type PreviewSessionSnapshot, ThreadId } from "@t3tools/c
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { acquireBrowserSurface, useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
@@ -62,7 +63,9 @@ describe("preview automation presentation", () => {
       presentationRectAvailable: false,
     });
 
-    const surface = acquireBrowserSurface("tab-1");
+    const surface = acquireBrowserSurface(
+      previewRuntimeTabId(threadRef, readThreadPreviewState(threadRef).serverEpoch, "tab-1"),
+    );
     surface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
 
     expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(true);

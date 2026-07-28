@@ -45,6 +45,7 @@ describe("browserSurfaceStore", () => {
     expect(first).toEqual({
       byTabId: state.byTabId,
       backgroundCapture: true,
+      content: null,
       cornerRadius: 0,
       fitSourceContent: false,
       fittedSourceContent: null,
