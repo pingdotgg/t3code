@@ -1636,6 +1636,31 @@ public actor LiveBackend: BackendService {
         return thread
     }
 
+    public func branchThread(source: ChatThread) async throws -> ChatThread {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let threadID = UUID().uuidString
+        let title = "Branch of \(source.title)"
+        _ = try await client.branchThread(
+            sourceThreadId: source.id, threadId: threadID, title: title)
+        let thread = ChatThread(
+            id: threadID, projectID: source.projectID, title: title, provider: source.provider,
+            status: .idle, updatedAt: Date(), latestUserMessageAt: source.latestUserMessageAt,
+            runtimeMode: source.runtimeMode, interactionMode: source.interactionMode,
+            modelInstanceID: source.modelInstanceID, modelID: source.modelID,
+            executorModelInstanceID: source.executorModelInstanceID,
+            executorModelID: source.executorModelID,
+            executorMaxSubAgents: source.executorMaxSubAgents,
+            reasoningEffort: source.reasoningEffort, serviceTier: source.serviceTier)
+        threadsByID[threadID] = thread
+        if let selection = modelSelectionsByThread[source.id] {
+            modelSelectionsByThread[threadID] = selection
+        }
+        titleSeedsByThread[threadID] = title
+        threadEnvByThread[threadID] = threadEnvByThread[source.id]
+        emitOrdered(threadID: threadID, event: .threadUpserted(thread))
+        return thread
+    }
+
     public func archiveThread(id: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         _ = try await client.archiveThread(threadId: id)

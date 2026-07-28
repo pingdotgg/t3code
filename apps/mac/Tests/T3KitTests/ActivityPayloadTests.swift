@@ -346,6 +346,22 @@ struct ActivityPayloadTests {
         #expect(interactionObject["interactionMode"] as? String == "plan")
     }
 
+    @Test("thread branch command encodes source and target identities")
+    func threadBranchCommand() throws {
+        let command = ClientOrchestrationCommand.threadBranch(
+            ThreadBranchCommand(
+                commandId: "branch-command", sourceThreadId: "source-thread",
+                threadId: "target-thread", title: "Alternative",
+                createdAt: "2026-07-04T12:00:00.000Z"))
+        let data = try WireCoding.encoder.encode(command)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+
+        #expect(object["type"] as? String == "thread.branch")
+        #expect(object["sourceThreadId"] as? String == "source-thread")
+        #expect(object["threadId"] as? String == "target-thread")
+        #expect(object["title"] as? String == "Alternative")
+    }
+
     @Test("tool.completed decodes the typed skill presentation")
     func toolPresentationSkill() throws {
         let activity = try activity(

@@ -1073,6 +1073,26 @@ public struct ThreadCreateCommand: Codable, Sendable {
     }
 }
 
+public struct ThreadBranchCommand: Encodable, Sendable {
+    public let type: String = "thread.branch"
+    public var commandId: String
+    public var sourceThreadId: String
+    public var threadId: String
+    public var title: String?
+    public var createdAt: String
+
+    public init(
+        commandId: String, sourceThreadId: String, threadId: String, title: String? = nil,
+        createdAt: String
+    ) {
+        self.commandId = commandId
+        self.sourceThreadId = sourceThreadId
+        self.threadId = threadId
+        self.title = title
+        self.createdAt = createdAt
+    }
+}
+
 public struct ThreadDeleteCommand: Encodable, Sendable {
     public let type: String = "thread.delete"
     public var commandId: String
@@ -1490,6 +1510,7 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
     case projectMetaUpdate(ProjectMetaUpdateCommand)
     case projectDelete(ProjectDeleteCommand)
     case threadCreate(ThreadCreateCommand)
+    case threadBranch(ThreadBranchCommand)
     case threadDelete(ThreadDeleteCommand)
     case threadArchive(ThreadArchiveCommand)
     case threadUnarchive(ThreadUnarchiveCommand)
@@ -1514,6 +1535,7 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
         case .projectMetaUpdate(let c): try container.encode(c)
         case .projectDelete(let c): try container.encode(c)
         case .threadCreate(let c): try container.encode(c)
+        case .threadBranch(let c): try container.encode(c)
         case .threadDelete(let c): try container.encode(c)
         case .threadArchive(let c): try container.encode(c)
         case .threadUnarchive(let c): try container.encode(c)

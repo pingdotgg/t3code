@@ -1,5 +1,6 @@
 import {
   EventId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -26,6 +27,7 @@ import {
   isSubAgentThreadTitle,
   withSubAgentThreadTitle,
 } from "./subAgentModelPolicy.ts";
+import { selectThreadBranchContext, THREAD_BRANCH_ACTIVITY_KIND } from "./ThreadBranching.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -318,6 +320,119 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.branch": {
+      const source = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const title = command.title ?? `Branch of ${source.title}`;
+      const context = selectThreadBranchContext(source.messages);
+      const createdEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: source.projectId,
+          title,
+          modelSelection: source.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: source.interactionMode,
+          executorModelSelection: source.executorModelSelection,
+          branch: source.branch,
+          worktreePath: source.worktreePath,
+          parentThreadId: null,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const executorSettingsEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.executor-model-set",
+        payload: {
+          threadId: command.threadId,
+          executorModelSelection: source.executorModelSelection,
+          executorMaxSubAgents: source.executorMaxSubAgents,
+          updatedAt: command.createdAt,
+        },
+      };
+      const activityId = yield* Crypto.Crypto.pipe(
+        Effect.flatMap((crypto) => crypto.randomUUIDv4),
+        Effect.map(EventId.make),
+      );
+      const branchActivityEvent: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: command.threadId,
+          activity: {
+            id: activityId,
+            tone: "info",
+            kind: THREAD_BRANCH_ACTIVITY_KIND,
+            summary: `Branched from ${source.title}`,
+            payload: {
+              version: 1,
+              sourceThreadId: source.id,
+              sourceTitle: source.title,
+              copiedMessageCount: context.messages.length,
+              omittedMessageCount: context.omittedMessageCount,
+            },
+            turnId: null,
+            createdAt: command.createdAt,
+          },
+        },
+      };
+      const copiedMessageEvents: PlannedOrchestrationEvent[] = [];
+      for (const message of context.messages) {
+        const messageId = yield* Crypto.Crypto.pipe(
+          Effect.flatMap((crypto) => crypto.randomUUIDv4),
+          Effect.map(MessageId.make),
+        );
+        copiedMessageEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId,
+            role: message.role,
+            text: message.text,
+            ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      return [createdEvent, executorSettingsEvent, branchActivityEvent, ...copiedMessageEvents];
     }
 
     case "thread.delete": {

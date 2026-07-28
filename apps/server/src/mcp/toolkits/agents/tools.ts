@@ -1,4 +1,7 @@
 import {
+  BranchThreadError,
+  BranchThreadInput,
+  BranchThreadResult,
   DelegateError,
   DelegateTaskInput,
   DelegateTaskResult,
@@ -8,6 +11,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { DelegateCoordinator } from "./DelegateCoordinator.ts";
+import { ThreadBranchCoordinator } from "./ThreadBranchCoordinator.ts";
 
 const dependencies = [McpInvocationContext.McpInvocationContext, DelegateCoordinator];
 
@@ -35,4 +39,20 @@ export const WaitForDelegateTool = Tool.make("wait_for_delegate", {
   .annotate(Tool.OpenWorld, false)
   .annotate(Tool.Destructive, false);
 
-export const DelegateToolkit = Toolkit.make(DelegateTaskTool, WaitForDelegateTool);
+export const BranchThreadTool = Tool.make("branch_thread", {
+  description:
+    "Create a new independent top-level thread from the current conversation. The new thread inherits a bounded snapshot of this conversation, its project, provider/model settings, permissions, and workspace, but starts a separate provider session. Use this when the user asks to explore or continue an alternative path in a new thread. Returns the new thread id; it does not start a turn in that thread.",
+  parameters: BranchThreadInput,
+  success: BranchThreadResult,
+  failure: BranchThreadError,
+  dependencies: [McpInvocationContext.McpInvocationContext, ThreadBranchCoordinator],
+})
+  .annotate(Tool.Title, "Branch current thread")
+  .annotate(Tool.OpenWorld, false)
+  .annotate(Tool.Destructive, false);
+
+export const DelegateToolkit = Toolkit.make(
+  DelegateTaskTool,
+  WaitForDelegateTool,
+  BranchThreadTool,
+);

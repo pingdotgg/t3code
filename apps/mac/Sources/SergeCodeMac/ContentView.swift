@@ -220,6 +220,15 @@ struct RootView: View {
                                 .padding(.top, 4)
 
                             AlpineMenuRow(
+                                icon: "arrow.triangle.branch",
+                                title: "Branch Current Session",
+                                detail: "Continue from this conversation in a new session"
+                            ) {
+                                isPresented.wrappedValue = false
+                                Task { await model.branchThread(thread) }
+                            }
+
+                            AlpineMenuRow(
                                 title: "New \(thread.provider.displayName) Session",
                                 detail: "Same project and provider as this session"
                             ) {

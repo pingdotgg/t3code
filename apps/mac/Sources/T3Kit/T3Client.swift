@@ -299,6 +299,17 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func branchThread(
+        sourceThreadId: String, threadId: String, title: String? = nil
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            .threadBranch(
+                ThreadBranchCommand(
+                    commandId: T3Ids.newCommandId(), sourceThreadId: sourceThreadId,
+                    threadId: threadId, title: title, createdAt: T3Clock.nowISO8601())))
+    }
+
+    @discardableResult
     public func deleteThread(threadId: String) async throws -> DispatchResult {
         try await dispatch(.threadDelete(ThreadDeleteCommand(commandId: T3Ids.newCommandId(), threadId: threadId)))
     }
