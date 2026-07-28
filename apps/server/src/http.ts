@@ -12,7 +12,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 import { cast } from "effect/Function";
 import {
   Headers,
@@ -31,6 +30,7 @@ import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as HttpResponseCompression from "./HttpResponseCompression.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import {
   annotateEnvironmentRequest,
@@ -70,6 +70,7 @@ function varyByAcceptEncoding(value: string | undefined): string {
 export function compressHttpResponse(
   response: HttpServerResponse.HttpServerResponse,
   acceptEncoding: string | undefined,
+  compression: HttpResponseCompression.HttpResponseCompression["Service"],
 ): HttpServerResponse.HttpServerResponse {
   const body = response.body;
   if (
@@ -88,16 +89,12 @@ export function compressHttpResponse(
   );
   if (!acceptsGzip(acceptEncoding)) return variedResponse;
 
-  const compressedBody = Stream.fromReadableStream({
-    evaluate: () => new Response(body.body).body!.pipeThrough(new CompressionStream("gzip")),
-    onError: (cause) => cause,
-  });
   const headers = Headers.set(
     Headers.remove(variedResponse.headers, "content-length"),
     "content-encoding",
     "gzip",
   );
-  return HttpServerResponse.stream(compressedBody, {
+  return compression.gzip(body.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -110,7 +107,12 @@ export const httpCompressionLayer = HttpRouter.middleware(
   (httpEffect) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      return compressHttpResponse(yield* httpEffect, request.headers["accept-encoding"]);
+      const compression = yield* HttpResponseCompression.HttpResponseCompression;
+      return compressHttpResponse(
+        yield* httpEffect,
+        request.headers["accept-encoding"],
+        compression,
+      );
     }),
   { global: true },
 );

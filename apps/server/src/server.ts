@@ -125,28 +125,36 @@ const RelayClientLive = Layer.unwrap(
   }),
 );
 
-const HttpServerLive = Layer.unwrap(
+const HttpServerPlatformLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     if (typeof Bun !== "undefined") {
-      const BunHttpServer = yield* Effect.promise(
-        () => import("@effect/platform-bun/BunHttpServer"),
+      const [BunHttpServer, BunHttpResponseCompression] = yield* Effect.all([
+        Effect.promise(() => import("@effect/platform-bun/BunHttpServer")),
+        Effect.promise(() => import("./BunHttpResponseCompression.ts")),
+      ]);
+      return Layer.merge(
+        BunHttpServer.layer({
+          port: config.port,
+          hostname: config.host ?? "127.0.0.1",
+          gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
+        }),
+        BunHttpResponseCompression.layer,
       );
-      return BunHttpServer.layer({
-        port: config.port,
-        hostname: config.host ?? "127.0.0.1",
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-      });
     } else {
-      const [NodeHttpServer, NodeHttp] = yield* Effect.all([
+      const [NodeHttpServer, NodeHttp, NodeHttpResponseCompression] = yield* Effect.all([
         Effect.promise(() => import("@effect/platform-node/NodeHttpServer")),
         Effect.promise(() => import("node:http")),
+        Effect.promise(() => import("./NodeHttpResponseCompression.ts")),
       ]);
-      return NodeHttpServer.layer(NodeHttp.createServer, {
-        host: config.host ?? "127.0.0.1",
-        port: config.port,
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-      });
+      return Layer.merge(
+        NodeHttpServer.layer(NodeHttp.createServer, {
+          host: config.host ?? "127.0.0.1",
+          port: config.port,
+          gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
+        }),
+        NodeHttpResponseCompression.layer,
+      );
     }
   }),
 );
@@ -516,7 +524,7 @@ export const makeServerLayer = Layer.unwrap(
     return serverApplicationLayer.pipe(
       Layer.provideMerge(RuntimeServicesLive),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
-      Layer.provideMerge(HttpServerLive),
+      Layer.provideMerge(HttpServerPlatformLive),
       Layer.provide(ObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(VcsProcess.layer),
