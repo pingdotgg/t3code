@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
+  buildNewThreadPickerGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
+  resolveCommandPaletteEmptyStateMessage,
+  shouldClearAddProjectEnvironmentOnPop,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -31,6 +34,152 @@ describe("enumerateCommandPaletteItems", () => {
       "thread.jump.8",
       "thread.jump.9",
       undefined,
+    ]);
+  });
+});
+
+const makeActionItem = (value: string) => ({
+  kind: "action" as const,
+  value,
+  searchTerms: [],
+  title: value,
+  icon: null,
+  run: async () => undefined,
+});
+
+describe("buildNewThreadPickerGroups", () => {
+  const addProjectItem = makeActionItem("action:add-project");
+
+  it("waits for projects before showing an empty picker", () => {
+    expect(
+      buildNewThreadPickerGroups({
+        projectItems: [],
+        addProjectItem,
+        areProjectsLoading: true,
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps Add project keyboard-addressable after project choices", () => {
+    const projectItem = makeActionItem("new-thread-in:environment-local:project-1");
+
+    expect(
+      buildNewThreadPickerGroups({
+        projectItems: [projectItem],
+        addProjectItem,
+        areProjectsLoading: false,
+      }).map((group) => ({
+        value: group.value,
+        items: group.items.map((item) => item.value),
+      })),
+    ).toEqual([
+      {
+        value: "new-thread-projects",
+        items: ["new-thread-in:environment-local:project-1"],
+      },
+      { value: "new-thread-actions", items: ["action:add-project"] },
+    ]);
+  });
+
+  it("offers Add project when loading completes without projects", () => {
+    expect(
+      buildNewThreadPickerGroups({
+        projectItems: [],
+        addProjectItem,
+        areProjectsLoading: false,
+      }),
+    ).toEqual([
+      {
+        value: "new-thread-actions",
+        label: "Actions",
+        items: [addProjectItem],
+      },
+    ]);
+  });
+});
+
+describe("resolveCommandPaletteEmptyStateMessage", () => {
+  it("keeps browse/create guidance when the new-thread picker has no projects", () => {
+    expect(
+      resolveCommandPaletteEmptyStateMessage({
+        contextualMessage: "Press Enter to create this folder and add it as a project.",
+        isNewThreadProjectPickerView: true,
+        projectCount: 0,
+        allEnvironmentShellsBootstrapped: true,
+        query: "/work/new-project",
+      }),
+    ).toBe("Press Enter to create this folder and add it as a project.");
+  });
+
+  it("uses zero-project guidance only when no more specific state applies", () => {
+    expect(
+      resolveCommandPaletteEmptyStateMessage({
+        isNewThreadProjectPickerView: true,
+        projectCount: 0,
+        allEnvironmentShellsBootstrapped: true,
+        query: "",
+      }),
+    ).toBe("No projects yet. Add a project to start a thread.");
+    expect(
+      resolveCommandPaletteEmptyStateMessage({
+        isNewThreadProjectPickerView: true,
+        projectCount: 0,
+        allEnvironmentShellsBootstrapped: false,
+        query: "",
+      }),
+    ).toBe("Loading projects…");
+  });
+});
+
+describe("shouldClearAddProjectEnvironmentOnPop", () => {
+  it("clears the selected environment when returning from source selection", () => {
+    expect(
+      shouldClearAddProjectEnvironmentOnPop({
+        viewStackDepth: 2,
+        currentGroupValue: "sources:environment-local",
+        addProjectEnvironmentId: "environment-local",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the selected environment while returning to source selection", () => {
+    expect(
+      shouldClearAddProjectEnvironmentOnPop({
+        viewStackDepth: 3,
+        currentGroupValue: undefined,
+        addProjectEnvironmentId: "environment-local",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("filterCommandPaletteGroups", () => {
+  it("keeps dedicated picker actions visible for the actions-only filter", () => {
+    const addProjectItem = {
+      ...makeActionItem("action:add-project"),
+      searchTerms: ["add project"],
+    };
+
+    expect(
+      filterCommandPaletteGroups({
+        activeGroups: [
+          {
+            value: "new-thread-actions",
+            label: "Actions",
+            items: [addProjectItem],
+          },
+        ],
+        query: ">",
+        isInSubmenu: true,
+        projectSearchItems: [],
+        threadSearchItems: [],
+      }),
+    ).toEqual([
+      {
+        value: "new-thread-actions",
+        label: "Actions",
+        items: [addProjectItem],
+      },
     ]);
   });
 });

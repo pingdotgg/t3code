@@ -260,3 +260,39 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(preferredIndex + 1),
   ];
 }
+
+export function resolveScopedNewThreadProjectRef(input: {
+  scopedProjectGroup: SidebarProjectSnapshot | null;
+  contextualProjectRef: ScopedProjectRef | null;
+}): ScopedProjectRef | null {
+  if (input.scopedProjectGroup === null) {
+    return input.contextualProjectRef;
+  }
+
+  const contextualProjectIsInScope =
+    input.contextualProjectRef !== null &&
+    input.scopedProjectGroup.memberProjectRefs.some(
+      (projectRef) =>
+        projectRef.environmentId === input.contextualProjectRef?.environmentId &&
+        projectRef.projectId === input.contextualProjectRef.projectId,
+    );
+  if (contextualProjectIsInScope) {
+    return input.contextualProjectRef;
+  }
+
+  return scopeProjectRef(input.scopedProjectGroup.environmentId, input.scopedProjectGroup.id);
+}
+
+export function resolveNewThreadPickerProjectRef(input: {
+  preferredProjectRef: ScopedProjectRef | null;
+  scopedProjectGroup: SidebarProjectSnapshot | null;
+  contextualProjectRef: ScopedProjectRef | null;
+}): ScopedProjectRef | null {
+  return (
+    input.preferredProjectRef ??
+    resolveScopedNewThreadProjectRef({
+      scopedProjectGroup: input.scopedProjectGroup,
+      contextualProjectRef: input.contextualProjectRef,
+    })
+  );
+}

@@ -12,6 +12,8 @@ import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  resolveNewThreadPickerProjectRef,
+  resolveScopedNewThreadProjectRef,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -316,6 +318,99 @@ describe("environment grouping", () => {
     });
     expect(entries[0]?.isPreferred).toBe(true);
     expect(entries[1]?.group.displayName).toBe("separate");
+  });
+
+  it("preserves an exact contextual project when opening a picker from its logical scope", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    const contextualProjectRef = {
+      environmentId: remote.environmentId,
+      projectId: remote.id,
+    };
+    expect(
+      resolveScopedNewThreadProjectRef({
+        scopedProjectGroup: group ?? null,
+        contextualProjectRef,
+      }),
+    ).toEqual(contextualProjectRef);
+  });
+
+  it("uses the scoped representative when the contextual project is outside the scope", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const separate = makeProject({
+      id: ProjectId.make("project-separate"),
+      title: "separate",
+      workspaceRoot: "/tmp/separate",
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote, separate],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(
+      resolveScopedNewThreadProjectRef({
+        scopedProjectGroup: group ?? null,
+        contextualProjectRef: {
+          environmentId: separate.environmentId,
+          projectId: separate.id,
+        },
+      }),
+    ).toEqual({
+      environmentId: primary.environmentId,
+      projectId: primary.id,
+    });
+  });
+
+  it("uses the sidebar scope when the command palette has no explicit project preference", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const separate = makeProject({
+      id: ProjectId.make("project-separate"),
+      title: "separate",
+      workspaceRoot: "/tmp/separate",
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote, separate],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(
+      resolveNewThreadPickerProjectRef({
+        preferredProjectRef: null,
+        scopedProjectGroup: group ?? null,
+        contextualProjectRef: {
+          environmentId: separate.environmentId,
+          projectId: separate.id,
+        },
+      }),
+    ).toEqual({
+      environmentId: primary.environmentId,
+      projectId: primary.id,
+    });
   });
 
   it("keeps manual project order when building grouped sidebar entries", () => {
