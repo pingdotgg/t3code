@@ -882,7 +882,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               <span className="relative ml-auto flex h-5 min-w-8 shrink-0 items-center justify-end pl-1 text-xs">
                 <span
                   className={cn(
-                    "tabular-nums text-muted-foreground/65 transition-opacity group-hover/v2-row:opacity-0",
+                    "tabular-nums text-muted-foreground/65 transition-opacity group-hover/v2-row:opacity-0 group-focus-within/v2-row:opacity-0",
                     snoozeMenuOpen && "opacity-0",
                   )}
                 >
@@ -917,7 +917,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 {props.settlementSupported || showSnoozeButton ? (
                   <span
                     className={cn(
-                      "absolute inset-y-0 right-0 flex items-stretch gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
+                      "absolute inset-y-0 right-0 z-10 isolate flex items-stretch gap-0.5 rounded-md pl-1 opacity-0 shadow-[-8px_0_14px_-12px_rgb(0_0_0/80%)] transition-opacity before:pointer-events-none before:absolute before:inset-y-0 before:-left-5 before:z-0 before:w-6 before:bg-gradient-to-r before:from-transparent focus-within:opacity-100 group-hover/v2-row:opacity-100 group-focus-within/v2-row:opacity-100 [&>button]:relative [&>button]:z-10",
+                      props.isActive
+                        ? "bg-sidebar-row-active before:to-sidebar-row-active dark:bg-[color-mix(in_srgb,var(--foreground)_11%,var(--sidebar))] dark:before:to-[color-mix(in_srgb,var(--foreground)_11%,var(--sidebar))]"
+                        : isSelected
+                          ? "bg-sidebar-row-selected before:to-sidebar-row-selected dark:bg-[color-mix(in_srgb,var(--foreground)_7%,var(--sidebar))] dark:before:to-[color-mix(in_srgb,var(--foreground)_7%,var(--sidebar))]"
+                          : "bg-sidebar-row-hover before:to-sidebar-row-hover dark:bg-[color-mix(in_srgb,var(--foreground)_8%,var(--sidebar))] dark:before:to-[color-mix(in_srgb,var(--foreground)_8%,var(--sidebar))]",
                       snoozeMenuOpen && "opacity-100",
                     )}
                   >
