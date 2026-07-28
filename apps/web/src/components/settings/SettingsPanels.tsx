@@ -955,10 +955,6 @@ function BackgroundActivityAdvancedDialog({
 
 export function AppearanceSettingsPanel() {
   const { theme, setTheme } = useTheme();
-  const supportsCua =
-    typeof window !== "undefined" &&
-    Boolean(window.desktopBridge) &&
-    isMacPlatform(window.navigator.platform);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const environmentStageLabel = useEnvironmentStageLabel();
@@ -1124,6 +1120,10 @@ export function AppearanceSettingsPanel() {
 }
 
 export function GeneralSettingsPanel() {
+  const supportsCua =
+    typeof window !== "undefined" &&
+    Boolean(window.desktopBridge) &&
+    isMacPlatform(window.navigator.platform);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
