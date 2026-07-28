@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -45,6 +46,49 @@ const captureProcessResult = (
   );
 
 describe("VcsProcess.run", () => {
+  it.effect("bounds how many processes it spawns at once", () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      let inFlight = 0;
+      let peakInFlight = 0;
+
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: () =>
+              Effect.gen(function* () {
+                inFlight += 1;
+                peakInFlight = Math.max(peakInFlight, inFlight);
+                yield* Deferred.await(release);
+                inFlight -= 1;
+                return {
+                  code: 0,
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                } as ProcessRunner.ProcessRunOutput;
+              }),
+          }),
+        ),
+      );
+
+      const fibers = yield* Effect.forEach(
+        Array.from({ length: 40 }, (_, index) => index),
+        () => Effect.forkChild(service.run(baseInput), { startImmediately: true }),
+      );
+      // Every fiber started eagerly and ran until it blocked, either on a
+      // permit or on the release latch.
+      expect(peakInFlight).toBeLessThanOrEqual(16);
+      expect(peakInFlight).toBeLessThan(40);
+
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.awaitAll(fibers);
+      expect(peakInFlight).toBeLessThanOrEqual(16);
+    }),
+  );
+
   it.effect("collects stdout", () =>
     Effect.gen(function* () {
       const result = yield* run({

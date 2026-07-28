@@ -1,7 +1,10 @@
+import * as NodeOS from "node:os";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
+import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -86,8 +89,24 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
   return "command-failed";
 };
 
+// A single workspace refresh can ask for refs across every worktree at once, and
+// each request spawns several git processes. Unbounded, that starves the event
+// loop badly enough that unrelated work (provider health checks, HTTP requests)
+// blows past its own timeouts. Bound the spawns instead; queued commands wait
+// for a permit rather than competing.
+// ponytail: one global limit, make it per-repository if a busy repo ever starves
+// the others.
+// The bound scales with the host: a single git command costs ~1s on a large
+// repository, so too low a limit turns a refresh into a queue, while too high a
+// limit is what caused the starvation in the first place.
+const MAX_CONCURRENT_VCS_PROCESSES = Math.max(
+  4,
+  Math.min(16, Math.floor(NodeOS.availableParallelism() / 4)),
+);
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const spawnPermits = yield* Semaphore.make(MAX_CONCURRENT_VCS_PROCESSES);
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
     const baseError = {
@@ -112,6 +131,9 @@ export const make = Effect.gen(function* () {
         timeoutBehavior: "error",
       })
       .pipe(
+        // Take the permit around the spawn only, so waiting in the queue never
+        // counts against the command's own timeout.
+        spawnPermits.withPermits(1),
         Effect.mapError(
           Match.valueTags({
             ProcessSpawnError: (error) =>
