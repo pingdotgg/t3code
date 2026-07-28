@@ -1,12 +1,20 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import {
+  increment,
+  metricAttributes,
+  orchestrationEffectClaimsTotal,
+  orchestrationEffectQueueWait,
+} from "../observability/Metrics.ts";
 import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ResourceCleanupService } from "./ResourceCleanupService.ts";
 import { EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -298,6 +306,10 @@ const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerErro
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
   readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly nextClaimableAt: Effect.Effect<
+    Option.Option<DateTime.Utc>,
+    OrchestrationEffectWorkerError
+  >;
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
 
@@ -338,11 +350,32 @@ export const layerWithOptions = (
         );
 
       const runOnce = Effect.gen(function* () {
-        const claimed = yield* outbox.claimNext({ workerId, leaseDurationMs });
+        const claimExit = yield* Effect.exit(outbox.claimNext({ workerId, leaseDurationMs }));
+        yield* increment(orchestrationEffectClaimsTotal, {
+          result: Exit.isFailure(claimExit)
+            ? "error"
+            : Option.isNone(claimExit.value)
+              ? "empty"
+              : "claimed",
+        });
+        if (Exit.isFailure(claimExit)) return yield* Effect.failCause(claimExit.cause);
+        const claimed = claimExit.value;
         if (Option.isNone(claimed)) {
           return false;
         }
         const effect = claimed.value;
+        const claimedAt = DateTime.toEpochMillis(yield* DateTime.now);
+        const eligibleAt = Math.max(
+          DateTime.toEpochMillis(DateTime.makeUnsafe(effect.createdAt)),
+          DateTime.toEpochMillis(DateTime.makeUnsafe(effect.availableAt)),
+        );
+        yield* Metric.update(
+          Metric.withAttributes(
+            orchestrationEffectQueueWait,
+            metricAttributes({ effect_type: effect.request.type }),
+          ),
+          Duration.millis(Math.max(0, claimedAt - eligibleAt)),
+        );
         // Cancellation can commit after the durable claim but before the
         // process-local Deferred is registered. Re-read the authoritative row
         // once before starting external work; later cancellations use the
@@ -415,6 +448,15 @@ export const layerWithOptions = (
       return OrchestrationEffectWorkerV2.of({
         awaitWork: outbox.awaitAvailable,
         runOnce,
+        nextClaimableAt: outbox.nextClaimableAt.pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationEffectWorkerError({
+                operation: "next-claimable",
+                cause,
+              }),
+          ),
+        ),
         drain: (maxEffects = Number.MAX_SAFE_INTEGER) =>
           Effect.gen(function* () {
             let completed = 0;
@@ -431,9 +473,11 @@ export const layer = layerWithOptions();
 
 export interface OrchestrationEffectDaemonOptions {
   readonly concurrency?: number;
+  readonly livenessPollIntervalMs?: number;
 }
 
 export const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+export const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
   Effect.scoped(
@@ -443,22 +487,58 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       const concurrency = Number.isFinite(requestedConcurrency)
         ? Math.max(1, Math.floor(requestedConcurrency))
         : DEFAULT_EFFECT_WORKER_CONCURRENCY;
-      // Notifications only reduce latency; the durable outbox remains authoritative.
-      // Every slot polls after a bounded delay so a missed or coalesced wakeup can
-      // never strand committed work. Consuming the outbox signal directly also
-      // avoids lifecycle coupling between a separate fan-out fiber and subscribers.
-      const runWorker = Effect.forever(
-        worker.runOnce.pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Orchestration effect worker failed", cause).pipe(Effect.as(false)),
-          ),
-          Effect.flatMap((worked) =>
-            worked
-              ? Effect.yieldNow
-              : Effect.raceFirst(worker.awaitWork, Effect.sleep(Duration.millis(50))),
-          ),
-        ),
-      );
+      const requestedLivenessPollIntervalMs =
+        options.livenessPollIntervalMs ?? DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
+      const livenessPollIntervalMs = Number.isFinite(requestedLivenessPollIntervalMs)
+        ? Math.max(1, Math.floor(requestedLivenessPollIntervalMs))
+        : DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
+      // Post-commit notifications are the low-latency path. `availableAt` is the
+      // durable retry schedule, and the long liveness poll only recovers from a
+      // missed in-process notification or work inserted by another process.
+      const runWorker = Effect.gen(function* () {
+        while (true) {
+          const outcome = yield* worker.runOnce.pipe(
+            Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Orchestration effect worker failed", cause).pipe(
+                Effect.as("failed" as const),
+              ),
+            ),
+          );
+          if (outcome === "worked") {
+            yield* Effect.yieldNow;
+            continue;
+          }
+          if (outcome === "failed") {
+            // A due row can remain visible when a claim UPDATE fails. Do not
+            // feed that past deadline back into the scheduler and retry at the
+            // one-millisecond floor; let transient database failures cool off.
+            yield* Effect.sleep(Duration.millis(Math.min(1_000, livenessPollIntervalMs)));
+            continue;
+          }
+
+          const nextClaimableAt = yield* worker.nextClaimableAt.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "Failed to read the next orchestration effect deadline",
+                cause,
+              ).pipe(Effect.as(Option.none<DateTime.Utc>())),
+            ),
+          );
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          const sleepMs = Option.match(nextClaimableAt, {
+            onNone: () => livenessPollIntervalMs,
+            onSome: (availableAt) => {
+              const untilAvailable = DateTime.toEpochMillis(availableAt) - now;
+              return Math.min(livenessPollIntervalMs, untilAvailable > 0 ? untilAvailable : 25);
+            },
+          });
+          yield* Effect.raceFirst(
+            worker.awaitWork.pipe(Effect.as("notified" as const)),
+            Effect.sleep(Duration.millis(sleepMs)).pipe(Effect.as("scheduled" as const)),
+          );
+        }
+      });
 
       return yield* Effect.all(
         Array.from({ length: concurrency }, () => runWorker),
