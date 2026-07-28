@@ -34,6 +34,10 @@ describe("compileClaudeModelSelection", () => {
       compileClaudeModelSelection(selection("claude-opus-4-6", [{ id: "fastMode", value: true }]))
         .settings,
     ).toEqual({ fastMode: true });
+    expect(
+      compileClaudeModelSelection(selection("claude-opus-4-6", [{ id: "fastMode", value: false }]))
+        .settings,
+    ).toEqual({ fastMode: false });
   });
 
   it("uses the model default SDK effort alongside prompt-injected effort", () => {
