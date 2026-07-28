@@ -83,7 +83,7 @@ const makeText = (overrides: Partial<TextGeneration.TextGeneration["Service"]> =
   });
 
 describe("AutoReviewRunner", () => {
-  it("posts a review and auto-fixes when an origin thread is linked", async () => {
+  it("tracks a dedicated fixer separately from the linked origin thread", async () => {
     const submits: unknown[] = [];
     const fixes: Array<{ jobId: string; threadId: string; prompt: string }> = [];
 
@@ -116,7 +116,7 @@ describe("AutoReviewRunner", () => {
         queueOrDispatchFix: (input) =>
           Effect.sync(() => {
             fixes.push(input);
-            return "dispatched" as const;
+            return { outcome: "dispatched" as const, threadId: "fixer-1" };
           }),
       });
 
@@ -126,6 +126,7 @@ describe("AutoReviewRunner", () => {
       expect(job?.actionableFindings).toBe(true);
       expect(job?.decision).toBe("comment");
       expect(job?.originThreadId).toBe("thread-1");
+      expect(job?.fixThreadId).toBe("fixer-1");
       expect(submits.length).toBe(1);
       expect(fixes[0]?.threadId).toBe("thread-1");
       expect(fixes[0]?.jobId).toBe(enqueued.job.id);
@@ -190,7 +191,7 @@ describe("AutoReviewRunner", () => {
         queueOrDispatchFix: (input) =>
           Effect.sync(() => {
             fixes.push(input);
-            return "queued" as const;
+            return { outcome: "queued" as const, threadId: input.threadId };
           }),
       });
 
@@ -217,6 +218,7 @@ describe("AutoReviewRunner", () => {
 
   it("does not queue a fix when findings have no blocking or important comments", async () => {
     const fixes: Array<{ jobId: string; threadId: string; prompt: string }> = [];
+    const settled: Array<{ projectId: string; prNumber: number }> = [];
 
     await Effect.gen(function* () {
       const store = yield* AutoReviewJobStore.AutoReviewJobStore;
@@ -247,7 +249,11 @@ describe("AutoReviewRunner", () => {
         queueOrDispatchFix: (input) =>
           Effect.sync(() => {
             fixes.push(input);
-            return "dispatched" as const;
+            return { outcome: "dispatched" as const, threadId: input.threadId };
+          }),
+        settleFixThread: (input) =>
+          Effect.sync(() => {
+            settled.push(input);
           }),
       });
 
@@ -256,6 +262,7 @@ describe("AutoReviewRunner", () => {
       expect(job?.autoFixEnqueued).toBe(false);
       expect(job?.actionableFindings).toBe(false);
       expect(fixes).toHaveLength(0);
+      expect(settled).toEqual([{ projectId: "proj", prNumber: 1 }]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

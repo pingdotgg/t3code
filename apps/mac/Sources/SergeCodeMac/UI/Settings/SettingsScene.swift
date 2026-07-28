@@ -295,7 +295,7 @@ private struct GeneralSettingsTab: View {
                 SettingsToggleRow(
                     title: "Playful motion",
                     description:
-                        "The animated activity indicator while the agent works, and the auto-review terrier. Turning this off leaves the status badges; macOS Reduce Motion stills them instead.",
+                        "The animated activity indicator while the agent works. Turning this off leaves the status badges; macOS Reduce Motion stills it instead.",
                     isOn: $playfulMotionEnabled)
                     .onChange(of: playfulMotionEnabled) { _, enabled in
                         PlayfulMotionPreferences.isEnabled = enabled

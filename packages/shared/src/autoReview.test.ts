@@ -443,12 +443,49 @@ describe("deriveAutoReviewThreadPhase", () => {
     ).toBe("fixing");
   });
 
+  it("is fixing while a dedicated fixer is parked", () => {
+    expect(
+      deriveAutoReviewThreadPhase({
+        jobs: [
+          makeJob({
+            actionableFindings: true,
+            fixThreadId: "fixer-1",
+            pendingFix: {
+              threadId: "fixer-1",
+              prompt: "fix it",
+              queuedAt: "2026-05-25T12:00:30.000Z",
+            } as never,
+          }),
+        ],
+        threadId: "thread-1",
+        threadBusy: false,
+      }),
+    ).toBe("fixing");
+  });
+
   it("is fixing while the dispatched fix turn is still busy", () => {
     expect(
       deriveAutoReviewThreadPhase({
         jobs: [makeJob({ actionableFindings: true, autoFixEnqueued: true })],
         threadId: "thread-1",
         threadBusy: true,
+      }),
+    ).toBe("fixing");
+  });
+
+  it("uses the dedicated fixer liveness instead of the idle origin thread", () => {
+    expect(
+      deriveAutoReviewThreadPhase({
+        jobs: [
+          makeJob({
+            actionableFindings: true,
+            autoFixEnqueued: true,
+            fixThreadId: "fixer-1",
+          }),
+        ],
+        threadId: "thread-1",
+        threadBusy: false,
+        fixThreadBusy: true,
       }),
     ).toBe("fixing");
   });
@@ -667,6 +704,22 @@ describe("countInFlightAutoReviewFixes", () => {
           { autoFixEnqueued: true, pendingFix: null, originThreadId: "t1" },
         ],
         busyThreadIds: new Set(["t1"]),
+      }),
+    ).toBe(1);
+  });
+
+  it("counts the dedicated fixer rather than its idle origin thread", () => {
+    expect(
+      countInFlightAutoReviewFixes({
+        jobs: [
+          {
+            autoFixEnqueued: true,
+            pendingFix: null,
+            originThreadId: "origin-1",
+            fixThreadId: "fixer-1",
+          },
+        ],
+        busyThreadIds: new Set(["fixer-1"]),
       }),
     ).toBe(1);
   });
