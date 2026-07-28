@@ -175,11 +175,11 @@ const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 const SINGLE_LABEL_HOSTNAMES = new Set(["localhost"]);
-// An allowlist, not full public-suffix detection: treating every dotted first
+// Allowlists, not full public-suffix detection: treating every dotted first
 // segment as a host would swallow real paths like `conf.d/x.conf` or
 // `Makefile.in:12`. Extensions that double as filename suffixes (`sh`, `md`,
-// `ts`, `rs`, `in`, ...) are deliberately absent.
-const COMMON_HOSTNAME_TLDS = new Set([
+// `ts`, `rs`, `in`, ...) are deliberately absent from both sets.
+const GENERIC_HOSTNAME_TLDS = new Set([
   "com",
   "net",
   "org",
@@ -205,6 +205,11 @@ const COMMON_HOSTNAME_TLDS = new Set([
   "tech",
   "store",
   "link",
+]);
+// Country codes collide with file extensions (`.pl` Perl, `.pt` PyTorch,
+// `.es` ES modules), so they only count as host evidence when the candidate
+// lacks a :line suffix — an explicit line reference marks a file and wins.
+const COUNTRY_HOSTNAME_TLDS = new Set([
   "uk",
   "de",
   "fr",
@@ -239,14 +244,16 @@ const COMMON_HOSTNAME_TLDS = new Set([
 ]);
 
 /** `127.0.0.1`, `localhost`, `example.com`, `1.2.3` — hosts and versions, not files. */
-function looksLikeHostname(segment: string): boolean {
+function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
   if (segment.startsWith(".")) return false;
   const lowered = segment.toLowerCase();
   if (SINGLE_LABEL_HOSTNAMES.has(lowered)) return true;
   if (NUMERIC_DOTTED_PATTERN.test(segment)) return true;
   const labels = lowered.split(".");
   const lastLabel = labels[labels.length - 1];
-  return labels.length >= 2 && lastLabel !== undefined && COMMON_HOSTNAME_TLDS.has(lastLabel);
+  if (labels.length < 2 || lastLabel === undefined) return false;
+  if (GENERIC_HOSTNAME_TLDS.has(lastLabel)) return true;
+  return !hasPosition && COUNTRY_HOSTNAME_TLDS.has(lastLabel);
 }
 
 /**
@@ -281,7 +288,7 @@ export function resolveInlineCodeFileLinkMeta(
   if (!hasExplicitPathShape) {
     const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
     const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
-    if (looksLikeHostname(firstSegment)) return null;
+    if (looksLikeHostname(firstSegment, hasPosition)) return null;
     if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basenameOfPath(withoutPosition))) {
       return null;
     }

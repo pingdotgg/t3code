@@ -213,6 +213,18 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     ).not.toBeNull();
   });
 
+  it("prefers file over country-code host when a line suffix is present", () => {
+    expect(resolveInlineCodeFileLinkMeta("script.pl:10", "/Users/julius/project")).toMatchObject({
+      targetPath: "/Users/julius/project/script.pl:10",
+      line: 10,
+    });
+    expect(resolveInlineCodeFileLinkMeta("model.pt:3", "/Users/julius/project")).not.toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("example.pl/index.html", "/Users/julius/project"),
+    ).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("example.com:8080", "/Users/julius/project")).toBeNull();
+  });
+
   it("ignores commands, flags, and expressions", () => {
     expect(resolveInlineCodeFileLinkMeta("git worktree list --porcelain")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("node.meta", "/Users/julius/project")).toBeNull();
