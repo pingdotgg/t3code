@@ -88,7 +88,15 @@ export function SettingsRow({
   );
 }
 
-export function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
+export function SettingResetButton({
+  label,
+  disabled = false,
+  onClick,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -98,6 +106,7 @@ export function SettingResetButton({ label, onClick }: { label: string; onClick:
             variant="ghost"
             aria-label={`Reset ${label} to default`}
             className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
               onClick();

@@ -1,11 +1,14 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
 import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
-import { primaryServerProvidersAtom, serverEnvironment } from "../state/server";
-import { usePrimaryEnvironment } from "../state/environments";
+import { serverEnvironment } from "../state/server";
+import { useDefaultEnvironmentId, useDefaultServerConfig } from "../hooks/useDefaultServerConfig";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
 import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
 import {
@@ -24,6 +27,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useAtomCommand } from "../state/use-atom-command";
 
 const seenProviderUpdateNotificationKeys = new Set<string>();
+const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
 
 type ActiveProviderUpdateToast =
@@ -112,8 +116,8 @@ function isTerminalProviderUpdateToastView(view: ProviderUpdateToastView) {
  */
 export function ProviderUpdatePrimaryNotification() {
   const navigate = useNavigate();
-  const providers = useAtomValue(primaryServerProvidersAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
+  const defaultEnvironmentId = useDefaultEnvironmentId();
+  const providers = useDefaultServerConfig()?.providers ?? EMPTY_SERVER_PROVIDERS;
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
@@ -212,7 +216,7 @@ export function ProviderUpdatePrimaryNotification() {
     };
 
     const runUpdates = () => {
-      if (updateStarted || oneClickProviders.length === 0 || !primaryEnvironment) {
+      if (updateStarted || oneClickProviders.length === 0 || defaultEnvironmentId === null) {
         return;
       }
       updateStarted = true;
@@ -238,7 +242,7 @@ export function ProviderUpdatePrimaryNotification() {
         for (const provider of oneClickProviders) {
           results.push(
             await updateProvider({
-              environmentId: primaryEnvironment.environmentId,
+              environmentId: defaultEnvironmentId,
               input: {
                 provider: provider.driver,
                 instanceId: provider.instanceId,
@@ -327,7 +331,7 @@ export function ProviderUpdatePrimaryNotification() {
     notificationKey,
     oneClickProviders,
     openProviderSettings,
-    primaryEnvironment,
+    defaultEnvironmentId,
     updateProviders,
   ]);
 

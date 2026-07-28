@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -28,6 +29,10 @@ export interface KeybindingRow {
 
 export type WhenVariableOption = string;
 export type KeybindingCommandOption = KeybindingCommand;
+
+export function keybindingsSettingsEditorKey(environmentId: EnvironmentId | null): string {
+  return environmentId ?? "no-environment";
+}
 
 const CORE_WHEN_VARIABLES = ["terminalFocus", "terminalOpen", "true", "false"] as const;
 

@@ -12,7 +12,11 @@ import {
   buildSidebarProjectSnapshots,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useAppOwnsLocalEnvironment,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
@@ -37,6 +41,7 @@ export function DraftHeroHeadline({
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const ownsLocalEnvironment = useAppOwnsLocalEnvironment();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const handleNewThread = useNewThreadHandler();
@@ -56,6 +61,7 @@ export function DraftHeroHeadline({
           projects,
           settings: projectGroupingSettings,
           primaryEnvironmentId,
+          ownsLocalEnvironment,
           resolveEnvironmentLabel: (environmentId) =>
             environmentLabelById.get(environmentId) ?? null,
         }),
@@ -64,6 +70,7 @@ export function DraftHeroHeadline({
       ),
     [
       environmentLabelById,
+      ownsLocalEnvironment,
       primaryEnvironmentId,
       projectGroupingSettings,
       projectSortOrder,

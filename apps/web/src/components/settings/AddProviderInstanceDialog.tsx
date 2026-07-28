@@ -1,15 +1,20 @@
 "use client";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   ProviderInstanceId,
   ProviderDriverKind,
+  type EnvironmentId,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useEnvironmentSettings,
+  usePersistEnvironmentSettings,
+} from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
@@ -115,13 +120,20 @@ function validateInstanceId(id: string, existing: ReadonlySet<string>): string |
 }
 
 interface AddProviderInstanceDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  readonly open: boolean;
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly onOpenChange: (open: boolean) => void;
 }
 
-export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+export function AddProviderInstanceDialog({
+  open,
+  environmentId,
+  environmentLabel,
+  onOpenChange,
+}: AddProviderInstanceDialogProps) {
+  const settings = useEnvironmentSettings(environmentId);
+  const persistSettings = usePersistEnvironmentSettings(environmentId);
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
@@ -134,6 +146,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const existingIds = useMemo(
     () => new Set(Object.keys(settings.providerInstances ?? {})),
@@ -179,9 +192,11 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     );
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (isSaving) return;
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null) return;
+    setIsSaving(true);
 
     const config = configByDriver[driver] ?? {};
     const hasConfig = Object.keys(config).length > 0;
@@ -204,7 +219,10 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
       [brandedId]: nextInstance,
     };
     try {
-      updateSettings({ providerInstances: nextMap });
+      const result = await persistSettings({ providerInstances: nextMap });
+      if (result._tag === "Failure") {
+        throw squashAtomCommandFailure(result);
+      }
       toastManager.add({
         type: "success",
         title: "Provider instance added",
@@ -217,6 +235,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
         title: "Could not add provider instance",
         description: error instanceof Error ? error.message : "Update failed.",
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -227,8 +247,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
           <DialogHeader>
             <DialogTitle>Add provider instance</DialogTitle>
             <DialogDescription>
-              Configure an additional provider instance — for example, a second Codex install
-              pointed at a different workspace.
+              Configure an additional provider instance on {environmentLabel} — for example, a
+              second Codex install pointed at a different workspace.
             </DialogDescription>
             <AddProviderInstanceWizardSteps
               currentStep={wizardStep}
@@ -425,8 +445,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                 Next
               </Button>
             ) : (
-              <Button size="sm" onClick={handleSave}>
-                Add instance
+              <Button size="sm" disabled={isSaving} onClick={handleSave}>
+                {isSaving ? "Adding…" : "Add instance"}
               </Button>
             )}
           </DialogFooter>

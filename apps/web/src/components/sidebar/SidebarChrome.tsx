@@ -1,11 +1,10 @@
-import { useAtomValue } from "@effect/atom-react";
 import { SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import { APP_STAGE_LABEL } from "../../branding";
 import { cn } from "../../lib/utils";
-import { primaryServerConfigAtom } from "../../state/server";
+import { useDefaultServerConfig } from "../../hooks/useDefaultServerConfig";
 import { resolveSidebarStageBadgeLabel } from "../Sidebar.logic";
 import { SidebarStageBackdrop, resolveSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import {
@@ -72,8 +71,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 }
 
 function useSidebarStageLabel() {
-  const primaryServerVersion =
-    useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
+  const primaryServerVersion = useDefaultServerConfig()?.environment.serverVersion ?? null;
 
   return resolveSidebarStageBadgeLabel({
     primaryServerVersion,

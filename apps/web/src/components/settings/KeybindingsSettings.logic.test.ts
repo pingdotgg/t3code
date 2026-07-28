@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 
 import {
   buildKeybindingRows,
@@ -8,6 +8,7 @@ import {
   commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
+  keybindingsSettingsEditorKey,
   parseWhenExpressionDraft,
   shortcutToKeybindingInput,
   unknownWhenVariables,
@@ -15,6 +16,14 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("keys editor state by environment so drafts are discarded on target changes", () => {
+    const first = EnvironmentId.make("first");
+    const second = EnvironmentId.make("second");
+
+    expect(keybindingsSettingsEditorKey(first)).not.toBe(keybindingsSettingsEditorKey(second));
+    expect(keybindingsSettingsEditorKey(null)).toBe("no-environment");
+  });
+
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [

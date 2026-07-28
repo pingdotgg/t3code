@@ -24,10 +24,14 @@ import {
 import {
   type KeybindingCommand,
   type KeybindingWhenNode,
+  type ServerConfig,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { Link } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -37,13 +41,11 @@ import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
+import { serverEnvironment } from "../../state/server";
 import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerKeybindingsAtom,
-  primaryServerKeybindingsConfigPathAtom,
-  serverEnvironment,
-} from "../../state/server";
-import { usePrimaryEnvironment } from "../../state/environments";
+  useSettingsEnvironment,
+  type SettingsEnvironmentTarget,
+} from "../../hooks/useSettingsEnvironment";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd, KbdGroup } from "../ui/kbd";
@@ -62,6 +64,7 @@ import {
   isKnownWhenVariable,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
+  keybindingsSettingsEditorKey,
   parseWhenExpressionDraft,
   type KeybindingCommandOption,
   type KeybindingRow,
@@ -69,9 +72,12 @@ import {
   unknownWhenVariables,
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { SettingsEnvironmentSelector } from "./SettingsEnvironmentSelector";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+
+const EMPTY_AVAILABLE_EDITORS: ServerConfig["availableEditors"] = [];
 
 function KeybindingPill({ value }: { value: string }) {
   const parts = value.split("+");
@@ -1081,21 +1087,31 @@ function NewKeybindingTableRow({
   );
 }
 
-export function KeybindingsSettingsPanel() {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const keybindingsConfigPath = useAtomValue(primaryServerKeybindingsConfigPathAtom);
-  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
+function KeybindingsSettingsPanelContent({
+  settingsEnvironment,
+}: {
+  settingsEnvironment: SettingsEnvironmentTarget;
+}) {
+  const {
+    environmentId,
+    environment,
+    environments,
+    primaryEnvironmentId,
+    selectEnvironment,
+    isReady: environmentsReady,
+  } = settingsEnvironment;
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const keybindings = serverConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  const keybindingsConfigPath = serverConfig?.keybindingsConfigPath ?? null;
+  const availableEditors = serverConfig?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const isConnected = environment?.connection.phase === "connected";
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
   const removeKeybindingMutation = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
-  const openInPreferredEditor = useOpenInPreferredEditor(
-    primaryEnvironment?.environmentId ?? null,
-    availableEditors,
-  );
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1149,7 +1165,7 @@ export function KeybindingsSettingsPanel() {
 
   const saveKeybinding = useCallback(
     (input: ServerUpsertKeybindingInput) => {
-      if (!primaryEnvironment) return;
+      if (environmentId === null || !isConnected) return;
       setSavingCommand(input.command);
       const payload: ServerUpsertKeybindingInput = {
         command: input.command,
@@ -1159,7 +1175,7 @@ export function KeybindingsSettingsPanel() {
       };
       void (async () => {
         const result = await upsertKeybinding({
-          environmentId: primaryEnvironment.environmentId,
+          environmentId,
           input: payload,
         });
         setSavingCommand(null);
@@ -1177,16 +1193,16 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [primaryEnvironment, upsertKeybinding],
+    [environmentId, isConnected, upsertKeybinding],
   );
 
   const removeKeybinding = useCallback(
     (row: KeybindingRow) => {
-      if (!primaryEnvironment) return;
+      if (environmentId === null || !isConnected) return;
       setSavingCommand(row.command);
       void (async () => {
         const result = await removeKeybindingMutation({
-          environmentId: primaryEnvironment.environmentId,
+          environmentId,
           input: rowKeybindingTarget(row),
         });
         setSavingCommand(null);
@@ -1200,7 +1216,7 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [primaryEnvironment, removeKeybindingMutation],
+    [environmentId, isConnected, removeKeybindingMutation],
   );
 
   const resetKeybinding = useCallback(
@@ -1229,109 +1245,151 @@ export function KeybindingsSettingsPanel() {
 
   return (
     <SettingsPageContainer className="max-w-5xl">
-      <SettingsSection
-        title="Keybindings"
-        headerAction={
-          <div className="flex items-center gap-1.5">
-            <ExpandableHeaderSearch
-              query={query}
-              onChange={setQuery}
-              isOpen={isSearchOpen}
-              onOpenChange={setIsSearchOpen}
-              inputRef={searchInputRef}
-              collapsedAccessory={bindingsCount}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsAddingBinding(true)}
-                    aria-label="Add keybinding"
-                  >
-                    <PlusIcon className="size-3" />
-                  </Button>
-                }
+      <SettingsSection title="Environment">
+        <SettingsRow
+          title="Keybindings environment"
+          description="Keybindings are stored by a specific server and can differ between environments."
+          status={
+            environment
+              ? [connectionStatusText(environment.connection), environment.displayUrl]
+                  .filter(Boolean)
+                  .join(" · ")
+              : environmentsReady
+                ? "Connect an environment to configure its keybindings."
+                : "Loading environments."
+          }
+          control={
+            environmentId !== null && environment !== null ? (
+              <SettingsEnvironmentSelector
+                environmentId={environmentId}
+                environments={environments}
+                primaryEnvironmentId={primaryEnvironmentId}
+                onEnvironmentChange={selectEnvironment}
               />
-              <TooltipPopup side="top">Add keybinding</TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    disabled={!keybindingsConfigPath}
-                    onClick={openKeybindingsFile}
-                    aria-label="Open keybindings.json"
-                  >
-                    <FileJsonIcon className="size-3" />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Open keybindings.json</TooltipPopup>
-            </Tooltip>
-          </div>
-        }
-      >
-        {!isElectron ? (
-          <div className="flex items-start gap-2 border-b border-warning/20 bg-warning/5 px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-            <p>
-              Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop
-              app for better keybinding support.
-            </p>
-          </div>
-        ) : null}
-
-        <ScrollArea
-          chainVerticalScroll
-          scrollFade
-          hideScrollbars
-          className="w-full max-w-full rounded-none"
-        >
-          <div className="grid min-w-[680px] grid-cols-[minmax(190px,1.1fr)_minmax(220px,0.85fr)_minmax(210px,1fr)_60px] border-b border-border/70 bg-muted/25 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
-            <div>Command</div>
-            <div>Keybinding</div>
-            <div>When</div>
-            <div>Status</div>
-          </div>
-          <div className="min-w-[680px] divide-y divide-border/60">
-            {isAddingBinding ? (
-              <NewKeybindingTableRow
-                commandOptions={commandOptions}
-                allRows={rows}
-                variables={whenVariables}
-                isSaving={savingCommand !== null}
-                onSave={saveKeybinding}
-                onCancel={() => setIsAddingBinding(false)}
-              />
-            ) : null}
-            {rows.map((row) => (
-              <KeybindingTableRow
-                key={row.id}
-                row={row}
-                allRows={rows}
-                variables={whenVariables}
-                isSaving={savingCommand === row.command}
-                onSave={saveKeybinding}
-                onReset={resetKeybinding}
-                onRemove={removeKeybinding}
-              />
-            ))}
-            {rows.length === 0 && !isAddingBinding ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                No keybindings match your search.
-              </div>
-            ) : null}
-          </div>
-        </ScrollArea>
+            ) : environmentsReady ? (
+              <Button render={<Link to="/settings/connections" />} size="xs" variant="outline">
+                Open connections
+              </Button>
+            ) : null
+          }
+        />
       </SettingsSection>
+
+      {isConnected ? (
+        <SettingsSection
+          title="Keybindings"
+          headerAction={
+            <div className="flex items-center gap-1.5">
+              <ExpandableHeaderSearch
+                query={query}
+                onChange={setQuery}
+                isOpen={isSearchOpen}
+                onOpenChange={setIsSearchOpen}
+                inputRef={searchInputRef}
+                collapsedAccessory={bindingsCount}
+              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => setIsAddingBinding(true)}
+                      aria-label="Add keybinding"
+                    >
+                      <PlusIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Add keybinding</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                      disabled={!keybindingsConfigPath}
+                      onClick={openKeybindingsFile}
+                      aria-label="Open keybindings.json"
+                    >
+                      <FileJsonIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Open keybindings.json</TooltipPopup>
+              </Tooltip>
+            </div>
+          }
+        >
+          {!isElectron ? (
+            <div className="flex items-start gap-2 border-b border-warning/20 bg-warning/5 px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
+              <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+              <p>
+                Some shortcuts may be claimed by the browser before T3 Code sees them. Use the
+                desktop app for better keybinding support.
+              </p>
+            </div>
+          ) : null}
+
+          <ScrollArea
+            chainVerticalScroll
+            scrollFade
+            hideScrollbars
+            className="w-full max-w-full rounded-none"
+          >
+            <div className="grid min-w-[680px] grid-cols-[minmax(190px,1.1fr)_minmax(220px,0.85fr)_minmax(210px,1fr)_60px] border-b border-border/70 bg-muted/25 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <div>Command</div>
+              <div>Keybinding</div>
+              <div>When</div>
+              <div>Status</div>
+            </div>
+            <div className="min-w-[680px] divide-y divide-border/60">
+              {isAddingBinding ? (
+                <NewKeybindingTableRow
+                  commandOptions={commandOptions}
+                  allRows={rows}
+                  variables={whenVariables}
+                  isSaving={savingCommand !== null}
+                  onSave={saveKeybinding}
+                  onCancel={() => setIsAddingBinding(false)}
+                />
+              ) : null}
+              {rows.map((row) => (
+                <KeybindingTableRow
+                  key={row.id}
+                  row={row}
+                  allRows={rows}
+                  variables={whenVariables}
+                  isSaving={savingCommand === row.command}
+                  onSave={saveKeybinding}
+                  onReset={resetKeybinding}
+                  onRemove={removeKeybinding}
+                />
+              ))}
+              {rows.length === 0 && !isAddingBinding ? (
+                <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  No keybindings match your search.
+                </div>
+              ) : null}
+            </div>
+          </ScrollArea>
+        </SettingsSection>
+      ) : null}
     </SettingsPageContainer>
+  );
+}
+
+export function KeybindingsSettingsPanel() {
+  const settingsEnvironment = useSettingsEnvironment();
+  return (
+    <KeybindingsSettingsPanelContent
+      key={keybindingsSettingsEditorKey(settingsEnvironment.environmentId)}
+      settingsEnvironment={settingsEnvironment}
+    />
   );
 }

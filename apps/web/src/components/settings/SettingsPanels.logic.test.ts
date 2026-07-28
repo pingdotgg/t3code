@@ -1,16 +1,119 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  buildGeneralSettingsRestorePatch,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  hasChangedGeneralServerSettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
+  resolveSettingsEnvironmentId,
 } from "./SettingsPanels.logic";
+import * as Duration from "effect/Duration";
+
+const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("00000000-0000-4000-8000-000000000001");
+const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("00000000-0000-4000-8000-000000000002");
+
+describe("settings environment selection", () => {
+  it("preserves an explicit selected environment", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        availableEnvironmentIds: [LOCAL_ENVIRONMENT_ID, REMOTE_ENVIRONMENT_ID],
+        selectedEnvironmentId: REMOTE_ENVIRONMENT_ID,
+        primaryEnvironmentId: LOCAL_ENVIRONMENT_ID,
+        activeEnvironmentId: LOCAL_ENVIRONMENT_ID,
+      }),
+    ).toBe(REMOTE_ENVIRONMENT_ID);
+  });
+
+  it("defaults to the primary environment in managed mode", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        availableEnvironmentIds: [REMOTE_ENVIRONMENT_ID, LOCAL_ENVIRONMENT_ID],
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: LOCAL_ENVIRONMENT_ID,
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+      }),
+    ).toBe(LOCAL_ENVIRONMENT_ID);
+  });
+
+  it("defaults to the active remote environment in client-only mode", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        availableEnvironmentIds: [LOCAL_ENVIRONMENT_ID, REMOTE_ENVIRONMENT_ID],
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: null,
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+      }),
+    ).toBe(REMOTE_ENVIRONMENT_ID);
+  });
+
+  it("falls back when the selected environment is no longer available", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        availableEnvironmentIds: [LOCAL_ENVIRONMENT_ID],
+        selectedEnvironmentId: REMOTE_ENVIRONMENT_ID,
+        primaryEnvironmentId: LOCAL_ENVIRONMENT_ID,
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+      }),
+    ).toBe(LOCAL_ENVIRONMENT_ID);
+  });
+
+  it("uses the first saved environment when client-only mode has no active environment yet", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        availableEnvironmentIds: [REMOTE_ENVIRONMENT_ID, LOCAL_ENVIRONMENT_ID],
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: null,
+        activeEnvironmentId: null,
+      }),
+    ).toBe(REMOTE_ENVIRONMENT_ID);
+  });
+
+  it("returns null when no environments are available", () => {
+    expect(
+      resolveSettingsEnvironmentId({
+        availableEnvironmentIds: [],
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: null,
+        activeEnvironmentId: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("general settings restore", () => {
+  it("detects whether server-backed general settings differ from their defaults", () => {
+    expect(hasChangedGeneralServerSettings(DEFAULT_SERVER_SETTINGS)).toBe(false);
+    expect(
+      hasChangedGeneralServerSettings({
+        ...DEFAULT_SERVER_SETTINGS,
+        automaticGitFetchInterval: Duration.seconds(5),
+      }),
+    ).toBe(true);
+  });
+
+  it("omits server-backed defaults when only client settings need restoring", () => {
+    const clientOnlyPatch = buildGeneralSettingsRestorePatch({
+      includeServerSettings: false,
+    });
+    const serverAndClientPatch = buildGeneralSettingsRestorePatch({
+      includeServerSettings: true,
+    });
+
+    expect(clientOnlyPatch).toHaveProperty("wordWrap");
+    expect(clientOnlyPatch).not.toHaveProperty("enableAssistantStreaming");
+    expect(clientOnlyPatch).not.toHaveProperty("textGenerationModelSelection");
+    expect(serverAndClientPatch).toHaveProperty("enableAssistantStreaming");
+    expect(serverAndClientPatch).toHaveProperty("textGenerationModelSelection");
+  });
+});
 
 describe("project grouping toggle", () => {
   it("enables repository grouping and disables into separate projects", () => {
