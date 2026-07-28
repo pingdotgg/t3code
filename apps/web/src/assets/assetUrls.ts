@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -41,6 +41,26 @@ export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResourc
     return null;
   }
   return result.url;
+}
+
+/**
+ * Re-issue an asset URL from the environment.
+ *
+ * Asset URLs embed the resolution the server performed when the URL was minted
+ * (for project favicons: which icon file was found, or that none was). Asking
+ * for a new URL therefore re-runs that resolution and yields a freshly signed
+ * URL, which also gets the browser past its cached copy of the old one.
+ */
+export function useRefreshAssetUrl(
+  environmentId: EnvironmentId,
+  resource: AssetResource,
+): () => void {
+  return useAtomRefresh(
+    assetEnvironment.createUrl({
+      environmentId,
+      input: { resource },
+    }),
+  );
 }
 
 export function useAssetUrls(

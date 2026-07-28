@@ -80,6 +80,25 @@ describe("createAssetEnvironmentAtoms", () => {
     ).not.toBe(assets.createUrl(originalTarget));
   });
 
+  it("forwards manual refreshes so a stale asset URL can be re-issued", () => {
+    const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
+      EnvironmentRegistry,
+      never
+    >;
+    const assets = createAssetEnvironmentAtoms(runtime);
+    const atom = assets.createUrl({
+      environmentId: EnvironmentId.make("environment-1"),
+      input: {
+        resource: { _tag: "project-favicon", cwd: "/repo/original" },
+      },
+    });
+
+    // Clicking a project favicon re-issues its URL so the server resolves the
+    // project's icon again. That only works while the query atom carries a
+    // refresh hook down to the underlying request.
+    expect(typeof atom.refresh).toBe("function");
+  });
+
   it("keys collections while preserving independent resource queries", () => {
     const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
       EnvironmentRegistry,
