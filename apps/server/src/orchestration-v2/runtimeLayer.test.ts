@@ -3,11 +3,15 @@ import { assert, it } from "@effect/vitest";
 import {
   type ApplicationStoredEvent,
   CommandId,
+  ContextTransferId,
+  EventId,
   MessageId,
   type ModelSelection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -37,9 +41,10 @@ import {
   OrchestratorV2,
 } from "./Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
-import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import { OrchestrationV2EventSinkLayerLive, OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import { shellStreamItemFromSnapshot } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
@@ -88,7 +93,7 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
   subscribeChanges: Effect.never,
 });
 
-const TestLayer = OrchestrationV2LayerLive.pipe(
+const TestLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
@@ -172,6 +177,175 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
       assert.equal(projection.thread.projectId, projectId);
       assert.equal(projection.thread.providerInstanceId, "codex");
       assert.deepEqual(projection.runs, []);
+    }),
+  );
+
+  it.effect("merges an explicit provider-finished run while checkpoint capture is pending", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("runtime-layer-waiting-merge-project");
+      const targetThreadId = ThreadId.make("runtime-layer-waiting-merge-target");
+      const sourceThreadId = ThreadId.make("runtime-layer-waiting-merge-source");
+      const baseRunId = RunId.make("runtime-layer-waiting-merge-base-run");
+      const sourceRunId = RunId.make("runtime-layer-waiting-merge-source-run");
+      const sourceProviderThreadId = ProviderThreadId.make(
+        "runtime-layer-waiting-merge-provider-thread",
+      );
+      const forkTransferId = ContextTransferId.make("runtime-layer-waiting-merge-fork-transfer");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-waiting-merge-create-target"),
+        threadId: targetThreadId,
+        projectId,
+        title: "Waiting merge target",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const target = yield* orchestrator.getThreadProjection(targetThreadId);
+
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-layer-waiting-merge-seed"),
+        events: [
+          {
+            id: EventId.make("runtime-layer-waiting-merge-source-thread-event"),
+            type: "thread.created",
+            threadId: sourceThreadId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              ...target.thread,
+              id: sourceThreadId,
+              title: "Waiting merge source",
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: targetThreadId,
+                relationshipToParent: "fork",
+                rootThreadId: targetThreadId,
+              },
+              forkedFrom: {
+                type: "run",
+                threadId: targetThreadId,
+                runId: baseRunId,
+              },
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("runtime-layer-waiting-merge-fork-transfer-event"),
+            type: "context-transfer.created",
+            threadId: sourceThreadId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: forkTransferId,
+              type: "fork",
+              sourceThreadId: targetThreadId,
+              targetThreadId: sourceThreadId,
+              sourcePoint: { threadId: targetThreadId, runId: baseRunId },
+              basePoint: null,
+              sourceProviderInstanceId: modelSelection.instanceId,
+              targetProviderInstanceId: modelSelection.instanceId,
+              targetRunId: null,
+              status: "consumed",
+              resolution: null,
+              createdBy: "user",
+              error: null,
+              createdAt: now,
+              updatedAt: now,
+              consumedAt: now,
+            },
+          },
+          {
+            id: EventId.make("runtime-layer-waiting-merge-provider-thread-event"),
+            type: "provider-thread.updated",
+            threadId: sourceThreadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: sourceProviderThreadId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              providerSessionId: null,
+              appThreadId: sourceThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: {
+                driver,
+                nativeId: "native-waiting-merge-source",
+                strength: "strong",
+              },
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("runtime-layer-waiting-merge-source-run-event"),
+            type: "run.created",
+            threadId: sourceThreadId,
+            runId: sourceRunId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: sourceRunId,
+              threadId: sourceThreadId,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: sourceProviderThreadId,
+              userMessageId: MessageId.make("runtime-layer-waiting-merge-message"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "waiting",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+        ],
+      });
+
+      yield* orchestrator.dispatch({
+        type: "thread.merge_back",
+        createdBy: "user",
+        creationSource: "mobile",
+        commandId: CommandId.make("runtime-layer-waiting-merge"),
+        sourceThreadId,
+        targetThreadId,
+        sourcePoint: { type: "run", runId: sourceRunId },
+        createdAt: now,
+      });
+
+      const mergedTarget = yield* orchestrator.getThreadProjection(targetThreadId);
+      const transfer = mergedTarget.contextTransfers.find(
+        (candidate) => candidate.type === "merge_back",
+      );
+      assert.isDefined(transfer);
+      assert.equal(transfer.status, "pending");
+      assert.equal(transfer.sourceThreadId, sourceThreadId);
+      assert.equal(transfer.targetThreadId, targetThreadId);
+      assert.equal(transfer.sourcePoint.runId, sourceRunId);
+      assert.isUndefined(transfer.sourcePoint.checkpointId);
+      assert.equal(transfer.sourcePoint.providerThreadRef?.nativeId, "native-waiting-merge-source");
+      assert.equal(transfer.basePoint?.runId, baseRunId);
+      assert.isNull(transfer.error);
     }),
   );
 });
