@@ -69,6 +69,10 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(resolveMarkdownFileLinkTarget("https://example.com/docs")).toBeNull();
   });
 
+  it("does not treat protocol-relative urls as workspace files", () => {
+    expect(resolveMarkdownFileLinkMeta("//cdn.example.com/logo.png", "/repo/project")).toBeNull();
+  });
+
   it("does not double-decode file URLs", () => {
     expect(resolveMarkdownFileLinkTarget("file:///Users/julius/project/file%2520name.md")).toBe(
       "/Users/julius/project/file%20name.md",
