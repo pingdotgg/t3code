@@ -55,6 +55,8 @@ import { OrchestrationEngineService } from "../../../orchestration/Services/Orch
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../../provider/Services/ProviderService.ts";
+import { workflowRouteFor } from "../../../provider/workflowModelRouting.ts";
+import { ServerSettingsService } from "../../../serverSettings.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;
@@ -222,6 +224,7 @@ const makeDelegateCoordinator = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const providerRegistry = yield* ProviderRegistry;
+  const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
   // Optional: used to heartbeat the parent's turn-activity watchdog while the
   // parent turn is blocked on a delegated child. Without it the parent emits
   // no runtime events of its own and would be flagged as stalled.
@@ -553,18 +556,35 @@ const makeDelegateCoordinator = Effect.gen(function* () {
     const title = resolveTitle(input);
     const parentTurnId = yield* readParentTurnId(scope.threadId);
 
-    // Advisor threads with an executor model configured delegate on that
-    // model instead of their own. The child still runs with
+    // A task-category route is the strongest user intent. Advisor threads
+    // otherwise use their executor model, and ordinary calls inherit the
+    // parent. The child still runs with
     // `interactionMode: "default"` and the parent's stored runtime mode, and
     // `parentThreadId` structurally bars it from delegating further — advisor
     // sub-agents are pure executors.
     const executorSelection =
       caller.interactionMode === "advisor" ? caller.executorModelSelection : null;
-    const childModelSelection = executorSelection ?? caller.modelSelection;
+    const configuredRoute = Option.isSome(serverSettings)
+      ? yield* serverSettings.value.getSettings.pipe(
+          Effect.map((settings) => workflowRouteFor(settings.workflowModelRouting, input.role)),
+          Effect.orElseSucceed(() => null),
+        )
+      : null;
 
     const providers = yield* providerRegistry.getProviders.pipe(
       Effect.orElseSucceed(() => [] as const),
     );
+    const configuredProvider = configuredRoute
+      ? providers.find((candidate) => candidate.instanceId === configuredRoute.instanceId)
+      : undefined;
+    const routeIsAvailable =
+      configuredRoute !== null &&
+      configuredProvider?.enabled === true &&
+      configuredProvider.installed === true &&
+      configuredProvider.status === "ready" &&
+      configuredProvider.models.some((model) => model.slug === configuredRoute.model);
+    const childModelSelection =
+      (routeIsAvailable ? configuredRoute : null) ?? executorSelection ?? caller.modelSelection;
     const provider = providers.find(
       (candidate) => candidate.instanceId === childModelSelection.instanceId,
     );

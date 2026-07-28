@@ -105,6 +105,62 @@ struct AppModelBugHuntRegressionTests {
         #expect(model.selectedThreadID == nil)
     }
 
+    @Test("deleting a project refreshes its archived sessions out of settings")
+    func projectDeleteRefreshesArchive() async throws {
+        let backend = MockBackend()
+        let archived = ChatThread(
+            id: "t-deleted-project-archive", projectID: "project-1",
+            title: "Archived session", provider: .claude, status: .archived,
+            updatedAt: Date())
+        await backend.insertThreads([archived])
+        let model = AppModel(backend: backend)
+        await model.refreshAll()
+        await model.refreshArchivedThreads()
+        let project = try #require(model.projects.first { $0.id == "project-1" })
+        #expect(model.archivedThreads.contains { $0.id == archived.id })
+
+        await model.deleteProject(project)
+
+        #expect(!model.archivedThreads.contains { $0.id == archived.id })
+        #expect(model.archivedThreadsTotal == 0)
+    }
+
+    @Test("deleting a project removes archived rows even when the reload fails")
+    func projectDeleteLocallyRemovesArchiveBeforeReload() async {
+        let backend = StubBackend()
+        let project = Project(id: "p-delete", name: "Delete", path: "/tmp/delete")
+        let archived = ChatThread(
+            id: "t-delete-archive", projectID: project.id,
+            title: "Archived session", provider: .claude, status: .archived,
+            updatedAt: Date())
+        backend.projectsResult = [project]
+        backend.threadsResult = [archived]
+        let model = AppModel(backend: backend)
+        await model.refreshAll()
+        await model.refreshArchivedThreads()
+        #expect(model.archivedThreads.map(\.id) == [archived.id])
+
+        backend.threadsShouldFail = true
+        await model.deleteProject(project)
+
+        #expect(model.archivedThreads.isEmpty)
+        #expect(model.archivedThreadsTotal == 0)
+        #expect(model.archivedThreadsNextCursor == nil)
+        #expect(model.archivedThreadsError != nil)
+    }
+
+    @Test("settle reports failure so the sidebar can preserve selection")
+    func settleReportsFailure() async {
+        let backend = StubBackend()
+        backend.settleShouldFail = true
+        let model = AppModel(backend: backend)
+
+        let succeeded = await model.settleThread(makeThread(id: "t-settle-failure"))
+
+        #expect(!succeeded)
+        #expect(model.lastError != nil)
+    }
+
     @Test("a failed review-diff load records an error instead of an empty diff")
     func failedReviewDiffSurfacesError() async {
         let backend = StubBackend()
@@ -173,17 +229,23 @@ private enum StubBackendError: Error, Sendable {
 private final class StubBackend: BackendService, @unchecked Sendable {
     private let streamPair = AsyncStream<BackendEvent>.makeStream()
 
+    var projectsResult: [Project] = []
     var threadsResult: [ChatThread] = []
+    var threadsShouldFail = false
     var diffFiles: [DiffFile] = []
     var diffShouldFail = false
+    var settleShouldFail = false
     private(set) var vcsRefreshedThreadIDs: [String] = []
 
     func events() async -> AsyncStream<BackendEvent> { streamPair.stream }
 
     func start() async {}
     func stop() async { streamPair.continuation.finish() }
-    func projects() async throws -> [Project] { [] }
-    func threads() async throws -> [ChatThread] { threadsResult }
+    func projects() async throws -> [Project] { projectsResult }
+    func threads() async throws -> [ChatThread] {
+        if threadsShouldFail { throw StubBackendError.failed }
+        return threadsResult
+    }
     func timeline(threadID: String) async throws -> [TimelineItem] { [] }
     func closeTimeline(threadID: String) async {}
     func providers() async throws -> [ProviderInstance] { [] }
@@ -201,7 +263,9 @@ private final class StubBackend: BackendService, @unchecked Sendable {
     }
     func archiveThread(id: String) async throws {}
     func unarchiveThread(id: String) async throws {}
-    func settleThread(id: String) async throws {}
+    func settleThread(id: String) async throws {
+        if settleShouldFail { throw StubBackendError.failed }
+    }
     func unsettleThread(id: String) async throws {}
     func deleteThread(id: String) async throws {}
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws

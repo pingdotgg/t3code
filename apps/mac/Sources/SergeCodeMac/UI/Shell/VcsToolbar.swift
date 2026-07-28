@@ -549,6 +549,9 @@ struct VcsToolbar: View {
             TextEditor(text: $commitMessage)
                 .font(.body)
                 .frame(width: 380, height: 90)
+                .accessibilityLabel("Commit message")
+                .accessibilityHint(
+                    "Optional. Leave blank to have the server generate a commit message.")
                 .overlay(alignment: .topLeading) {
                     if commitMessage.isEmpty {
                         Text("Commit message (optional — server generates one if empty)")

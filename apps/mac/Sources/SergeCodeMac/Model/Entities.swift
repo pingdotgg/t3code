@@ -1622,12 +1622,38 @@ public struct AppAutoReviewJob: Hashable, Sendable, Identifiable {
 }
 
 /// The editable server-settings subset surfaced in the Settings scene.
+public struct AppWorkflowModelRoute: Hashable, Sendable {
+    public var instanceID: String
+    public var modelID: String
+
+    public init(instanceID: String, modelID: String) {
+        self.instanceID = instanceID
+        self.modelID = modelID
+    }
+}
+
+public struct AppWorkflowModelRouting: Hashable, Sendable {
+    public var explore: AppWorkflowModelRoute?
+    public var implement: AppWorkflowModelRoute?
+    public var verify: AppWorkflowModelRoute?
+
+    public init(
+        explore: AppWorkflowModelRoute? = nil, implement: AppWorkflowModelRoute? = nil,
+        verify: AppWorkflowModelRoute? = nil
+    ) {
+        self.explore = explore
+        self.implement = implement
+        self.verify = verify
+    }
+}
+
 public struct AppSettings: Hashable, Sendable {
     public var assistantStreaming: Bool
     public var providerUpdateChecks: Bool
     public var defaultEnvMode: ProjectEnvMode
     public var newWorktreesStartFromOrigin: Bool
     public var addProjectBaseDirectory: String
+    public var workflowModelRouting: AppWorkflowModelRouting
     public var autoReview: AppAutoReviewSettings
     /// Milliseconds a settled thread may sit before the server auto-archives
     /// it. `nil` disables auto-archiving.
@@ -1636,6 +1662,7 @@ public struct AppSettings: Hashable, Sendable {
     public init(
         assistantStreaming: Bool, providerUpdateChecks: Bool, defaultEnvMode: ProjectEnvMode,
         newWorktreesStartFromOrigin: Bool, addProjectBaseDirectory: String,
+        workflowModelRouting: AppWorkflowModelRouting = AppWorkflowModelRouting(),
         autoReview: AppAutoReviewSettings = AppAutoReviewSettings(),
         autoArchiveSettledAfterMs: Double? = nil
     ) {
@@ -1644,6 +1671,7 @@ public struct AppSettings: Hashable, Sendable {
         self.defaultEnvMode = defaultEnvMode
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.addProjectBaseDirectory = addProjectBaseDirectory
+        self.workflowModelRouting = workflowModelRouting
         self.autoReview = autoReview
         self.autoArchiveSettledAfterMs = autoArchiveSettledAfterMs
     }

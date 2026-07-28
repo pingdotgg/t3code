@@ -218,4 +218,77 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
     }),
   );
+
+  it.effect("rejects ordinary commands against tombstones while preserving duplicate deletes", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const deletedAt = "2026-01-02T00:00:00.000Z";
+      const tombstonedReadModel = {
+        ...readModel,
+        projects: readModel.projects.map((project) => ({ ...project, deletedAt })),
+        threads: readModel.threads.map((thread) => ({ ...thread, deletedAt })),
+      };
+
+      const duplicateProjectDelete = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-duplicate"),
+          projectId: asProjectId("project-delete"),
+        },
+        readModel: tombstonedReadModel,
+      });
+      expect(normalizeDeleteEvent(duplicateProjectDelete).map((event) => event.type)).toEqual([
+        "project.deleted",
+      ]);
+
+      const duplicateThreadDelete = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("cmd-thread-delete-duplicate"),
+          threadId: asThreadId("thread-delete-1"),
+        },
+        readModel: tombstonedReadModel,
+      });
+      expect(normalizeDeleteEvent(duplicateThreadDelete).map((event) => event.type)).toEqual([
+        "thread.deleted",
+      ]);
+
+      const createUnderDeletedProjectError = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.create",
+            commandId: asCommandId("cmd-thread-create-after-project-delete"),
+            threadId: asThreadId("thread-after-project-delete"),
+            projectId: asProjectId("project-delete"),
+            title: "Orphaned Thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            parentThreadId: null,
+            createdAt: deletedAt,
+          },
+          readModel: tombstonedReadModel,
+        }),
+      );
+      expect(createUnderDeletedProjectError.message).toContain("has been deleted");
+
+      const updateDeletedThreadError = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.meta.update",
+            commandId: asCommandId("cmd-thread-update-after-delete"),
+            threadId: asThreadId("thread-delete-1"),
+            title: "Still Deleted",
+          },
+          readModel: tombstonedReadModel,
+        }),
+      );
+      expect(updateDeletedThreadError.message).toContain("has been deleted");
+    }),
+  );
 });

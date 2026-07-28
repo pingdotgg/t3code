@@ -109,6 +109,32 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings workflow model routing", () => {
+  it("defaults every task role to the parent model", () => {
+    expect(decodeServerSettings({}).workflowModelRouting).toEqual({
+      explore: null,
+      implement: null,
+      verify: null,
+    });
+  });
+
+  it("decodes provider-instance model selections per task role", () => {
+    expect(
+      decodeServerSettings({
+        workflowModelRouting: {
+          explore: { instanceId: "codex", model: "gpt-5.6-luna" },
+          implement: { instanceId: "claudeAgent", model: "claude-fable-5" },
+          verify: null,
+        },
+      }).workflowModelRouting,
+    ).toEqual({
+      explore: { instanceId: "codex", model: "gpt-5.6-luna" },
+      implement: { instanceId: "claudeAgent", model: "claude-fable-5" },
+      verify: null,
+    });
+  });
+});
+
 describe("ServerSettings token efficiency defaults", () => {
   it("defaults to assistive/manual token efficiency settings", () => {
     const decoded = decodeServerSettings({});

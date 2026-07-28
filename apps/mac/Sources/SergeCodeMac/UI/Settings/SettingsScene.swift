@@ -5,7 +5,8 @@ import T3Kit
 /// Settings tab identifiers — public so debug harnesses (UIProbe) can open
 /// the window on a specific tab.
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case general, providers, dictation, autoReview, archive, scenery, devices, remoteMacs, connection
+    case general, providers, workflows, dictation, autoReview, archive, scenery, devices, remoteMacs,
+        connection
 
     public var id: Self { self }
 
@@ -13,6 +14,7 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .providers: "Providers"
+        case .workflows: "Workflows"
         case .dictation: "Dictation"
         case .autoReview: "Auto Review"
         case .archive: "Archive"
@@ -27,6 +29,7 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .providers: "puzzlepiece.extension"
+        case .workflows: "point.3.connected.trianglepath.dotted"
         case .dictation: "mic"
         case .autoReview: "text.magnifyingglass"
         case .archive: "archivebox"
@@ -174,6 +177,8 @@ public struct SettingsScene: View {
             GeneralSettingsTab(model: model)
         case .providers:
             ProvidersSettingsTab(model: model)
+        case .workflows:
+            WorkflowRoutingSettingsTab(model: model)
         case .dictation:
             DictationSettingsTab(model: model)
         case .autoReview:
@@ -234,7 +239,7 @@ private struct GeneralSettingsTab: View {
                     }
                     SettingsDivider()
                     SettingsToggleRow(
-                        title: "Start new worktrees from origin",
+                        title: "Require latest origin/main for new worktrees",
                         isOn: binding(settings, \.newWorktreesStartFromOrigin))
                     SettingsDivider()
                     SettingsCardRow {

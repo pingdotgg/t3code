@@ -859,43 +859,11 @@ const makeWsRpcLayer = (
 
             if (bootstrap?.prepareWorktree) {
               const prepareWorktree = bootstrap.prepareWorktree;
-              let worktreeBaseRef = prepareWorktree.baseBranch;
-              if (prepareWorktree.startFromOrigin) {
-                const resolvedRemoteBase = yield* Effect.gen(function* () {
-                  // Only the base branch is needed here, and the refresh is
-                  // shared (and rate-limited) with the eager worktree path, so
-                  // a first turn right after thread creation does not re-fetch.
-                  yield* gitWorkflow.refreshRemoteBase({
-                    cwd: prepareWorktree.projectCwd,
-                    remoteName: "origin",
-                    remoteBranch: prepareWorktree.baseBranch,
-                  });
-                  return yield* gitWorkflow.resolveRemoteTrackingCommit({
-                    cwd: prepareWorktree.projectCwd,
-                    refName: prepareWorktree.baseBranch,
-                    fallbackRemoteName: "origin",
-                  });
-                }).pipe(
-                  // An unreachable remote must not block thread creation —
-                  // fall back to the local base branch instead.
-                  Effect.catch((error) =>
-                    Effect.logWarning(
-                      "Failed to fetch the latest remote base; falling back to the local branch",
-                      {
-                        cwd: prepareWorktree.projectCwd,
-                        baseBranch: prepareWorktree.baseBranch,
-                        detail: error.detail,
-                      },
-                    ).pipe(Effect.as(null)),
-                  ),
-                );
-                if (resolvedRemoteBase) {
-                  worktreeBaseRef = resolvedRemoteBase.commitSha;
-                }
-              }
               const worktree = yield* gitWorkflow.createWorktree({
                 cwd: prepareWorktree.projectCwd,
-                refName: worktreeBaseRef,
+                refName: prepareWorktree.startFromOrigin
+                  ? `origin/${prepareWorktree.baseBranch}`
+                  : prepareWorktree.baseBranch,
                 newRefName: prepareWorktree.branch,
                 baseRefName: prepareWorktree.baseBranch,
                 path: null,
