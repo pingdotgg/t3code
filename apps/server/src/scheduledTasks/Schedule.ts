@@ -1,4 +1,4 @@
-import type { ScheduledTaskSchedule } from "@t3tools/contracts";
+import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 const MINUTE_MS = 60_000;
@@ -14,7 +14,11 @@ export function nextScheduledRunAt(
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
   if (schedule.type === "interval") {
-    return DateTime.add(from, { milliseconds: schedule.everyMs });
+    // Persisted rows created before the one-minute floor remain readable, but
+    // they must not retain their old high-frequency execution rate.
+    return DateTime.add(from, {
+      milliseconds: Math.max(schedule.everyMs, MIN_SCHEDULED_TASK_INTERVAL_MS),
+    });
   }
 
   const time = parseTimeOfDay(schedule.timeOfDay);
