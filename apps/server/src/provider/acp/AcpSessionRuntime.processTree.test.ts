@@ -955,6 +955,43 @@ describe("terminatePosixOwnedProcessTree", () => {
     }),
   );
 
+  it.live("detects an owned child first observed in the final survivor snapshot", () =>
+    Effect.gen(function* () {
+      const lateChild = identity(111, 110, 111, 111);
+      const fixture = makeController({
+        processes: [server(), identity(100, process.pid, 100, 100), identity(110, 100, 110, 110)],
+        onProcess: (processes, pid) => {
+          // Leave the descendant parent alive through teardown so it can fork
+          // immediately after the last signal pass.
+          if (pid !== 110) processes.delete(pid);
+        },
+      });
+      let snapshotCalls = 0;
+      const controller: AcpPosixProcessTreeController = {
+        ...fixture.controller,
+        snapshot: () => {
+          snapshotCalls += 1;
+          // Two TERM discovery passes, the root TERM pass, and two KILL passes
+          // precede the final survivor snapshot.
+          if (snapshotCalls === 6) fixture.processes.set(lateChild.pid, lateChild);
+          return fixture.controller.snapshot();
+        },
+      };
+
+      const error = yield* Effect.flip(
+        terminatePosixOwnedProcessTree({
+          controller,
+          discoveryPasses: 2,
+          grace: 0,
+          rootPid: 100,
+        }),
+      );
+
+      expect(snapshotCalls).toBe(6);
+      expect(error.detail).toContain("110, 111");
+    }),
+  );
+
   it.live("retains the ledger across root exit and an explicit failure for finalizer retry", () =>
     Effect.gen(function* () {
       let ignoreSignals = true;
