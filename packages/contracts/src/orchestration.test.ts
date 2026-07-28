@@ -294,6 +294,25 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   }),
 );
 
+it.effect("decodes thread.branch commands with an optional title", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.branch",
+      commandId: "cmd-branch",
+      sourceThreadId: "thread-source",
+      threadId: "thread-branch",
+      title: "Alternative approach",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.type, "thread.branch");
+    if (parsed.type !== "thread.branch") return;
+    assert.strictEqual(parsed.sourceThreadId, "thread-source");
+    assert.strictEqual(parsed.threadId, "thread-branch");
+    assert.strictEqual(parsed.title, "Alternative approach");
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({

@@ -107,6 +107,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.createThread(projectID: projectID, provider: provider, title: title)
     }
 
+    public func branchThread(source: ChatThread) async throws -> ChatThread {
+        await state.branchThread(source: source)
+    }
+
     public func archiveThread(id: String) async throws {
         await state.archiveThread(id: id)
     }
@@ -678,6 +682,20 @@ private actor MockState {
         timelinesByThread[thread.id] = []
         diffsByThread[thread.id] = []
         checkpointsByThread[thread.id] = []
+        emit(.threadUpserted(thread))
+        return thread
+    }
+
+    func branchThread(source: ChatThread) -> ChatThread {
+        var thread = source
+        thread.id = nextID("thread")
+        thread.title = "Branch of \(source.title)"
+        thread.status = .idle
+        thread.updatedAt = Date()
+        threadsByID[thread.id] = thread
+        timelinesByThread[thread.id] = timelinesByThread[source.id] ?? []
+        diffsByThread[thread.id] = diffsByThread[source.id] ?? []
+        checkpointsByThread[thread.id] = checkpointsByThread[source.id] ?? []
         emit(.threadUpserted(thread))
         return thread
     }

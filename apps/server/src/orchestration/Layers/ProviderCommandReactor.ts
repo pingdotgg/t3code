@@ -46,6 +46,7 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { formatThreadBranchPrompt, readThreadBranchActivity } from "../ThreadBranching.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -896,6 +897,8 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
+    const branchActivity = readThreadBranchActivity(thread.activities);
+    const needsBranchBootstrap = thread.session === null && branchActivity !== null;
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
@@ -903,7 +906,15 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const messageText =
+      needsBranchBootstrap && branchActivity !== null
+        ? formatThreadBranchPrompt({
+            sourceTitle: branchActivity.sourceTitle,
+            messages: thread.messages.slice(0, -1),
+            currentMessage: input.messageText,
+          })
+        : input.messageText;
+    const normalizedInput = toNonEmptyProviderInput(messageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()

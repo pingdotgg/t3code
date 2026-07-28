@@ -1716,6 +1716,18 @@ public final class AppModel {
         }
     }
 
+    @discardableResult
+    public func branchThread(_ source: ChatThread) async -> ChatThread? {
+        do {
+            let thread = try await backend.branchThread(source: source)
+            selectedThreadID = thread.id
+            return thread
+        } catch {
+            report(error)
+            return nil
+        }
+    }
+
     public func respond(to approval: ApprovalRequest, decision: ApprovalDecision) async {
         guard pendingDecisionResponseIDs.insert(approval.id).inserted else { return }
         defer { pendingDecisionResponseIDs.remove(approval.id) }

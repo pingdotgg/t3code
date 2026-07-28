@@ -82,6 +82,7 @@ public protocol BackendService: Sendable {
     /// `title` nil means the backend picks its generic default.
     func createThread(projectID: String, provider: ProviderKind, title: String?) async throws
         -> ChatThread
+    func branchThread(source: ChatThread) async throws -> ChatThread
     func archiveThread(id: String) async throws
     func unarchiveThread(id: String) async throws
     func settleThread(id: String) async throws
@@ -186,6 +187,12 @@ public protocol BackendService: Sendable {
 }
 
 public extension BackendService {
+    func branchThread(source: ChatThread) async throws -> ChatThread {
+        try await createThread(
+            projectID: source.projectID, provider: source.provider,
+            title: "Branch of \(source.title)")
+    }
+
     func archivedThreadsPage(cursor: Int?, limit: Int) async throws -> ArchivedThreadsPage {
         // Default for backends without a separate archived query: paginate
         // the full thread list client-side.

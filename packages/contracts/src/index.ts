@@ -25,6 +25,7 @@ export * from "./assets.ts";
 export * from "./review.ts";
 export * from "./autoReview.ts";
 export * from "./subAgents.ts";
+export * from "./threadBranching.ts";
 export * from "./customInstructions.ts";
 export * from "./extensions.ts";
 export * from "./rpc.ts";

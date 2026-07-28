@@ -1231,6 +1231,16 @@ private struct SidebarThreadMenu: View {
                 }
                 .disabled(!item.isSelectable || providers.isEmpty)
 
+                AlpineMenuRow(
+                    icon: "arrow.triangle.branch",
+                    title: "Branch Session"
+                ) {
+                    Haptics.play(.commit)
+                    dismiss()
+                    Task { await model.branchThread(item.thread) }
+                }
+                .disabled(!item.isSelectable)
+
                 AlpineMenuSeparator()
 
                 lifecycleRow
