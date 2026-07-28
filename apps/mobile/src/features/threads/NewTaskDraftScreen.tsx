@@ -274,7 +274,7 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    const selection = resolveDraftProjectSelection(selectedProjectKey, projectScopes);
+    const selection = resolveDraftProjectSelection(selectedProjectKey, projects, projectScopes);
     if (selection.kind === "preserve") {
       return;
     }
