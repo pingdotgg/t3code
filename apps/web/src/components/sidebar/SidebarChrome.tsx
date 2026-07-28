@@ -2,7 +2,7 @@ import { SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
-import { useClientSettings } from "../../hooks/useSettings";
+import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -29,9 +29,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron: boolean;
 }) {
   const stageLabel = useEnvironmentStageLabel();
-  const environmentIdentificationMode = useClientSettings(
-    (settings) => settings.environmentIdentificationMode,
-  );
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
     environmentIdentificationMode === "artwork",
