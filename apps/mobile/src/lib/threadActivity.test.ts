@@ -9,7 +9,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadFeed, deriveThreadFeedPresentation } from "./threadActivity";
+import {
+  buildThreadFeed,
+  deriveThreadFeedPresentation,
+  threadFeedRunIsUnsettled,
+  type ThreadFeedActivity,
+  type ThreadFeedEntry,
+} from "./threadActivity";
 
 const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
@@ -83,6 +89,25 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("does not treat a queued-only run as live feed activity", () => {
+    expect(
+      threadFeedRunIsUnsettled({
+        runId,
+        status: "queued",
+        startedAt: null,
+        completedAt: null,
+      }),
+    ).toBe(false);
+    expect(
+      threadFeedRunIsUnsettled({
+        runId,
+        status: "running",
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: null,
+      }),
+    ).toBe(true);
+  });
+
   it("preserves authoritative V2 order instead of sorting reconstructed collections", () => {
     const rows = [
       projected(userMessage("2026-06-20T00:00:03.000Z"), 0),
