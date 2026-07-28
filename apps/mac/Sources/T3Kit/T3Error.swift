@@ -79,6 +79,25 @@ public struct RpcFailure: Error, Decodable, Sendable {
         }
         return nil
     }
+
+    /// Short message suitable for settings/UI surfaces. Effect failures may
+    /// contain a deeply nested schema cause; never stringify that entire tree.
+    public var userFacingMessage: String? {
+        for cause in causes {
+            guard case let .fail(tag, error) = cause else { continue }
+            let message =
+                error["message"]?.stringValue
+                ?? error["description"]?.stringValue
+                ?? error["operation"]?.stringValue.map { "Settings \($0) failed." }
+            if let message, !message.isEmpty {
+                return message
+            }
+            if !tag.isEmpty {
+                return "The server rejected the change (\(tag))."
+            }
+        }
+        return nil
+    }
 }
 
 public enum T3Error: Error, Sendable {

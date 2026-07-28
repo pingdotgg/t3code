@@ -86,7 +86,7 @@ private struct EntranceModifier: ViewModifier {
             .opacity(settled ? 1 : policy.initialOpacity)
             .scaleEffect(settled ? 1 : policy.initialScale(for: role))
             .offset(y: settled ? 0 : policy.offset(for: role))
-            .onAppear {
+            .task {
                 guard policy.shouldPlay(alreadyPlayed: hasEntered, suppressed: suppressed)
                 else {
                     // Already visible. Latch so lifting suppression later does
@@ -94,6 +94,14 @@ private struct EntranceModifier: ViewModifier {
                     hasEntered = true
                     return
                 }
+                // Updating state inside SwiftUI's appearance callback can race
+                // teardown when a lazy row is inserted and removed in the same
+                // render pass. macOS 27 has been observed dereferencing the
+                // freed _AppearanceActionModifier box in that race. A
+                // view-bound task starts after mounting and is cancelled when
+                // the row disappears, so the state write never outlives it.
+                await Task.yield()
+                guard !Task.isCancelled else { return }
                 // Marked so the streaming timeline's animation suppressor lets
                 // this through — unmarked, `hasEntered` flipped instantly and
                 // arriving rows popped in mid-run. See `isEntranceAnimation`.

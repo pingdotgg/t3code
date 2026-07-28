@@ -10,10 +10,10 @@ import T3Kit
 /// happening, how long it has been happening, and what just happened before
 /// it.
 ///
-/// Cost: one `TimelineView` at 30fps plus a small `Canvas`, mounted only
+/// Cost: one `TimelineView` at 30fps plus two small `Canvas` passes, mounted only
 /// while `AgentActivityPresentation` reports an activity — a settled thread
-/// hosts nothing. Its height is fixed (single-line label), so the streaming
-/// autoscroll never re-anchors because the dock re-rendered.
+/// hosts nothing. Its geometry stays fixed across phase changes, so switching
+/// from thinking to a tool never re-anchors the streaming transcript.
 ///
 /// Reduce Motion / playful motion off: the whole thing degrades to the quiet
 /// dots-and-label row the transcript used to show for silent reasoning (see
@@ -42,45 +42,60 @@ struct AgentActivityDock: View {
 
     var body: some View {
         let playful = Motion.playful
-        HStack(alignment: .center, spacing: 0) {
+        Group {
             if playful.showsPlayfulSurfaces {
                 dock(animated: playful.allowsCharacterMotion)
             } else {
                 quietRow
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityAddTraits(.updatesFrequently)
         .playfulMotionInvalidated($playfulRevision)
     }
 
     // MARK: - Playful dock
 
-    /// Deliberately built out of `transcriptCard` and nothing else: the dock
-    /// is the tail of a column of tool rows, and its own leading inset used
-    /// to push the card 12pt — and its badge 20pt — to the right of every
-    /// row above it, which is exactly where a misalignment is most visible.
-    /// The card hugs its content rather than filling the width; that is the
-    /// one thing it does not share with the rows, and it is what keeps a
-    /// transient status pill from reading as another entry in the transcript.
+    /// A full-width member of the transcript column, with the same geometry as
+    /// completed tool cards. The generous horizontal rhythm is intentional:
+    /// this is the one place that owns all non-terminal work, not a small
+    /// status pill competing with a second running row above it.
     private func dock(animated: Bool) -> some View {
-        HStack(spacing: 10) {
-            AuroraChip(tint: tint, symbolName: symbolName, animated: animated)
-            phaseLabel(animated: animated)
-            if let since = activity.since {
-                Text(since, style: .timer)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 46, alignment: .trailing)
-                    .accessibilityHidden(true)
-            }
-            if !activity.recentToolKinds.isEmpty {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 12) {
+                AuroraChip(tint: tint, symbolName: symbolName, animated: animated, size: 32)
+                VStack(alignment: .leading, spacing: 3) {
+                    phaseLabel(animated: animated)
+                    Text(contextLabel)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .contentTransition(Motion.reduceMotion ? .identity : .opacity)
+                }
+                .frame(width: 280, alignment: .leading)
+                Spacer(minLength: 12)
                 ToolTape(kinds: activity.recentToolKinds)
+                Group {
+                    if let since = activity.since {
+                        Text(since, style: .timer)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Color.clear
+                    }
+                }
+                // The clock updates once a second. Reserve its width, but let
+                // the digits update immediately so they do not animate forever.
+                .frame(width: 46, alignment: .trailing)
+                .accessibilityHidden(true)
             }
+            ActivityFlowLine(tint: tint, animated: animated)
         }
         .transcriptCard(fill: tint.opacity(0.08))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .shimmerBorder(
             color: tint, isActive: animated, cornerRadius: TranscriptMetrics.cardRadius)
+        .animation(Motion.ambient, value: activity.phase)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
     }
@@ -89,21 +104,28 @@ struct AgentActivityDock: View {
         tickingLabel { text in
             ShimmerLabel(text: text, tint: tint, animated: animated)
         }
-        // Tool names and the escalating thinking copy vary dramatically in
-        // width. Hold one line box so phase changes crossfade without pushing
-        // the timer and recent-tool tape sideways.
-        .frame(width: 280, alignment: .leading)
+    }
+
+    private var contextLabel: String {
+        AgentActivityPresentation.contextLabel(
+            phase: activity.phase, completedToolCount: activity.completedToolCount)
     }
 
     /// Cardless, so it carries the inset the card would otherwise supply —
     /// without it the dots sit 12pt left of the icon column every row above
     /// shares.
     private var quietRow: some View {
-        tickingLabel { text in
-            QuietActivityRow(label: text, accessibilityLabel: accessibilityLabel)
+        VStack(alignment: .leading, spacing: 8) {
+            tickingLabel { text in
+                QuietActivityRow(label: text, accessibilityLabel: accessibilityLabel)
+            }
+            Text(contextLabel)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.leading, TranscriptMetrics.iconColumn + 8)
         }
-        .padding(.horizontal, TranscriptMetrics.cardPadH)
-        .padding(.vertical, TranscriptMetrics.cardPadV)
+        .transcriptCard(fill: tint.opacity(0.05))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Both presentations ride this tick, and neither can go without it: the
@@ -132,6 +154,53 @@ struct AgentActivityDock: View {
 
     private var accessibilityLabel: String {
         AgentActivityPresentation.accessibilityLabel(phase: activity.phase, subject: subject)
+    }
+}
+
+// MARK: - Activity flow
+
+/// A quiet directional current across the bottom of the live card. It gives
+/// continuous work a sense of travel without changing layout; the completed
+/// row's own upward entrance carries the handoff into transcript history.
+private struct ActivityFlowLine: View {
+    let tint: Color
+    let animated: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(tint.opacity(0.10))
+                if animated {
+                    TimelineView(
+                        .animation(minimumInterval: Motion.playful.decorativeFrameInterval)
+                    ) { context in
+                        let period = 2.2
+                        let progress =
+                            context.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: period) / period
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [.clear, tint.opacity(0.75), .clear],
+                                    startPoint: .leading, endPoint: .trailing))
+                            .frame(width: min(120, proxy.size.width * 0.32))
+                            .offset(
+                                x: CGFloat(progress)
+                                    * (proxy.size.width + min(120, proxy.size.width * 0.32))
+                                    - min(120, proxy.size.width * 0.32))
+                    }
+                } else {
+                    Capsule()
+                        .fill(tint.opacity(0.35))
+                        .frame(width: min(96, proxy.size.width * 0.24))
+                }
+            }
+        }
+        .frame(height: 2)
+        .clipped()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -279,7 +348,7 @@ private struct ShimmerLabel: View {
     let animated: Bool
 
     var body: some View {
-        let base = Text(text).font(SurgeTypography.agentStatus)
+        let base = Text(text).font(.callout.weight(.medium))
         base
             .foregroundStyle(.secondary)
             .lineLimit(1)
