@@ -294,6 +294,9 @@ public struct ComposerBar: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .background(ComposerDropTargetConfigurator())
                         .background(ComposerWindowAnchor(box: windowBox))
+                        .accessibilityLabel("Message")
+                        .accessibilityHint(
+                            "Type a message. Use @ to mention files or / to insert commands.")
                         .overlay(alignment: .topLeading) {
                             if draft.isEmpty {
                                 // Matches NSTextView's text origin (no top

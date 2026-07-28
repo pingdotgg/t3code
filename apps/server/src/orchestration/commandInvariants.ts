@@ -43,6 +43,32 @@ export function requireProject(input: {
   readonly command: OrchestrationCommand;
   readonly projectId: ProjectId;
 }): Effect.Effect<OrchestrationProject, OrchestrationCommandInvariantError> {
+  return requireProjectIncludingDeleted(input).pipe(
+    Effect.flatMap((project) =>
+      project.deletedAt === null
+        ? Effect.succeed(project)
+        : Effect.fail(
+            invariantError(
+              input.command.type,
+              `Project '${input.projectId}' has been deleted and cannot handle command '${input.command.type}'.`,
+            ),
+          ),
+    ),
+  );
+}
+
+/**
+ * Resolve a project tombstone as well as an active project.
+ *
+ * Ordinary commands must use `requireProject`. This variant exists only for
+ * delete commands whose duplicate-delete behavior deliberately re-emits the
+ * deletion event.
+ */
+export function requireProjectIncludingDeleted(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly projectId: ProjectId;
+}): Effect.Effect<OrchestrationProject, OrchestrationCommandInvariantError> {
   const project = findProjectById(input.readModel, input.projectId);
   if (project) {
     return Effect.succeed(project);
@@ -72,6 +98,32 @@ export function requireProjectAbsent(input: {
 }
 
 export function requireThread(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+  return requireThreadIncludingDeleted(input).pipe(
+    Effect.flatMap((thread) =>
+      thread.deletedAt === null
+        ? Effect.succeed(thread)
+        : Effect.fail(
+            invariantError(
+              input.command.type,
+              `Thread '${input.threadId}' has been deleted and cannot handle command '${input.command.type}'.`,
+            ),
+          ),
+    ),
+  );
+}
+
+/**
+ * Resolve a thread tombstone as well as an active thread.
+ *
+ * Ordinary commands must use `requireThread`. This variant exists only for
+ * thread.delete, whose duplicate-delete behavior deliberately re-emits the
+ * deletion event for cleanup reactors.
+ */
+export function requireThreadIncludingDeleted(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
@@ -144,11 +196,13 @@ export function requireValidParentThread(input: {
     );
   }
   const parent = findThreadById(input.readModel, input.parentThreadId);
-  if (!parent) {
+  if (!parent || parent.deletedAt !== null) {
     return Effect.fail(
       invariantError(
         input.command.type,
-        `Parent thread '${input.parentThreadId}' does not exist for command '${input.command.type}'.`,
+        parent
+          ? `Parent thread '${input.parentThreadId}' has been deleted and cannot handle command '${input.command.type}'.`
+          : `Parent thread '${input.parentThreadId}' does not exist for command '${input.command.type}'.`,
       ),
     );
   }
