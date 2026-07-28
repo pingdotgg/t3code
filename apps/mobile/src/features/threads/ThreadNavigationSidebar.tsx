@@ -62,7 +62,7 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "./thread-list-items";
-import { ThreadListV2Row } from "./thread-list-v2-items";
+import { ThreadListV2PendingRow, ThreadListV2Row } from "./thread-list-v2-items";
 import {
   buildThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
@@ -79,7 +79,8 @@ type SidebarListItem =
       readonly type: "v2-pending-task";
       readonly key: string;
       readonly pendingTask: PendingNewTask;
-      readonly isLast: boolean;
+      /** Only the leading queued row draws the "Pending" divider. */
+      readonly isFirst: boolean;
     }
   | { readonly type: "v2-thread"; readonly key: string; readonly item: ThreadListV2Item }
   | { readonly type: "v2-show-more"; readonly key: string; readonly hiddenCount: number };
@@ -494,7 +495,7 @@ function ThreadNavigationSidebarPane(
       type: "v2-pending-task" as const,
       key: `v2-pending:${pendingTask.message.messageId}`,
       pendingTask,
-      isLast: index === v2PendingTasks.length - 1,
+      isFirst: index === 0,
     }));
     for (const item of threadListV2Layout.items) {
       items.push({
@@ -712,7 +713,7 @@ function ThreadNavigationSidebarPane(
         return previous.hiddenCount === item.hiddenCount;
       }
       if (previous.type === "v2-pending-task" && item.type === "v2-pending-task") {
-        return previous.pendingTask === item.pendingTask && previous.isLast === item.isLast;
+        return previous.pendingTask === item.pendingTask && previous.isFirst === item.isFirst;
       }
       if (
         previous.type === "v2-thread" ||
@@ -748,20 +749,27 @@ function ThreadNavigationSidebarPane(
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
-        case "v2-pending-task":
+        case "v2-pending-task": {
+          const pendingScopeKey = scopedProjectKey(
+            item.pendingTask.message.environmentId,
+            item.pendingTask.creation.projectId,
+          );
           return (
-            <PendingTaskListRow
-              variant="sidebar"
+            <ThreadListV2PendingRow
               pendingTask={item.pendingTask}
+              project={projectByKey.get(pendingScopeKey) ?? null}
+              projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
               environmentLabel={
                 savedConnectionsById[item.pendingTask.message.environmentId]?.environmentLabel ??
                 null
               }
-              isLast={item.isLast}
+              pane="sidebar"
+              showPendingDivider={item.isFirst}
               onSelectPendingTask={openPendingTask}
               onDeletePendingTask={confirmDeletePendingTask}
             />
           );
+        }
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);

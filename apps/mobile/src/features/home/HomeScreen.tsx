@@ -36,7 +36,7 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
-import { ThreadListV2Row } from "../threads/thread-list-v2-items";
+import { ThreadListV2PendingRow, ThreadListV2Row } from "../threads/thread-list-v2-items";
 import {
   buildThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
@@ -809,14 +809,21 @@ export function HomeScreen(props: HomeScreenProps) {
     <>
       {listHeader}
       {v2PendingTasks.map((pendingTask, index) => (
-        <PendingTaskListRow
+        <ThreadListV2PendingRow
           key={pendingTask.message.messageId}
-          variant="compact"
           pendingTask={pendingTask}
+          project={
+            projectByKey.get(
+              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+            ) ?? null
+          }
+          projectTitle={v2ProjectTitleByProjectKey.get(
+            scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+          )}
           environmentLabel={
             props.savedConnectionsById[pendingTask.message.environmentId]?.environmentLabel ?? null
           }
-          isLast={index === v2PendingTasks.length - 1}
+          showPendingDivider={index === 0}
           onSelectPendingTask={props.onSelectPendingTask}
           onDeletePendingTask={props.onDeletePendingTask}
         />
