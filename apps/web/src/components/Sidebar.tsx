@@ -147,9 +147,10 @@ import {
   prStatusIndicator,
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
+  setThreadChangeRequestSnapshot,
   settledPrHoverColorClass,
   terminalStatusFromRunningIds,
-  threadChangeRequestSnapshotsEqual,
+  threadChangeRequestSnapshotsAtom,
   type ThreadChangeRequestSnapshot,
   type TerminalStatusIndicator,
 } from "./ThreadStatusIndicators";
@@ -1855,29 +1856,7 @@ export default function Sidebar() {
   // fresh clock whenever it recomputes.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
 
-  const [changeRequestSnapshotByKey, setChangeRequestSnapshotByKey] = useState<
-    ReadonlyMap<string, ThreadChangeRequestSnapshot>
-  >(() => new Map());
-  const handleChangeRequestSnapshot = useCallback(
-    (threadKey: string, snapshot: ThreadChangeRequestSnapshot | null) => {
-      setChangeRequestSnapshotByKey((current) => {
-        const existing = current.get(threadKey);
-        if (snapshot === null) {
-          if (existing === undefined) return current;
-          const next = new Map(current);
-          next.delete(threadKey);
-          return next;
-        }
-        if (existing !== undefined && threadChangeRequestSnapshotsEqual(existing, snapshot)) {
-          return current;
-        }
-        const next = new Map(current);
-        next.set(threadKey, snapshot);
-        return next;
-      });
-    },
-    [],
-  );
+  const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
@@ -3691,7 +3670,7 @@ export default function Sidebar() {
                         onUnpin={attemptUnpin}
                         onAcknowledgeWoke={acknowledgeWoke}
                         changeRequestSnapshot={changeRequestSnapshotByKey.get(threadKey) ?? null}
-                        onChangeRequestSnapshot={handleChangeRequestSnapshot}
+                        onChangeRequestSnapshot={setThreadChangeRequestSnapshot}
                       />
                     );
                   };

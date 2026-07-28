@@ -4,8 +4,10 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { Atom } from "effect/unstable/reactivity";
 import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -136,6 +138,10 @@ export interface ThreadChangeRequestSnapshot {
   readonly sourceControlProvider: VcsStatusResult["sourceControlProvider"] | undefined;
 }
 
+export const threadChangeRequestSnapshotsAtom = Atom.make<
+  ReadonlyMap<string, ThreadChangeRequestSnapshot>
+>(new Map()).pipe(Atom.withLabel("sidebar:thread-change-request-snapshots"));
+
 function isTerminalChangeRequestState(
   state: NonNullable<ThreadPr>["state"],
 ): state is "merged" | "closed" {
@@ -165,6 +171,27 @@ export function threadChangeRequestSnapshotsEqual(
     left.pr.state === right.pr.state &&
     sourceControlProvidersEqual(left.sourceControlProvider, right.sourceControlProvider)
   );
+}
+
+export function setThreadChangeRequestSnapshot(
+  threadKey: string,
+  snapshot: ThreadChangeRequestSnapshot | null,
+): void {
+  appAtomRegistry.modify(threadChangeRequestSnapshotsAtom, (current) => {
+    const existing = current.get(threadKey);
+    if (snapshot === null) {
+      if (existing === undefined) return [false, current];
+      const next = new Map(current);
+      next.delete(threadKey);
+      return [true, next];
+    }
+    if (existing !== undefined && threadChangeRequestSnapshotsEqual(existing, snapshot)) {
+      return [false, current];
+    }
+    const next = new Map(current);
+    next.set(threadKey, snapshot);
+    return [true, next];
+  });
 }
 
 /**
