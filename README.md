@@ -1,6 +1,6 @@
 # T3 Code
 
-T3 Code is a "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app, [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app, [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 
 Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, and OpenCode. If they're set up on your computer, T3 Code can control them.
 
