@@ -59,6 +59,10 @@ import {
   WORKSPACE_NEVER_POLICY,
   WEB_SEARCH_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+import {
+  validateClaudeReplayRecordingSelection,
+  type ClaudeRecordingQueryMode,
+} from "./claudeReplayRecordingConfig.ts";
 
 const CLAUDE_RECORDINGS = {
   simple: {
@@ -229,20 +233,6 @@ function readArgValue(name: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-type ClaudeRecordingQueryMode =
-  | "streaming"
-  | "restart"
-  | "resume_at_cursor"
-  | "fork_session"
-  | "fork_session_prior_turn"
-  | "fork_session_continue"
-  | "fork_session_siblings"
-  | "fork_session_merge_back"
-  | "fork_session_merge_back_siblings"
-  | "active_steering"
-  | "interrupt"
-  | "interrupt_restart";
-
 function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordingQueryMode {
   const raw = readArgValue("--query-mode") ?? process.env.T3_CLAUDE_REPLAY_QUERY_MODE;
   if (raw === undefined) {
@@ -327,6 +317,16 @@ function selectedPrompts(): ReadonlyArray<string> {
   return recording.prompts;
 }
 
+const prompts = selectedPrompts();
+const queryMode = selectedQueryMode(recording.queryMode);
+validateClaudeReplayRecordingSelection({
+  scenario,
+  configuredQueryMode: recording.queryMode,
+  selectedQueryMode: queryMode,
+  configuredPromptCount: recording.prompts.length,
+  selectedPromptCount: prompts.length,
+});
+
 function runtimePolicyForRecording(input: {
   readonly cwd: string;
   readonly override?: RuntimePolicyV2Override;
@@ -400,7 +400,7 @@ try {
 
   const transcript = await recordClaudeAgentSdkReplayTranscript({
     scenario,
-    prompts: selectedPrompts(),
+    prompts,
     modelSelection: {
       ...CLAUDE_MODEL_SELECTION,
       model: process.env.T3_CLAUDE_REPLAY_MODEL ?? CLAUDE_MODEL_SELECTION.model,
@@ -409,7 +409,7 @@ try {
     ...(process.env.T3_CLAUDE_REPLAY_SESSION_ID === undefined
       ? {}
       : { sessionId: process.env.T3_CLAUDE_REPLAY_SESSION_ID }),
-    queryMode: selectedQueryMode(recording.queryMode),
+    queryMode,
     ...("enableTools" in recording && recording.enableTools === true ? { enableTools: true } : {}),
     ...(queryPolicy.tools === undefined ? {} : { tools: queryPolicy.tools }),
     permissionMode: queryPolicy.permissionMode,
