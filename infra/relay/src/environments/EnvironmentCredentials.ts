@@ -6,7 +6,8 @@ import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, ne, notExists } from "drizzle-orm";
+import { and, eq, exists, isNull, ne, notExists } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentCredentials, relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -196,6 +197,24 @@ const make = Effect.gen(function* () {
           and(
             eq(relayEnvironmentCredentials.credentialHash, credentialHash),
             isNull(relayEnvironmentCredentials.revokedAt),
+            exists(
+              new QueryBuilder()
+                .select({ userId: relayEnvironmentLinks.userId })
+                .from(relayEnvironmentLinks)
+                .where(
+                  and(
+                    eq(
+                      relayEnvironmentLinks.environmentId,
+                      relayEnvironmentCredentials.environmentId,
+                    ),
+                    eq(
+                      relayEnvironmentLinks.environmentPublicKey,
+                      relayEnvironmentCredentials.environmentPublicKey,
+                    ),
+                    isNull(relayEnvironmentLinks.revokedAt),
+                  ),
+                ),
+            ),
           ),
         )
         .limit(1)
@@ -238,7 +257,7 @@ const make = Effect.gen(function* () {
             eq(relayEnvironmentCredentials.environmentPublicKey, input.environmentPublicKey),
             isNull(relayEnvironmentCredentials.revokedAt),
             notExists(
-              db
+              new QueryBuilder()
                 .select({ userId: relayEnvironmentLinks.userId })
                 .from(relayEnvironmentLinks)
                 .where(

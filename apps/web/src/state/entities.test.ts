@@ -46,6 +46,7 @@ vi.mock("./threads", () => ({
 }));
 
 import {
+  resolveThreadDetailRef,
   shouldSubscribeToThreadDetail,
   useThread,
   useThreadDetailWhenReady,
@@ -127,5 +128,34 @@ describe("thread detail subscription", () => {
     expect(mocks.detailAtom).toHaveBeenCalledWith(THREAD_REF);
     expect(mocks.statusAtom).toHaveBeenCalledOnce();
     expect(mocks.statusAtom).toHaveBeenCalledWith(THREAD_REF);
+  });
+});
+
+describe("resolveThreadDetailRef", () => {
+  it("does not subscribe to a reserved draft thread before it enters the shell index", () => {
+    expect(
+      resolveThreadDetailRef(THREAD_REF, {
+        shellExists: false,
+        waitForShell: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("subscribes once the reserved draft thread enters the shell index", () => {
+    expect(
+      resolveThreadDetailRef(THREAD_REF, {
+        shellExists: true,
+        waitForShell: true,
+      }),
+    ).toBe(THREAD_REF);
+  });
+
+  it("keeps direct server-thread lookups enabled when the shell has not loaded it", () => {
+    expect(
+      resolveThreadDetailRef(THREAD_REF, {
+        shellExists: false,
+        waitForShell: false,
+      }),
+    ).toBe(THREAD_REF);
   });
 });
