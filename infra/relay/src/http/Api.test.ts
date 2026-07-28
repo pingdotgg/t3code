@@ -24,6 +24,7 @@ import {
   relayNotFoundRoute,
   revokeEnvironmentLinkRecord,
   traceRelayHttpRequestWith,
+  unlinkEnvironmentRecord,
   verifyRelayClientBearerToken,
   withoutCapturedParentSpan,
 } from "./Api.ts";
@@ -31,6 +32,7 @@ import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
+import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -196,6 +198,143 @@ describe("relay environment unlink", () => {
         }),
       ).toBe(true);
       expect(calls).toEqual(["transaction", "link", "credential"]);
+    });
+  });
+
+  it.effect("commits database revocation before deprovisioning the managed endpoint", () => {
+    const calls: Array<string> = [];
+    const db = {
+      $client: {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+          calls.push("transaction");
+          return effect;
+        },
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+    const links = {
+      getForUser: () =>
+        Effect.sync(() => {
+          calls.push("lookup");
+          return {
+            environmentId: "environment-1",
+            environmentPublicKey: "public-key",
+          };
+        }),
+      revokeForUser: () =>
+        Effect.sync(() => {
+          calls.push("link");
+          return true;
+        }),
+    } as unknown as EnvironmentLinks.EnvironmentLinks["Service"];
+    const credentials = {
+      revokeForEnvironmentPublicKey: () =>
+        Effect.sync(() => {
+          calls.push("credential");
+          return true;
+        }),
+    } as unknown as EnvironmentCredentials.EnvironmentCredentials["Service"];
+    const managedEndpointProvider = {
+      deprovision: () =>
+        Effect.sync(() => {
+          calls.push("deprovision");
+        }),
+    } as unknown as ManagedEndpointProvider.ManagedEndpointProvider["Service"];
+
+    return Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          db,
+          links,
+          credentials,
+          managedEndpointProvider,
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(true);
+      expect(calls).toEqual(["lookup", "transaction", "link", "credential", "deprovision"]);
+    });
+  });
+
+  it.effect("does not deprovision when database revocation fails", () => {
+    const calls: Array<string> = [];
+    const failure = new EnvironmentCredentials.EnvironmentCredentialRevokePersistenceError({
+      environmentId: "environment-1",
+      cause: "database unavailable",
+    });
+    const db = {
+      $client: {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+          calls.push("transaction");
+          return effect;
+        },
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+    const links = {
+      getForUser: () =>
+        Effect.succeed({
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+        }),
+      revokeForUser: () =>
+        Effect.sync(() => {
+          calls.push("link");
+          return true;
+        }),
+    } as unknown as EnvironmentLinks.EnvironmentLinks["Service"];
+    const credentials = {
+      revokeForEnvironmentPublicKey: () =>
+        Effect.sync(() => {
+          calls.push("credential");
+        }).pipe(Effect.andThen(Effect.fail(failure))),
+    } as unknown as EnvironmentCredentials.EnvironmentCredentials["Service"];
+    const managedEndpointProvider = {
+      deprovision: () =>
+        Effect.sync(() => {
+          calls.push("deprovision");
+        }),
+    } as unknown as ManagedEndpointProvider.ManagedEndpointProvider["Service"];
+
+    return Effect.gen(function* () {
+      expect(
+        yield* Effect.flip(
+          unlinkEnvironmentRecord({
+            db,
+            links,
+            credentials,
+            managedEndpointProvider,
+            userId: "user-1",
+            environmentId: "environment-1",
+          }),
+        ),
+      ).toBe(failure);
+      expect(calls).toEqual(["transaction", "link", "credential"]);
+    });
+  });
+
+  it.effect("retries deprovisioning after the link is already revoked", () => {
+    const calls: Array<string> = [];
+    const links = {
+      getForUser: () => Effect.succeed(null),
+    } as unknown as EnvironmentLinks.EnvironmentLinks["Service"];
+    const managedEndpointProvider = {
+      deprovision: () =>
+        Effect.sync(() => {
+          calls.push("deprovision");
+        }),
+    } as unknown as ManagedEndpointProvider.ManagedEndpointProvider["Service"];
+
+    return Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          db: {} as RelayDb.RelayDb["Service"],
+          links,
+          credentials: {} as EnvironmentCredentials.EnvironmentCredentials["Service"],
+          managedEndpointProvider,
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(false);
+      expect(calls).toEqual(["deprovision"]);
     });
   });
 });
