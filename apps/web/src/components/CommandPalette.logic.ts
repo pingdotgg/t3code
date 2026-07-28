@@ -102,6 +102,38 @@ export function filterBrowseEntries(input: {
   return { filteredEntries, highlightedEntry, exactEntry };
 }
 
+export type BrowseTabCompletion =
+  | { readonly kind: "up" }
+  | { readonly kind: "entry"; readonly entry: FilesystemBrowseEntry };
+
+export function resolveBrowseTabCompletion(input: {
+  allowFirstEntryFallback?: boolean;
+  exactEntry: FilesystemBrowseEntry | null;
+  filteredEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  highlightedItemValue: string | null;
+}): BrowseTabCompletion | null {
+  if (input.highlightedItemValue === "browse:up") {
+    return { kind: "up" };
+  }
+
+  if (input.highlightedItemValue?.startsWith("browse:")) {
+    const highlightedPath = input.highlightedItemValue.slice("browse:".length);
+    const highlightedEntry = input.filteredEntries.find(
+      (entry) => entry.fullPath === highlightedPath,
+    );
+    if (highlightedEntry) {
+      return { kind: "entry", entry: highlightedEntry };
+    }
+  }
+
+  if (input.exactEntry) {
+    return { kind: "entry", entry: input.exactEntry };
+  }
+
+  const firstEntry = input.allowFirstEntryFallback === false ? undefined : input.filteredEntries[0];
+  return firstEntry ? { kind: "entry", entry: firstEntry } : null;
+}
+
 export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
