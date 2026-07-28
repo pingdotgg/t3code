@@ -330,10 +330,14 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
+  const editAction =
+    runtimeMode === "auto-accept-edits" || runtimeMode === "auto" ? "allow" : "ask";
+
   return [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "bash", pattern: "*", action: "ask" },
-    { permission: "edit", pattern: "*", action: "ask" },
+    { permission: "read", pattern: "*", action: "ask" },
+    { permission: "edit", pattern: "*", action: editAction },
     { permission: "webfetch", pattern: "*", action: "ask" },
     { permission: "websearch", pattern: "*", action: "ask" },
     { permission: "codesearch", pattern: "*", action: "ask" },

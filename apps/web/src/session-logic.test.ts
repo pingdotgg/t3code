@@ -175,6 +175,55 @@ describe("derivePendingApprovals", () => {
 
     expect(derivePendingApprovals(activities)).toEqual([]);
   });
+
+  it("falls back to command requestKind when requestType is unknown", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-unknown-type",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-unknown-type",
+          requestType: "unknown",
+          detail: "webfetch",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-unknown-type",
+        requestKind: "command",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        detail: "webfetch",
+      },
+    ]);
+  });
+
+  it("falls back to command requestKind when no requestKind or requestType in payload", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-open-no-kind",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "approval.requested",
+        summary: "Approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-no-kind",
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-no-kind",
+        requestKind: "command",
+        createdAt: "2026-02-23T00:00:01.000Z",
+      },
+    ]);
+  });
 });
 
 describe("derivePendingUserInputs", () => {

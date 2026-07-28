@@ -320,8 +320,13 @@ function mapPermissionToRequestType(
 ): "command_execution_approval" | "file_read_approval" | "file_change_approval" | "unknown" {
   switch (permission) {
     case "bash":
+    case "webfetch":
+    case "websearch":
+    case "doom_loop":
       return "command_execution_approval";
     case "read":
+    case "codesearch":
+    case "external_directory":
       return "file_read_approval";
     case "edit":
       return "file_change_approval";
