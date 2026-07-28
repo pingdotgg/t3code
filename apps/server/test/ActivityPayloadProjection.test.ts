@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildThreadFeed, type ThreadFeedActivity } from "../../mobile/src/lib/threadActivity.ts";
+import { deriveLatestContextWindowSnapshot } from "../../web/src/lib/contextWindow.ts";
 import { deriveWorkLogEntries } from "../../web/src/session-logic.ts";
 import {
   projectActivityEvent,
@@ -229,5 +230,134 @@ describe("projectActivityPayload", () => {
         : undefined,
     ).toEqual(projectActivityPayload(activity));
     expect(event.payload.activity).toBe(activity);
+  });
+});
+
+describe("context-window snapshot dedup", () => {
+  function makeContextWindowActivity(
+    id: string,
+    usedTokens: number,
+    turn = `turn-${id}`,
+  ): OrchestrationThreadActivity {
+    return {
+      id: EventId.make(id),
+      tone: "info",
+      kind: "context-window.updated",
+      summary: "Context window updated",
+      payload: { usedTokens, maxTokens: 200_000 },
+      turnId: TurnId.make(turn),
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+  }
+
+  it("keeps only the latest context-window activity per turn in snapshots", () => {
+    const stale1 = makeContextWindowActivity("ctx-1", 1_000, "turn-a");
+    const latestA = makeContextWindowActivity("ctx-2", 2_000, "turn-a");
+    const latestB = makeContextWindowActivity("ctx-3", 3_000, "turn-b");
+    const tool = fixtures[0]!;
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([stale1, tool, latestA, latestB]),
+    });
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      tool.id,
+      latestA.id,
+      latestB.id,
+    ]);
+    // The retained rows keep their payloads untouched — the tool-data
+    // projection only rewrites payloads with a `data` record.
+    expect(projected.thread.activities[2]?.payload).toEqual(latestB.payload);
+  });
+
+  it("still resolves a meter value after the client reverts the newest turn", () => {
+    // A live thread.reverted makes the client drop all activities from
+    // discarded turns; each surviving turn must keep a usable row.
+    const olderTurn = makeContextWindowActivity("ctx-old", 1_500, "turn-kept");
+    const revertedTurn = makeContextWindowActivity("ctx-new", 9_000, "turn-reverted");
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([olderTurn, revertedTurn]),
+    });
+    const afterRevert = projected.thread.activities.filter(
+      (activity) => activity.turnId === TurnId.make("turn-kept"),
+    );
+
+    expect(deriveLatestContextWindowSnapshot(afterRevert)).toEqual(
+      deriveLatestContextWindowSnapshot([olderTurn]),
+    );
+  });
+
+  it("matches what the web client derives from the full history", () => {
+    const activities = [
+      makeContextWindowActivity("ctx-1", 1_000),
+      makeContextWindowActivity("ctx-2", 2_000),
+    ];
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread(activities),
+    });
+
+    expect(deriveLatestContextWindowSnapshot(projected.thread.activities)).toEqual(
+      deriveLatestContextWindowSnapshot(activities),
+    );
+  });
+
+  it("does not let a malformed row shadow an earlier valid row in the same turn", () => {
+    const valid = makeContextWindowActivity("ctx-valid", 5_000, "turn-a");
+    const malformed: OrchestrationThreadActivity = {
+      ...makeContextWindowActivity("ctx-broken", 0, "turn-a"),
+      payload: { usedTokens: null },
+    };
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([valid, malformed]),
+    });
+
+    // The malformed row passes through, the valid row survives, and the
+    // client's backward walk resolves the same value as with full history.
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      valid.id,
+      malformed.id,
+    ]);
+    expect(deriveLatestContextWindowSnapshot(projected.thread.activities)).toEqual(
+      deriveLatestContextWindowSnapshot([valid, malformed]),
+    );
+  });
+
+  it("leaves snapshots without context-window activities untouched", () => {
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([fixtures[4]!]),
+    });
+    expect(projected.thread.activities).toEqual([fixtures[4]]);
+  });
+
+  it("does not filter live activity-appended events", () => {
+    const activity = makeContextWindowActivity("ctx-live", 4_000);
+    const event = {
+      sequence: 9,
+      eventId: EventId.make("event-ctx"),
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-projection"),
+      occurredAt: "2026-07-27T00:00:02.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "thread.activity-appended",
+      payload: {
+        threadId: ThreadId.make("thread-projection"),
+        activity,
+      },
+    } satisfies Extract<OrchestrationEvent, { type: "thread.activity-appended" }>;
+
+    const projected = projectActivityEvent(event);
+    expect(
+      projected.type === "thread.activity-appended" ? projected.payload.activity : undefined,
+    ).toEqual(activity);
   });
 });

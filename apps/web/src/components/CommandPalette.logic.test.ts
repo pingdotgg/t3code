@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
+  buildBrowseGroups,
   buildThreadActionItems,
+  canPreloadBrowsePath,
+  createBrowseNavigationCoordinator,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   type CommandPaletteGroup,
@@ -191,5 +194,105 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("buildBrowseGroups", () => {
+  it("waits for asynchronous browse navigation actions", async () => {
+    let finishNavigation: (() => void) | undefined;
+    const browseTo = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishNavigation = resolve;
+        }),
+    );
+    const groups = buildBrowseGroups({
+      browseEntries: [{ name: "Downloads", fullPath: "/Users/test/Downloads" }],
+      browseQuery: "~/",
+      canBrowseUp: false,
+      upIcon: null,
+      directoryIcon: null,
+      browseUp: vi.fn(),
+      browseTo,
+    });
+    const item = groups[0]?.items[0];
+    if (!item || item.kind !== "action") {
+      throw new Error("Expected a browse action");
+    }
+
+    let actionSettled = false;
+    const action = item.run().then(() => {
+      actionSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(browseTo).toHaveBeenCalledWith("Downloads");
+    expect(actionSettled).toBe(false);
+
+    finishNavigation?.();
+    await action;
+    expect(actionSettled).toBe(true);
+  });
+});
+
+describe("createBrowseNavigationCoordinator", () => {
+  it("only commits the latest overlapping navigation", async () => {
+    const coordinator = createBrowseNavigationCoordinator();
+    let finishFirst: (() => void) | undefined;
+    let finishSecond: (() => void) | undefined;
+    const commits: string[] = [];
+
+    const first = coordinator.run({
+      load: () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        }),
+      commit: () => {
+        commits.push("first");
+      },
+    });
+    const second = coordinator.run({
+      load: () =>
+        new Promise<void>((resolve) => {
+          finishSecond = resolve;
+        }),
+      commit: () => {
+        commits.push("second");
+      },
+    });
+
+    finishSecond?.();
+    await expect(second).resolves.toBe(true);
+    finishFirst?.();
+    await expect(first).resolves.toBe(false);
+    expect(commits).toEqual(["second"]);
+  });
+
+  it("does not commit after newer user input invalidates the navigation", async () => {
+    const coordinator = createBrowseNavigationCoordinator();
+    let finishNavigation: (() => void) | undefined;
+    const commit = vi.fn();
+    const navigation = coordinator.run({
+      load: () =>
+        new Promise<void>((resolve) => {
+          finishNavigation = resolve;
+        }),
+      commit,
+    });
+
+    coordinator.invalidate();
+    finishNavigation?.();
+
+    await expect(navigation).resolves.toBe(false);
+    expect(commit).not.toHaveBeenCalled();
+  });
+});
+
+describe("canPreloadBrowsePath", () => {
+  it("only preloads paths for connected environments", () => {
+    expect(canPreloadBrowsePath("connected")).toBe(true);
+    expect(canPreloadBrowsePath("offline")).toBe(false);
+    expect(canPreloadBrowsePath("reconnecting")).toBe(false);
+    expect(canPreloadBrowsePath(null)).toBe(false);
   });
 });
