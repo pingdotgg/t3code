@@ -388,7 +388,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
                   <span fg={active ? palette.text : palette.dim}>{` ${index + 1}`}</span>
                 </text>
               </box>
-              {active && tabIds.length > 1 ? (
+              {active ? (
                 <box onMouseDown={() => onCloseTab(id)}>
                   <text fg={palette.dim}>{" ✕"}</text>
                 </box>

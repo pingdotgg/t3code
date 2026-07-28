@@ -23,6 +23,47 @@ const info: TerminalInfo = {
 };
 
 describe("ThreadTerminalDrawer tab bar", () => {
+  it("keeps the close control available for the final terminal", async () => {
+    const closed: string[] = [];
+    const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
+      (() => string) | null
+    >;
+    const scrollRef = React.createRef<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >() as React.MutableRefObject<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >;
+    const setup = await testRender(
+      <ThreadTerminalDrawer
+        client={stubClient}
+        info={info}
+        cols={40}
+        rows={4}
+        focused={false}
+        copyRef={copyRef}
+        scrollRef={scrollRef}
+        tabIds={["term-1"]}
+        activeTabId="term-1"
+        onSelectTab={() => {}}
+        onNewTab={() => {}}
+        onCloseTab={(id) => closed.push(id)}
+      />,
+      { width: 50, height: 12 },
+    );
+
+    await setup.renderOnce();
+    await setup.flush();
+    const lines = setup.captureCharFrame().split("\n");
+    const row = lines.findIndex((line) => line.includes("✕"));
+    const column = row < 0 ? -1 : (lines[row]?.indexOf("✕") ?? -1);
+    expect(row).toBeGreaterThanOrEqual(0);
+    expect(column).toBeGreaterThanOrEqual(0);
+    await setup.mockMouse.click(column, row);
+    await setup.flush();
+    expect(closed).toEqual(["term-1"]);
+    setup.renderer.destroy();
+  });
+
   it("Given multiple tabs, then it lists their numbers, a close mark, and '+ new'", async () => {
     const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
       (() => string) | null
