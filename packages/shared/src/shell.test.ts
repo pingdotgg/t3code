@@ -2,9 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  clearCommandPathCache,
   extractPathFromShellOutput,
   CommandAvailability,
   type CommandAvailabilityChecker,
@@ -363,6 +366,32 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 
       expect(result._tag).toBe("Failure");
     }),
+  );
+
+  it.effect("reuses a resolution until the cache is cleared", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const toolPath = path.join(directory, "tool.cmd");
+      yield* fs.writeFileString(toolPath, "@echo off\n");
+      const env = { PATH: directory, PATHEXT: ".CMD" };
+      const resolve = () =>
+        resolveCommandPath("tool", { env }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.result,
+        );
+
+      clearCommandPathCache();
+      const resolved = yield* resolve();
+      expect(resolved._tag).toBe("Success");
+
+      yield* fs.remove(toolPath);
+      expect(yield* resolve()).toStrictEqual(resolved);
+
+      clearCommandPathCache();
+      expect((yield* resolve())._tag).toBe("Failure");
+    }).pipe(Effect.scoped),
   );
 });
 
