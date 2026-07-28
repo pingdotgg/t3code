@@ -2,6 +2,12 @@
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  canPreloadBrowsePath,
+  createBrowseNavigationCoordinator,
+  filterFilesystemBrowseEntries,
+  getFilesystemBrowsePath,
+} from "@t3tools/client-runtime/state/filesystem";
+import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
@@ -61,16 +67,12 @@ import { useProjects, useThreadShells } from "../state/entities";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
-  canNavigateUp,
   ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
-  getBrowseLeafPathSegment,
-  getBrowseParentPath,
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
-  isFilesystemBrowseQuery,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
@@ -92,13 +94,10 @@ import {
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
-  canPreloadBrowsePath,
-  createBrowseNavigationCoordinator,
   enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
-  filterBrowseEntries,
   filterCommandPaletteGroups,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
@@ -684,8 +683,12 @@ function OpenCommandPaletteDialog(props: {
   );
   const isRemoteProjectCloneFlow = addProjectCloneFlow !== null;
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
-  const isBrowsing =
-    !isRemoteProjectRepositoryStep && isFilesystemBrowseQuery(query, browseEnvironmentPlatform);
+  const browsePath = useMemo(
+    () => getFilesystemBrowsePath(query, browseEnvironmentPlatform, !isRemoteProjectRepositoryStep),
+    [browseEnvironmentPlatform, isRemoteProjectRepositoryStep, query],
+  );
+  const isBrowsing = browsePath.isBrowsing;
+  const browseDirectoryPath = browsePath.directoryPath;
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
   const getAddProjectInitialQueryForEnvironment = useCallback(
     (environmentId: EnvironmentId | null): string => {
@@ -730,18 +733,15 @@ function OpenCommandPaletteDialog(props: {
   );
   const relativePathNeedsActiveProject =
     isExplicitRelativeProjectPath(query.trim()) && currentProjectCwdForBrowse === null;
-  const browseDirectoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
-  const browseFilterQuery =
-    isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
   const browseQuery = useEnvironmentQuery(
     isBrowsing &&
-      browseDirectoryPath.length > 0 &&
+      browsePath.directoryPath.length > 0 &&
       browseEnvironmentId !== null &&
       !relativePathNeedsActiveProject
       ? filesystemEnvironment.browse({
           environmentId: browseEnvironmentId,
           input: {
-            partialPath: browseDirectoryPath,
+            partialPath: browsePath.directoryPath,
             ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
           },
         })
@@ -750,9 +750,9 @@ function OpenCommandPaletteDialog(props: {
   const browseResult = browseQuery.data;
   const isBrowsePending = browseQuery.isPending;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
-  const { filteredEntries: filteredBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
-    () => filterBrowseEntries({ browseEntries, browseFilterQuery }),
-    [browseEntries, browseFilterQuery],
+  const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
+    () => filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery),
+    [browseEntries, browsePath.filterQuery],
   );
 
   const prefetchBrowsePath = useCallback(
@@ -973,17 +973,17 @@ function OpenCommandPaletteDialog(props: {
         initialQuery,
       };
 
-      await browseNavigation.run({
-        load: () =>
+      await browseNavigation.run(
+        () =>
           initialBrowsePath.length > 0
             ? prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd)
             : Promise.resolve(),
-        commit: () => {
+        () => {
           setAddProjectEnvironmentId(environmentId);
           setAddProjectCloneFlow(null);
           pushPaletteView(view);
         },
-      });
+      );
     },
     [
       browseNavigation,
@@ -1630,33 +1630,33 @@ function OpenCommandPaletteDialog(props: {
   const browseTo = useCallback(
     async (name: string): Promise<void> => {
       const nextQuery = appendBrowsePathSegment(query, name);
-      await browseNavigation.run({
-        load: () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
-        commit: () => {
+      await browseNavigation.run(
+        () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
+        () => {
           setHighlightedItemValue(null);
           setQuery(nextQuery);
           setBrowseGeneration((generation) => generation + 1);
         },
-      });
+      );
     },
     [browseNavigation, prefetchBrowsePath, query],
   );
 
   const browseUp = useCallback(async (): Promise<void> => {
-    const parentPath = getBrowseParentPath(query);
+    const parentPath = browsePath.parentPath;
     if (parentPath === null) {
       return;
     }
 
-    await browseNavigation.run({
-      load: () => prefetchBrowsePath(parentPath),
-      commit: () => {
+    await browseNavigation.run(
+      () => prefetchBrowsePath(parentPath),
+      () => {
         setHighlightedItemValue(null);
         setQuery(parentPath);
         setBrowseGeneration((generation) => generation + 1);
       },
-    });
-  }, [browseNavigation, prefetchBrowsePath, query]);
+    );
+  }, [browseNavigation, browsePath.parentPath, prefetchBrowsePath]);
 
   // Resolve the add-project path from browse data when available. When the
   // query has a trailing separator (e.g. "~/projects/foo/"), parentPath is the
@@ -1666,11 +1666,10 @@ function OpenCommandPaletteDialog(props: {
     ? (browseResult?.parentPath ?? query.trim())
     : (exactBrowseEntry?.fullPath ?? query.trim());
 
-  const canBrowseUp =
-    isBrowsing && !relativePathNeedsActiveProject && canNavigateUp(browseDirectoryPath);
+  const canBrowseUp = !relativePathNeedsActiveProject && browsePath.canBrowseUp;
 
   const browseGroups = buildBrowseGroups({
-    browseEntries: filteredBrowseEntries,
+    browseEntries: visibleBrowseEntries,
     browseQuery: query,
     canBrowseUp,
     upIcon: <CornerLeftUpIcon className={ITEM_ICON_CLASS} />,
