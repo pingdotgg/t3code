@@ -98,5 +98,14 @@ describe("paginated branch scroll trigger", () => {
         clientHeight: 224,
       }),
     ).toBe(true);
+
+    expect(
+      shouldLoadNextBranchPageAfterScroll({
+        previousScrollTop: 499.5,
+        scrollTop: 500,
+        scrollHeight: 800,
+        clientHeight: 224,
+      }),
+    ).toBe(true);
   });
 });

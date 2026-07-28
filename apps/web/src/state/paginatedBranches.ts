@@ -28,7 +28,7 @@ export function shouldLoadNextBranchPageAfterScroll({
   clientHeight: number;
   distanceThreshold?: number;
 }): boolean {
-  if (previousScrollTop === null || scrollTop <= previousScrollTop + 1) {
+  if (previousScrollTop === null || scrollTop <= previousScrollTop) {
     return false;
   }
 
