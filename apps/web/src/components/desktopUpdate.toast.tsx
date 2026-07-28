@@ -1,7 +1,10 @@
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ArrowRightIcon } from "lucide-react";
 
-import { getDesktopUpdateReleaseUrl } from "./desktopUpdate.logic";
+import {
+  getDesktopUpdateDownloadedVersion,
+  getDesktopUpdateReleaseUrl,
+} from "./desktopUpdate.logic";
 import { toastManager } from "./ui/toast";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
@@ -36,9 +39,9 @@ function ReleaseNotesLink({
 
 export function showDesktopUpdateDownloadedToast(
   shell: DesktopUpdateShell,
-  downloadedVersion: string | null,
+  state: DesktopUpdateState,
 ): void {
-  const releaseUrl = getDesktopUpdateReleaseUrl(downloadedVersion);
+  const releaseUrl = getDesktopUpdateReleaseUrl(getDesktopUpdateDownloadedVersion(state));
   toastManager.add({
     type: "success",
     title: "Update downloaded",
