@@ -17,13 +17,14 @@ import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
-  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
+  const { canRestoreDefaults, changedSettingLabels, restoreDefaults } =
+    useSettingsRestore(onRestored);
 
   return (
     <Button
       size="xs"
       variant="ghost"
-      disabled={changedSettingLabels.length === 0}
+      disabled={changedSettingLabels.length === 0 || !canRestoreDefaults}
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />

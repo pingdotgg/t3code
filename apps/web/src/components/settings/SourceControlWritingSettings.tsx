@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useRef } from "react";
-import type { SourceControlWritingStyleMode } from "@t3tools/contracts";
+import type { EnvironmentId, SourceControlWritingStyleMode } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -15,7 +15,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { primaryServerProvidersAtom } from "../../state/server";
+import { serverEnvironment } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -40,10 +40,17 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     },
   };
 
-export function SourceControlWritingSettingsSection() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+export function SourceControlWritingSettingsSection({
+  environmentId,
+  isConnected,
+}: {
+  environmentId: EnvironmentId;
+  isConnected: boolean;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const serverProviders =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.providers ?? [];
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const style = settings.sourceControlWritingStyle;
   const defaults = DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
@@ -79,6 +86,7 @@ export function SourceControlWritingSettingsSection() {
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
               label="source control writing style"
+              disabled={!isConnected}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -92,6 +100,7 @@ export function SourceControlWritingSettingsSection() {
         }
         control={
           <Select
+            disabled={!isConnected}
             value={style.mode}
             onValueChange={(value) => {
               const customInstructions = customInstructionsRef.current?.value.trim();
@@ -119,6 +128,7 @@ export function SourceControlWritingSettingsSection() {
         {style.mode === "custom" ? (
           <div className="mt-3 max-w-2xl pb-3.5">
             <Textarea
+              disabled={!isConnected}
               key={style.customInstructions}
               ref={customInstructionsRef}
               defaultValue={style.customInstructions}
@@ -143,6 +153,7 @@ export function SourceControlWritingSettingsSection() {
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
               label="change request templates"
+              disabled={!isConnected}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -156,6 +167,7 @@ export function SourceControlWritingSettingsSection() {
         control={
           <Switch
             checked={style.followChangeRequestTemplates}
+            disabled={!isConnected}
             onCheckedChange={(checked) =>
               updateSettings({
                 sourceControlWritingStyle: {
@@ -176,6 +188,7 @@ export function SourceControlWritingSettingsSection() {
             {usesDedicatedModel ? (
               <ProviderModelPicker
                 activeInstanceId={activeSelection.instanceId}
+                disabled={!isConnected}
                 model={activeSelection.model}
                 lockedProvider={null}
                 instanceEntries={instanceEntries}
@@ -192,6 +205,7 @@ export function SourceControlWritingSettingsSection() {
             ) : null}
             <Switch
               checked={usesDedicatedModel}
+              disabled={!isConnected}
               onCheckedChange={(checked) =>
                 updateSettings({
                   sourceControlWriterModelSelection: checked

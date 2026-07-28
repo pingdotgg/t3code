@@ -31,6 +31,7 @@ const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
 const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
 const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
+const SERVER_CONFIG_WAIT_TIMEOUT_MS = 10_000;
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("web-project:empty"),
@@ -114,6 +115,50 @@ export function useProjects(): ReadonlyArray<EnvironmentProject> {
 
 export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
   return useAtomValue(environmentServerConfigsAtom);
+}
+
+export async function waitForServerConfig(environmentId: EnvironmentId): Promise<ServerConfig> {
+  const readConfig = () => appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+  const current = readConfig();
+  if (current !== undefined) {
+    return current;
+  }
+
+  return await new Promise<ServerConfig>((resolve, reject) => {
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+    const finish = (result: { config: ServerConfig } | { error: Error }) => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      unsubscribe?.();
+      if ("config" in result) {
+        resolve(result.config);
+      } else {
+        reject(result.error);
+      }
+    };
+    const timeoutId = globalThis.setTimeout(() => {
+      finish({
+        error: new Error(`Timed out waiting for server settings for environment ${environmentId}.`),
+      });
+    }, SERVER_CONFIG_WAIT_TIMEOUT_MS);
+
+    unsubscribe = appAtomRegistry.subscribe(environmentServerConfigsAtom, (configs) => {
+      const config = configs.get(environmentId);
+      if (config === undefined) return;
+      finish({ config });
+    });
+    if (settled) {
+      unsubscribe();
+      return;
+    }
+
+    const config = readConfig();
+    if (config !== undefined) {
+      finish({ config });
+    }
+  });
 }
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {

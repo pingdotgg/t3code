@@ -6,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
+  type EnvironmentId,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -14,6 +15,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -43,7 +45,8 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useSettingsEnvironment } from "../../hooks/useSettingsEnvironment";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -56,12 +59,8 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import {
-  primaryServerObservabilityAtom,
-  primaryServerProvidersAtom,
-  serverEnvironment,
-} from "../../state/server";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
+import { type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
@@ -80,10 +79,13 @@ import {
   type ProviderUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { SettingsEnvironmentSelector } from "./SettingsEnvironmentSelector";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
+  buildGeneralSettingsRestorePatch,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  hasChangedGeneralServerSettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
@@ -389,13 +391,17 @@ function AboutVersionSection() {
 
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const { environmentId, environment } = useSettingsEnvironment();
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const hasChangedServerSettings = hasChangedGeneralServerSettings(settings);
+  const includeServerSettings =
+    hasChangedServerSettings && environment?.connection.phase === "connected";
 
   const changedSettingLabels = useMemo(
     () => [
@@ -418,25 +424,31 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
-      ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
+      ...(includeServerSettings &&
+      settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
-      ...(settings.enableProviderUpdateChecks !==
+      ...(includeServerSettings &&
+      settings.enableProviderUpdateChecks !==
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
-      ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
+      ...(includeServerSettings &&
+      Duration.toMillis(settings.automaticGitFetchInterval) !==
       Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
         ? ["Automatic Git fetch interval"]
         : []),
-      ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
+      ...(includeServerSettings &&
+      settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
-      ...(settings.newWorktreesStartFromOrigin !==
+      ...(includeServerSettings &&
+      settings.newWorktreesStartFromOrigin !==
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
-      ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
+      ...(includeServerSettings &&
+      settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
@@ -445,9 +457,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
-      ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+      ...(includeServerSettings && isTextGenerationModelDirty ? ["Text generation model"] : []),
     ],
     [
+      includeServerSettings,
       isTextGenerationModelDirty,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
@@ -467,9 +480,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       theme,
     ],
   );
+  const canRestoreDefaults = changedSettingLabels.length > 0;
 
   const restoreDefaults = useCallback(async () => {
-    if (changedSettingLabels.length === 0) return;
+    if (changedSettingLabels.length === 0 || !canRestoreDefaults) return;
     const api = readLocalApi();
     const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
@@ -479,28 +493,23 @@ export function useSettingsRestore(onRestored?: () => void) {
     if (!confirmed) return;
 
     setTheme("system");
-    updateSettings({
-      timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
-      wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
-      diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
-      glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
-      sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
-      sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
-      autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
-      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
-      enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
-      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
-      defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
-      newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
-      addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-      confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
-      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-    });
+    updateSettings(
+      buildGeneralSettingsRestorePatch({
+        includeServerSettings,
+      }),
+    );
     onRestored?.();
-  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
+  }, [
+    canRestoreDefaults,
+    changedSettingLabels,
+    includeServerSettings,
+    onRestored,
+    setTheme,
+    updateSettings,
+  ]);
 
   return {
+    canRestoreDefaults,
     changedSettingLabels,
     restoreDefaults,
   };
@@ -508,13 +517,23 @@ export function useSettingsRestore(onRestored?: () => void) {
 
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const {
+    environmentId,
+    environment,
+    environments,
+    primaryEnvironmentId,
+    selectEnvironment,
+    isReady: environmentsReady,
+  } = useSettingsEnvironment();
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
-  const observability = useAtomValue(primaryServerObservabilityAtom);
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const observability = serverConfig?.observability ?? null;
+  const serverProviders = serverConfig?.providers ?? [];
+  const canConfigureServer = environment?.connection.phase === "connected";
   const glassOpacityRatio =
     (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
   const glassOpacitySliderStyle = {
@@ -554,6 +573,36 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection title="Environment">
+        <SettingsRow
+          title="Server settings"
+          description="Assistant behavior, workspace defaults, provider maintenance, and text generation are configured per environment."
+          status={
+            environment
+              ? [connectionStatusText(environment.connection), environment.displayUrl]
+                  .filter(Boolean)
+                  .join(" · ")
+              : environmentsReady
+                ? "Connect an environment to configure its server settings."
+                : "Loading environments."
+          }
+          control={
+            environmentId !== null && environment !== null ? (
+              <SettingsEnvironmentSelector
+                environmentId={environmentId}
+                environments={environments}
+                primaryEnvironmentId={primaryEnvironmentId}
+                onEnvironmentChange={selectEnvironment}
+              />
+            ) : environmentsReady ? (
+              <Button render={<Link to="/settings/connections" />} size="xs" variant="outline">
+                Open connections
+              </Button>
+            ) : null
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
@@ -770,6 +819,7 @@ export function GeneralSettingsPanel() {
             DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
               <SettingResetButton
                 label="assistant output"
+                disabled={!canConfigureServer}
                 onClick={() =>
                   updateSettings({
                     enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
@@ -781,6 +831,7 @@ export function GeneralSettingsPanel() {
           control={
             <Switch
               checked={settings.enableAssistantStreaming}
+              disabled={!canConfigureServer}
               onCheckedChange={(checked) =>
                 updateSettings({ enableAssistantStreaming: Boolean(checked) })
               }
@@ -797,6 +848,7 @@ export function GeneralSettingsPanel() {
             DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
               <SettingResetButton
                 label="provider update checks"
+                disabled={!canConfigureServer}
                 onClick={() =>
                   updateSettings({
                     enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
@@ -808,6 +860,7 @@ export function GeneralSettingsPanel() {
           control={
             <Switch
               checked={settings.enableProviderUpdateChecks}
+              disabled={!canConfigureServer}
               onCheckedChange={(checked) =>
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
@@ -851,6 +904,7 @@ export function GeneralSettingsPanel() {
               DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
               <SettingResetButton
                 label="new threads"
+                disabled={!canConfigureServer}
                 onClick={() =>
                   updateSettings({
                     defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
@@ -870,7 +924,11 @@ export function GeneralSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
+              <SelectTrigger
+                className="w-full sm:w-44"
+                aria-label="Default thread mode"
+                disabled={!canConfigureServer}
+              >
                 <SelectValue>
                   {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
                 </SelectValue>
@@ -897,6 +955,7 @@ export function GeneralSettingsPanel() {
               DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
                 <SettingResetButton
                   label="new worktrees start from origin"
+                  disabled={!canConfigureServer}
                   onClick={() =>
                     updateSettings({
                       newWorktreesStartFromOrigin:
@@ -909,6 +968,7 @@ export function GeneralSettingsPanel() {
             control={
               <Switch
                 checked={settings.newWorktreesStartFromOrigin}
+                disabled={!canConfigureServer}
                 onCheckedChange={(checked) =>
                   updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
                 }
@@ -926,6 +986,7 @@ export function GeneralSettingsPanel() {
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
               <SettingResetButton
                 label="add project base directory"
+                disabled={!canConfigureServer}
                 onClick={() =>
                   updateSettings({
                     addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -937,6 +998,7 @@ export function GeneralSettingsPanel() {
           control={
             <DraftInput
               className="w-full sm:w-72"
+              disabled={!canConfigureServer}
               value={settings.addProjectBaseDirectory}
               onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
               placeholder="~/"
@@ -1005,6 +1067,7 @@ export function GeneralSettingsPanel() {
             isTextGenerationModelDirty ? (
               <SettingResetButton
                 label="text generation model"
+                disabled={!canConfigureServer}
                 onClick={() =>
                   updateSettings({
                     textGenerationModelSelection:
@@ -1015,9 +1078,13 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <fieldset
+              className="flex flex-wrap items-center justify-end gap-1.5"
+              disabled={!canConfigureServer}
+            >
               <ProviderModelPicker
                 activeInstanceId={textGenInstanceId}
+                disabled={!canConfigureServer}
                 model={textGenModel}
                 lockedProvider={null}
                 instanceEntries={textGenerationModelInstanceEntries}
@@ -1068,7 +1135,7 @@ export function GeneralSettingsPanel() {
                   });
                 }}
               />
-            </div>
+            </fieldset>
           }
         />
       </SettingsSection>
@@ -1097,10 +1164,74 @@ export function GeneralSettingsPanel() {
 }
 
 export function ProviderSettingsPanel() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
+  const {
+    isReady,
+    environments,
+    primaryEnvironmentId,
+    environmentId,
+    environment,
+    selectEnvironment,
+  } = useSettingsEnvironment();
+
+  if (environmentId === null || environment === null) {
+    return (
+      <SettingsPageContainer>
+        <SettingsSection title="Providers">
+          <SettingsRow
+            title={isReady ? "No connected environments" : "Loading environments"}
+            description={
+              isReady
+                ? "Connect an environment before configuring its provider accounts."
+                : "Waiting for available environments."
+            }
+            control={
+              isReady ? (
+                <Button render={<Link to="/settings/connections" />} size="xs" variant="outline">
+                  Open connections
+                </Button>
+              ) : null
+            }
+          />
+        </SettingsSection>
+      </SettingsPageContainer>
+    );
+  }
+
+  return (
+    <ProviderSettingsEnvironmentPanel
+      key={environmentId}
+      environmentId={environmentId}
+      environmentLabel={environment.label}
+      environmentStatus={connectionStatusText(environment.connection)}
+      isConnected={environment.connection.phase === "connected"}
+      environments={environments}
+      primaryEnvironmentId={primaryEnvironmentId}
+      onEnvironmentChange={selectEnvironment}
+    />
+  );
+}
+
+function ProviderSettingsEnvironmentPanel({
+  environmentId,
+  environmentLabel,
+  environmentStatus,
+  isConnected,
+  environments,
+  primaryEnvironmentId,
+  onEnvironmentChange,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly environmentStatus: string;
+  readonly isConnected: boolean;
+  readonly environments: ReadonlyArray<EnvironmentPresentation>;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const serverProviders = useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? [];
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -1114,6 +1245,15 @@ export function ProviderSettingsPanel() {
   >(() => new Set());
   const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
   const refreshingRef = useRef(false);
+
+  const environmentSelector = (
+    <SettingsEnvironmentSelector
+      environmentId={environmentId}
+      environments={environments}
+      primaryEnvironmentId={primaryEnvironmentId}
+      onEnvironmentChange={onEnvironmentChange}
+    />
+  );
 
   const providerUpdateCandidates = useMemo(
     () => collectProviderUpdateCandidates(serverProviders),
@@ -1145,14 +1285,9 @@ export function ProviderSettingsPanel() {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setIsRefreshingProviders(true);
-    if (!primaryEnvironment) {
-      refreshingRef.current = false;
-      setIsRefreshingProviders(false);
-      return;
-    }
     void (async () => {
       const result = await refreshServerProviders({
-        environmentId: primaryEnvironment.environmentId,
+        environmentId,
         input: {},
       });
       refreshingRef.current = false;
@@ -1160,16 +1295,15 @@ export function ProviderSettingsPanel() {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         console.warn("Failed to refresh providers", {
           operation: "refresh-providers",
-          environmentId: primaryEnvironment.environmentId,
+          environmentId,
           ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
         });
       }
     })();
-  }, [primaryEnvironment, refreshServerProviders]);
+  }, [environmentId, refreshServerProviders]);
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {
-      if (!primaryEnvironment) return;
       let started = false;
       setUpdatingProviderDrivers((previous) => {
         if (previous.has(candidate.driver)) {
@@ -1185,7 +1319,7 @@ export function ProviderSettingsPanel() {
       }
 
       const result = await updateProvider({
-        environmentId: primaryEnvironment.environmentId,
+        environmentId,
         input: {
           provider: candidate.driver,
           instanceId: candidate.instanceId,
@@ -1213,8 +1347,21 @@ export function ProviderSettingsPanel() {
         return next;
       });
     },
-    [primaryEnvironment, updateProvider],
+    [environmentId, updateProvider],
   );
+
+  if (serverSettings === null || !isConnected) {
+    return (
+      <SettingsPageContainer>
+        <SettingsSection title="Providers" headerAction={environmentSelector}>
+          <SettingsRow
+            title={`${environmentStatus}: ${environmentLabel}`}
+            description="Provider settings are available while this environment is connected."
+          />
+        </SettingsSection>
+      </SettingsPageContainer>
+    );
+  }
 
   interface InstanceRow {
     readonly instanceId: ProviderInstanceId;
@@ -1393,6 +1540,7 @@ export function ProviderSettingsPanel() {
         title="Providers"
         headerAction={
           <div className="flex items-center gap-1.5">
+            {environmentSelector}
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
             <Tooltip>
               <TooltipTrigger
@@ -1535,7 +1683,12 @@ export function ProviderSettingsPanel() {
       </SettingsSection>
 
       {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
+        <AddProviderInstanceDialog
+          open
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          onOpenChange={setIsAddInstanceDialogOpen}
+        />
       ) : null}
     </SettingsPageContainer>
   );

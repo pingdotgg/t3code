@@ -1,10 +1,9 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { CircleCheckIcon, DownloadIcon, LoaderIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 
-import { primaryServerProvidersAtom } from "../../state/server";
+import { useDefaultServerConfig } from "../../hooks/useDefaultServerConfig";
 import {
   getProviderUpdateSidebarPillView,
   type ProviderUpdateSidebarPillView,
@@ -40,7 +39,7 @@ function latestProviderCheckedAt(
 
 export function SidebarProviderUpdatePill() {
   const navigate = useNavigate();
-  const providers = useAtomValue(primaryServerProvidersAtom);
+  const providers = useDefaultServerConfig()?.providers ?? [];
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [renderedView, setRenderedView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [pendingView, setPendingView] = useState<ProviderUpdateSidebarPillView | null>(null);

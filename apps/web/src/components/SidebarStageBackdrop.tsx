@@ -1,9 +1,8 @@
-import { useAtomValue } from "@effect/atom-react";
 import { useId } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
-import { primaryServerConfigAtom } from "../state/server";
+import { useDefaultServerConfig } from "../hooks/useDefaultServerConfig";
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
 
@@ -21,8 +20,7 @@ export function resolveSidebarStageBackdropVariant(
 }
 
 export function useSidebarStageBackdropVariant(): SidebarStageBackdropVariant | null {
-  const primaryServerVersion =
-    useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
+  const primaryServerVersion = useDefaultServerConfig()?.environment.serverVersion ?? null;
 
   return resolveSidebarStageBackdropVariant(
     resolveServerBackedAppStageLabel({

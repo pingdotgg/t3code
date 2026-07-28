@@ -9,6 +9,9 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import type { EnvironmentPresenceScope } from "../environmentPresence";
+import { isDesktopClientOnlyMode } from "../environments/primary";
+import { isHostedStaticApp } from "../hostedPairing";
 import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { useEnvironmentQuery } from "./query";
@@ -58,6 +61,30 @@ export function useEnvironments() {
 
 export function usePrimaryEnvironmentId(): EnvironmentId | null {
   return useAtomValue(primaryEnvironmentIdAtom);
+}
+
+/**
+ * Whether this app can ever serve an environment from its own backend. A
+ * client-only desktop and the hosted static web app cannot, so they have no
+ * local environment for threads and projects to belong to.
+ */
+export function appOwnsLocalEnvironment(): boolean {
+  return !isHostedStaticApp() && !isDesktopClientOnlyMode();
+}
+
+export function useAppOwnsLocalEnvironment(): boolean {
+  // The answer is fixed for the app's lifetime: the hosted-static check is
+  // origin/build derived, and changing the desktop backend mode relaunches.
+  return useMemo(appOwnsLocalEnvironment, []);
+}
+
+export function useEnvironmentPresenceScope(): EnvironmentPresenceScope {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const ownsLocalEnvironment = useAppOwnsLocalEnvironment();
+  return useMemo(
+    () => ({ primaryEnvironmentId, ownsLocalEnvironment }),
+    [primaryEnvironmentId, ownsLocalEnvironment],
+  );
 }
 
 export function useEnvironment(

@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
@@ -7,6 +8,74 @@ import type {
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
+
+export function hasChangedGeneralServerSettings(settings: ServerSettings): boolean {
+  return (
+    settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ||
+    settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ||
+    Duration.toMillis(settings.automaticGitFetchInterval) !==
+      Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval) ||
+    settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ||
+    settings.newWorktreesStartFromOrigin !== DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ||
+    settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ||
+    !Equal.equals(
+      settings.textGenerationModelSelection,
+      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+    )
+  );
+}
+
+export function buildGeneralSettingsRestorePatch(input: {
+  readonly includeServerSettings: boolean;
+}): Partial<UnifiedSettings> {
+  return {
+    timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+    wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+    diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+    glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+    sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+    sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+    autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+    confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+    ...(input.includeServerSettings
+      ? {
+          enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+          enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+          automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+          defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+          newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+          addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+          textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+        }
+      : {}),
+  };
+}
+
+export function resolveSettingsEnvironmentId(input: {
+  readonly availableEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly activeEnvironmentId: EnvironmentId | null;
+}): EnvironmentId | null {
+  const availableIds = new Set(input.availableEnvironmentIds);
+  const candidates = [
+    input.selectedEnvironmentId,
+    input.primaryEnvironmentId,
+    input.activeEnvironmentId,
+    input.availableEnvironmentIds[0] ?? null,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate !== null && availableIds.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
