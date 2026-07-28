@@ -6,7 +6,7 @@ Expected behavior:
 
 - Archived conversations are grouped by project, and each project group is collapsed by default.
 - The Archive panel fetches archived thread snapshots from all configured environments, not only environments that currently have active projects, so archived-only workspaces remain visible, while active rows returned in those snapshots remain excluded from archive content and empty-state counts.
-- Web project headers show environment labels whenever multiple environments are configured and keep a sole remote environment labeled, while a sole primary environment remains implicit.
+- Web project headers show environment labels whenever multiple environments are configured and keep a sole remote environment labeled, while a sole primary environment remains implicit. Native project sections show environment labels and the header controls can filter the archive to all environments or one configured environment.
 - The page includes a search box that filters archived thread titles across all projects case-insensitively. Multi-word searches match any term, rank exact phrase matches first, rank titles matching every term ahead of partial term matches, and auto-open matching project groups while search is active. Native incremental search updates the existing list without remounting it for every keystroke, preserving scroll position and transient row state.
 - Expanded project headers include sortable `Archived` and `Created` columns; clicking either header toggles ascending/descending order for the conversations inside each group, with `Archived` descending as the default.
 - Native project-section ordering follows the selected archive sort field and direction. Invalid archived timestamps fall back to the conversation's created timestamp for sorting and display on both surfaces.
@@ -16,6 +16,7 @@ Expected behavior:
 - Archived conversations can be deleted directly from the Archive panel without unarchiving first. Web delete actions respect the shared `confirmThreadDelete` client setting, while native keeps its standard guarded delete flow.
 - Project group context menus expose `unarchive all` and `delete all` actions. While search is active, those bulk actions apply to the visible matching archived conversations and use matching-specific menu labels; otherwise they apply to all archived conversations in the project. Delete confirmations respect `confirmThreadDelete` on web and remain explicitly guarded on native; unarchive bulk actions remain guarded on both surfaces, and partial failures surface as not-fully-completed feedback instead of implying every archived thread failed.
 - Archive grouping, search ranking, sort state, and project bulk-action concurrency live in `apps/web/src/components/settings/SettingsPanels.logic.ts` on web and `apps/mobile/src/features/archive/archivedThreadList.ts` on native so the dense Archive behavior stays covered without growing the React components. Project groups expose and reuse collision-safe keys so project ids containing separator characters do not collapse expansion state or React row identity. Bulk actions stop scheduling new work after thrown failures, wait for active workers to settle, preserve the completed success/failure/skipped outcome counts, show incomplete-operation feedback, and surface the underlying exception messages instead of only a generic aggregate error. The Archive surfaces refresh archived threads after bulk unarchive/delete attempts even when the action runner throws.
+- The user guide documents Archive as a reversible thread-lifecycle action, covers the web, desktop, and mobile controls and safeguards, and explains that search scopes project bulk actions to visible matches. The documentation index links the guide, and the encyclopedia defines the Archive term separately from permanent deletion.
 
 Primary files:
 
@@ -25,6 +26,9 @@ Primary files:
 - `apps/mobile/src/features/archive/ArchivedThreadsRouteScreen.tsx`
 - `apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx`
 - `apps/mobile/src/features/archive/archivedThreadList.ts`
+- `docs/user/archive.md`
+- `docs/reference/encyclopedia.md`
+- `docs/README.md`
 
 ## Development Ports
 
