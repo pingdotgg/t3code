@@ -470,6 +470,58 @@ describe("DesktopServerExposure", () => {
     );
   });
 
+  it.effect("still disables when Serve was already unbound", () => {
+    // `tailscale serve --https=<port> off` exits 1 with "handler does not
+    // exist" when nothing is bound. The tailnet already matches what the user
+    // asked for, so this must not strand the toggle on.
+    const alreadyOffSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const args = (command as unknown as { args: ReadonlyArray<string> }).args;
+        const isOff = args.at(-1) === "off";
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(isOff ? 1 : 0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(encoder.encode(isOff ? "" : "{}")),
+            stderr: Stream.make(
+              encoder.encode(
+                isOff ? "error: failed to remove web serve: handler does not exist" : "",
+              ),
+            ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
+    );
+
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setTailscaleServeEnabled({ enabled: true, port: 8443 });
+
+        const disabled = yield* serverExposure.setTailscaleServeEnabled({ enabled: false });
+
+        assert.equal(disabled.state.tailscaleServeEnabled, false);
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, false);
+      }),
+      {},
+      alreadyOffSpawner,
+    );
+  });
+
   it.effect("re-enables Serve when persisting the disable fails", () => {
     const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
       operation: "replace-settings-file",

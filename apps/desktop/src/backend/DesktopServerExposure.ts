@@ -633,10 +633,23 @@ export const make = Effect.gen(function* () {
         // `enabled: false` while `tailscale serve --https=<port>` stayed live on
         // the tailnet. Fail loudly instead of reporting a teardown we did not do.
         const current = yield* Ref.get(stateRef);
+        let removedBinding = false;
         if (current.tailscaleServeEnabled) {
           const servePort = current.tailscaleServePort;
-          yield* disableTailscaleServe({ servePort }).pipe(
+          removedBinding = yield* disableTailscaleServe({ servePort }).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+            Effect.as(true),
+            // `serve off` on a port with nothing bound exits non-zero with
+            // "handler does not exist". The tailnet is already in the state the
+            // user asked for, so treating that as a failure would strand the
+            // toggle on and warn about an exposure that does not exist — and it
+            // would bite hardest in the very case this eager teardown exists
+            // for, where settings say enabled but no child ever bound Serve.
+            Effect.catchTag("TailscaleCommandExitError", (cause) =>
+              cause.stderrDiagnostic === "no-existing-handler"
+                ? Effect.succeed(false)
+                : Effect.fail(cause),
+            ),
             Effect.mapError((cause) => {
               const exitDetail =
                 cause._tag === "TailscaleCommandExitError"
@@ -655,8 +668,10 @@ export const make = Effect.gen(function* () {
           // Mirror the enable path's rollback. Serve is already down; if the
           // settings write now fails, both stateRef and the persisted document
           // still say enabled, so without this the UI would advertise an HTTPS
-          // endpoint that no longer answers.
-          if (current.port > 0) {
+          // endpoint that no longer answers. Only when we actually removed a
+          // binding, though — re-creating one that was never there would expose
+          // the backend rather than restore it.
+          if (removedBinding && current.port > 0) {
             revertEnableBinding = { servePort, localPort: current.port };
           }
         }
