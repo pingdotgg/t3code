@@ -9,7 +9,7 @@ on:
 jobs:
   check:
     name: Check
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -42,7 +42,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -84,7 +84,7 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout

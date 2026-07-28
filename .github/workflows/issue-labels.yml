@@ -15,7 +15,7 @@ permissions:
 jobs:
   sync:
     name: Sync issue labels
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     steps:
       - name: Ensure managed issue labels exist
         uses: actions/github-script@v7

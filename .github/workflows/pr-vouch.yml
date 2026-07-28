@@ -20,7 +20,7 @@ permissions:
 jobs:
   collect-targets:
     name: Collect PR targets
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     outputs:
       targets: ${{ steps.collect.outputs.targets }}
     steps:
@@ -66,7 +66,7 @@ jobs:
     name: Label PR ${{ matrix.target.number }}
     needs: collect-targets
     if: ${{ needs.collect-targets.outputs.targets != '[]' }}
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     concurrency:
       group: pr-vouch-${{ matrix.target.number }}
       cancel-in-progress: true

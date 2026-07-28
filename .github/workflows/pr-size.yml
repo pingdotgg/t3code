@@ -10,7 +10,7 @@ permissions:
 jobs:
   prepare-config:
     name: Prepare PR size config
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     outputs:
       labels_json: ${{ steps.config.outputs.labels_json }}
     steps:
@@ -58,7 +58,7 @@ jobs:
     name: Sync PR size label definitions
     needs: prepare-config
     if: github.event_name != 'pull_request_target'
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
@@ -115,7 +115,7 @@ jobs:
     name: Label PR size
     needs: prepare-config
     if: github.event_name == 'pull_request_target'
-    runs-on: t3code-arc
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
