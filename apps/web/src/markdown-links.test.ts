@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
@@ -125,5 +126,73 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   it("does not treat app routes as file links", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+  });
+});
+
+describe("resolveInlineCodeFileLinkMeta", () => {
+  it("links relative paths with file extensions", () => {
+    expect(
+      resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md", "/Users/julius/project"),
+    ).toMatchObject({
+      targetPath: "/Users/julius/project/.plans/worktree-management-v1.md",
+      basename: "worktree-management-v1.md",
+    });
+  });
+
+  it("links absolute posix paths", () => {
+    expect(resolveInlineCodeFileLinkMeta("/Users/julius/project/AGENTS.md")).toMatchObject({
+      targetPath: "/Users/julius/project/AGENTS.md",
+    });
+  });
+
+  it("links windows drive paths", () => {
+    expect(resolveInlineCodeFileLinkMeta("C:\\Users\\mike\\project\\src\\main.ts")).toMatchObject({
+      basename: "main.ts",
+    });
+  });
+
+  it("links relative paths with line positions", () => {
+    expect(
+      resolveInlineCodeFileLinkMeta("src/processRunner.ts:71", "/Users/julius/project"),
+    ).toMatchObject({
+      targetPath: "/Users/julius/project/src/processRunner.ts:71",
+      line: 71,
+    });
+  });
+
+  it("links bare filenames only when a line suffix marks them as file references", () => {
+    expect(resolveInlineCodeFileLinkMeta("script.ts:10", "/Users/julius/project")).toMatchObject({
+      targetPath: "/Users/julius/project/script.ts:10",
+      line: 10,
+    });
+    expect(resolveInlineCodeFileLinkMeta("AGENTS.md", "/Users/julius/project")).toBeNull();
+  });
+
+  it("links dot-prefixed relative paths without extensions", () => {
+    expect(
+      resolveInlineCodeFileLinkMeta("./scripts/deploy", "/Users/julius/project"),
+    ).toMatchObject({
+      basename: "deploy",
+    });
+  });
+
+  it("ignores commands, flags, and expressions", () => {
+    expect(resolveInlineCodeFileLinkMeta("git worktree list --porcelain")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("node.meta", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("pnpm install", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("src/**/*.ts", "/Users/julius/project")).toBeNull();
+  });
+
+  it("ignores extension-less relative segments like git refs and directories", () => {
+    expect(resolveInlineCodeFileLinkMeta("origin/main", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("apps/web", "/Users/julius/project")).toBeNull();
+  });
+
+  it("ignores external urls", () => {
+    expect(resolveInlineCodeFileLinkMeta("https://example.com/docs.html")).toBeNull();
+  });
+
+  it("ignores relative paths without a cwd to resolve against", () => {
+    expect(resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md")).toBeNull();
   });
 });

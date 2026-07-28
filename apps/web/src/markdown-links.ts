@@ -170,6 +170,42 @@ export function resolveMarkdownFileLinkTarget(
   return resolvePathLinkTarget(pathWithPosition, cwd);
 }
 
+const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
+const PATH_SEPARATOR_PATTERN = /[\\/]/;
+const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
+
+/**
+ * Inline code spans mostly hold identifiers, commands, and refs (`node.meta`,
+ * `origin/main`) rather than deliberate link destinations, so auto-linking
+ * them demands stronger path evidence than an explicit markdown link does:
+ * an unambiguous path prefix, a file extension, or a :line suffix.
+ */
+export function resolveInlineCodeFileLinkMeta(
+  codeText: string,
+  cwd?: string,
+): MarkdownFileLinkMeta | null {
+  const candidate = codeText.trim();
+  if (candidate.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(candidate)) return null;
+
+  const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
+  if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
+
+  const hasExplicitPathShape =
+    RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
+    candidate.startsWith("/") ||
+    WINDOWS_DRIVE_PATH_PATTERN.test(candidate) ||
+    WINDOWS_UNC_PATH_PATTERN.test(candidate);
+  if (
+    !hasPosition &&
+    !hasExplicitPathShape &&
+    !FILE_EXTENSION_PATTERN.test(basenameOfPath(candidate))
+  ) {
+    return null;
+  }
+
+  return resolveMarkdownFileLinkMeta(candidate, cwd);
+}
+
 function basenameOfPath(path: string): string {
   const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
