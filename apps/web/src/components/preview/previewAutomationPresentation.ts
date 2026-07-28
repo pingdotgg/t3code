@@ -170,7 +170,9 @@ export async function waitForBrowserSurfaceVisibility(
       // Reassert the explicit show request only while that request is pending.
       revealPreviewAutomationTab(input.threadRef, input.tabId);
     }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, Math.min(50, remainingMs)));
   }
   throw new PreviewAutomationVisibilityTimeoutError({
     requestId: input.requestId,

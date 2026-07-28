@@ -235,6 +235,35 @@ describe("preview automation presentation", () => {
     }
   });
 
+  it("clamps open visibility polling to the remaining operation budget", async () => {
+    vi.useFakeTimers();
+    const runtimeTabId = addRuntimeTab("tab-open");
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    try {
+      const visibility = waitForBrowserSurfaceVisibility({
+        threadRef,
+        requestId: "request-open",
+        tabId: "tab-open",
+        runtimeTabId,
+        timeoutMs: 40,
+      });
+      const rejection = expect(visibility).rejects.toMatchObject({
+        _tag: "PreviewAutomationVisibilityTimeoutError",
+        requestId: "request-open",
+        tabId: "tab-open",
+        timeoutMs: 40,
+      });
+
+      await vi.advanceTimersByTimeAsync(40);
+      await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects an open visibility wait when the runtime guest is replaced", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", {

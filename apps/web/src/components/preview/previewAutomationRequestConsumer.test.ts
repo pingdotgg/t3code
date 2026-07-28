@@ -61,8 +61,21 @@ describe("previewAutomationRequestConsumer", () => {
   it("preserves the full execution budget for short requested timeouts", () => {
     expect(previewAutomationExecutionBudget(100, 250)).toBe(100);
     expect(previewAutomationExecutionBudget(500, 250)).toBe(500);
+    expect(previewAutomationExecutionBudget(501, 250)).toBe(500);
+    expect(previewAutomationExecutionBudget(750, 250)).toBe(500);
+    expect(previewAutomationExecutionBudget(751, 250)).toBe(501);
     expect(previewAutomationExecutionBudget(1_000, 250)).toBe(750);
     expect(previewAutomationExecutionBudget(1_000)).toBe(750);
+  });
+
+  it("keeps execution budgets monotonic as requested timeouts increase", () => {
+    const budgets = Array.from({ length: 1_001 }, (_, timeoutMs) =>
+      previewAutomationExecutionBudget(timeoutMs, 250),
+    );
+
+    expect(budgets.every((budget, index) => index === 0 || budget >= budgets[index - 1]!)).toBe(
+      true,
+    );
   });
 
   it("reports an expired operation budget instead of clamping it to one millisecond", () => {

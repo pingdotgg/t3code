@@ -103,10 +103,15 @@ const AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS = 250;
 const AUTOMATION_SCREENSHOT_TIMEOUT_MS = 5_000;
 const AUTOMATION_BACKGROUND_TARGET_SCREENSHOT_TIMEOUT_MS = 2_000;
 const AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS = 3_000;
-const automationExecutionBudget = (timeoutMs: number): number =>
-  timeoutMs > AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS * 2
-    ? timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS
-    : timeoutMs;
+const AUTOMATION_SCREENSHOT_SETTLEMENT_GRACE_MS = 25;
+export const automationExecutionBudget = (timeoutMs: number): number =>
+  Math.min(
+    timeoutMs,
+    Math.max(
+      AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS * 2,
+      timeoutMs - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS,
+    ),
+  );
 const RECORDING_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const RECORDING_JPEG_QUALITY = 80;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
@@ -972,9 +977,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     wc: Electron.WebContents,
     action: string,
-    use: (send: SendCommand, sendCleanup: SendCommand) => Effect.Effect<A, PreviewManagerError>,
+    use: (
+      send: SendCommand,
+      sendCleanup: SendCommand,
+      operationDeadline: number,
+    ) => Effect.Effect<A, PreviewManagerError>,
     timeoutMs = DEFAULT_AUTOMATION_TIMEOUT_MS,
   ) {
+    const executionBudgetMs = automationExecutionBudget(timeoutMs);
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
     const millis = yield* currentMillis;
@@ -986,7 +996,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
     yield* pushAction(tabId, actionEvent);
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-    const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
+    const execute = Effect.fn("PreviewManager.executeControlAction")(function* (
+      operationDeadline: number,
+    ) {
       yield* update(tabId, { controller: "agent" });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
         function* (method, commandParams) {
@@ -1034,7 +1046,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           features: [{ name: "prefers-color-scheme", value: colorScheme }],
         });
       }
-      return yield* use(send, sendCleanup);
+      return yield* use(send, sendCleanup, operationDeadline);
     });
     let detachOnTimeout = true;
     let permitAcquired = false;
@@ -1073,6 +1085,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
     });
     const boundedExecution = Effect.gen(function* () {
+      const operationDeadline = (yield* currentMillis) + executionBudgetMs;
       // Session initialization itself sends CDP commands. Keep it inside the
       // operation deadline so an offscreen or suspended guest cannot retain
       // the synchronized session lock indefinitely and poison later actions.
@@ -1082,10 +1095,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Effect.sync(() => {
           detachOnTimeout = true;
           permitAcquired = true;
-        }).pipe(Effect.andThen(execute())),
+        }).pipe(Effect.andThen(execute(operationDeadline))),
       );
     }).pipe(
-      Effect.timeoutOption(automationExecutionBudget(timeoutMs)),
+      Effect.timeoutOption(executionBudgetMs),
       Effect.flatMap((result) =>
         Option.isNone(result)
           ? Effect.fail(new PreviewAutomationTimeoutError({ tabId, timeoutMs }))
@@ -2848,7 +2861,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const captureAutomationSnapshot = Effect.fn("PreviewManager.captureAutomationSnapshot")(
-    function* (tabId: string, wc: Electron.WebContents, send: SendCommand, background: boolean) {
+    function* (
+      tabId: string,
+      wc: Electron.WebContents,
+      send: SendCommand,
+      background: boolean,
+      operationDeadline: number,
+    ) {
       yield* Effect.all([send("Runtime.enable"), send("Accessibility.enable")], {
         concurrency: 2,
         discard: true,
@@ -2923,11 +2942,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const primaryScreenshotTimeoutMs = background
         ? AUTOMATION_BACKGROUND_TARGET_SCREENSHOT_TIMEOUT_MS
         : AUTOMATION_SCREENSHOT_TIMEOUT_MS;
-      const primaryScreenshotResult = yield* (
-        background
-          ? captureAutomationTargetScreenshot(tabId, wc, send)
-          : captureAutomationScreenshot(tabId, wc, send)
-      ).pipe(Effect.timeoutOption(primaryScreenshotTimeoutMs), Effect.exit);
+      const remainingBeforePrimary =
+        operationDeadline - (yield* currentMillis) - AUTOMATION_SCREENSHOT_SETTLEMENT_GRACE_MS;
+      const fallbackReservationMs = Math.min(
+        AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS,
+        Math.max(0, Math.floor(remainingBeforePrimary / 2)),
+      );
+      const boundedPrimaryScreenshotTimeoutMs = Math.min(
+        primaryScreenshotTimeoutMs,
+        Math.max(0, remainingBeforePrimary - fallbackReservationMs),
+      );
+      const primaryScreenshotResult =
+        boundedPrimaryScreenshotTimeoutMs > 0
+          ? yield* (
+              background
+                ? captureAutomationTargetScreenshot(tabId, wc, send)
+                : captureAutomationScreenshot(tabId, wc, send)
+            ).pipe(Effect.timeoutOption(boundedPrimaryScreenshotTimeoutMs), Effect.exit)
+          : Exit.succeed(Option.none<NonNullable<PreviewAutomationSnapshot["screenshot"]>>());
       let screenshot: PreviewAutomationSnapshot["screenshot"] =
         Exit.isSuccess(primaryScreenshotResult) && Option.isSome(primaryScreenshotResult.value)
           ? primaryScreenshotResult.value.value
@@ -2939,12 +2971,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ? primaryScreenshotResult.cause
           : new PreviewAutomationTimeoutError({
               tabId,
-              timeoutMs: primaryScreenshotTimeoutMs,
+              timeoutMs: boundedPrimaryScreenshotTimeoutMs,
             });
-        const backgroundScreenshotResult = yield* captureBackgroundPage(tabId, wc, background).pipe(
-          Effect.timeoutOption(AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS),
-          Effect.exit,
+        const boundedFallbackScreenshotTimeoutMs = Math.min(
+          AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS,
+          Math.max(
+            0,
+            operationDeadline - (yield* currentMillis) - AUTOMATION_SCREENSHOT_SETTLEMENT_GRACE_MS,
+          ),
         );
+        const backgroundScreenshotResult =
+          boundedFallbackScreenshotTimeoutMs > 0
+            ? yield* captureBackgroundPage(tabId, wc, background).pipe(
+                Effect.timeoutOption(boundedFallbackScreenshotTimeoutMs),
+                Effect.exit,
+              )
+            : Exit.succeed(Option.none<NonNullable<PreviewAutomationSnapshot["screenshot"]>>());
         screenshot =
           Exit.isSuccess(backgroundScreenshotResult) &&
           Option.isSome(backgroundScreenshotResult.value)
@@ -2955,7 +2997,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             ? backgroundScreenshotResult.cause
             : new PreviewAutomationTimeoutError({
                 tabId,
-                timeoutMs: AUTOMATION_BACKGROUND_CAPTURE_PAGE_TIMEOUT_MS,
+                timeoutMs: boundedFallbackScreenshotTimeoutMs,
               });
           yield* Effect.logWarning("Preview automation screenshot capture was unavailable.", {
             tabId,
@@ -2990,7 +3032,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         tabId,
         wc,
         "snapshot",
-        (send) => captureAutomationSnapshot(tabId, wc, send, false),
+        (send, _sendCleanup, operationDeadline) =>
+          captureAutomationSnapshot(tabId, wc, send, false, operationDeadline),
         timeoutMs,
       );
       if (result.detachAfterCapture) yield* detachControlSession(wc.id);
@@ -3006,7 +3049,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       tabId,
       wc,
       "snapshot",
-      (send) => captureAutomationSnapshot(tabId, wc, send, true),
+      (send, _sendCleanup, operationDeadline) =>
+        captureAutomationSnapshot(tabId, wc, send, true, operationDeadline),
       timeoutMs,
     );
     if (result.detachAfterCapture) yield* detachControlSession(wc.id);

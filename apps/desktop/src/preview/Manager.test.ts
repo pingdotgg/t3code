@@ -36,6 +36,24 @@ describe("fitPictureInPictureContentSize", () => {
   });
 });
 
+describe("automationExecutionBudget", () => {
+  it("keeps short execution budgets monotonic while reserving response grace", () => {
+    expect(PreviewManager.automationExecutionBudget(100)).toBe(100);
+    expect(PreviewManager.automationExecutionBudget(500)).toBe(500);
+    expect(PreviewManager.automationExecutionBudget(501)).toBe(500);
+    expect(PreviewManager.automationExecutionBudget(750)).toBe(500);
+    expect(PreviewManager.automationExecutionBudget(751)).toBe(501);
+    expect(PreviewManager.automationExecutionBudget(1_000)).toBe(750);
+
+    const budgets = Array.from({ length: 1_001 }, (_, timeoutMs) =>
+      PreviewManager.automationExecutionBudget(timeoutMs),
+    );
+    expect(budgets.every((budget, index) => index === 0 || budget >= budgets[index - 1]!)).toBe(
+      true,
+    );
+  });
+});
+
 const {
   bridgeAttach,
   bridgeDestroy,
@@ -468,20 +486,20 @@ describe("PreviewManager", () => {
           expect(recovered.screenshot).toMatchObject({ width: 640, height: 360 });
           expect(attach).toHaveBeenCalledTimes(2);
 
+          capturePage.mockClear();
           captureMode = "timeout";
+          capturePage.mockImplementationOnce(async () => await new Promise<never>(() => undefined));
           const callerBoundCapture = yield* manager
             .automationSnapshot("tab_snapshot", false, 1_000)
             .pipe(Effect.forkChild({ startImmediately: true }));
-          yield* TestClock.adjust(750);
-          const callerBoundExit = yield* Effect.exit(Fiber.join(callerBoundCapture));
-          expect(Exit.isFailure(callerBoundExit)).toBe(true);
-          if (Exit.isFailure(callerBoundExit)) {
-            expect(Option.getOrThrow(Cause.findErrorOption(callerBoundExit.cause))).toMatchObject({
-              _tag: "PreviewAutomationTimeoutError",
-              tabId: "tab_snapshot",
-              timeoutMs: 1_000,
-            });
-          }
+          yield* TestClock.adjust(725);
+          const callerBoundResult = yield* Fiber.join(callerBoundCapture);
+          expect(callerBoundResult).toMatchObject({
+            url: "https://example.com/",
+            visibleText: "Example body",
+            screenshot: null,
+          });
+          expect(capturePage).toHaveBeenCalledOnce();
           expect(detach).toHaveBeenCalledTimes(2);
         }),
       ),

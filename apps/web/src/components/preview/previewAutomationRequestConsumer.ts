@@ -20,7 +20,7 @@ export const PREVIEW_AUTOMATION_RESPONSE_GRACE_MS = 250;
 export const previewAutomationExecutionBudget = (
   timeoutMs: number,
   responseGraceMs = PREVIEW_AUTOMATION_RESPONSE_GRACE_MS,
-): number => (timeoutMs > responseGraceMs * 2 ? timeoutMs - responseGraceMs : timeoutMs);
+): number => Math.min(timeoutMs, Math.max(responseGraceMs * 2, timeoutMs - responseGraceMs));
 
 export const previewAutomationRemainingBudget = (
   operationDeadline: number,
