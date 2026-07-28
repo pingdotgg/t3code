@@ -247,7 +247,12 @@ export function isXAiMonitorTool(toolCall: AcpToolCallState): boolean {
   // prevent monitor registration / inProgress forcing.
   const rawOutput = unknownRecord(toolCall.data.rawOutput);
   const outputType = nonEmptyString(rawOutput?.type)?.toLowerCase();
-  return outputType === "monitor";
+  if (outputType === "monitor") return true;
+  // Released clients can wrap the start ACK as plain Text and omit the Monitor
+  // variant. The ACK is still unambiguous and contains the task id required for
+  // background tracking, even after a generic title is rewritten from
+  // rawInput.description.
+  return isXAiMonitorStartAck(xAiToolOutputText(toolCall));
 }
 
 export function extractXAiMonitorTaskId(toolCall: AcpToolCallState): string | undefined {
@@ -1038,14 +1043,16 @@ const unregisterXAiPromptCompletionFallback = (
 
 const abortPendingPromptCompletions = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
-  sessionId: string,
+  sessionId?: string,
 ) =>
   Ref.modify(pendingRef, (pending) => {
     const [toAbort, remaining] = pending.reduce<
       [ReadonlyArray<PendingXAiPromptCompletion>, ReadonlyArray<PendingXAiPromptCompletion>]
     >(
       ([aborting, kept], entry) =>
-        entry.sessionId === sessionId ? [[...aborting, entry], kept] : [aborting, [...kept, entry]],
+        sessionId === undefined || entry.sessionId === sessionId
+          ? [[...aborting, entry], kept]
+          : [aborting, [...kept, entry]],
       [[], []],
     );
     if (toAbort.length === 0) {
@@ -1241,8 +1248,10 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
           );
         }),
       cancel: Effect.gen(function* () {
-        const started = yield* runtime.start();
-        yield* abortPendingPromptCompletions(pendingXAiPromptCompletionsRef, started.sessionId);
+        // Do not call start here: cancellation must be able to reach the
+        // underlying runtime when startup is stalled. Pending entries already
+        // carry their session ids, and this runtime owns all of them.
+        yield* abortPendingPromptCompletions(pendingXAiPromptCompletionsRef);
         yield* runtime.cancel;
       }),
     } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
