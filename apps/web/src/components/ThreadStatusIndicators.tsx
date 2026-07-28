@@ -140,7 +140,7 @@ export interface ThreadChangeRequestSnapshot {
 
 export const threadChangeRequestSnapshotsAtom = Atom.make<
   ReadonlyMap<string, ThreadChangeRequestSnapshot>
->(new Map()).pipe(Atom.withLabel("sidebar:thread-change-request-snapshots"));
+>(new Map()).pipe(Atom.keepAlive, Atom.withLabel("sidebar:thread-change-request-snapshots"));
 
 function isTerminalChangeRequestState(
   state: NonNullable<ThreadPr>["state"],
