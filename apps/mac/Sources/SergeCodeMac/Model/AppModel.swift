@@ -37,6 +37,11 @@ public final class AppModel {
     /// Per-task stop failures for subagent rows (`taskId` → message). Transient;
     /// cleared on the next successful stop, a new stop attempt, or task state change.
     public private(set) var subagentStopErrors: [String: String] = [:]
+    /// Decision cards whose response RPC is in flight. Keeping this on the
+    /// model (rather than view-local state) survives a row re-render and blocks
+    /// duplicate keyboard/pointer submissions while the provider acknowledges
+    /// the first response.
+    public private(set) var pendingDecisionResponseIDs: Set<String> = []
     /// Outcome of the most recent git action per thread, shown as a transient
     /// banner. Per-thread so a push/PR result from thread A never bleeds into
     /// thread B after a switch.
@@ -1706,6 +1711,8 @@ public final class AppModel {
     }
 
     public func respond(to approval: ApprovalRequest, decision: ApprovalDecision) async {
+        guard pendingDecisionResponseIDs.insert(approval.id).inserted else { return }
+        defer { pendingDecisionResponseIDs.remove(approval.id) }
         do {
             try await backend.respondToApproval(id: approval.id, decision: decision)
         } catch {
@@ -1714,6 +1721,8 @@ public final class AppModel {
     }
 
     public func respond(to request: UserInputRequest, answers: [String: [String]]) async {
+        guard pendingDecisionResponseIDs.insert(request.id).inserted else { return }
+        defer { pendingDecisionResponseIDs.remove(request.id) }
         do {
             try await backend.respondToUserInput(id: request.id, answers: answers)
         } catch {

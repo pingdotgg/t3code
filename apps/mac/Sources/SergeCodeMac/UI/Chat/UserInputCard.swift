@@ -9,6 +9,9 @@ public struct UserInputCard: View {
     /// why Command-Shift-Return was chosen over the composer's own
     /// Command-Return send shortcut).
     let isActive: Bool
+    /// Response RPC state. The footer crossfades without changing size so the
+    /// question card acknowledges submission without shifting the transcript.
+    let isResponding: Bool
     let onSubmit: ([String: [String]]) -> Void
 
     @UIState private var selections: [String: Set<String>] = [:]
@@ -17,10 +20,12 @@ public struct UserInputCard: View {
     private static let submitShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
 
     public init(
-        request: UserInputRequest, isActive: Bool, onSubmit: @escaping ([String: [String]]) -> Void
+        request: UserInputRequest, isActive: Bool, isResponding: Bool = false,
+        onSubmit: @escaping ([String: [String]]) -> Void
     ) {
         self.request = request
         self.isActive = isActive
+        self.isResponding = isResponding
         self.onSubmit = onSubmit
     }
 
@@ -33,22 +38,7 @@ public struct UserInputCard: View {
                 questionSection(question)
             }
 
-            HStack(spacing: 10) {
-                if !isComplete {
-                    Text("Choose an option to continue.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Submit decision") {
-                    onSubmit(collectAnswers())
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(AlpineTheme.accent)
-                .disabled(!isComplete)
-                .keyboardShortcut(isActive ? Self.submitShortcut : nil)
-                .help(isActive ? "Submit (⌘⇧⏎)" : "Submit")
-            }
+            submissionFooter
         }
         .padding(14)
         .background(
@@ -58,6 +48,7 @@ public struct UserInputCard: View {
             RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
                 .stroke(.separator.opacity(0.65), lineWidth: 1)
         }
+        .animation(Motion.reveal, value: isResponding)
     }
 
     @ViewBuilder
@@ -118,6 +109,36 @@ public struct UserInputCard: View {
         }
         .buttonStyle(.plain)
         .padding(.vertical, 2)
+        .disabled(isResponding)
+    }
+
+    private var submissionFooter: some View {
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 10) {
+                if !isComplete {
+                    Text("Choose an option to continue.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Submit decision") {
+                    onSubmit(collectAnswers())
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AlpineTheme.accent)
+                .disabled(!isComplete || isResponding)
+                .keyboardShortcut(isActive ? Self.submitShortcut : nil)
+                .help(isActive ? "Submit (⌘⇧⏎)" : "Submit")
+            }
+            .opacity(isResponding ? 0 : 1)
+            .accessibilityHidden(isResponding)
+
+            Label("Submitting decision…", systemImage: "arrow.up.circle")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .opacity(isResponding ? 1 : 0)
+                .accessibilityHidden(!isResponding)
+        }
     }
 
     private func toggle(_ label: String, question: UserInputQuestionItem) {
