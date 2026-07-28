@@ -1567,6 +1567,10 @@ function FontFamilySettingsRow({
 }
 
 export function GeneralSettingsPanel() {
+  const supportsCua =
+    typeof window !== "undefined" &&
+    Boolean(window.desktopBridge) &&
+    isMacPlatform(window.navigator.platform);
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
