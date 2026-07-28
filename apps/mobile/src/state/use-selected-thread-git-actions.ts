@@ -131,9 +131,15 @@ export function useSelectedThreadGitActions() {
         readonly project: EnvironmentProject;
         readonly cwd: string;
       }) => Promise<AtomCommandResult<T, E>>,
-      options?: { readonly managedExternally?: boolean },
+      options?: {
+        readonly managedExternally?: boolean;
+        readonly throwOnFailure?: boolean;
+      },
     ): Promise<T | null> => {
       if (!selectedThread || !selectedThreadProject || !selectedThreadCwd) {
+        if (options?.throwOnFailure === true) {
+          throw new Error("No repository is available for this Git action.");
+        }
         return null;
       }
 
@@ -157,6 +163,9 @@ export function useSelectedThreadGitActions() {
         const message = error instanceof Error ? error.message : "Git action failed.";
         setPendingConnectionError(message);
         showGitActionResult({ type: "error", title: "Git action failed", description: message });
+        if (options?.throwOnFailure === true) {
+          throw error;
+        }
         return null;
       }
       return result.value;
@@ -194,8 +203,8 @@ export function useSelectedThreadGitActions() {
   );
 
   const onCheckoutSelectedThreadBranch = useCallback(
-    async (branch: string) => {
-      await runSelectedThreadGitMutation(
+    async (branch: string, options?: { readonly throwOnFailure?: boolean }) => {
+      return await runSelectedThreadGitMutation(
         "switch_ref",
         "Switching branch",
         async ({ thread, cwd }) => {
@@ -216,6 +225,7 @@ export function useSelectedThreadGitActions() {
           });
           return AsyncResult.isFailure(syncResult) ? AsyncResult.failure(syncResult.cause) : result;
         },
+        options,
       );
     },
     [

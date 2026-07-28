@@ -636,7 +636,9 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const switchBranch = useCallback(
     (branch: VcsRef) => {
       void runAction("switch", async () => {
-        await gitActions.onCheckoutSelectedThreadBranch(branch.name);
+        await gitActions.onCheckoutSelectedThreadBranch(branch.name, {
+          throwOnFailure: true,
+        });
       });
     },
     [gitActions, runAction],
