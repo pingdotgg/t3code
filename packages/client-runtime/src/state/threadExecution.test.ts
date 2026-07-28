@@ -68,4 +68,21 @@ describe("thread execution presentation", () => {
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
   });
+
+  it("keeps checkpoint-wait activity visible without exposing a non-functional interrupt", () => {
+    const waitingRun = run("run-waiting", 1, "waiting");
+    const projection = { ...v2Projection, runs: [waitingRun], updatedAt: now };
+
+    expect(deriveThreadActivityRun(projection)).toMatchObject({
+      runId: waitingRun.id,
+      status: "waiting",
+    });
+
+    const runtime = deriveThreadRuntime(projection);
+    expect(runtime).toMatchObject({
+      status: "waiting",
+      activeRunId: null,
+    });
+    expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+  });
 });
