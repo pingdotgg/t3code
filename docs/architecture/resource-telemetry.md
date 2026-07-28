@@ -55,6 +55,17 @@ Electron telemetry is unavailable. The native monitor still runs beside the
 server and tracks the server process tree. Power fields degrade to `unknown`
 instead of invoking platform shell commands.
 
+### WSL backend limitation
+
+Windows desktop packages currently ship the Windows resource-monitor executable.
+That executable cannot run inside the Linux WSL backend, so a WSL-only backend
+does not receive `resourceMonitorPath` and reports native process telemetry as
+unavailable. Electron host-power telemetry remains available over the inherited
+desktop pipe. Supporting native WSL process telemetry requires publishing a
+Linux sidecar for each supported architecture in the Windows artifact and
+converting its packaged path into the selected distro; the configuration
+deliberately does not pass the Windows `.exe` into WSL as a false fallback.
+
 ## Native monitor
 
 The executable lives in `native/resource-monitor`.
@@ -116,9 +127,10 @@ expansion preserves complete subtrees.
 ### Native history and streaming
 
 Every native sample is appended to a one-hour in-memory ring bounded to 3,600
-snapshots and 20,000 retained process rows. History stays in the sidecar until a
-`readHistory` request and is returned in bounded chunks. The first bound reached
-wins, so high process counts shorten the effective history window.
+snapshots, 20,000 retained process rows, and 64 MiB of retained history bytes.
+History stays in the sidecar until a `readHistory` request and is returned in
+bounded chunks. The first bound reached wins, so high process counts or large
+process names and command lines shorten the effective history window.
 
 Periodic snapshot streaming is disabled by default. The server enables it only
 while at least one diagnostics subscription is retained. `sampleNow` remains
@@ -126,8 +138,7 @@ available for explicit refreshes and identity validation.
 
 The server adjusts native sampling without restarting the sidecar:
 
-- suspended: paused;
-- locked, low-power, or serious/critical thermal state: 15 seconds;
+- suspended, locked, low-power, or serious/critical thermal state: 15 seconds;
 - battery: 5 seconds;
 - normal AC: 1 second;
 - unknown or stale power: 5 seconds in the background and 1 second while live
@@ -166,9 +177,10 @@ columns are the operating system's cumulative counters for that process.
 
 Electron main owns `DesktopTelemetryPublisher`.
 
-Power events trigger an immediate snapshot. A low-rate 30-second heartbeat keeps
-the server-side power state fresh while diagnostics is closed. During that
-heartbeat Electron reads:
+Power events trigger an immediate snapshot. While diagnostics is closed, the
+server sends the configured active and idle host-power intervals to Electron
+(30 seconds and 2 minutes in the balanced profile). During those heartbeats
+Electron reads:
 
 - `powerMonitor.isOnBatteryPower()`;
 - `powerMonitor.getSystemIdleTime()`;
@@ -186,6 +198,10 @@ It also listens for:
 - AC and battery transitions;
 - thermal-state changes;
 - CPU speed-limit changes.
+
+Suspension stays latched across event-driven snapshots. An explicit resume
+clears it immediately; a periodic heartbeat also clears a stale latch so a
+missed resume event cannot leave telemetry permanently constrained.
 
 Electron does not expose a cross-platform low-power-mode getter, so that field
 remains `unknown`.
@@ -240,9 +256,12 @@ restart cannot freeze telemetry.
 
 Reads fd 4, decodes schema-validated messages, stores the latest Electron
 snapshot, and publishes desktop health. It writes diagnostics demand to fd 5
-and marks the source stale after 90 seconds without a heartbeat. Decode errors,
-protocol mismatch, control-write failure, stream failure, stale input, and
-normal stream closure are represented explicitly.
+and gives the first sample a 90-second startup deadline. Once samples arrive,
+the stale deadline stays beyond the slower configured host-power interval with
+30 seconds of scheduling grace, so intentional 2–10 minute idle polling does
+not oscillate the policy between constrained and unconstrained states. Decode
+errors, protocol mismatch, control-write failure, stream failure, stale input,
+and normal stream closure are represented explicitly.
 
 ### `ResourceTelemetry`
 

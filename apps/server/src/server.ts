@@ -135,7 +135,9 @@ const ServerSettingsLayerLive = ServerSettings.layer.pipe(Layer.provide(ServerSe
 const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
   Layer.provide(ResourceMonitorBinary.layer),
 );
-const DesktopTelemetryReceiverLayerLive = DesktopTelemetryReceiver.layer;
+const DesktopTelemetryReceiverLayerLive = DesktopTelemetryReceiver.layer.pipe(
+  Layer.provideMerge(ServerSettingsLayerLive),
+);
 
 const ResourceTelemetryLayerLive = ResourceTelemetry.layer.pipe(
   Layer.provideMerge(NativeTelemetryLayerLive),

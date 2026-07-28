@@ -66,6 +66,30 @@ function binaryName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
 }
 
+export type ResourceMonitorLinuxLibc = "gnu" | "musl";
+
+function detectResourceMonitorLinuxLibc(): ResourceMonitorLinuxLibc {
+  try {
+    const report = process.report?.getReport() as
+      | {
+          readonly header?: {
+            readonly glibcVersionRuntime?: unknown;
+          };
+        }
+      | undefined;
+    return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
+  } catch {
+    return "musl";
+  }
+}
+
+export const ResourceMonitorHostLinuxLibc = Context.Reference<ResourceMonitorLinuxLibc>(
+  "t3/resourceTelemetry/ResourceMonitorHostLinuxLibc",
+  {
+    defaultValue: detectResourceMonitorLinuxLibc,
+  },
+);
+
 export function resourceMonitorPlatformKey(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
@@ -79,9 +103,10 @@ export function resourceMonitorPlatformKey(
   return `${platform}-${architecture}`;
 }
 
-function resourceMonitorRustTarget(
+export function resourceMonitorRustTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
+  linuxLibc: ResourceMonitorLinuxLibc,
 ): string | undefined {
   if (platform === "darwin") {
     return architecture === "arm64"
@@ -91,6 +116,9 @@ function resourceMonitorRustTarget(
         : undefined;
   }
   if (platform === "linux") {
+    if (linuxLibc !== "gnu") {
+      return undefined;
+    }
     return architecture === "arm64"
       ? "aarch64-unknown-linux-gnu"
       : architecture === "x64"
@@ -114,10 +142,47 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
   const environment = yield* HostProcessEnvironment;
+  const linuxLibc = yield* ResourceMonitorHostLinuxLibc;
   const executableName = binaryName(platform);
   const platformKey = resourceMonitorPlatformKey(platform, architecture);
-  const rustTarget = resourceMonitorRustTarget(platform, architecture);
-  if (platformKey === undefined || rustTarget === undefined) {
+  const rustTarget = resourceMonitorRustTarget(platform, architecture, linuxLibc);
+  const overrideCandidates = [
+    environment.T3CODE_RESOURCE_MONITOR_PATH,
+    config.resourceMonitorPath,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const bundledCandidates =
+    platformKey === undefined || rustTarget === undefined
+      ? []
+      : [
+          path.resolve(import.meta.dirname, "resource-monitor", platformKey, executableName),
+          path.resolve(import.meta.dirname, "resource-monitor", executableName),
+          path.resolve(import.meta.dirname, "../resource-monitor", executableName),
+          path.resolve(
+            import.meta.dirname,
+            "../../../../native/resource-monitor/target",
+            rustTarget,
+            "release",
+            executableName,
+          ),
+          path.resolve(
+            import.meta.dirname,
+            "../../../native/resource-monitor/target",
+            rustTarget,
+            "release",
+            executableName,
+          ),
+          path.resolve(
+            import.meta.dirname,
+            "../../../../native/resource-monitor/target/release",
+            executableName,
+          ),
+          path.resolve(
+            import.meta.dirname,
+            "../../../../native/resource-monitor/target/debug",
+            executableName,
+          ),
+        ];
+  if (overrideCandidates.length === 0 && bundledCandidates.length === 0) {
     return ResourceMonitorBinary.of({
       resolve: Effect.fail(
         new ResourceMonitorBinaryUnsupported({
@@ -128,37 +193,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
     });
   }
 
-  const candidates = [
-    environment.T3CODE_RESOURCE_MONITOR_PATH,
-    config.resourceMonitorPath,
-    path.resolve(import.meta.dirname, "resource-monitor", platformKey, executableName),
-    path.resolve(import.meta.dirname, "resource-monitor", executableName),
-    path.resolve(import.meta.dirname, "../resource-monitor", executableName),
-    path.resolve(
-      import.meta.dirname,
-      "../../../../native/resource-monitor/target",
-      rustTarget,
-      "release",
-      executableName,
-    ),
-    path.resolve(
-      import.meta.dirname,
-      "../../../native/resource-monitor/target",
-      rustTarget,
-      "release",
-      executableName,
-    ),
-    path.resolve(
-      import.meta.dirname,
-      "../../../../native/resource-monitor/target/release",
-      executableName,
-    ),
-    path.resolve(
-      import.meta.dirname,
-      "../../../../native/resource-monitor/target/debug",
-      executableName,
-    ),
-  ].filter((candidate): candidate is string => Boolean(candidate));
+  const candidates = [...overrideCandidates, ...bundledCandidates];
 
   const resolve: ResourceMonitorBinary["Service"]["resolve"] = Effect.gen(function* () {
     for (const candidate of candidates) {

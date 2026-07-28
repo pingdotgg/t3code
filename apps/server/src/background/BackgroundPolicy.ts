@@ -78,7 +78,7 @@ function isLeaseActive(lease: ClientActivityLease, now: DateTime.Utc): boolean {
 }
 
 function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
-  return isLeaseActive(lease, now) && lease.visible && lease.focused;
+  return isLeaseActive(lease, now) && lease.visible && (lease.focused || lease.recentlyInteracted);
 }
 
 function leaseHasScope(lease: ClientActivityLease, scope: BackgroundScope): boolean {

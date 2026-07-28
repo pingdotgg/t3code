@@ -329,6 +329,11 @@ function makeMutableServerSettingsService(
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },
+      get subscribeChanges() {
+        return PubSub.subscribe(changes).pipe(
+          Effect.map((subscription) => Stream.fromSubscription(subscription)),
+        );
+      },
     } satisfies ServerSettingsModule.ServerSettingsService["Service"];
   });
 }

@@ -338,6 +338,81 @@ describe("serverSettings helpers", () => {
     ).toBe(15_000);
   });
 
+  it("preserves legacy background activity settings when applying an unrelated patch", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivityProfile: "performance" as const,
+      automaticGitFetchInterval: Duration.seconds(7),
+      providerHealthRefreshInterval: Duration.minutes(4),
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      sourceControlWriterModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.4-mini",
+      ),
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "performance",
+      overrides: {
+        automaticGitFetchInterval: Duration.seconds(7),
+        providerHealthRefreshInterval: Duration.minutes(4),
+      },
+    });
+    expect(next.backgroundActivityProfile).toBe("performance");
+    expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(7_000);
+    expect(Duration.toMillis(next.providerHealthRefreshInterval)).toBe(240_000);
+  });
+
+  it("does not reactivate dormant overrides from a concrete profile", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: {
+        schemaVersion: 1 as const,
+        profile: "battery-saver" as const,
+        overrides: {
+          providerHealthRefreshInterval: Duration.seconds(5),
+        },
+      },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      automaticGitFetchInterval: Duration.seconds(15),
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "battery-saver",
+      overrides: {
+        automaticGitFetchInterval: Duration.seconds(15),
+      },
+    });
+  });
+
+  it("prefers structured background activity settings over legacy aliases", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "battery-saver",
+        overrides: {},
+      },
+      automaticGitFetchInterval: Duration.seconds(5),
+      backgroundActivityProfile: "performance",
+    });
+
+    expect(next.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "battery-saver",
+      overrides: {},
+    });
+    expect(next.backgroundActivityProfile).toBe("battery-saver");
+    expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(0);
+  });
+
   it("reconciles custom background activity back to a preset when overrides match the preset", () => {
     const custom = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       automaticGitFetchInterval: Duration.seconds(15),

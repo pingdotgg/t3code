@@ -246,3 +246,25 @@ export function resolveServerBackgroundActivitySettings(
   }
   return resolveBackgroundActivitySettings(settings.backgroundActivity);
 }
+
+export function normalizeServerBackgroundActivitySettings(
+  settings: ServerSettings,
+): BackgroundActivitySettings {
+  const resolved = resolveServerBackgroundActivitySettings(settings);
+  return normalizeBackgroundActivitySettings({
+    schemaVersion: 1,
+    profile: "custom",
+    baseProfile: resolved.profile,
+    overrides: {
+      automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+      providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+      hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
+      hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
+      idleClientTtl: resolved.idleClientTtl,
+      pauseWhenHostLocked: resolved.pauseWhenHostLocked,
+      pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
+      pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
+      pauseWhenOnBattery: resolved.pauseWhenOnBattery,
+    },
+  });
+}

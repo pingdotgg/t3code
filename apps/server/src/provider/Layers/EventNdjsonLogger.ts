@@ -181,8 +181,12 @@ function shouldPersist(stream: EventNdjsonStream, event: unknown): boolean {
   if (stream !== "canonical" || typeof event !== "object" || event === null) {
     return true;
   }
-  const type = Reflect.get(event, "type");
-  return typeof type !== "string" || !transientCanonicalEventTypes.has(type);
+  try {
+    const type = Reflect.get(event, "type");
+    return typeof type !== "string" || !transientCanonicalEventTypes.has(type);
+  } catch {
+    return true;
+  }
 }
 
 export function writeBatchedMessages(
@@ -558,9 +562,9 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;
       const bytes = Buffer.byteLength(line);
-      const action = yield* SynchronizedRef.modify(stateRef, (state) => {
+      const action = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
         if (state.closed) {
-          return [{ flush: false, schedule: false }, state] as const;
+          return Effect.succeed([{ flush: false }, state] as const);
         }
         const pending = [
           ...state.pending,
@@ -572,21 +576,19 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
           pending.length >= resolved.maxBufferedRecords ||
           pendingBytes >= resolved.maxBufferedBytes;
         const schedule = !flush && !state.flushScheduled;
-        return [
-          { flush, schedule },
-          {
-            ...state,
-            pending,
-            pendingBytes,
-            flushScheduled: state.flushScheduled || schedule,
-          },
-        ] as const;
-      });
+        const nextState = {
+          ...state,
+          pending,
+          pendingBytes,
+          flushScheduled: state.flushScheduled || schedule,
+        };
+        return (schedule ? scheduleFlush() : Effect.void).pipe(
+          Effect.as([{ flush }, nextState] as const),
+        );
+      }).pipe(Effect.uninterruptible);
 
       if (action.flush) {
         yield* flush(false, false);
-      } else if (action.schedule) {
-        yield* scheduleFlush();
       }
     });
 

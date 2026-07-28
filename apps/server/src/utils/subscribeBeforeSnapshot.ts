@@ -24,3 +24,14 @@ export const subscribeBeforeSnapshot = Effect.fn("subscribeBeforeSnapshot")(func
     }),
   );
 });
+
+export const subscribeBeforeSnapshotWithoutMutex = Effect.fn("subscribeBeforeSnapshotWithoutMutex")(
+  function* <A, E, R>(changes: PubSub.PubSub<A>, snapshot: Effect.Effect<A, E, R>) {
+    const subscription = yield* PubSub.subscribe(changes);
+    const latest = yield* snapshot;
+    return {
+      latest,
+      changes: Stream.fromSubscription(subscription),
+    } satisfies SnapshotSubscription<A>;
+  },
+);

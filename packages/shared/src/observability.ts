@@ -299,20 +299,39 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
 
     const records = buffer;
-    const chunk = records.join("");
     buffer = [];
-    const startedAt = performance.now();
+    let persistedCount = 0;
 
-    try {
-      sink.write(chunk);
+    while (persistedCount < records.length) {
+      const firstRecordBytes = textEncoder.encode(records[persistedCount]).byteLength;
+      if (firstRecordBytes > options.maxBytes) {
+        persistedCount += 1;
+        continue;
+      }
+
+      let nextIndex = persistedCount + 1;
+      let chunkBytes = firstRecordBytes;
+      while (nextIndex < records.length) {
+        const nextRecordBytes = textEncoder.encode(records[nextIndex]).byteLength;
+        if (chunkBytes + nextRecordBytes > options.maxBytes) break;
+        chunkBytes += nextRecordBytes;
+        nextIndex += 1;
+      }
+
+      const chunk = records.slice(persistedCount, nextIndex).join("");
+      const startedAt = performance.now();
+      try {
+        sink.write(chunk);
+      } catch {
+        buffer.unshift(...records.slice(persistedCount));
+        return;
+      }
       pendingFlushStats = {
-        logicalWriteBytes:
-          pendingFlushStats.logicalWriteBytes + textEncoder.encode(chunk).byteLength,
-        count: pendingFlushStats.count + records.length,
+        logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
+        count: pendingFlushStats.count + nextIndex - persistedCount,
         durationMs: pendingFlushStats.durationMs + Math.max(0, performance.now() - startedAt),
       };
-    } catch {
-      buffer.unshift(...records);
+      persistedCount = nextIndex;
     }
   };
 

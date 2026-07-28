@@ -1,5 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ResourceTelemetryHistory } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,13 +6,14 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
+import type { ResourceTelemetryHistoryWithLegacyBuckets } from "../resourceTelemetry/ResourceTelemetryHistory.ts";
 import * as ProcessResourceMonitor from "./ProcessResourceMonitor.ts";
 
 describe("ProcessResourceMonitor", () => {
   it.effect("projects resource telemetry history into the legacy diagnostics contract", () =>
     Effect.gen(function* () {
       const readAt = DateTime.makeUnsafe("2026-05-05T10:00:00.000Z");
-      const history: ResourceTelemetryHistory = {
+      const history: ResourceTelemetryHistoryWithLegacyBuckets = {
         readAt,
         windowMs: 60_000,
         bucketMs: 10_000,
@@ -29,6 +29,18 @@ describe("ProcessResourceMonitor", () => {
             ioReadBytes: 1_024,
             ioWriteBytes: 2_048,
             maxProcessCount: 2,
+          },
+        ],
+        legacyBackendBuckets: [
+          {
+            startedAt: DateTime.makeUnsafe("2026-05-05T09:59:50.000Z"),
+            endedAt: readAt,
+            avgCpuPercent: 5,
+            maxCpuPercent: 8,
+            maxRssBytes: 4_096,
+            ioReadBytes: 1_024,
+            ioWriteBytes: 2_048,
+            maxProcessCount: 1,
           },
         ],
         topProcesses: [
@@ -142,10 +154,10 @@ describe("ProcessResourceMonitor", () => {
         },
       ]);
       expect(result.buckets[0]).toMatchObject({
-        avgCpuPercent: 15,
-        maxCpuPercent: 25,
+        avgCpuPercent: 5,
+        maxCpuPercent: 8,
         maxRssBytes: 4_096,
-        maxProcessCount: 2,
+        maxProcessCount: 1,
       });
       expect(result.error).toEqual(
         Option.some({

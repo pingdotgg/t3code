@@ -26,6 +26,30 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(HostProcessArchitecture, "x64"),
+        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "musl"),
+        Effect.provideService(HostProcessEnvironment, {
+          T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
+        }),
+      );
+
+      assert.equal(yield* service.resolve, binaryPath);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolves an executable override on an unsupported platform", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-resource-monitor-binary-",
+      });
+      const binaryPath = `${baseDir}/custom-resource-monitor`;
+      yield* fileSystem.writeFileString(binaryPath, "binary");
+      yield* fileSystem.chmod(binaryPath, 0o755);
+
+      const service = yield* ResourceMonitorBinary.make().pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+        Effect.provideService(HostProcessPlatform, "freebsd"),
+        Effect.provideService(HostProcessArchitecture, "ia32"),
         Effect.provideService(HostProcessEnvironment, {
           T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
         }),
@@ -49,6 +73,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(HostProcessArchitecture, "x64"),
+        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "gnu"),
         Effect.provideService(HostProcessEnvironment, {
           T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
         }),
@@ -70,6 +95,25 @@ describe("ResourceMonitorBinary", () => {
         Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
         Effect.provideService(HostProcessPlatform, "freebsd"),
         Effect.provideService(HostProcessArchitecture, "ia32"),
+        Effect.provideService(HostProcessEnvironment, {}),
+      );
+      const error = yield* Effect.flip(service.resolve);
+
+      assert.instanceOf(error, ResourceMonitorBinary.ResourceMonitorBinaryUnsupported);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects bundled glibc binaries on musl Linux hosts", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-resource-monitor-binary-",
+      });
+      const service = yield* ResourceMonitorBinary.make().pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcessArchitecture, "x64"),
+        Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "musl"),
         Effect.provideService(HostProcessEnvironment, {}),
       );
       const error = yield* Effect.flip(service.resolve);

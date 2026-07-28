@@ -19,6 +19,7 @@ import {
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
+  UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
   LinuxIconResizeError,
   MacPasskeySigningConfigurationResolutionError,
@@ -693,6 +694,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.platform, "win");
       assert.equal(resolved.target, "nsis");
       assert.equal(resolved.arch, "arm64");
+    }),
+  );
+
+  it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
+    Effect.gen(function* () {
+      for (const platform of ["linux", "win"] as const) {
+        const error = yield* Effect.flip(
+          resolveBuildOptions({
+            platform: Option.some(platform),
+            target: Option.none(),
+            arch: Option.some("universal"),
+            buildVersion: Option.none(),
+            outputDir: Option.none(),
+            skipBuild: Option.none(),
+            keepStage: Option.none(),
+            signed: Option.none(),
+            verbose: Option.none(),
+            mockUpdates: Option.none(),
+            mockUpdateServerPort: Option.none(),
+            wslPrebuild: Option.none(),
+          }),
+        );
+
+        assert.instanceOf(error, UnsupportedDesktopBuildArchitectureError);
+        assert.deepStrictEqual(error.supportedArchitectures, ["x64", "arm64"]);
+      }
     }),
   );
 

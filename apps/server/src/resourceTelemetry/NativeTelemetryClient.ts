@@ -29,12 +29,14 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/unstable/encoding/Ndjson";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 import { ServerConfig } from "../config.ts";
+import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const SAMPLE_INTERVAL_MS = 1_000;
 const UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS = 5_000;
@@ -168,7 +170,14 @@ export class NativeTelemetryClient extends Context.Service<
     readonly sampleNow: Effect.Effect<NativeTelemetrySnapshot, NativeTelemetryClientError>;
     readonly retry: Effect.Effect<boolean>;
     readonly health: Effect.Effect<NativeTelemetryClientHealth>;
-    readonly healthChanges: Stream.Stream<NativeTelemetryClientHealth>;
+    readonly subscribeHealth: Effect.Effect<
+      {
+        readonly latest: NativeTelemetryClientHealth;
+        readonly changes: Stream.Stream<NativeTelemetryClientHealth>;
+      },
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/resourceTelemetry/NativeTelemetryClient") {}
 
@@ -226,8 +235,8 @@ export function resolveNativeSampleIntervalMs(
   if (snapshot.stale || snapshot.source === "unknown") {
     return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
   }
-  if (snapshot.suspended) return 0;
   if (
+    snapshot.suspended ||
     snapshot.locked === "true" ||
     snapshot.lowPowerMode === "true" ||
     isThermallyConstrained(snapshot)
@@ -239,18 +248,39 @@ export function resolveNativeSampleIntervalMs(
 }
 
 export function commitCollectionControlUpdate<E, R>(
-  state: Ref.Ref<CollectionControl>,
+  desiredState: Ref.Ref<CollectionControl>,
+  appliedState: Ref.Ref<CollectionControl>,
   update: (current: CollectionControl) => CollectionControl,
   apply: (previous: CollectionControl, next: CollectionControl) => Effect.Effect<void, E, R>,
 ): Effect.Effect<readonly [CollectionControl, CollectionControl], E, R> {
   return Effect.gen(function* () {
-    const [previous, next] = yield* Ref.modify(state, (previous) => {
+    const [previousDesired, next] = yield* Ref.modify(desiredState, (previous) => {
       const next = update(previous);
       return [[previous, next] as const, next];
     });
-    yield* apply(previous, next);
-    return [previous, next] as const;
+    const previousApplied = yield* Ref.get(appliedState);
+    yield* apply(previousApplied, next);
+    yield* Ref.set(appliedState, next);
+    return [previousDesired, next] as const;
   });
+}
+
+export function synchronizeCollectionControlOnStart<E1, R1, E2, R2>(
+  mutex: Semaphore.Semaphore,
+  desiredState: Ref.Ref<CollectionControl>,
+  appliedState: Ref.Ref<CollectionControl>,
+  apply: (control: CollectionControl) => Effect.Effect<void, E1, R1>,
+  markReady: Effect.Effect<void, E2, R2>,
+) {
+  return mutex.withPermits(1)(
+    Effect.gen(function* () {
+      const control = yield* Ref.get(desiredState);
+      yield* apply(control);
+      yield* Ref.set(appliedState, control);
+      yield* markReady;
+      return control;
+    }),
+  );
 }
 
 const decodeMonitorEvent: (
@@ -293,7 +323,7 @@ export function canRequestNativeTelemetryRetry(
   return status !== "healthy" && status !== "starting" && !hasHandle;
 }
 
-export function canUpdateNativeTelemetrySidecar(
+export function canCommandNativeTelemetrySidecar(
   status: ResourceTelemetrySourceStatus,
   hasHandle: boolean,
 ): boolean {
@@ -323,6 +353,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     liveSubscriberCount: 0,
     sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
   });
+  const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
   const externalProcesses = yield* Ref.make<ReadonlyArray<ResourceMonitorExternalProcess>>([]);
   const pendingSamples = yield* Ref.make(
     new Map<string, Deferred.Deferred<NativeTelemetrySnapshot, NativeTelemetryClientError>>(),
@@ -426,15 +457,15 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       case "historyChunk":
         return Effect.gen(function* () {
           const latestSnapshot = event.snapshots.at(-1);
-          if (latestSnapshot) {
-            yield* Ref.update(state, (current) => ({
-              ...current,
-              status: "healthy" as const,
-              lastSampleAt: Option.some(DateTime.makeUnsafe(latestSnapshot.sampledAtUnixMs)),
-              lastError: Option.none(),
-            }));
-            yield* publishHealth;
-          }
+          yield* Ref.update(state, (current) => ({
+            ...current,
+            status: "healthy" as const,
+            lastSampleAt: latestSnapshot
+              ? Option.some(DateTime.makeUnsafe(latestSnapshot.sampledAtUnixMs))
+              : current.lastSampleAt,
+            lastError: Option.none(),
+          }));
+          yield* publishHealth;
           const completed = yield* Ref.modify(pendingHistories, (pending) => {
             const request = pending.get(event.requestId);
             if (!request) return [Option.none(), pending] as const;
@@ -560,48 +591,39 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           }),
         ),
       );
-      const control = yield* Ref.get(collectionControl);
-      yield* writeCommand(handle, {
-        version: RESOURCE_MONITOR_PROTOCOL_VERSION,
-        type: "configure",
-        rootPid: process.pid,
-        sampleIntervalMs: control.sampleIntervalMs,
-        externalProcesses: [...(yield* Ref.get(externalProcesses))],
-      });
-      if (control.liveSubscriberCount > 0) {
-        yield* writeCommand(handle, {
-          version: RESOURCE_MONITOR_PROTOCOL_VERSION,
-          type: "setStreaming",
-          enabled: true,
-        });
-      }
-      yield* Ref.update(state, (current) => ({
-        ...current,
-        status: "healthy" as const,
-        hello: Option.some(hello),
-      }));
-      yield* publishHealth;
+      yield* synchronizeCollectionControlOnStart(
+        controlMutex,
+        collectionControl,
+        appliedCollectionControl,
+        (control) =>
+          Effect.gen(function* () {
+            yield* writeCommand(handle, {
+              version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+              type: "configure",
+              rootPid: process.pid,
+              sampleIntervalMs: control.sampleIntervalMs,
+              externalProcesses: [...(yield* Ref.get(externalProcesses))],
+            });
+            if (control.liveSubscriberCount > 0) {
+              yield* writeCommand(handle, {
+                version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+                type: "setStreaming",
+                enabled: true,
+              });
+            }
+          }),
+        Ref.update(state, (current) => ({
+          ...current,
+          status: "healthy" as const,
+          hello: Option.some(hello),
+        })).pipe(Effect.andThen(publishHealth)),
+      );
 
       yield* writeCommand(handle, {
         version: RESOURCE_MONITOR_PROTOCOL_VERSION,
         type: "setExternalProcesses",
         processes: [...(yield* Ref.get(externalProcesses))],
       });
-      const latestControl = yield* Ref.get(collectionControl);
-      if (latestControl.sampleIntervalMs !== control.sampleIntervalMs) {
-        yield* writeCommand(handle, {
-          version: RESOURCE_MONITOR_PROTOCOL_VERSION,
-          type: "setSampleInterval",
-          sampleIntervalMs: latestControl.sampleIntervalMs,
-        });
-      }
-      if (latestControl.liveSubscriberCount > 0 !== control.liveSubscriberCount > 0) {
-        yield* writeCommand(handle, {
-          version: RESOURCE_MONITOR_PROTOCOL_VERSION,
-          type: "setStreaming",
-          enabled: latestControl.liveSubscriberCount > 0,
-        });
-      }
 
       const exitEffect = handle.exitCode.pipe(
         Effect.mapError(
@@ -702,7 +724,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     "resourceTelemetry.nativeTelemetryClient.applyCollectionControl",
   )(function* (previous: CollectionControl, next: CollectionControl) {
     const current = yield* Ref.get(state);
-    if (canUpdateNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
+    if (canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
       const handle = Option.getOrThrow(current.handle);
       if (previous.sampleIntervalMs !== next.sampleIntervalMs) {
         yield* writeCommand(handle, {
@@ -725,10 +747,12 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
 
   const updateCollectionControl = (update: (current: CollectionControl) => CollectionControl) =>
     controlMutex.withPermits(1)(
-      commitCollectionControlUpdate(collectionControl, update, applyCollectionControl).pipe(
-        Effect.ensuring(publishHealth),
-        Effect.asVoid,
-      ),
+      commitCollectionControlUpdate(
+        collectionControl,
+        appliedCollectionControl,
+        update,
+        applyCollectionControl,
+      ).pipe(Effect.ensuring(publishHealth), Effect.asVoid),
     );
 
   const setHostPowerState: NativeTelemetryClient["Service"]["setHostPowerState"] = (hostPower) =>
@@ -767,7 +791,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     Effect.gen(function* () {
       yield* Ref.set(externalProcesses, [...processes]);
       const current = yield* Ref.get(state);
-      if (!canUpdateNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) return;
+      if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) return;
       yield* writeCommand(Option.getOrThrow(current.handle), {
         version: RESOURCE_MONITOR_PROTOCOL_VERSION,
         type: "setExternalProcesses",
@@ -778,7 +802,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   const readHistory: NativeTelemetryClient["Service"]["readHistory"] = (windowMs) =>
     Effect.gen(function* () {
       const current = yield* Ref.get(state);
-      if (Option.isNone(current.handle) || current.status !== "healthy") {
+      if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
         return yield* new NativeTelemetryUnavailable({
           reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
         });
@@ -801,7 +825,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         next.set(requestId, { deferred, snapshots: [] });
         return next;
       });
-      return yield* writeCommand(current.handle.value, {
+      return yield* writeCommand(Option.getOrThrow(current.handle), {
         version: RESOURCE_MONITOR_PROTOCOL_VERSION,
         type: "readHistory",
         requestId,
@@ -836,7 +860,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
 
   const sampleNow: NativeTelemetryClient["Service"]["sampleNow"] = Effect.gen(function* () {
     const current = yield* Ref.get(state);
-    if (Option.isNone(current.handle) || current.status !== "healthy") {
+    if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
       return yield* new NativeTelemetryUnavailable({
         reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
       });
@@ -857,7 +881,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       next.set(requestId, deferred);
       return next;
     });
-    return yield* writeCommand(current.handle.value, {
+    return yield* writeCommand(Option.getOrThrow(current.handle), {
       version: RESOURCE_MONITOR_PROTOCOL_VERSION,
       type: "sampleNow",
       requestId,
@@ -918,7 +942,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       ),
     ),
     health,
-    healthChanges: Stream.fromPubSub(healthChanges),
+    subscribeHealth: subscribeBeforeSnapshotWithoutMutex(healthChanges, health),
   });
 });
 
@@ -926,8 +950,18 @@ export const layer = Layer.effect(NativeTelemetryClient, make());
 
 export const layerTest = (
   overrides: Partial<NativeTelemetryClient["Service"]> = {},
-): Layer.Layer<NativeTelemetryClient> =>
-  Layer.succeed(
+): Layer.Layer<NativeTelemetryClient> => {
+  const health =
+    overrides.health ??
+    Effect.succeed({
+      status: "unavailable" as const,
+      hello: Option.none<ResourceMonitorHelloEvent>(),
+      lastSampleAt: Option.none<DateTime.Utc>(),
+      lastError: Option.some("Resource monitor test implementation is unavailable."),
+      restartCount: 0,
+      sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
+    });
+  return Layer.succeed(
     NativeTelemetryClient,
     NativeTelemetryClient.of({
       capabilities: Effect.succeed({
@@ -954,15 +988,16 @@ export const layerTest = (
         }),
       ),
       retry: Effect.succeed(false),
-      health: Effect.succeed({
-        status: "unavailable",
-        hello: Option.none(),
-        lastSampleAt: Option.none(),
-        lastError: Option.some("Resource monitor test implementation is unavailable."),
-        restartCount: 0,
-        sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
-      }),
-      healthChanges: Stream.empty,
+      health,
+      subscribeHealth:
+        overrides.subscribeHealth ??
+        health.pipe(
+          Effect.map((initial) => ({
+            latest: initial,
+            changes: Stream.empty,
+          })),
+        ),
       ...overrides,
     }),
   );
+};

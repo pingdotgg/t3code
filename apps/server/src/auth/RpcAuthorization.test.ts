@@ -1,6 +1,8 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -28,9 +30,18 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  it("rejects unknown RPC method names", () => {
-    expect(() => requiredScopeForRpcMethod("server.notRegistered")).toThrow(
-      "RPC method server.notRegistered has no declared authorization scope.",
+  it("allows relay status reads without granting relay installation access", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.cloudGetRelayClientStatus)).toBe(
+      AuthRelayReadScope,
     );
+    expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
+  });
+
+  it("rejects unknown RPC method names", () => {
+    for (const method of ["server.notRegistered", "toString", "constructor"]) {
+      expect(() => requiredScopeForRpcMethod(method)).toThrow(
+        `RPC method ${method} has no declared authorization scope.`,
+      );
+    }
   });
 });

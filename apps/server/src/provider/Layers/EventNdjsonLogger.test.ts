@@ -7,6 +7,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -258,6 +259,33 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("does not strand a later batch after an interrupted write", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadPath = ownedLogPath(basePath, "thread-interrupted");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
+        const logger = store.logger("native");
+        const interruptedWrite = yield* logger
+          .write({ id: "possibly-interrupted" }, ThreadId.make("thread-interrupted"))
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(interruptedWrite);
+        yield* logger.write({ id: "accepted" }, ThreadId.make("thread-interrupted"));
+
+        yield* TestClock.adjust(1_000);
+
+        assert.equal(NodeFS.existsSync(threadPath), true);
+        assert.include(NodeFS.readFileSync(threadPath, "utf8"), '{"id":"accepted"}');
+        yield* store.close();
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("drops transient canonical events before serialization", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
@@ -288,6 +316,39 @@ describe("EventNdjsonLogger", () => {
             { stream: "NTIVE", payload: '{"type":"content.delta","id":"native-delta"}' },
           ],
         );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("contains hostile event accessors inside guarded serialization", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, {
+          stream: "canonical",
+          batchWindowMs: 0,
+        });
+        assert.exists(logger);
+        if (!logger) return;
+        const hostile = new Proxy(
+          { id: "hostile" },
+          {
+            get(_target, property) {
+              if (property === "type") throw new Error("blocked");
+              return undefined;
+            },
+          },
+        );
+
+        yield* logger.write(hostile, ThreadId.make("thread-hostile"));
+        yield* logger.close();
+
+        const contents = NodeFS.readFileSync(ownedLogPath(basePath, "thread-hostile"), "utf8");
+        assert.notInclude(contents, "blocked");
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }

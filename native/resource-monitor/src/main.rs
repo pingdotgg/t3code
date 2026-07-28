@@ -4,7 +4,9 @@ use std::io::{self, BufRead, BufWriter, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{
+    MINIMUM_CPU_UPDATE_INTERVAL, Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
+};
 
 const PROTOCOL_VERSION: u32 = 2;
 const MIN_SAMPLE_INTERVAL_MS: u64 = 250;
@@ -272,6 +274,20 @@ impl HistoryRecorder {
         max_retained_entries: usize,
         max_retained_bytes: usize,
     ) {
+        let mut future_entry_count = 0usize;
+        let mut future_bytes = 0usize;
+        self.snapshots.retain(|snapshot| {
+            let keep = snapshot.sampled_at_unix_ms <= now_ms;
+            if !keep {
+                future_entry_count =
+                    future_entry_count.saturating_add(snapshot.retained_entry_count());
+                future_bytes = future_bytes.saturating_add(snapshot.estimated_history_bytes());
+            }
+            keep
+        });
+        self.retained_entry_count = self.retained_entry_count.saturating_sub(future_entry_count);
+        self.retained_bytes = self.retained_bytes.saturating_sub(future_bytes);
+
         while self.snapshots.front().is_some_and(|snapshot| {
             snapshot.sampled_at_unix_ms < now_ms.saturating_sub(HISTORY_RETENTION_MS)
                 || self.snapshots.len() > max_snapshots
@@ -293,7 +309,10 @@ impl HistoryRecorder {
         let started_at_ms = now_ms.saturating_sub(window_ms.min(HISTORY_RETENTION_MS));
         self.snapshots
             .iter()
-            .filter(|snapshot| snapshot.sampled_at_unix_ms >= started_at_ms)
+            .filter(|snapshot| {
+                snapshot.sampled_at_unix_ms >= started_at_ms
+                    && snapshot.sampled_at_unix_ms <= now_ms
+            })
             .cloned()
             .collect()
     }
@@ -302,6 +321,7 @@ impl HistoryRecorder {
 struct Collector {
     system: System,
     sequence: u64,
+    cpu_baseline_refreshed_at: Option<Instant>,
 }
 
 impl Collector {
@@ -309,16 +329,32 @@ impl Collector {
         Self {
             system: System::new(),
             sequence: 0,
+            cpu_baseline_refreshed_at: None,
         }
     }
 
+    fn prime_cpu_usage(&mut self) {
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            process_refresh_kind(),
+        );
+        self.cpu_baseline_refreshed_at = Some(Instant::now());
+    }
+
     fn sample(&mut self, config: &CollectorConfig, request_id: Option<String>) -> SnapshotEvent {
+        if let Some(delay) =
+            remaining_cpu_measurement_delay(self.cpu_baseline_refreshed_at.take(), Instant::now())
+        {
+            thread::sleep(delay);
+        }
         let collection_started = Instant::now();
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
             process_refresh_kind(),
         );
+        self.cpu_baseline_refreshed_at = Some(Instant::now());
 
         let rows = self
             .system
@@ -351,6 +387,7 @@ impl Collector {
             .collect::<HashSet<_>>();
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
+        let tracked_process_count = tracked.len();
         let mut processes = tracked
             .into_iter()
             .filter_map(|pid| {
@@ -402,7 +439,10 @@ impl Collector {
             collection_duration_micros: collection_started.elapsed().as_micros() as u64,
             scanned_process_count: self.system.processes().len(),
             retained_process_count: processes.len(),
-            inaccessible_process_count: 0,
+            inaccessible_process_count: inaccessible_process_count(
+                tracked_process_count,
+                processes.len(),
+            ),
             request_id,
             external_processes,
             processes,
@@ -417,6 +457,19 @@ fn process_refresh_kind() -> ProcessRefreshKind {
         .with_disk_usage()
         .with_cmd(UpdateKind::Always)
         .without_tasks()
+}
+
+fn inaccessible_process_count(selected: usize, materialized: usize) -> usize {
+    selected.saturating_sub(materialized)
+}
+
+fn remaining_cpu_measurement_delay(
+    baseline_refreshed_at: Option<Instant>,
+    now: Instant,
+) -> Option<Duration> {
+    baseline_refreshed_at
+        .and_then(|baseline| MINIMUM_CPU_UPDATE_INTERVAL.checked_sub(now.duration_since(baseline)))
+        .filter(|delay| !delay.is_zero())
 }
 
 fn matches_external_identity(
@@ -696,6 +749,7 @@ fn main() -> io::Result<()> {
                                 .map(|process| (process.pid, process.start_time_ms))
                                 .collect(),
                         });
+                        collector.prime_cpu_usage();
                         next_sample_at = sample_interval.map(|_| Instant::now());
                     }
                     Command::SetExternalProcesses { processes, .. } => {
@@ -873,6 +927,27 @@ mod tests {
     }
 
     #[test]
+    fn counts_selected_processes_that_could_not_be_materialized() {
+        assert_eq!(inaccessible_process_count(5, 3), 2);
+        assert_eq!(inaccessible_process_count(3, 5), 0);
+    }
+
+    #[test]
+    fn waits_for_a_cpu_measurement_window_after_priming() {
+        let baseline = Instant::now();
+
+        assert_eq!(
+            remaining_cpu_measurement_delay(Some(baseline), baseline),
+            Some(MINIMUM_CPU_UPDATE_INTERVAL)
+        );
+        assert_eq!(
+            remaining_cpu_measurement_delay(Some(baseline), baseline + MINIMUM_CPU_UPDATE_INTERVAL),
+            None
+        );
+        assert_eq!(remaining_cpu_measurement_delay(None, baseline), None);
+    }
+
+    #[test]
     fn retains_bounded_history_without_request_ids() {
         let mut history = HistoryRecorder::default();
         for sequence in 0..=MAX_HISTORY_SNAPSHOTS {
@@ -911,6 +986,38 @@ mod tests {
                 .read(10_000, MAX_HISTORY_SNAPSHOTS as u64 * 1_000)
                 .len(),
             11
+        );
+    }
+
+    #[test]
+    fn excludes_and_trims_future_history_after_the_clock_moves_backward() {
+        let mut history = HistoryRecorder::default();
+        let snapshot = SnapshotEvent {
+            version: PROTOCOL_VERSION,
+            event_type: "snapshot",
+            sequence: 1,
+            sampled_at_unix_ms: 2_000,
+            collection_duration_micros: 1,
+            scanned_process_count: 0,
+            retained_process_count: 0,
+            inaccessible_process_count: 0,
+            request_id: None,
+            external_processes: Vec::new(),
+            processes: Vec::new(),
+        };
+        history.record(&snapshot);
+
+        assert!(history.read(0, 1_000).is_empty());
+
+        history.record(&SnapshotEvent {
+            sequence: 2,
+            sampled_at_unix_ms: 1_000,
+            ..snapshot
+        });
+        assert_eq!(history.snapshots.len(), 1);
+        assert_eq!(
+            history.snapshots.front().map(|entry| entry.sequence),
+            Some(2)
         );
     }
 
@@ -1021,7 +1128,7 @@ mod tests {
         let value = "é".repeat(MAX_PROCESS_NAME_BYTES);
         let truncated = truncate_utf8(value, MAX_PROCESS_NAME_BYTES - 1);
 
-        assert!(truncated.len() <= MAX_PROCESS_NAME_BYTES - 1);
+        assert!(truncated.len() < MAX_PROCESS_NAME_BYTES);
         assert!(truncated.is_char_boundary(truncated.len()));
     }
 

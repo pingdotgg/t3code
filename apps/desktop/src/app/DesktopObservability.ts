@@ -139,6 +139,7 @@ const DesktopBackendOutputLogNoop: DesktopBackendOutputLogShape = {
 interface BufferedBackendOutputChunk {
   readonly streamName: "stdout" | "stderr";
   readonly chunk: Uint8Array;
+  readonly offset: number;
 }
 
 interface BackendOutputSession {
@@ -148,7 +149,7 @@ interface BackendOutputSession {
   readonly byteLength: number;
 }
 
-function appendBoundedOutputChunk(
+export function appendBoundedOutputChunk(
   session: BackendOutputSession,
   streamName: "stdout" | "stderr",
   chunk: Uint8Array,
@@ -161,7 +162,7 @@ function appendBoundedOutputChunk(
     chunk.byteLength > DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES
       ? chunk.slice(chunk.byteLength - DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES)
       : chunk.slice();
-  const chunks = [...session.chunks, { streamName, chunk: retainedChunk }];
+  const chunks = [...session.chunks, { streamName, chunk: retainedChunk, offset: 0 }];
   let byteLength = session.byteLength + retainedChunk.byteLength;
   let overflow = Math.max(0, byteLength - DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES);
   let firstRetainedIndex = 0;
@@ -169,16 +170,17 @@ function appendBoundedOutputChunk(
   while (overflow > 0) {
     const first = chunks[firstRetainedIndex];
     if (!first) break;
-    if (first.chunk.byteLength <= overflow) {
-      overflow -= first.chunk.byteLength;
-      byteLength -= first.chunk.byteLength;
+    const retainedByteLength = first.chunk.byteLength - first.offset;
+    if (retainedByteLength <= overflow) {
+      overflow -= retainedByteLength;
+      byteLength -= retainedByteLength;
       firstRetainedIndex += 1;
       continue;
     }
 
     chunks[firstRetainedIndex] = {
       ...first,
-      chunk: first.chunk.slice(overflow),
+      offset: first.offset + overflow,
     };
     byteLength -= overflow;
     overflow = 0;
@@ -189,7 +191,8 @@ function appendBoundedOutputChunk(
     chunks.length - firstRetainedIndex - DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_CHUNKS,
   );
   for (let index = firstRetainedIndex; index < firstRetainedIndex + excessChunks; index += 1) {
-    byteLength -= chunks[index]?.chunk.byteLength ?? 0;
+    const chunk = chunks[index];
+    byteLength -= chunk ? chunk.chunk.byteLength - chunk.offset : 0;
   }
   firstRetainedIndex += excessChunks;
 
@@ -442,7 +445,7 @@ const makeBackendOutputLogShape = (
                   runId: session.runId,
                   instanceId: id,
                   stream: output.streamName,
-                  text: textDecoder.decode(output.chunk),
+                  text: textDecoder.decode(output.chunk.subarray(output.offset)),
                 },
               });
             }

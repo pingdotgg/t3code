@@ -60,6 +60,10 @@ export interface BuildResourceTelemetryHistoryInput {
   readonly health: ResourceTelemetryHealth;
 }
 
+export type ResourceTelemetryHistoryWithLegacyBuckets = ResourceTelemetryHistory & {
+  readonly legacyBackendBuckets?: ReadonlyArray<ResourceTelemetryHistoryBucket>;
+};
+
 function summarizeProcesses(
   samples: ReadonlyArray<ProcessSample>,
 ): ReadonlyArray<ResourceTelemetryProcessSummary> {
@@ -94,7 +98,7 @@ function summarizeProcesses(
         maxCpuPercent: Math.max(...sorted.map((sample) => sample.process.cpuPercent)),
         cpuTimeMs: sorted.reduce((total, sample) => total + sample.cpuTimeMs, 0),
         currentRssBytes: latest.process.residentBytes,
-        peakRssBytes: Math.max(...sorted.map((sample) => sample.process.peakResidentBytes)),
+        peakRssBytes: Math.max(...sorted.map((sample) => sample.process.residentBytes)),
         ioReadBytes: sorted.reduce((total, sample) => total + sample.ioReadBytes, 0),
         ioWriteBytes: sorted.reduce((total, sample) => total + sample.ioWriteBytes, 0),
         ioSemantics: latest.process.ioSemantics,
@@ -142,7 +146,9 @@ function buildBuckets(input: {
 
 export function buildResourceTelemetryHistory(
   input: BuildResourceTelemetryHistoryInput,
-): ResourceTelemetryHistory {
+): ResourceTelemetryHistoryWithLegacyBuckets & {
+  readonly legacyBackendBuckets: ReadonlyArray<ResourceTelemetryHistoryBucket>;
+} {
   const readAtMs = DateTime.toEpochMillis(input.readAt);
   const { windowMs, bucketMs } = normalizeResourceTelemetryHistoryInput(input);
   const windowStartMs = readAtMs - windowMs;
@@ -159,26 +165,39 @@ export function buildResourceTelemetryHistory(
     ? [precedingSnapshot, ...snapshotsInWindow]
     : snapshotsInWindow;
   const aggregateSamples: AggregateSample[] = [];
+  const legacyBackendAggregateSamples: AggregateSample[] = [];
   const processSamples: ProcessSample[] = [];
   let previous: ReadonlyMap<string, ProcessState> = new Map();
   let counters: TelemetryCounters = emptyTelemetryCounters();
+  let previousSnapshotAtMs: number | undefined;
 
   for (const snapshot of snapshots) {
+    const deltaWindowFraction =
+      previousSnapshotAtMs !== undefined &&
+      previousSnapshotAtMs < windowStartMs &&
+      snapshot.sampledAtUnixMs > previousSnapshotAtMs
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              (snapshot.sampledAtUnixMs - windowStartMs) /
+                (snapshot.sampledAtUnixMs - previousSnapshotAtMs),
+            ),
+          )
+        : 1;
+    previousSnapshotAtMs = snapshot.sampledAtUnixMs;
     const recordedExternalProcesses =
       snapshot.externalProcesses ??
       Option.match(input.desktopSnapshot, {
         onNone: () => [],
-        onSome: (desktopSnapshot) =>
-          snapshot.sampledAtUnixMs >= desktopSnapshot.sampledAtUnixMs
-            ? [
-                {
-                  pid: desktopSnapshot.electronPid,
-                  startTimeMs: desktopSnapshot.electronProcesses.find(
-                    (metric) => metric.pid === desktopSnapshot.electronPid,
-                  )?.creationTimeMs,
-                },
-              ]
-            : [],
+        onSome: (desktopSnapshot) => [
+          {
+            pid: desktopSnapshot.electronPid,
+            startTimeMs: desktopSnapshot.electronProcesses.find(
+              (metric) => metric.pid === desktopSnapshot.electronPid,
+            )?.creationTimeMs,
+          },
+        ],
       });
     const electronRootPids = new Set(recordedExternalProcesses.map((process) => process.pid));
     const electronRootStartTimes = new Map(
@@ -198,21 +217,45 @@ export function buildResourceTelemetryHistory(
       counters,
       updatePrevious: true,
     });
-    previous = merged.previous;
+    previous = new Map([...previous, ...merged.previous]);
     counters = merged.counters;
     if (snapshot.sampledAtUnixMs < windowStartMs) {
       continue;
     }
+    const deltas =
+      deltaWindowFraction === 1
+        ? merged.deltas
+        : merged.deltas.map((delta) => ({
+            ...delta,
+            cpuTimeMs: Math.round(delta.cpuTimeMs * deltaWindowFraction),
+            ioReadBytes: Math.round(delta.ioReadBytes * deltaWindowFraction),
+            ioWriteBytes: Math.round(delta.ioWriteBytes * deltaWindowFraction),
+          }));
     const deltasByIdentity = new Map(
-      merged.deltas.map((processDelta) => [processDelta.identityKey, processDelta]),
+      deltas.map((processDelta) => [processDelta.identityKey, processDelta]),
     );
     aggregateSamples.push({
       sampledAtMs: snapshot.sampledAtUnixMs,
       cpuPercent: merged.groups.allT3.currentCpuPercent,
       rssBytes: merged.groups.allT3.currentRssBytes,
       processCount: merged.groups.allT3.processCount,
-      ioReadBytes: merged.deltas.reduce((total, process) => total + process.ioReadBytes, 0),
-      ioWriteBytes: merged.deltas.reduce((total, process) => total + process.ioWriteBytes, 0),
+      ioReadBytes: deltas.reduce((total, process) => total + process.ioReadBytes, 0),
+      ioWriteBytes: deltas.reduce((total, process) => total + process.ioWriteBytes, 0),
+    });
+    const backendDeltas = deltas.filter(
+      (processDelta) =>
+        processDelta.category === "server" ||
+        processDelta.category === "server-child" ||
+        processDelta.category === "provider-root" ||
+        processDelta.category === "terminal-root",
+    );
+    legacyBackendAggregateSamples.push({
+      sampledAtMs: snapshot.sampledAtUnixMs,
+      cpuPercent: merged.groups.backend.currentCpuPercent,
+      rssBytes: merged.groups.backend.currentRssBytes,
+      processCount: merged.groups.backend.processCount,
+      ioReadBytes: backendDeltas.reduce((total, process) => total + process.ioReadBytes, 0),
+      ioWriteBytes: backendDeltas.reduce((total, process) => total + process.ioWriteBytes, 0),
     });
     for (const process of merged.processes) {
       const processDelta = deltasByIdentity.get(
@@ -235,6 +278,12 @@ export function buildResourceTelemetryHistory(
     sampleIntervalMs: input.sampleIntervalMs,
     retainedSampleCount: aggregateSamples.length + processSamples.length,
     buckets: buildBuckets({ samples: aggregateSamples, nowMs: readAtMs, windowMs, bucketMs }),
+    legacyBackendBuckets: buildBuckets({
+      samples: legacyBackendAggregateSamples,
+      nowMs: readAtMs,
+      windowMs,
+      bucketMs,
+    }),
     topProcesses: summarizeProcesses(processSamples),
     health: input.health,
   };

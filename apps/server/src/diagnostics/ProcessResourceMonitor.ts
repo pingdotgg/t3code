@@ -62,7 +62,7 @@ export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
             (total, entry) => total + entry.cpuSecondsApprox,
             0,
           ),
-          buckets: history.buckets.map((bucket) => ({
+          buckets: (history.legacyBackendBuckets ?? history.buckets).map((bucket) => ({
             startedAt: bucket.startedAt,
             endedAt: bucket.endedAt,
             avgCpuPercent: bucket.avgCpuPercent,

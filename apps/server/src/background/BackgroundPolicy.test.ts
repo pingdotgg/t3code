@@ -252,6 +252,38 @@ describe("BackgroundPolicy", () => {
     }).pipe(Effect.provide(makeLayer(nominalHostPower))),
   );
 
+  it.effect("keeps scoped work active after a recently used visible window loses focus", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-1"),
+        RpcClientId.make(1),
+        makeReport({ focused: false, recentlyInteracted: true }),
+      );
+
+      const snapshot = yield* policy.snapshot;
+      assert.equal(snapshot.activeForegroundLeaseCount, 1);
+      assert.equal(snapshot.shouldRunOpportunisticWork, true);
+      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), true);
+    }).pipe(Effect.provide(makeLayer(nominalHostPower))),
+  );
+
+  it.effect("pauses scoped work for a visible unfocused client without recent interaction", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      yield* policy.reportClientActivity(
+        AuthSessionId.make("session-1"),
+        RpcClientId.make(1),
+        makeReport({ focused: false, recentlyInteracted: false }),
+      );
+
+      const snapshot = yield* policy.snapshot;
+      assert.equal(snapshot.activeForegroundLeaseCount, 0);
+      assert.equal(snapshot.shouldRunOpportunisticWork, false);
+      assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), false);
+    }).pipe(Effect.provide(makeLayer(nominalHostPower))),
+  );
+
   it.effect(
     "performance profile allows background scoped work while a scoped lease is active",
     () =>

@@ -15,6 +15,7 @@ import { createModelSelection } from "./model.ts";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
+  normalizeServerBackgroundActivitySettings,
   resolveBackgroundActivitySettings,
 } from "./backgroundActivitySettings.ts";
 
@@ -132,6 +133,7 @@ export function applyServerSettingsPatch(
     backgroundActivity,
     ...patchForMerge
   } = patch;
+  const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
   const backgroundActivityPatch =
     backgroundActivityProfile !== undefined
       ? {
@@ -154,9 +156,11 @@ export function applyServerSettingsPatch(
         ? {
             schemaVersion: 1 as const,
             profile: "custom" as const,
-            baseProfile: getBackgroundActivityBaseProfile(current.backgroundActivity),
+            baseProfile: getBackgroundActivityBaseProfile(currentBackgroundActivity),
             overrides: {
-              ...current.backgroundActivity.overrides,
+              ...(currentBackgroundActivity.profile === "custom"
+                ? currentBackgroundActivity.overrides
+                : {}),
               ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
               ...(providerHealthRefreshInterval !== undefined
                 ? { providerHealthRefreshInterval }
@@ -170,14 +174,14 @@ export function applyServerSettingsPatch(
     ...(backgroundActivity !== undefined
       ? {
           backgroundActivity: {
-            ...deepMerge(current.backgroundActivity, backgroundActivity),
+            ...deepMerge(currentBackgroundActivity, backgroundActivity),
             ...(backgroundActivity.overrides !== undefined
               ? { overrides: backgroundActivity.overrides }
               : {}),
           },
         }
-      : {}),
-    ...(backgroundActivityPatch !== undefined
+      : { backgroundActivity: currentBackgroundActivity }),
+    ...(backgroundActivity === undefined && backgroundActivityPatch !== undefined
       ? { backgroundActivity: backgroundActivityPatch }
       : {}),
     ...(patch.providerInstances !== undefined

@@ -165,7 +165,90 @@ describe("buildResourceTelemetryHistory", () => {
     expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(4_000);
   });
 
-  it("uses the preceding sample as a delta baseline and excludes future samples", () => {
+  it("uses observed RSS for the history-window peak instead of the lifetime process peak", () => {
+    const first = snapshot(1, STARTED_AT_MS, 100, 1_000);
+    const second = snapshot(2, STARTED_AT_MS + 1_000, 200, 2_000);
+    const history = buildResourceTelemetryHistory({
+      readAt: DateTime.makeUnsafe(STARTED_AT_MS + 2_000),
+      windowMs: 10_000,
+      bucketMs: 10_000,
+      sampleIntervalMs: 1_000,
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      desktopSnapshot: Option.none(),
+      snapshots: [
+        {
+          ...first,
+          processes: first.processes.map((process) =>
+            process.pid === CHILD_PID
+              ? { ...process, residentBytes: 2_000, peakResidentBytes: 50_000 }
+              : process,
+          ),
+        },
+        {
+          ...second,
+          processes: second.processes.map((process) =>
+            process.pid === CHILD_PID
+              ? { ...process, residentBytes: 3_000, peakResidentBytes: 60_000 }
+              : process,
+          ),
+        },
+      ],
+      health,
+    });
+
+    expect(
+      history.topProcesses.find((process) => process.identity.pid === CHILD_PID)?.peakRssBytes,
+    ).toBe(3_000);
+  });
+
+  it("retains cumulative baselines while a process is absent from an intermediate sample", () => {
+    const first = snapshot(1, STARTED_AT_MS, 100, 1_000);
+    const absent = snapshot(2, STARTED_AT_MS + 1_000, 0, 0);
+    const returned = snapshot(3, STARTED_AT_MS + 2_000, 350, 5_000);
+    const history = buildResourceTelemetryHistory({
+      readAt: DateTime.makeUnsafe(STARTED_AT_MS + 3_000),
+      windowMs: 10_000,
+      bucketMs: 10_000,
+      sampleIntervalMs: 1_000,
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      desktopSnapshot: Option.none(),
+      snapshots: [
+        first,
+        {
+          ...absent,
+          processes: absent.processes.filter((process) => process.pid !== CHILD_PID),
+        },
+        returned,
+      ],
+      health,
+    });
+
+    const child = history.topProcesses.find((process) => process.identity.pid === CHILD_PID);
+    expect(child?.cpuTimeMs).toBe(250);
+    expect(child?.ioWriteBytes).toBe(4_000);
+  });
+
+  it("uses an exact current Electron identity for slightly older native samples", () => {
+    const history = buildResourceTelemetryHistory({
+      readAt: DateTime.makeUnsafe(STARTED_AT_MS + 2_000),
+      windowMs: 10_000,
+      bucketMs: 10_000,
+      sampleIntervalMs: 1_000,
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      desktopSnapshot: Option.some(desktopSnapshot()),
+      snapshots: [snapshot(1, STARTED_AT_MS, 100, 1_000)],
+      health,
+    });
+
+    expect(
+      history.topProcesses.find((process) => process.identity.pid === ELECTRON_PID)?.category,
+    ).toBe("electron-main");
+  });
+
+  it("uses the preceding sample as a baseline without attributing pre-window deltas", () => {
     const readAtMs = STARTED_AT_MS + 10_000;
     const history = buildResourceTelemetryHistory({
       readAt: DateTime.makeUnsafe(readAtMs),
@@ -185,11 +268,35 @@ describe("buildResourceTelemetryHistory", () => {
 
     const child = history.topProcesses.find((process) => process.identity.pid === CHILD_PID);
     expect(child?.sampleCount).toBe(1);
-    expect(child?.cpuTimeMs).toBe(500);
-    expect(child?.ioWriteBytes).toBe(5_000);
+    expect(child?.cpuTimeMs).toBe(0);
+    expect(child?.ioWriteBytes).toBe(0);
+    expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(0);
     expect(
       history.buckets.every((bucket) => DateTime.toEpochMillis(bucket.startedAt) <= readAtMs),
     ).toBe(true);
+  });
+
+  it("prorates a cumulative delta that crosses the history window boundary", () => {
+    const readAtMs = STARTED_AT_MS + 10_000;
+    const history = buildResourceTelemetryHistory({
+      readAt: DateTime.makeUnsafe(readAtMs),
+      windowMs: 5_000,
+      bucketMs: 5_000,
+      sampleIntervalMs: 1_000,
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      desktopSnapshot: Option.none(),
+      snapshots: [
+        snapshot(1, STARTED_AT_MS, 100, 1_000),
+        snapshot(2, STARTED_AT_MS + 7_500, 850, 8_500),
+      ],
+      health,
+    });
+
+    const child = history.topProcesses.find((process) => process.identity.pid === CHILD_PID);
+    expect(child?.cpuTimeMs).toBe(250);
+    expect(child?.ioWriteBytes).toBe(2_500);
+    expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(2_500);
   });
 
   it("replays the Electron root identity recorded with each native sample", () => {

@@ -230,6 +230,66 @@ describe("resource telemetry process model", () => {
     expect(second.groups.electron.cpuTimeMs).toBe(500);
   });
 
+  it("uses the native timestamp for native cumulative-counter deltas", () => {
+    const first = merge({
+      native: nativeSnapshot(BASE_TIME_MS, [
+        processSample({
+          pid: SERVER_PID,
+          ppid: 1,
+          startTimeMs: 1_000,
+          cpuTimeMs: 1_000,
+        }),
+      ]),
+      desktop: desktopSnapshot(BASE_TIME_MS + 10_000, []),
+    });
+    const second = merge({
+      previous: first,
+      native: nativeSnapshot(
+        BASE_TIME_MS + 1_000,
+        [
+          processSample({
+            pid: SERVER_PID,
+            ppid: 1,
+            startTimeMs: 1_000,
+            cpuTimeMs: 1_500,
+          }),
+        ],
+        2,
+      ),
+      desktop: desktopSnapshot(BASE_TIME_MS + 11_000, []),
+    });
+
+    expect(second.processes[0]?.cpuPercent).toBe(50);
+    expect(second.groups.backend.cpuTimeMs).toBe(500);
+  });
+
+  it("does not advance synthetic CPU time when reusing the same desktop sample", () => {
+    const metric = electronMetric({
+      pid: 300,
+      creationTimeMs: 10_000,
+      type: "Browser",
+      cpuPercent: 50,
+    });
+    const first = merge({
+      native: nativeSnapshot(BASE_TIME_MS, [
+        processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 }),
+      ]),
+      desktop: desktopSnapshot(BASE_TIME_MS, [metric]),
+    });
+    const second = merge({
+      previous: first,
+      native: nativeSnapshot(
+        BASE_TIME_MS + 1_000,
+        [processSample({ pid: SERVER_PID, ppid: 1, startTimeMs: 1_000 })],
+        2,
+      ),
+      desktop: desktopSnapshot(BASE_TIME_MS, [metric]),
+    });
+
+    expect(second.processes.find((process) => process.identity.pid === 300)?.cpuTimeMs).toBe(0);
+    expect(second.groups.electron.cpuTimeMs).toBe(0);
+  });
+
   it("does not apply an explicit Electron root to a reused PID", () => {
     const first = mergeProcesses({
       serverPid: SERVER_PID,

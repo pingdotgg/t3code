@@ -63,6 +63,27 @@ const makeEnvironmentLayer = (baseDir: string, isDevelopment = true) =>
   );
 
 describe("DesktopObservability", () => {
+  it("advances a retained output offset instead of repeatedly copying a full head chunk", () => {
+    const maxBufferedBytes = 1024 * 1024;
+    const initial = DesktopObservability.appendBoundedOutputChunk(
+      {
+        runId: "test-run",
+        startDetails: "pid=123",
+        chunks: [],
+        byteLength: 0,
+      },
+      "stderr",
+      new Uint8Array(maxBufferedBytes),
+    );
+    const initialBackingBuffer = initial.chunks[0]?.chunk.buffer;
+
+    const next = DesktopObservability.appendBoundedOutputChunk(initial, "stderr", Uint8Array.of(1));
+
+    assert.equal(next.chunks[0]?.chunk.buffer, initialBackingBuffer);
+    assert.equal(next.chunks[0]?.offset, 1);
+    assert.equal(next.byteLength, maxBufferedBytes);
+  });
+
   it.effect("persists desktop Effect logs as span events in desktop.trace.ndjson", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

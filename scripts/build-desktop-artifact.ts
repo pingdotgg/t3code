@@ -209,6 +209,19 @@ export class UnsupportedHostBuildPlatformError extends Schema.TaggedErrorClass<U
   }
 }
 
+export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedErrorClass<UnsupportedDesktopBuildArchitectureError>()(
+  "UnsupportedDesktopBuildArchitectureError",
+  {
+    platform: BuildPlatform,
+    arch: BuildArch,
+    supportedArchitectures: Schema.Array(BuildArch),
+  },
+) {
+  override get message(): string {
+    return `Unsupported architecture '${this.arch}' for ${this.platform}.`;
+  }
+}
+
 const InvalidMockUpdateServerPortReason = Schema.Literals([
   "not-numeric",
   "not-integer",
@@ -1084,6 +1097,14 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const target = mergeOptions(input.target, env.target, PLATFORM_CONFIG[platform].defaultTarget);
   const defaultArch = yield* getDefaultArch(platform);
   const arch = mergeOptions(input.arch, env.arch, defaultArch);
+  const supportedArchitectures = PLATFORM_CONFIG[platform].archChoices;
+  if (!supportedArchitectures.includes(arch)) {
+    return yield* new UnsupportedDesktopBuildArchitectureError({
+      platform,
+      arch,
+      supportedArchitectures: [...supportedArchitectures],
+    });
+  }
   const version = mergeOptions(input.buildVersion, env.version, undefined);
   const releaseDir = resolveBooleanFlag(input.mockUpdates, env.mockUpdates)
     ? "release-mock"

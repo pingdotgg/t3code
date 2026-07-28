@@ -46,7 +46,12 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { shouldShowResourceMonitorRetry } from "./ResourceTelemetryDiagnostics.logic";
+import {
+  resourceHistoryBarHeight,
+  resourceHistoryCpuScaleMax,
+  shouldShowResourceMonitorRetry,
+  visibleResourceTelemetryProcesses,
+} from "./ResourceTelemetryDiagnostics.logic";
 import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 
 const HISTORY_WINDOWS = [
@@ -395,7 +400,7 @@ function ResourceHistoryChart({
 }: {
   buckets: ReadonlyArray<ResourceTelemetryHistoryBucket>;
 }) {
-  const maxCpu = Math.max(1, ...buckets.map((bucket) => bucket.maxCpuPercent));
+  const maxCpu = resourceHistoryCpuScaleMax(buckets);
   const maxIo = Math.max(1, ...buckets.map((bucket) => bucket.ioReadBytes + bucket.ioWriteBytes));
 
   return (
@@ -413,24 +418,36 @@ function ResourceHistoryChart({
       </div>
       <div className="flex h-32 items-end gap-1 overflow-hidden rounded-lg border border-border/40 bg-muted/8 px-2 pt-3 pb-2">
         {buckets.map((bucket) => {
-          const cpuHeight = Math.max(2, (bucket.avgCpuPercent / maxCpu) * 100);
-          const readHeight = Math.max(1, (bucket.ioReadBytes / maxIo) * 100);
-          const writeHeight = Math.max(1, (bucket.ioWriteBytes / maxIo) * 100);
+          const cpuHeight = resourceHistoryBarHeight({
+            value: bucket.avgCpuPercent,
+            max: maxCpu,
+            minimumVisiblePercent: 2,
+          });
+          const readHeight = resourceHistoryBarHeight({
+            value: bucket.ioReadBytes,
+            max: maxIo,
+            minimumVisiblePercent: 1,
+          });
+          const writeHeight = resourceHistoryBarHeight({
+            value: bucket.ioWriteBytes,
+            max: maxIo,
+            minimumVisiblePercent: 1,
+          });
           return (
             <Tooltip key={DateTime.formatIso(bucket.startedAt)}>
               <TooltipTrigger
                 render={
                   <div className="grid h-full min-w-1 flex-1 grid-cols-3 items-end gap-px">
                     <span
-                      className="block min-h-px rounded-t-sm bg-foreground/65"
+                      className="block rounded-t-sm bg-foreground/65"
                       style={{ height: `${cpuHeight}%` }}
                     />
                     <span
-                      className="block min-h-px rounded-t-sm bg-sky-500/70"
+                      className="block rounded-t-sm bg-sky-500/70"
                       style={{ height: `${readHeight}%` }}
                     />
                     <span
-                      className="block min-h-px rounded-t-sm bg-amber-500/80"
+                      className="block rounded-t-sm bg-amber-500/80"
                       style={{ height: `${writeHeight}%` }}
                     />
                   </div>
@@ -548,21 +565,10 @@ function ProcessTable({
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
-  const visible = useMemo(() => {
-    const result: ResourceTelemetryProcess[] = [];
-    let hiddenDepth: number | null = null;
-    for (const process of processes) {
-      if (hiddenDepth !== null) {
-        if (process.depth > hiddenDepth) continue;
-        hiddenDepth = null;
-      }
-      result.push(process);
-      if (collapsed.has(processIdentityKey(process))) {
-        hiddenDepth = process.depth;
-      }
-    }
-    return result;
-  }, [collapsed, processes]);
+  const visible = useMemo(
+    () => visibleResourceTelemetryProcesses(processes, collapsed),
+    [collapsed, processes],
+  );
   const toggle = useCallback((process: ResourceTelemetryProcess) => {
     const identityKey = processIdentityKey(process);
     setCollapsed((current) => {

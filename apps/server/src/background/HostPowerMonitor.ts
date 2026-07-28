@@ -49,15 +49,28 @@ function samePowerState(left: HostPowerSnapshot, right: HostPowerSnapshot): bool
 }
 
 export const make = Effect.fn("background.hostPower.make")(function* (
-  initialSource: HostPowerSnapshot["source"] = "unknown",
+  initialSnapshot?: HostPowerSnapshot,
 ) {
-  const initial = makeUnknownSnapshot(initialSource, yield* DateTime.now);
+  const initial = initialSnapshot ?? makeUnknownSnapshot("unknown", yield* DateTime.now);
   const latestRef = yield* Ref.make(initial);
   const changes = yield* PubSub.sliding<HostPowerSnapshot>(1);
 
   const report: HostPowerMonitor["Service"]["report"] = (snapshot) =>
-    Ref.modify(latestRef, (current) => [!samePowerState(current, snapshot), snapshot]).pipe(
-      Effect.flatMap((changed) => (changed ? PubSub.publish(changes, snapshot) : Effect.void)),
+    Ref.modify(latestRef, (current) => {
+      if (DateTime.isLessThan(snapshot.updatedAt, current.updatedAt)) {
+        return [Option.none<HostPowerSnapshot>(), current] as const;
+      }
+      return [
+        samePowerState(current, snapshot) ? Option.none() : Option.some(snapshot),
+        snapshot,
+      ] as const;
+    }).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (next) => PubSub.publish(changes, next),
+        }),
+      ),
       Effect.asVoid,
     );
 
@@ -74,15 +87,10 @@ export const layer = Layer.effect(
     const desktopTelemetry = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
     const desktopSubscription = yield* desktopTelemetry.subscribe;
     const initial = desktopSubscription.latest;
-    const monitor = yield* make(
-      Option.match(initial, {
-        onNone: () => "unknown" as const,
-        onSome: (snapshot) => snapshot.power.source,
-      }),
-    );
-    if (Option.isSome(initial)) {
-      yield* monitor.report(initial.value.power);
-    }
+    const monitor = yield* Option.match(initial, {
+      onNone: () => make(),
+      onSome: (snapshot) => make(snapshot.power),
+    });
     yield* desktopSubscription.changes.pipe(
       Stream.map((snapshot) => snapshot.power),
       Stream.runForEach(monitor.report),

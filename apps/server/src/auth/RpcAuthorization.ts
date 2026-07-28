@@ -2,6 +2,7 @@ import {
   AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthReviewWriteScope,
   AuthTerminalOperateScope,
@@ -45,7 +46,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
-  [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayWriteScope,
+  [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthOrchestrationOperateScope,
@@ -99,6 +100,9 @@ export const RPC_REQUIRED_SCOPES = {
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
+  if (!Object.hasOwn(RPC_REQUIRED_SCOPES, method)) {
+    throw new Error(`RPC method ${method} has no declared authorization scope.`);
+  }
   const requiredScope = RPC_REQUIRED_SCOPES[method as WsRpcMethod];
   if (requiredScope === undefined) {
     throw new Error(`RPC method ${method} has no declared authorization scope.`);

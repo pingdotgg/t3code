@@ -38,25 +38,26 @@ const retainedScopeListeners = new Set<() => void>();
 
 function notifyRetainedScopesChanged(): void {
   for (const listener of retainedScopeListeners) {
-    listener();
+    try {
+      listener();
+    } catch {
+      // A failing observer must not corrupt retained-scope lifetime.
+    }
   }
 }
 
 function stableScopeKey(environmentId: EnvironmentId, scope: BackgroundScope): string {
-  const prefix = `${environmentId}:`;
   switch (scope.type) {
     case "server-config":
     case "diagnostics":
-      return `${prefix}${scope.type}`;
+      return JSON.stringify([environmentId, scope.type]);
     case "provider-status":
-      return scope.instanceId
-        ? `${prefix}${scope.type}:${scope.instanceId}`
-        : `${prefix}${scope.type}`;
+      return JSON.stringify([environmentId, scope.type, scope.instanceId ?? null]);
     case "vcs-status":
     case "git-refs":
-      return `${prefix}${scope.type}:${scope.cwd}`;
+      return JSON.stringify([environmentId, scope.type, scope.cwd]);
     case "thread":
-      return `${prefix}${scope.type}:${scope.threadId}`;
+      return JSON.stringify([environmentId, scope.type, scope.threadId]);
   }
 }
 
@@ -245,11 +246,9 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
       Stream.runForEach(() => report),
       Effect.forkScoped,
     );
-    yield* report.pipe(
+    yield* Effect.sync(requestReport).pipe(
       Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)),
       Effect.forkScoped,
     );
-
-    requestReport();
   }),
 );

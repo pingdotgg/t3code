@@ -3,7 +3,6 @@ import type {
   HostPowerSnapshot,
   ResourceMonitorSnapshotEvent,
   ResourceTelemetryHealth,
-  ResourceTelemetryHistory,
   ResourceTelemetryHistoryInput,
   ResourceTelemetryProcessIdentity,
   ResourceTelemetryRetryResult,
@@ -35,6 +34,7 @@ import * as ResourceAttribution from "./ResourceAttribution.ts";
 import {
   buildResourceTelemetryHistory,
   normalizeResourceTelemetryHistoryInput,
+  type ResourceTelemetryHistoryWithLegacyBuckets,
 } from "./ResourceTelemetryHistory.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 
@@ -65,7 +65,7 @@ export class ResourceTelemetry extends Context.Service<
     >;
     readonly readHistory: (
       input: ResourceTelemetryHistoryInput,
-    ) => Effect.Effect<ResourceTelemetryHistory>;
+    ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets>;
     readonly refresh: Effect.Effect<ResourceTelemetrySnapshot, ResourceTelemetryRefreshFailed>;
     readonly validateProcessIdentity: (
       identity: ResourceTelemetryProcessIdentity,
@@ -149,6 +149,8 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   const mutex = yield* Semaphore.make(1);
   const changes = yield* PubSub.sliding<ResourceTelemetrySnapshot>(8);
   const initialReadAt = yield* DateTime.now;
+  const nativeHealthSubscription = yield* nativeClient.subscribeHealth;
+  const desktopHealthSubscription = yield* desktopReceiver.subscribeHealth;
   const desktopSubscription = yield* desktopReceiver.subscribe;
   const initialDesktop = desktopSubscription.latest;
   if (Option.isSome(initialDesktop)) {
@@ -165,11 +167,9 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       .pipe(Effect.ignore);
     yield* nativeClient.setHostPowerState(initialDesktop.value.power).pipe(Effect.ignore);
   }
-  const [initialNativeHealth, initialDesktopHealth, initialAttribution] = yield* Effect.all([
-    nativeClient.health,
-    desktopReceiver.health,
-    attribution.snapshot,
-  ]);
+  const initialNativeHealth = nativeHealthSubscription.latest;
+  const initialDesktopHealth = desktopHealthSubscription.latest;
+  const initialAttribution = yield* attribution.snapshot;
   const initialMerge = mergeProcesses({
     serverPid: process.pid,
     sidecarPid: Option.map(initialNativeHealth.hello, (hello) => hello.sidecarPid),
@@ -444,11 +444,11 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
         }),
       });
     });
-  yield* nativeClient.healthChanges.pipe(
+  yield* nativeHealthSubscription.changes.pipe(
     Stream.runForEach(() => refreshHealth),
     Effect.forkScoped,
   );
-  yield* desktopReceiver.healthChanges.pipe(
+  yield* desktopHealthSubscription.changes.pipe(
     Stream.runForEach(() => refreshHealth),
     Effect.forkScoped,
   );

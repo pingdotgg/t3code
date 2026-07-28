@@ -34,4 +34,30 @@ describe("wasRecentlyInteracted", () => {
       expect(retainedBackgroundScopes(environmentId)).toEqual([]);
     }),
   );
+
+  it.effect("keeps delimiter-containing environment and scope values distinct", () =>
+    Effect.gen(function* () {
+      const firstEnvironmentId = EnvironmentId.make("a");
+      const secondEnvironmentId = EnvironmentId.make("a:vcs-status:b");
+      const releaseFirst = yield* observeBackgroundActivitySubscription({
+        environmentId: firstEnvironmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: "b:vcs-status:c" },
+      });
+      const releaseSecond = yield* observeBackgroundActivitySubscription({
+        environmentId: secondEnvironmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: "c" },
+      });
+
+      expect(retainedBackgroundScopes(firstEnvironmentId)).toEqual([
+        { type: "vcs-status", cwd: "b:vcs-status:c" },
+      ]);
+      expect(retainedBackgroundScopes(secondEnvironmentId)).toEqual([
+        { type: "vcs-status", cwd: "c" },
+      ]);
+
+      yield* Effect.all([releaseFirst, releaseSecond]);
+    }),
+  );
 });

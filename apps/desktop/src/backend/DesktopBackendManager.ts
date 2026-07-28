@@ -38,7 +38,6 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -224,6 +223,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly readinessTimeout?: Duration.Duration;
   readonly outputDrainTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
+  readonly onExitObserved?: () => Effect.Effect<void>;
   readonly onReady?: () => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
   readonly onOutput?: (
@@ -301,6 +301,8 @@ interface ActiveBackendRun {
   readonly scope: Scope.Closeable;
   readonly fiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly pid: Option.Option<number>;
+  readonly exitObserved: boolean;
+  readonly stopRequested: boolean;
 }
 
 interface BackendManagerState {
@@ -408,17 +410,19 @@ function drainBackendOutput(
               cause,
             }),
         ),
+        Effect.catchTag("BackendProcessOutputHandlingError", onOutputFailure),
       ),
     ),
     Effect.catchTags({
       BackendProcessOutputReadError: onOutputFailure,
-      BackendProcessOutputHandlingError: onOutputFailure,
     }),
   );
 }
 
 const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
-const decodeDesktopTelemetryControl = Schema.decodeUnknownEffect(DesktopTelemetryControlMessage);
+const decodeDesktopTelemetryControlLine = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(DesktopTelemetryControlMessage),
+);
 
 export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   options: RunBackendProcessOptions,
@@ -495,9 +499,20 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     const controlFd = options.bootstrap.desktopTelemetryControlFd;
     const handleControl = options.onDesktopTelemetryControl;
     yield* handle.getOutputFd(controlFd).pipe(
-      Stream.pipeThroughChannel(Ndjson.decode({ ignoreEmptyLines: true })),
-      Stream.mapEffect((message) => decodeDesktopTelemetryControl(message)),
-      Stream.runForEach(handleControl),
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.filter((line) => line.trim().length > 0),
+      Stream.runForEach((line) =>
+        decodeDesktopTelemetryControlLine(line).pipe(
+          Effect.flatMap(handleControl),
+          Effect.catchCause((cause) =>
+            logBackendProcessWarning("ignored invalid desktop telemetry control message", {
+              fd: controlFd,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        ),
+      ),
       Effect.catchCause((cause) =>
         logBackendProcessWarning("desktop telemetry control stream stopped", {
           fd: controlFd,
@@ -568,6 +583,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
     Effect.exit,
   );
+  yield* options.onExitObserved?.() ?? Effect.void;
   yield* Effect.forEach(outputFibers, Fiber.await, {
     concurrency: "unbounded",
     discard: true,
@@ -651,6 +667,12 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       Effect.gen(function* () {
         const current = yield* Ref.get(state);
         if (Option.isSome(current.active)) {
+          if (!current.desiredRunning) {
+            yield* Ref.update(state, (latest) => ({
+              ...latest,
+              desiredRunning: true,
+            }));
+          }
           return;
         }
 
@@ -768,6 +790,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               scope: runScope,
               fiber: Option.none(),
               pid: Option.none(),
+              exitObserved: false,
+              stopRequested: false,
             } satisfies ActiveBackendRun),
             nextRunId: latest.nextRunId + 1,
           },
@@ -778,49 +802,60 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         ) {
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
-              const { isCurrentRun, nextState, pid } = yield* Ref.modify(
-                state,
-                (
-                  latest,
-                ): readonly [
-                  {
-                    readonly isCurrentRun: boolean;
-                    readonly nextState: BackendManagerState;
-                    readonly pid: Option.Option<number>;
-                  },
-                  BackendManagerState,
-                ] => {
-                  const currentRun = Option.getOrUndefined(latest.active);
-                  if (currentRun?.id !== runId) {
+              const { isCurrentRun, nextState, pid, exitObserved, stopRequested, wasReady } =
+                yield* Ref.modify(
+                  state,
+                  (
+                    latest,
+                  ): readonly [
+                    {
+                      readonly isCurrentRun: boolean;
+                      readonly nextState: BackendManagerState;
+                      readonly pid: Option.Option<number>;
+                      readonly exitObserved: boolean;
+                      readonly stopRequested: boolean;
+                      readonly wasReady: boolean;
+                    },
+                    BackendManagerState,
+                  ] => {
+                    const currentRun = Option.getOrUndefined(latest.active);
+                    if (currentRun?.id !== runId) {
+                      return [
+                        {
+                          isCurrentRun: false,
+                          nextState: latest,
+                          pid: Option.none<number>(),
+                          exitObserved: false,
+                          stopRequested: false,
+                          wasReady: false,
+                        },
+                        latest,
+                      ] as const;
+                    }
+
+                    const next = {
+                      ...latest,
+                      active: Option.none<ActiveBackendRun>(),
+                      ready: false,
+                    };
                     return [
                       {
-                        isCurrentRun: false,
-                        nextState: latest,
-                        pid: Option.none<number>(),
+                        isCurrentRun: true,
+                        nextState: next,
+                        pid: currentRun.pid,
+                        exitObserved: currentRun.exitObserved,
+                        stopRequested: currentRun.stopRequested,
+                        wasReady: latest.ready,
                       },
-                      latest,
+                      next,
                     ] as const;
-                  }
-
-                  const next = {
-                    ...latest,
-                    active: Option.none<ActiveBackendRun>(),
-                    ready: false,
-                  };
-                  return [
-                    {
-                      isCurrentRun: true,
-                      nextState: next,
-                      pid: currentRun.pid,
-                    },
-                    next,
-                  ] as const;
-                },
-              );
+                  },
+                );
 
               if (isCurrentRun) {
+                yield* desktopTelemetryPublisher.removeControlSource(spec.id);
                 if (Option.isSome(pid)) {
-                  if (nextState.desiredRunning) {
+                  if (exitObserved && !stopRequested) {
                     yield* backendOutputLog.persistFailure({
                       details: `pid=${pid.value} ${reason}`,
                     });
@@ -828,7 +863,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                     yield* backendOutputLog.discardSession;
                   }
                 }
-                yield* spec.onShutdown?.() ?? Effect.void;
+                if (wasReady) {
+                  yield* spec.onShutdown?.() ?? Effect.void;
+                }
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
@@ -852,6 +889,11 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
             });
           }),
+          onExitObserved: () =>
+            updateActiveRun(runId, (run) => ({
+              ...run,
+              exitObserved: true,
+            })),
           onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
             const isCurrentRun = yield* Ref.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
@@ -968,41 +1010,99 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const stop = Effect.fn("desktop.backendInstance.stop")(function* (options?: {
     readonly timeout?: Duration.Duration;
   }) {
-    const { active, restartFiber } = yield* mutex.withPermits(1)(
+    const { active, restartFiber, notifyShutdown } = yield* mutex.withPermits(1)(
       Effect.gen(function* () {
-        const result = yield* Ref.modify(state, (latest) => [
-          {
-            active: latest.active,
-            restartFiber: latest.restartFiber,
-          },
-          {
-            ...latest,
-            desiredRunning: false,
-            ready: false,
-            active: Option.none<ActiveBackendRun>(),
-            restartFiber: Option.none<Fiber.Fiber<void, never>>(),
-          },
-        ]);
-        // Ignore failures from spec.onShutdown so a downstream throw
-        // can't abort the rest of stop(). Ref.modify above already
-        // flipped state to "no active run / no restart fiber", and the
-        // physical cleanup (Fiber.interrupt + closeRun) runs after the
-        // mutex releases. If onShutdown were allowed to propagate, both
-        // would be skipped and the child process + restart fiber would
-        // be orphaned while state claimed nothing was running — the
-        // next start() would then spawn a second backend on top.
-        yield* (spec.onShutdown?.() ?? Effect.void).pipe(Effect.ignore);
+        const result = yield* Ref.modify(state, (latest) => {
+          const active = Option.map(latest.active, (run) =>
+            run.exitObserved ? run : { ...run, stopRequested: true },
+          );
+          return [
+            {
+              active,
+              restartFiber: latest.restartFiber,
+              notifyShutdown: latest.ready,
+            },
+            {
+              ...latest,
+              desiredRunning: false,
+              ready: false,
+              active,
+              restartFiber: Option.none<Fiber.Fiber<void, never>>(),
+            },
+          ] as const;
+        });
         return result;
       }),
     );
 
+    if (notifyShutdown) {
+      yield* (spec.onShutdown?.() ?? Effect.void).pipe(Effect.ignore);
+    }
     yield* Option.match(restartFiber, {
       onNone: () => Effect.void,
       onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
     });
     yield* Option.match(active, {
       onNone: () => Effect.void,
-      onSome: (run) => closeRun(run, options).pipe(Effect.andThen(backendOutputLog.discardSession)),
+      onSome: (run) =>
+        Effect.gen(function* () {
+          if (run.exitObserved && Option.isSome(run.fiber)) {
+            const awaitExit = Fiber.await(run.fiber.value).pipe(Effect.asVoid);
+            yield* (
+              options?.timeout
+                ? awaitExit.pipe(Effect.timeoutOption(options.timeout), Effect.asVoid)
+                : awaitExit
+            ).pipe(Effect.ignore);
+            yield* Scope.close(run.scope, Exit.void).pipe(Effect.ignore);
+          } else {
+            yield* closeRun(run, options);
+          }
+          const cleanup = yield* mutex.withPermits(1)(
+            Ref.modify(
+              state,
+              (
+                latest,
+              ): readonly [
+                {
+                  readonly needsCleanup: boolean;
+                  readonly shouldStart: boolean;
+                },
+                BackendManagerState,
+              ] => {
+                const current = Option.getOrUndefined(latest.active);
+                if (current?.id !== run.id) {
+                  return [
+                    {
+                      needsCleanup: false,
+                      shouldStart:
+                        latest.desiredRunning &&
+                        Option.isNone(latest.active) &&
+                        Option.isNone(latest.restartFiber),
+                    },
+                    latest,
+                  ];
+                }
+                return [
+                  {
+                    needsCleanup: true,
+                    shouldStart: latest.desiredRunning,
+                  },
+                  {
+                    ...latest,
+                    active: Option.none<ActiveBackendRun>(),
+                  },
+                ];
+              },
+            ),
+          );
+          if (cleanup.needsCleanup) {
+            yield* desktopTelemetryPublisher.removeControlSource(spec.id);
+            yield* backendOutputLog.discardSession;
+          }
+          if (cleanup.shouldStart) {
+            yield* start;
+          }
+        }),
     });
   });
 

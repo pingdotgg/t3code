@@ -170,7 +170,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const refreshIntervalChanges = yield* Queue.sliding<void>(1);
   if (input.refreshInterval === undefined) {
-    yield* serverSettings.streamChanges.pipe(
+    const serverSettingsChanges = yield* serverSettings.subscribeChanges;
+    yield* serverSettingsChanges.pipe(
       Stream.map((settings) =>
         Duration.toMillis(
           resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,

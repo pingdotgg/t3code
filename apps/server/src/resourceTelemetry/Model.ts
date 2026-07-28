@@ -392,6 +392,15 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
         onSome: (desktop) => Math.max(native.sampledAtUnixMs, desktop.sampledAtUnixMs),
       }),
   });
+  const nativeSampledAtMs = Option.map(
+    input.nativeSnapshot,
+    (snapshot) => snapshot.sampledAtUnixMs,
+  );
+  const desktopSampledAtMs = Option.map(
+    input.desktopSnapshot,
+    (snapshot) => snapshot.sampledAtUnixMs,
+  );
+  const nativeProcessPids = new Set(nativeProcesses.map((process) => process.pid));
   const nativeByPid = new Map(nativeProcesses.map((process) => [process.pid, process]));
   const metricsByPid = new Map<number, DesktopElectronProcessMetric>();
   for (const metric of electronMetrics) {
@@ -401,7 +410,7 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
         metric.pid,
         syntheticNativeSample(
           metric,
-          sampledAtMs,
+          Option.getOrElse(desktopSampledAtMs, () => sampledAtMs),
           input.previous.get(processIdentityKey(metric.pid, metric.creationTimeMs)),
         ),
       );
@@ -462,7 +471,10 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
   const normalized = processes.map((process): ResourceTelemetryProcess => {
     const identityKey = processIdentityKey(process.pid, process.startTimeMs);
     const previous = input.previous.get(identityKey);
-    const elapsedMs = previous ? sampledAtMs - previous.sampledAtMs : 0;
+    const counterSampledAtMs = nativeProcessPids.has(process.pid)
+      ? Option.getOrElse(nativeSampledAtMs, () => sampledAtMs)
+      : Option.getOrElse(desktopSampledAtMs, () => sampledAtMs);
+    const elapsedMs = previous ? counterSampledAtMs - previous.sampledAtMs : 0;
     const cpuTimeDelta = previous
       ? delta({
           current: process.cpuTimeMs,
@@ -549,7 +561,7 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
     };
     nextPrevious.set(identityKey, {
       process: normalizedProcess,
-      sampledAtMs,
+      sampledAtMs: counterSampledAtMs,
     });
     processDeltas.push({
       identityKey,

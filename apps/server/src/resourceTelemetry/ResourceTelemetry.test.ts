@@ -331,6 +331,73 @@ describe("ResourceTelemetry", () => {
     ),
   );
 
+  it.effect("retains desktop health changes while aggregate telemetry initializes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const health = yield* Ref.make<DesktopTelemetryReceiver.DesktopTelemetryReceiverHealth>({
+          status: "starting",
+          lastSampleAt: Option.none(),
+          lastError: Option.none(),
+        });
+        const healthChanges =
+          yield* PubSub.sliding<DesktopTelemetryReceiver.DesktopTelemetryReceiverHealth>(4);
+        const healthSubscribed = yield* Deferred.make<void>();
+        const finishDesktopSnapshot = yield* Deferred.make<void>();
+        const desktopLayer = DesktopTelemetryReceiver.layerTest({
+          health: Ref.get(health),
+          subscribeHealth: Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(healthChanges);
+            const latest = yield* Ref.get(health);
+            yield* Deferred.succeed(healthSubscribed, undefined);
+            return {
+              latest,
+              changes: Stream.fromSubscription(subscription),
+            };
+          }),
+          subscribe: Deferred.await(finishDesktopSnapshot).pipe(
+            Effect.as({
+              latest: Option.none(),
+              changes: Stream.empty,
+            }),
+          ),
+        });
+        const telemetryLayer = ResourceTelemetry.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NativeTelemetryClient.layerTest(),
+              desktopLayer,
+              ResourceAttribution.layer,
+            ),
+          ),
+        );
+        const resultFiber = yield* Effect.gen(function* () {
+          const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+          while (true) {
+            const snapshot = yield* telemetry.latest;
+            if (snapshot.health.desktop.status === "degraded") return snapshot;
+            yield* Effect.yieldNow;
+          }
+        }).pipe(Effect.provide(telemetryLayer), Effect.timeout("1 second"), Effect.forkChild);
+
+        yield* Deferred.await(healthSubscribed);
+        const degraded: DesktopTelemetryReceiver.DesktopTelemetryReceiverHealth = {
+          status: "degraded",
+          lastSampleAt: Option.none(),
+          lastError: Option.some("desktop telemetry failed"),
+        };
+        yield* Ref.set(health, degraded);
+        yield* PubSub.publish(healthChanges, degraded);
+        yield* Deferred.succeed(finishDesktopSnapshot, undefined);
+
+        const snapshot = yield* Fiber.join(resultFiber);
+        expect(snapshot.health.desktop.status).toBe("degraded");
+        expect(Option.getOrNull(snapshot.health.desktop.lastError)).toBe(
+          "desktop telemetry failed",
+        );
+      }),
+    ),
+  );
+
   it.effect("atomically subscribes while a desktop update is being rebuilt", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -462,7 +529,14 @@ describe("ResourceTelemetry", () => {
         }),
         retry: Ref.updateAndGet(retryCount, (count) => count + 1).pipe(Effect.as(true)),
         health: Ref.get(nativeHealth),
-        healthChanges: Stream.fromPubSub(nativeHealthChanges),
+        subscribeHealth: Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(nativeHealthChanges);
+          const latest = yield* Ref.get(nativeHealth);
+          return {
+            latest,
+            changes: Stream.fromSubscription(subscription),
+          };
+        }),
       });
       const desktopLayer = DesktopTelemetryReceiver.layerTest({
         latest: Effect.succeedSome(desktopSnapshot(startedAt)),
