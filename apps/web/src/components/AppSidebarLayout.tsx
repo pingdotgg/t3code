@@ -14,7 +14,7 @@ import { getLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useClientSettings } from "../hooks/useSettings";
+import { useSidebarV2Enabled } from "../hooks/useSettings";
 import ThreadSidebar from "./Sidebar";
 import ThreadSidebarV2 from "./SidebarV2";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -115,7 +115,7 @@ function SidebarControl() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
+  const sidebarV2Enabled = useSidebarV2Enabled();
   // Settings routes render the settings nav, which lives in the v1 component
   // and is identical for both sidebars — so v1 stays mounted there.
   const pathname = useLocation({ select: (location) => location.pathname });
