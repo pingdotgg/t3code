@@ -139,4 +139,56 @@ describe("buildProjectGroups", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["fresh", "sibling"]);
   });
+
+  it("uses the freshest winner's repository identity when stale duplicates disagree", () => {
+    const staleIdentity = {
+      ...repositoryIdentity,
+      canonicalKey: "github.com/t3tools/old-repository",
+      name: "old-repository",
+      displayName: "Old Repository",
+    };
+    const stale = makeProject("stale", "/work/t3code", {
+      repositoryIdentity: staleIdentity,
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const fresh = makeProject("fresh", "/work/t3code/", {
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    });
+    const sibling = makeProject("sibling", "/work/t3code-2");
+
+    const groups = buildProjectGroups({
+      projects: [stale, fresh, sibling],
+      settings: settings("repository"),
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["fresh", "sibling"]);
+  });
+
+  it("uses the freshest identity-bearing duplicate when the winner lacks identity", () => {
+    const staleIdentity = {
+      ...repositoryIdentity,
+      canonicalKey: "github.com/t3tools/old-repository",
+      name: "old-repository",
+      displayName: "Old Repository",
+    };
+    const staleIdentified = makeProject("stale-identified", "/work/t3code", {
+      repositoryIdentity: staleIdentity,
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const freshIdentified = makeProject("fresh-identified", "/work/t3code/", {
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    });
+    const winner = makeProject("winner", "/work/t3code", {
+      repositoryIdentity: null,
+      updatedAt: "2026-07-03T00:00:00.000Z",
+    });
+    const sibling = makeProject("sibling", "/work/t3code-2");
+
+    const groups = buildProjectGroups({
+      projects: [staleIdentified, freshIdentified, winner, sibling],
+      settings: settings("repository"),
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
 });

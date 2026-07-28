@@ -216,6 +216,29 @@ function shouldReplacePhysicalProjectWinner<TProject extends EnvironmentProject>
   return freshnessDelta > 0 || (freshnessDelta === 0 && candidate.id > existing.id);
 }
 
+function selectProjectIdentitySource<TProject extends EnvironmentProject>(
+  projects: ReadonlyArray<TProject>,
+  winner: TProject,
+): TProject {
+  if (winner.repositoryIdentity !== null) {
+    return winner;
+  }
+
+  let freshestIdentifiedProject: TProject | null = null;
+  for (const project of projects) {
+    if (project.repositoryIdentity === null) {
+      continue;
+    }
+    if (
+      freshestIdentifiedProject === null ||
+      shouldReplacePhysicalProjectWinner(freshestIdentifiedProject, project)
+    ) {
+      freshestIdentifiedProject = project;
+    }
+  }
+  return freshestIdentifiedProject ?? winner;
+}
+
 /**
  * Builds logical project groups without losing the physical projects that
  * remain the actual navigation and task-creation targets.
@@ -246,8 +269,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
     const winner = physicalProjects.reduce((current, candidate) =>
       shouldReplacePhysicalProjectWinner(current, candidate) ? candidate : current,
     );
-    const identitySource =
-      physicalProjects.find((project) => project.repositoryIdentity !== null) ?? winner;
+    const identitySource = selectProjectIdentitySource(physicalProjects, winner);
     const logicalKey = deriveLogicalProjectKey(identitySource, {
       groupingMode: resolveProjectGroupingMode(winner, input.settings),
     });

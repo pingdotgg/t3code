@@ -50,7 +50,7 @@ import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../sta
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
-import { getOnlySelectableProject } from "./new-task-project-selection";
+import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 
 function formatWorkspaceLabel(input: {
@@ -90,7 +90,7 @@ export function NewTaskDraftScreen(props: {
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
-  const { projectScopes, selectedProject, setProject } = flow;
+  const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
@@ -278,13 +278,12 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    if (selectedProject) {
+    const selection = resolveDraftProjectSelection(selectedProjectKey, projectScopes);
+    if (selection.kind === "preserve") {
       return;
     }
-
-    const onlyProject = getOnlySelectableProject(projectScopes);
-    if (onlyProject) {
-      setProject(onlyProject);
+    if (selection.kind === "select") {
+      setProject(selection.project);
       return;
     }
 
@@ -297,6 +296,7 @@ export function NewTaskDraftScreen(props: {
     props.pendingTaskId,
     navigation,
     selectedProject,
+    selectedProjectKey,
     setProject,
   ]);
 

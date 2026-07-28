@@ -31,12 +31,6 @@ export interface ResolvedHomeListOptions extends HomeListOptions {
   readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
 
-export function resolveProjectGroupingMode(
-  projectGroupingEnabled: boolean | undefined,
-): SidebarProjectGroupingMode {
-  return projectGroupingEnabled === false ? "separate" : "repository";
-}
-
 export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
   readonly value: HomeProjectSortOrder;
   readonly label: string;
