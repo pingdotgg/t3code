@@ -52,6 +52,7 @@ function AutoSettleDaysInput({
 
 export function BetaSettingsPanel() {
   const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
+  const sidebarV2LargeIcons = useClientSettings((settings) => settings.sidebarV2LargeIcons);
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
   );
@@ -73,6 +74,19 @@ export function BetaSettingsPanel() {
         />
         {sidebarV2Enabled ? (
           <>
+            <SettingsRow
+              title="Larger project icons"
+              description="Give the project icon the full height of active thread cards and enlarge it on settled rows."
+              control={
+                <Switch
+                  checked={sidebarV2LargeIcons}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ sidebarV2LargeIcons: Boolean(checked) })
+                  }
+                  aria-label="Use larger project icons on thread rows"
+                />
+              }
+            />
             <SettingsRow
               title="Auto-settle inactive threads"
               description="Threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
