@@ -89,6 +89,9 @@ export function applyServerSettingsPatch(
     ...(patch.customInstructions !== undefined
       ? { customInstructions: patch.customInstructions }
       : {}),
+    ...(patch.workflowModelRouting !== undefined
+      ? { workflowModelRouting: patch.workflowModelRouting }
+      : {}),
     ...(patch.tokenEfficiency?.customModelPricing !== undefined
       ? {
           tokenEfficiency: {

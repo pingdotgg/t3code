@@ -273,7 +273,7 @@ struct SettingsSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             group(label: nil, tabs: [.general])
-            group(label: "Agents", tabs: [.providers, .dictation, .autoReview])
+            group(label: "Agents", tabs: [.providers, .workflows, .dictation, .autoReview])
             group(label: "Workspace", tabs: [.archive, .scenery])
             group(label: "Devices", tabs: [.devices, .remoteMacs, .connection])
             Spacer(minLength: 0)

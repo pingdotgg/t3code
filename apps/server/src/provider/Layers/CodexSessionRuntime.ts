@@ -12,6 +12,7 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  type WorkflowModelRouting,
   RuntimeMode,
   ThreadId,
   TurnId,
@@ -42,6 +43,10 @@ import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
+import {
+  EMPTY_WORKFLOW_MODEL_ROUTING,
+  workflowModelRoutingInstructions,
+} from "../workflowModelRouting.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -119,6 +124,7 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly defaultReasoningEffort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly getWorkflowModelRouting?: Effect.Effect<WorkflowModelRouting>;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
 }
@@ -390,17 +396,25 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly workflowModelRouting?: WorkflowModelRouting;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
+  const workflowInstructions =
+    input.effort === "ultra" && input.workflowModelRouting
+      ? workflowModelRoutingInstructions(input.workflowModelRouting)
+      : undefined;
+  const baseInstructions = codexDeveloperInstructionsFor(input.interactionMode);
   return {
     mode: codexModeKindFor(input.interactionMode),
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
-      developer_instructions: codexDeveloperInstructionsFor(input.interactionMode),
+      developer_instructions: workflowInstructions
+        ? `${baseInstructions}\n\n${workflowInstructions}`
+        : baseInstructions,
     },
   };
 }
@@ -418,6 +432,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly workflowModelRouting?: WorkflowModelRouting;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -438,6 +453,7 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.workflowModelRouting ? { workflowModelRouting: input.workflowModelRouting } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -1417,6 +1433,10 @@ export const makeCodexSessionRuntime = (
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
           const effectiveEffort = input.effort ?? options.defaultReasoningEffort;
+          const workflowModelRouting =
+            effectiveEffort === "ultra" && options.getWorkflowModelRouting
+              ? yield* options.getWorkflowModelRouting
+              : EMPTY_WORKFLOW_MODEL_ROUTING;
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
@@ -1426,6 +1446,7 @@ export const makeCodexSessionRuntime = (
             ...(normalizedModel ? { model: normalizedModel } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(effectiveEffort ? { effort: effectiveEffort } : {}),
+            workflowModelRouting,
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
           });
           // turn/start can block while the agent works; liveness is governed by

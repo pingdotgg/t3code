@@ -1,9 +1,6 @@
 import { assert, describe, expect, it, vi } from "@effect/vitest";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 
 import { GitCommandError, VcsRepositoryDetectionError } from "@t3tools/contracts";
 
@@ -199,15 +196,10 @@ describe("GitWorkflowService", () => {
     driver: {},
   } as unknown as VcsDriverRegistry.VcsDriverHandle;
 
-  const nonGitHandle = {
-    kind: "jj",
-    repository: {},
-    driver: {},
-  } as unknown as VcsDriverRegistry.VcsDriverHandle;
-
   function makeGitRepoLayer(input: {
     readonly fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"];
     readonly createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"];
+    readonly resolveRemoteTrackingCommit?: GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"];
     readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
   }) {
     return GitWorkflowService.layer.pipe(
@@ -220,6 +212,13 @@ describe("GitWorkflowService", () => {
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           fetchRemoteTrackingBranch: input.fetchRemoteTrackingBranch,
           createWorktree: input.createWorktree,
+          resolveRemoteTrackingCommit:
+            input.resolveRemoteTrackingCommit ??
+            (() =>
+              Effect.succeed({
+                commitSha: "fetched-main-sha",
+                remoteRefName: "origin/main",
+              })),
         }),
       ),
       Layer.provide(Layer.mock(GitManager.GitManager)({})),
@@ -262,6 +261,13 @@ describe("GitWorkflowService", () => {
         remoteName: "origin",
         remoteBranch: "main",
       });
+      assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+        cwd: "/tmp/project",
+        refName: "fetched-main-sha",
+        newRefName: "sergecode/abc12345",
+        baseRefName: "main",
+        path: null,
+      });
       assert.deepEqual(operations, ["fetch", "create-worktree"]);
       assert.equal(result.worktree.path, "/tmp/worktree");
     }).pipe(
@@ -274,7 +280,7 @@ describe("GitWorkflowService", () => {
     );
   });
 
-  it.effect("still creates the worktree when the remote base fetch fails", () => {
+  it.effect("aborts worktree creation when the remote base fetch fails", () => {
     const fetchRemoteTrackingBranch = vi.fn(
       (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
         Effect.fail(
@@ -298,17 +304,19 @@ describe("GitWorkflowService", () => {
 
     return Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
-      const result = yield* workflow.createWorktree({
-        cwd: "/tmp/project",
-        refName: "origin/main",
-        newRefName: "sergecode/abc12345",
-        baseRefName: "main",
-        path: null,
-      });
+      const exit = yield* Effect.exit(
+        workflow.createWorktree({
+          cwd: "/tmp/project",
+          refName: "origin/main",
+          newRefName: "sergecode/abc12345",
+          baseRefName: "main",
+          path: null,
+        }),
+      );
 
       assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 1);
-      assert.equal(createWorktree.mock.calls.length, 1);
-      assert.equal(result.worktree.path, "/tmp/worktree");
+      assert.equal(createWorktree.mock.calls.length, 0);
+      assert.equal(exit._tag, "Failure");
     }).pipe(
       Effect.provide(
         makeGitRepoLayer({
@@ -318,12 +326,6 @@ describe("GitWorkflowService", () => {
       ),
     );
   });
-
-  // Mirrors REMOTE_BASE_REFRESH_TTL / REMOTE_BASE_REFRESH_TIMEOUT in
-  // GitWorkflowService.ts. The refresh sits on the interactive new-thread path,
-  // so these bounds are the behaviour under test, not incidental detail.
-  const REFRESH_TTL = Duration.seconds(30);
-  const REFRESH_TIMEOUT = Duration.seconds(10);
 
   const originWorktreeInput = (newRefName: string) =>
     ({
@@ -342,7 +344,7 @@ describe("GitWorkflowService", () => {
       });
     });
 
-  it.effect("reuses a recent remote base refresh instead of fetching per worktree", () => {
+  it.effect("fetches the remote base for every worktree creation", () => {
     const fetchRemoteTrackingBranch = vi.fn(
       (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
         Effect.void,
@@ -355,25 +357,9 @@ describe("GitWorkflowService", () => {
       yield* workflow.createWorktree(originWorktreeInput("sergecode/aaaaaaaa"));
       yield* workflow.createWorktree(originWorktreeInput("sergecode/bbbbbbbb"));
 
-      // The second session must not pay for another network round trip.
-      assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 1);
-      assert.equal(createWorktree.mock.calls.length, 2);
-
-      // Once the window lapses the base is refreshed again, so threads never
-      // keep branching off an indefinitely stale origin ref.
-      yield* TestClock.adjust(Duration.sum(REFRESH_TTL, Duration.seconds(1)));
-      yield* workflow.createWorktree(originWorktreeInput("sergecode/cccccccc"));
-
       assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 2);
-      assert.equal(createWorktree.mock.calls.length, 3);
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree }),
-          TestClock.layer(),
-        ),
-      ),
-    );
+      assert.equal(createWorktree.mock.calls.length, 2);
+    }).pipe(Effect.provide(makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree })));
   });
 
   it.effect("refreshes each base branch independently", () => {
@@ -397,136 +383,7 @@ describe("GitWorkflowService", () => {
         fetchRemoteTrackingBranch.mock.calls.map((call) => call[0].remoteBranch),
         ["main", "release"],
       );
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree }),
-          TestClock.layer(),
-        ),
-      ),
-    );
-  });
-
-  it.effect("creates the worktree from the local ref when the remote fetch hangs", () => {
-    const fetchRemoteTrackingBranch = vi.fn(
-      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
-        Effect.never,
-    );
-    const createWorktree = succeedingCreateWorktree();
-
-    return Effect.gen(function* () {
-      const workflow = yield* GitWorkflowService.GitWorkflowService;
-      const creating = yield* Effect.forkChild(
-        workflow.createWorktree(originWorktreeInput("sergecode/aaaaaaaa")),
-      );
-
-      // An unreachable remote must not hold the thread open indefinitely: the
-      // fetch is abandoned at the bound and the worktree is created anyway.
-      yield* TestClock.adjust(Duration.sum(REFRESH_TIMEOUT, Duration.seconds(1)));
-      const result = yield* Fiber.join(creating);
-
-      assert.equal(result.worktree.path, "/tmp/worktree/sergecode/aaaaaaaa");
-      assert.equal(createWorktree.mock.calls.length, 1);
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree }),
-          TestClock.layer(),
-        ),
-      ),
-    );
-  });
-
-  it.effect("does not re-fetch a remote that just timed out", () => {
-    const fetchRemoteTrackingBranch = vi.fn(
-      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
-        Effect.never,
-    );
-    const createWorktree = succeedingCreateWorktree();
-
-    return Effect.gen(function* () {
-      const workflow = yield* GitWorkflowService.GitWorkflowService;
-      const creating = yield* Effect.forkChild(
-        workflow.createWorktree(originWorktreeInput("sergecode/aaaaaaaa")),
-      );
-      yield* TestClock.adjust(Duration.sum(REFRESH_TIMEOUT, Duration.seconds(1)));
-      yield* Fiber.join(creating);
-
-      // Offline machines would otherwise pay the full timeout on every new
-      // thread; the timed-out attempt is cached like a successful one.
-      yield* workflow.createWorktree(originWorktreeInput("sergecode/bbbbbbbb"));
-
-      assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 1);
-      assert.equal(createWorktree.mock.calls.length, 2);
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree }),
-          TestClock.layer(),
-        ),
-      ),
-    );
-  });
-
-  it.effect("skips the standalone remote base refresh when the path is not a Git repo", () => {
-    const fetchRemoteTrackingBranch = vi.fn(
-      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
-        Effect.void,
-    );
-    const createWorktree = succeedingCreateWorktree();
-
-    return Effect.gen(function* () {
-      const workflow = yield* GitWorkflowService.GitWorkflowService;
-
-      // Must resolve rather than fail: the refresh is best-effort, and callers
-      // rely on it never breaking their own fallback path.
-      yield* workflow.refreshRemoteBase({
-        cwd: "/tmp/not-a-git-repo",
-        remoteName: "origin",
-        remoteBranch: "main",
-      });
-
-      // The route says this is not Git, so `git fetch` is never spawned.
-      assert.equal(fetchRemoteTrackingBranch.mock.calls.length, 0);
-    }).pipe(
-      Effect.provide(
-        makeGitRepoLayer({
-          fetchRemoteTrackingBranch,
-          createWorktree,
-          resolve: () => Effect.succeed(nonGitHandle),
-        }),
-      ),
-    );
-  });
-
-  it.effect("refreshes the remote base for a routed Git repo", () => {
-    const fetchRemoteTrackingBranch = vi.fn(
-      (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
-        Effect.void,
-    );
-    const createWorktree = succeedingCreateWorktree();
-
-    return Effect.gen(function* () {
-      const workflow = yield* GitWorkflowService.GitWorkflowService;
-      yield* workflow.refreshRemoteBase({
-        cwd: "/tmp/project",
-        remoteName: "origin",
-        remoteBranch: "main",
-      });
-
-      assert.deepEqual(fetchRemoteTrackingBranch.mock.calls[0]?.[0], {
-        cwd: "/tmp/project",
-        remoteName: "origin",
-        remoteBranch: "main",
-      });
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree }),
-          TestClock.layer(),
-        ),
-      ),
-    );
+    }).pipe(Effect.provide(makeGitRepoLayer({ fetchRemoteTrackingBranch, createWorktree })));
   });
 
   it.effect("does not fetch when the worktree base is a local ref", () => {
