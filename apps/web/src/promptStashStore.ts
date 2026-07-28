@@ -265,7 +265,12 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
 // Hydrate once at startup. Like the app's other persisted stores, tabs are
 // last-write-wins: no cross-tab merging or storage-event syncing.
 {
-  baseStashStorage.removeItem(LEGACY_PROMPT_STASH_STORAGE_KEY);
+  try {
+    baseStashStorage.removeItem(LEGACY_PROMPT_STASH_STORAGE_KEY);
+  } catch {
+    // Purging the v1 payload is best-effort; a storage policy that rejects
+    // the delete must not take down module init.
+  }
   const persisted = readPersistedEntries();
   if (persisted) {
     usePromptStashStore.setState({ entries: persisted });
