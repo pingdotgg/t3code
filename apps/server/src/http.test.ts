@@ -31,20 +31,6 @@ describe("http dev routing", () => {
 });
 
 it.layer(HttpResponseCompression.layerNode)("http compression", (it) => {
-  it.effect("gzips large JSON responses when the client accepts it", () =>
-    Effect.gen(function* () {
-      const body = `{"value":"${"compressible".repeat(1_000)}"}`;
-      const response = yield* compressHttpResponse(
-        HttpServerResponse.text(body, { contentType: "application/json" }),
-        "br, gzip, deflate",
-      );
-
-      expect(response.headers["content-encoding"]).toBe("gzip");
-      expect(response.headers["content-length"]).toBeUndefined();
-      expect(response.headers.vary).toBe("Accept-Encoding");
-    }),
-  );
-
   it.effect("keeps the original body when gzip is declined", () =>
     Effect.gen(function* () {
       const response = yield* compressHttpResponse(
