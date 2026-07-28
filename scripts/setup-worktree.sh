@@ -94,19 +94,12 @@ run_bounded() {
   local timed_out_marker="$state_dir/timed-out"
   local finished_marker="$state_dir/finished"
 
-  # Job control puts the command in its own process group, so the watchdog can
-  # signal the whole tree. Signalling only the direct child leaves pnpm's
-  # grandchildren alive holding this script's stdout, and a caller capturing
-  # that output then blocks on EOF long after the timeout fired.
-  set -m
-  # The trap turns the watchdog's TERM into an ordinary exit status, so bash
-  # does not print its own "Terminated: 15" line over the message below.
-  (
-    trap 'exit 143' TERM
-    "$@"
-  ) &
+  # The supervisor puts the command in a detached process group and owns its
+  # escalation. Signalling only pnpm's direct process leaves grandchildren
+  # alive holding this script's stdout, while shell job-control and setsid(1)
+  # expose different group-leader behavior across macOS and Linux.
+  node "$ROOT/scripts/run-bounded-command.mjs" "$@" &
   local command_pid=$!
-  set +m
 
   # Detached from this script's stdout/stderr on purpose. A watchdog that
   # inherits them keeps the pipe open after the install is done, so anything
@@ -118,9 +111,11 @@ run_bounded() {
     # already been reaped and possibly reused.
     if [[ ! -f "$finished_marker" ]] && kill -0 "$command_pid" 2>/dev/null; then
       : > "$timed_out_marker"
-      kill -TERM -"$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
-      sleep 5
-      kill -KILL -"$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
+      kill -TERM "$command_pid" 2>/dev/null || true
+      # The supervisor escalates its child group after five seconds. This
+      # fallback only kills a broken supervisor that failed to finish.
+      sleep 7
+      kill -KILL "$command_pid" 2>/dev/null || true
     fi
   ) >/dev/null 2>&1 &
   local watchdog_pid=$!

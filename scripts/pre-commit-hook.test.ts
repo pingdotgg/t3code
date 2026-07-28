@@ -15,6 +15,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const hookPath = NodeURL.fileURLToPath(new URL("../.vite-hooks/pre-commit", import.meta.url));
 const setupPath = NodeURL.fileURLToPath(new URL("./setup-worktree.sh", import.meta.url));
+const boundedCommandPath = NodeURL.fileURLToPath(
+  new URL("./run-bounded-command.mjs", import.meta.url),
+);
 
 const sh = (command: string, cwd: string) =>
   NodeChildProcess.execFileSync("/bin/sh", ["-c", command], { cwd, encoding: "utf8" });
@@ -40,6 +43,10 @@ function makeRepo(options: Fixture = {}): string {
   if (options.withoutSetupScript !== true) {
     NodeFS.copyFileSync(setupPath, NodePath.join(repo, "scripts", "setup-worktree.sh"));
     NodeFS.chmodSync(NodePath.join(repo, "scripts", "setup-worktree.sh"), 0o755);
+    NodeFS.copyFileSync(
+      boundedCommandPath,
+      NodePath.join(repo, "scripts", "run-bounded-command.mjs"),
+    );
   }
   NodeFS.writeFileSync(
     NodePath.join(repo, "package.json"),

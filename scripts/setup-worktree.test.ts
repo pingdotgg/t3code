@@ -36,6 +36,10 @@ function makeRepo(
   NodeFS.mkdirSync(NodePath.join(repo, "scripts"));
   NodeFS.copyFileSync(scriptPath, NodePath.join(repo, "scripts", "setup-worktree.sh"));
   NodeFS.chmodSync(NodePath.join(repo, "scripts", "setup-worktree.sh"), 0o755);
+  NodeFS.copyFileSync(
+    NodeURL.fileURLToPath(new URL("./run-bounded-command.mjs", import.meta.url)),
+    NodePath.join(repo, "scripts", "run-bounded-command.mjs"),
+  );
   NodeFS.writeFileSync(
     NodePath.join(repo, "package.json"),
     `${JSON.stringify({ name: "fixture", engines: { node: "^24.13.1" } }, null, 2)}\n`,
