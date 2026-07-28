@@ -99,12 +99,12 @@ run_bounded() {
   # grandchildren alive holding this script's stdout, and a caller capturing
   # that output then blocks on EOF long after the timeout fired.
   set -m
-  # The trap turns the watchdog's TERM into an ordinary exit status, so bash
-  # does not print its own "Terminated: 15" line over the message below.
-  (
-    trap 'exit 143' TERM
-    "$@"
-  ) &
+  # Launch the command itself as the job leader. A wrapper subshell that exits
+  # on TERM can be reaped before a TERM-ignoring grandchild, causing this
+  # function to cancel the watchdog while that grandchild still holds the
+  # caller's output pipe open. CI then eventually kills the whole setup script
+  # with 137 instead of receiving the intentional timeout status and message.
+  "$@" &
   local command_pid=$!
   set +m
 
