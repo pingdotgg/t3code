@@ -18,6 +18,8 @@ import {
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import { annotateEnvironmentRequest } from "./auth/http.ts";
 import * as ServerConfig from "./config.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { CLOUD_MANAGED_ENDPOINT, decodeManagedEndpoint } from "./cloud/config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 import {
@@ -39,6 +41,7 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
     const serverConfig = yield* ServerConfig.ServerConfig;
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
     const tailnetAccess = yield* TailnetAccess.TailnetAccess;
     const httpServer = yield* HttpServer.HttpServer;
     return handlers.handle(
@@ -47,9 +50,21 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
         yield* annotateEnvironmentRequest(args.endpoint.name);
         const descriptor = yield* serverEnvironment.getDescriptor;
         const tailnetHttpsBaseUrl = yield* tailnetAccess.getTailnetHttpsBaseUrl;
+        const managedEndpoint = yield* secrets.get(CLOUD_MANAGED_ENDPOINT).pipe(
+          Effect.map((stored) =>
+            Option.flatMap(stored, (bytes) =>
+              decodeManagedEndpoint(new TextDecoder().decode(bytes)),
+            ),
+          ),
+          Effect.tapError((cause) =>
+            Effect.logWarning("Could not read the managed remote endpoint", { cause }),
+          ),
+          Effect.orElseSucceed(() => Option.none()),
+        );
         return {
           ...descriptor,
           advertisedEndpoints: buildServerAdvertisedEndpoints({
+            managedEndpoint: Option.getOrNull(managedEndpoint),
             tailnetHttpsBaseUrl,
             directHttpBaseUrl: resolveHeadlessConnectionString(
               serverConfig.host,

@@ -156,7 +156,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  it.effect("defaults tailscale serve on so remote access auto-attempts", () =>
+  it.effect("defaults tailscale serve off in favor of managed remote access", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "sergecode-cli-config-tailscale-default");
@@ -164,7 +164,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         Effect.provide(configLayer({ T3CODE_HOME: baseDir })),
       );
 
-      expect(resolved.tailscaleServeEnabled).toBe(true);
+      expect(resolved.tailscaleServeEnabled).toBe(false);
       expect(resolved.tailscaleServePort).toBe(443);
     }),
   );

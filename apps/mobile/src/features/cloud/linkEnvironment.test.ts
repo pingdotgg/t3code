@@ -757,6 +757,10 @@ describe("mobile cloud link environment client", () => {
       expect(bodies[3]).toMatchObject({
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
+        endpoint: {
+          httpBaseUrl: "https://managed.example.test/",
+          providerKind: "cloudflare_tunnel",
+        },
       });
     }),
   );

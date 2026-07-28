@@ -247,9 +247,8 @@ public actor LiveBackend: BackendService {
         }
     }
 
-    /// `tailscaleServeEnabled` defaults to `false` so tests and ad-hoc
-    /// spawns never touch the machine's Tailscale state; App.swift passes
-    /// the user preference (default ON) explicitly.
+    /// `tailscaleServeEnabled` defaults to `false` so tests, ad-hoc spawns,
+    /// and fresh installs never touch the machine's Tailscale state.
     public init(
         allowLanAccess: Bool = false,
         tailscaleServeEnabled: Bool = false,
@@ -2655,11 +2654,16 @@ public actor LiveBackend: BackendService {
 
     public func remoteAccessStatus() async -> ServerRemoteAccessStatus {
         guard !mode.isRemote, serverProcess != nil else {
-            return ServerRemoteAccessStatus(lanReachable: false, tailnetHostname: nil)
+            return ServerRemoteAccessStatus(
+                lanReachable: false,
+                internetHostname: nil,
+                internetProvider: nil)
         }
-        let hostname = (await fetchTailnetEndpoint()).flatMap { URL(string: $0.httpBaseUrl)?.host }
+        let remoteEndpoint = await fetchPreferredRemoteEndpoint()
         return ServerRemoteAccessStatus(
-            lanReachable: mode.allowLanAccess, tailnetHostname: hostname)
+            lanReachable: mode.allowLanAccess,
+            internetHostname: remoteEndpoint.flatMap { URL(string: $0.httpBaseUrl)?.host },
+            internetProvider: remoteEndpoint?.provider.label)
     }
 
     public func mintMobilePairing(label: String) async throws -> MobilePairingInfo {
@@ -2667,11 +2671,10 @@ public actor LiveBackend: BackendService {
         guard let auth = authClient, let port = sidecarPort, currentClient != nil else {
             throw LiveBackendError.notConnected
         }
-        // Prefer the tailnet address when the server advertises one:
-        // `tailscale serve` proxies to loopback, so pairing works over the
-        // tailnet even with the LAN bind (mobile-access preference) off.
-        let tailnetEndpoint = await fetchTailnetEndpoint()
-        if tailnetEndpoint == nil {
+        // Prefer the verified managed tunnel (or optional tailnet fallback).
+        // Both proxy to loopback, so pairing works with the LAN bind off.
+        let remoteEndpoint = await fetchPreferredRemoteEndpoint()
+        if remoteEndpoint == nil {
             guard mode.allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
         }
         let accessToken = try await auth.acquireAccessToken()
@@ -2680,13 +2683,13 @@ public actor LiveBackend: BackendService {
         // (startupAccess.ts buildPairingUrl): path /pair, token in the URL
         // fragment so it never appears in request logs.
         let url: URL
-        if let tailnetEndpoint,
-            let tailnetURL = PairingEndpointSelection.pairingURL(
-                httpBaseUrl: tailnetEndpoint.httpBaseUrl, credential: minted.credential)
+        if let remoteEndpoint,
+            let remoteURL = PairingEndpointSelection.pairingURL(
+                httpBaseUrl: remoteEndpoint.httpBaseUrl, credential: minted.credential)
         {
-            url = tailnetURL
+            url = remoteURL
         } else {
-            // Re-checked here (not just before minting) so a tailnet entry
+            // Re-checked here (not just before minting) so an advertised entry
             // with an unparseable base URL can't fall through to a LAN URL
             // the server isn't actually bound to.
             guard mode.allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
@@ -2706,18 +2709,21 @@ public actor LiveBackend: BackendService {
             pairingURL: url, credential: minted.credential, expiresAt: expiresAt)
     }
 
-    /// The default `private-network` endpoint from the running sidecar's
-    /// `/.well-known/t3/environment` descriptor, or nil when Tailscale serve
-    /// is inactive (not enabled / not installed / not recorded yet — it can
-    /// take a few seconds after boot) or the fetch fails. Always re-fetched
-    /// (never cached): serve can come up or drop at any time during the
-    /// sidecar's life, and callers re-mint every few minutes anyway.
-    private func fetchTailnetEndpoint() async -> AdvertisedEndpoint? {
+    /// The descriptor's default cross-network endpoint, but only after that
+    /// address independently answers as this environment. This prevents a
+    /// persisted tunnel whose connector is down from producing a dead QR.
+    private func fetchPreferredRemoteEndpoint() async -> AdvertisedEndpoint? {
         guard let port = sidecarPort,
             let base = URL(string: "http://127.0.0.1:\(port)/")
         else { return nil }
-        let descriptor = try? await PairingClient.fetchDescriptor(httpBaseURL: base)
-        return PairingEndpointSelection.preferredTailnetEndpoint(descriptor?.advertisedEndpoints)
+        guard let descriptor = try? await PairingClient.fetchDescriptor(httpBaseURL: base),
+            let endpoint = PairingEndpointSelection.preferredRemoteEndpoint(
+                descriptor.advertisedEndpoints),
+            let remoteBase = URL(string: endpoint.httpBaseUrl),
+            let remoteDescriptor = try? await PairingClient.fetchDescriptor(httpBaseURL: remoteBase),
+            remoteDescriptor.environmentId == descriptor.environmentId
+        else { return nil }
+        return endpoint
     }
 
     // MARK: - BackendService: settings + providers

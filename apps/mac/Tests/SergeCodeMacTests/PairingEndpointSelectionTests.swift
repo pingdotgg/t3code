@@ -22,7 +22,8 @@ struct PairingEndpointSelectionTests {
             wsBaseUrl: httpBaseUrl
                 .replacingOccurrences(of: "https:", with: "wss:")
                 .replacingOccurrences(of: "http:", with: "ws:"),
-            reachability: kind == "private-network" ? "private-network" : "lan",
+            reachability: kind == "private-network"
+                ? "private-network" : (kind == "tunnel" ? "public" : "lan"),
             source: "server",
             status: status,
             isDefault: isDefault)
@@ -37,7 +38,7 @@ struct PairingEndpointSelectionTests {
             Self.endpoint(id: "direct", kind: "core", httpBaseUrl: "http://192.168.1.42:3773/"),
         ]
 
-        let selected = PairingEndpointSelection.preferredTailnetEndpoint(endpoints)
+        let selected = PairingEndpointSelection.preferredRemoteEndpoint(endpoints)
         #expect(selected?.id == "tailscale-serve")
     }
 
@@ -47,13 +48,13 @@ struct PairingEndpointSelectionTests {
             Self.endpoint(id: "direct", kind: "core", httpBaseUrl: "http://192.168.1.42:3773/")
         ]
 
-        #expect(PairingEndpointSelection.preferredTailnetEndpoint(endpoints) == nil)
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint(endpoints) == nil)
     }
 
     @Test("returns nil for absent or empty endpoint lists (pre-serve boot, older servers)")
     func toleratesMissingEndpoints() {
-        #expect(PairingEndpointSelection.preferredTailnetEndpoint(nil) == nil)
-        #expect(PairingEndpointSelection.preferredTailnetEndpoint([]) == nil)
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint(nil) == nil)
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint([]) == nil)
     }
 
     @Test("ignores a private-network endpoint that is not default or not available")
@@ -63,7 +64,7 @@ struct PairingEndpointSelectionTests {
                 id: "tailscale-serve", kind: "private-network",
                 httpBaseUrl: "https://serges-mac.tail1234.ts.net/")
         ]
-        #expect(PairingEndpointSelection.preferredTailnetEndpoint(notDefault) == nil)
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint(notDefault) == nil)
 
         let unavailable = [
             Self.endpoint(
@@ -71,7 +72,23 @@ struct PairingEndpointSelectionTests {
                 httpBaseUrl: "https://serges-mac.tail1234.ts.net/",
                 status: "unavailable", isDefault: true)
         ]
-        #expect(PairingEndpointSelection.preferredTailnetEndpoint(unavailable) == nil)
+        #expect(PairingEndpointSelection.preferredRemoteEndpoint(unavailable) == nil)
+    }
+
+    @Test("prefers a public managed tunnel over the private-network fallback")
+    func prefersManagedTunnel() {
+        let endpoints = [
+            Self.endpoint(
+                id: "managed-tunnel", kind: "tunnel",
+                httpBaseUrl: "https://environment.surgecode.dev/", isDefault: true),
+            Self.endpoint(
+                id: "tailscale-serve", kind: "private-network",
+                httpBaseUrl: "https://serges-mac.tail1234.ts.net/", isDefault: false),
+        ]
+
+        #expect(
+            PairingEndpointSelection.preferredRemoteEndpoint(endpoints)?.id
+                == "managed-tunnel")
     }
 
     @Test("builds the /pair fragment-token URL from a normalized https base")

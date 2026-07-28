@@ -60,7 +60,9 @@ import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
+  CLOUD_MANAGED_ENDPOINT,
   CLOUD_MINT_PUBLIC_KEY,
+  encodeManagedEndpointJson,
   encodeEndpointRuntimeConfigJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -200,6 +202,38 @@ function validateRelayConfigPayload(
         message: "Cloud user id is required.",
       }),
     );
+  }
+  if (payload.endpoint !== undefined) {
+    let httpUrl: URL;
+    let wsUrl: URL;
+    try {
+      httpUrl = new URL(payload.endpoint.httpBaseUrl);
+      wsUrl = new URL(payload.endpoint.wsBaseUrl);
+    } catch {
+      return Effect.fail(
+        new EnvironmentHttpBadRequestError({
+          message: "Managed endpoint URLs must be valid absolute URLs.",
+        }),
+      );
+    }
+    const expectedWsProtocol = httpUrl.protocol === "https:" ? "wss:" : "ws:";
+    if (
+      httpUrl.protocol !== "https:" ||
+      wsUrl.protocol !== expectedWsProtocol ||
+      httpUrl.host !== wsUrl.host ||
+      httpUrl.username !== "" ||
+      httpUrl.password !== "" ||
+      wsUrl.username !== "" ||
+      wsUrl.password !== "" ||
+      payload.endpoint.providerKind !== "cloudflare_tunnel" ||
+      payload.endpointRuntime?.providerKind !== payload.endpoint.providerKind
+    ) {
+      return Effect.fail(
+        new EnvironmentHttpBadRequestError({
+          message: "Managed endpoint must be the secure endpoint backed by its tunnel runtime.",
+        }),
+      );
+    }
   }
   return Effect.void;
 }
@@ -455,6 +489,12 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     stringToBytes(payload.environmentCredential),
   );
   yield* dependencies.secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
+  if (payload.endpoint) {
+    const managedEndpointJson = yield* encodeManagedEndpointJson(payload.endpoint);
+    yield* dependencies.secrets.set(CLOUD_MANAGED_ENDPOINT, stringToBytes(managedEndpointJson));
+  } else {
+    yield* dependencies.secrets.remove(CLOUD_MANAGED_ENDPOINT);
+  }
   if (payload.endpointRuntime) {
     const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
     yield* dependencies.secrets.set(
@@ -583,6 +623,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       cloudUserId: link.cloudUserId,
       environmentCredential: link.environmentCredential,
       cloudMintPublicKey: link.cloudMintPublicKey,
+      endpoint: link.endpoint,
       endpointRuntime: link.endpointRuntime,
     });
   },
@@ -650,10 +691,11 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
         dependencies.secrets.remove(RELAY_ISSUER_SECRET),
         dependencies.secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
         dependencies.secrets.remove(CLOUD_MINT_PUBLIC_KEY),
+        dependencies.secrets.remove(CLOUD_MANAGED_ENDPOINT),
         dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
         dependencies.secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
       ],
-      { concurrency: 7 },
+      { concurrency: 8 },
     );
     yield* setCliDesiredCloudLink(false);
     return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
