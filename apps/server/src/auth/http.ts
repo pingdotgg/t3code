@@ -37,7 +37,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
-import { deriveAuthClientMetadata } from "./utils.ts";
+import { makeLocalServerPairingIssuer } from "./localPairing.ts";
+import { deriveAuthClientMetadata, readRequestRemoteAddress } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
@@ -203,6 +204,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const issueLocalServerPairing = yield* makeLocalServerPairingIssuer;
 
     return handlers
       .handle(
@@ -248,6 +250,30 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("browser_session_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "localPair",
+        Effect.fn("environment.auth.localPair")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            // Deliberately no `requireEnvironmentScope`: this endpoint exists to
+            // bootstrap the caller's first credential. `issueLocalServerPairing`
+            // authorizes it with filesystem proof instead.
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const result = yield* issueLocalServerPairing({
+              challenge: args.payload,
+              remoteAddress: readRequestRemoteAddress(request),
+            });
+            if (result === null) {
+              return yield* failEnvironmentAuthInvalid("invalid_credential");
+            }
+            yield* appendCredentialResponseHeaders;
+            return result;
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("pairing_credential_issuance_failed", error),
           ),
         ),
       )

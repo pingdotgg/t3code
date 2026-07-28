@@ -97,6 +97,24 @@ export const buildPairingUrl = (connectionString: string, token: string): string
   return url.toString();
 };
 
+export const resolveLocalAdvertisementHttpBaseUrl = (
+  host: string | undefined,
+  port: number,
+  listeningHost?: string,
+): string | null => {
+  if (!isLoopbackHost(host)) {
+    return null;
+  }
+  const normalizedListeningHost = listeningHost ? normalizeHost(listeningHost) : null;
+  if (normalizedListeningHost !== null && !isLoopbackHost(normalizedListeningHost)) {
+    return null;
+  }
+  const normalized = normalizedListeningHost ?? (host ? normalizeHost(host) : "127.0.0.1");
+  const canonicalHost =
+    normalized === "localhost" ? "127.0.0.1" : formatHostForUrl(normalized);
+  return `http://${canonicalHost}:${port}/`;
+};
+
 export const renderTerminalQrCode = (value: string, margin = 2): string => {
   const qrCode = QrCode.encodeText(value, QrCode.Ecc.MEDIUM);
   const rows: Array<string> = [];

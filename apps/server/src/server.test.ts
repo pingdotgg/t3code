@@ -72,6 +72,7 @@ import { vi } from "vite-plus/test";
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import * as ServerConfig from "./config.ts";
+import * as LocalServerDiscoveryState from "./localServerDiscoveryState.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAvailableEditorsForConfig } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -637,7 +638,9 @@ const buildAppUnderTest = (options?: {
             }),
         }),
       ),
-      Layer.provide(gitManagerLayer),
+      // Merged rather than a separate `Layer.provide` so this chain stays under
+      // the 20-argument `pipe` overload limit.
+      Layer.provide(Layer.mergeAll(gitManagerLayer, LocalServerDiscoveryState.layer)),
       Layer.provide(gitVcsDriverLayer),
       Layer.provide(gitWorkflowLayer),
       Layer.provide(reviewLayer),

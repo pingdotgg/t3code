@@ -1,6 +1,13 @@
-import type { DesktopWslState } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type DesktopWslState,
+  type LocalServerAdvertisement,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import {
+  applyWslEnableSelection,
+  selectLocalServerPairingCandidates,
+} from "./ConnectionsSettings.logic";
 
 const baseWslState: DesktopWslState = {
   enabled: false,
@@ -71,5 +78,48 @@ describe("applyWslEnableSelection", () => {
     expect(calls).toEqual(["setWslOnly:true", "setWslBackendEnabled:true"]);
     expect(setWslDistro).not.toHaveBeenCalled();
     expect(state).toMatchObject({ enabled: true, wslOnly: true });
+  });
+});
+
+describe("selectLocalServerPairingCandidates", () => {
+  const advertisement = {
+    version: 1,
+    instanceId: "instance-local",
+    pid: 1234,
+    startedAt: "2026-01-01T00:00:00.000Z",
+    httpBaseUrl: "http://127.0.0.1:3773/",
+    environmentId: EnvironmentId.make("environment-local"),
+    label: "Local server",
+  } satisfies LocalServerAdvertisement;
+
+  it("offers unsaved advertisements as explicit Pair actions", () => {
+    expect(selectLocalServerPairingCandidates([advertisement], [])).toEqual([
+      { advertisement, pairAgain: false },
+    ]);
+  });
+
+  it("suppresses connected saved environments and offers Pair again while reconnecting", () => {
+    expect(
+      selectLocalServerPairingCandidates(
+        [advertisement],
+        [
+          {
+            environmentId: advertisement.environmentId,
+            connection: { phase: "connected" },
+          },
+        ],
+      ),
+    ).toEqual([]);
+    expect(
+      selectLocalServerPairingCandidates(
+        [advertisement],
+        [
+          {
+            environmentId: advertisement.environmentId,
+            connection: { phase: "reconnecting" },
+          },
+        ],
+      ),
+    ).toEqual([{ advertisement, pairAgain: true }]);
   });
 });

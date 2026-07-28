@@ -165,6 +165,17 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
   return normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
 }
 
+/**
+ * Peer address of the underlying socket, IPv4-mapped IPv6 unwrapped. Returns
+ * `undefined` when it cannot be determined so callers that gate on loopback can
+ * fail closed.
+ */
+export function readRequestRemoteAddress(
+  request: HttpServerRequest.HttpServerRequest,
+): string | undefined {
+  return readRemoteAddressFromSource(request.source);
+}
+
 export function deriveAuthClientMetadata(input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly presented?: AuthClientPresentationMetadata;
