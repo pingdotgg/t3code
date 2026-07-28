@@ -67,7 +67,8 @@ const storesLayer = Layer.mergeAll(
   turnItemPositionStoreLayer,
 );
 
-const eventSinkProvided = eventSinkLayer.pipe(Layer.provide(storesLayer));
+export const OrchestrationV2EventSinkLayerLive = eventSinkLayer.pipe(Layer.provide(storesLayer));
+const eventSinkProvided = OrchestrationV2EventSinkLayerLive;
 const projectionMaintenanceProvided = projectionMaintenanceLayer.pipe(Layer.provide(storesLayer));
 const legacyV1ThreadImporterProvided = legacyV1ThreadImporterLayer.pipe(
   Layer.provide(Layer.mergeAll(eventSinkProvided, eventStoreProvided)),
