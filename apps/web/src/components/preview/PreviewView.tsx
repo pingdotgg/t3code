@@ -526,7 +526,13 @@ export function PreviewView({
         if (!result) return;
         const { annotation, submission } = result;
         addPreviewAnnotation(threadRef, annotation);
-        const screenshotFile = await previewAnnotationScreenshotFile(annotation);
+        let screenshotFile: File | null = null;
+        try {
+          screenshotFile = await previewAnnotationScreenshotFile(annotation);
+        } catch {
+          // The structured annotation is still sendable when converting its
+          // optional screenshot into a composer attachment fails.
+        }
         const image =
           screenshotFile && annotation.screenshot
             ? ({

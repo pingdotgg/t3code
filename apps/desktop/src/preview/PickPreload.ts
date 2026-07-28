@@ -377,11 +377,6 @@ function startAnnotation(): void {
   const hoverOutline = createBox(PRIMARY, PRIMARY_FILL);
   const marqueeBox = createBox(PRIMARY, PRIMARY_FILL);
   root.append(hoverOutline, marqueeBox);
-  root.addEventListener("keydown", (event) => {
-    // Let the focused annotation control handle the key, then keep it away
-    // from page-level shortcuts such as a video's Space play/pause binding.
-    event.stopPropagation();
-  });
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute(OVERLAY_ATTRIBUTE, "");
@@ -1234,13 +1229,19 @@ function startAnnotation(): void {
     });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
-  comment.addEventListener("keydown", (event) => {
-    const submission = resolveAnnotationSubmission(event);
-    if (!submission) return;
-    event.preventDefault();
-    event.stopPropagation();
-    submitAnnotation(submission);
-  });
+  root.addEventListener(
+    "keydown",
+    (event) => {
+      const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+      // Isolate annotation controls before the event reaches bubble-phase
+      // listeners installed by the inspected page.
+      event.stopImmediatePropagation();
+      if (!submission) return;
+      event.preventDefault();
+      submitAnnotation(submission);
+    },
+    { capture: true },
+  );
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
