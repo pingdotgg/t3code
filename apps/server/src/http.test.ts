@@ -5,8 +5,14 @@ import * as Effect from "effect/Effect";
 import { HttpServerResponse } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
 
-import * as NodeHttpResponseCompression from "./NodeHttpResponseCompression.ts";
+import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import { compressHttpResponse, isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+
+const compressionUnavailable = HttpResponseCompression.HttpResponseCompression.of({
+  gzip: () => {
+    throw new Error("Unexpected HTTP response compression.");
+  },
+});
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
@@ -36,10 +42,11 @@ describe("http compression", () => {
   it.effect("gzips large JSON responses when the client accepts it", () =>
     Effect.gen(function* () {
       const body = `{"value":"${"compressible".repeat(1_000)}"}`;
+      const compression = yield* HttpResponseCompression.HttpResponseCompression;
       const response = compressHttpResponse(
         HttpServerResponse.text(body, { contentType: "application/json" }),
         "br, gzip, deflate",
-        NodeHttpResponseCompression.make,
+        compression,
       );
 
       expect(response.headers["content-encoding"]).toBe("gzip");
@@ -60,14 +67,14 @@ describe("http compression", () => {
         return chunks;
       });
       expect(NodeZlib.gunzipSync(Buffer.concat(chunks)).toString()).toBe(body);
-    }),
+    }).pipe(Effect.provide(HttpResponseCompression.layerNode)),
   );
 
   it("keeps the original body when gzip is declined", () => {
     const response = compressHttpResponse(
       HttpServerResponse.text("x".repeat(2_000), { contentType: "application/json" }),
       "gzip;q=0, *;q=1",
-      NodeHttpResponseCompression.make,
+      compressionUnavailable,
     );
 
     expect(response.headers["content-encoding"]).toBeUndefined();
@@ -83,7 +90,7 @@ describe("http compression", () => {
           headers: { vary },
         }),
         undefined,
-        NodeHttpResponseCompression.make,
+        compressionUnavailable,
       );
 
     expect(makeResponse("*").headers.vary).toBe("*");

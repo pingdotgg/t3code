@@ -5,6 +5,7 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as ServerConfig from "./config.ts";
+import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -129,23 +130,21 @@ const HttpServerPlatformLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     if (typeof Bun !== "undefined") {
-      const [BunHttpServer, BunHttpResponseCompression] = yield* Effect.all([
-        Effect.promise(() => import("@effect/platform-bun/BunHttpServer")),
-        Effect.promise(() => import("./BunHttpResponseCompression.ts")),
-      ]);
+      const BunHttpServer = yield* Effect.promise(
+        () => import("@effect/platform-bun/BunHttpServer"),
+      );
       return Layer.merge(
         BunHttpServer.layer({
           port: config.port,
           hostname: config.host ?? "127.0.0.1",
           gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
         }),
-        BunHttpResponseCompression.layer,
+        HttpResponseCompression.layerBun,
       );
     } else {
-      const [NodeHttpServer, NodeHttp, NodeHttpResponseCompression] = yield* Effect.all([
+      const [NodeHttpServer, NodeHttp] = yield* Effect.all([
         Effect.promise(() => import("@effect/platform-node/NodeHttpServer")),
         Effect.promise(() => import("node:http")),
-        Effect.promise(() => import("./NodeHttpResponseCompression.ts")),
       ]);
       return Layer.merge(
         NodeHttpServer.layer(NodeHttp.createServer, {
@@ -153,7 +152,7 @@ const HttpServerPlatformLive = Layer.unwrap(
           port: config.port,
           gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
         }),
-        NodeHttpResponseCompression.layer,
+        HttpResponseCompression.layerNode,
       );
     }
   }),
