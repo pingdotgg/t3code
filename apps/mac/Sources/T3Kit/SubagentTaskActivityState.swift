@@ -31,7 +31,7 @@ public enum T3SubagentTaskEntityKind: String, Sendable, Equatable {
         switch taskType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "local_bash", "bash", "command", "command_execution":
             self = .command
-        case "workflow", "workflow_execution":
+        case "local_workflow", "workflow", "workflow_execution":
             self = .workflow
         default:
             self = .subagent

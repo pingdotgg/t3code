@@ -747,6 +747,26 @@ struct SubagentTaskActivityStateTests {
         #expect(T3SubagentTaskEntityKind(nil, taskType: nil) == .subagent)
     }
 
+    @Test("Claude local_workflow task types infer workflow kind")
+    func claudeWorkflowTaskTypeFallback() throws {
+        let started = activity(
+            id: "act-claude-workflow", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("workflow-1"),
+                "taskType": .string("local_workflow"),
+                "workflowName": .string("review-changes"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        let result = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        let item = try #require(result)
+
+        #expect(item.entityKind == .workflow)
+        #expect(item.workflowName == "review-changes")
+        #expect(item.producesTimelineRow)
+    }
+
     @Test("a foreground command earns no row until it is backgrounded")
     func commandRowsAppearOnlyWhenBackgrounded() throws {
         let started = activity(
