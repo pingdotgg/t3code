@@ -628,7 +628,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const startNextQueuedRun = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const projection = yield* projectionStore.getThreadProjection(threadId);
-      if (projection.runs.some(isBlockingRun)) {
+      if (
+        projection.thread.archivedAt !== null ||
+        projection.thread.deletedAt !== null ||
+        projection.runs.some(isBlockingRun)
+      ) {
         return;
       }
 
@@ -997,13 +1001,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedThread,
     });
 
-    if (command.type === "thread.delete") {
+    if (command.type === "thread.archive" || command.type === "thread.delete") {
       const emitEvent = emit(events, command);
       const activeRunIds = new Set(
         projection.runs
-          .filter((run) =>
-            ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
-          )
+          .filter((run) => {
+            if (command.type === "thread.archive") {
+              return run.status === "queued";
+            }
+            return ["preparing", "queued", "starting", "running", "waiting"].includes(run.status);
+          })
           .map((run) => run.id),
       );
       for (const run of projection.runs.filter((candidate) => activeRunIds.has(candidate.id))) {
@@ -1049,24 +1056,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...node, status: "cancelled", completedAt: now },
         });
       }
-      for (const request of projection.runtimeRequests.filter(
-        (candidate) => candidate.status === "pending",
-      )) {
-        yield* emitEvent({
-          type: "runtime-request.updated",
-          threadId: command.threadId,
-          nodeId: request.nodeId,
-          occurredAt: now,
-          payload: {
-            ...request,
-            status: "cancelled",
-            responseCapability: {
-              type: "not_resumable",
-              reason: "The thread was deleted.",
+      if (command.type === "thread.delete") {
+        for (const request of projection.runtimeRequests.filter(
+          (candidate) => candidate.status === "pending",
+        )) {
+          yield* emitEvent({
+            type: "runtime-request.updated",
+            threadId: command.threadId,
+            nodeId: request.nodeId,
+            occurredAt: now,
+            payload: {
+              ...request,
+              status: "cancelled",
+              responseCapability: {
+                type: "not_resumable",
+                reason: "The thread was deleted.",
+              },
+              resolvedAt: now,
             },
-            resolvedAt: now,
-          },
-        });
+          });
+        }
       }
     }
 
@@ -4183,6 +4192,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
         );
+      if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is not active.`,
+        });
+      }
       const queuedRun = projection.runs.find((candidate) => candidate.id === command.queuedRunId);
       if (queuedRun === undefined || queuedRun.status !== "queued") {
         return yield* new OrchestratorDispatchError({
