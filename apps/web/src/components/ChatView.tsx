@@ -212,6 +212,7 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  setActiveEnvironmentId,
   useProject,
   useProjects,
   useThread,
@@ -1132,6 +1133,9 @@ function ChatViewContent(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
+  useEffect(() => {
+    setActiveEnvironmentId(environmentId);
+  }, [environmentId]);
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),

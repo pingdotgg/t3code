@@ -23,6 +23,44 @@ it("formats issued pairing credentials with the secret and optional pair URL", (
 
   expect(output).toContain("secret-pairing-token");
   expect(output).toContain("https://example.com/pair#token=secret-pairing-token");
+  // Scannable from another device, matching `t3 serve`'s startup output.
+  expect(output).toContain("█");
+});
+
+it("omits the QR code when there is no pair URL worth scanning", () => {
+  const output = formatIssuedPairingCredential(
+    {
+      id: "pairing-1",
+      credential: "secret-pairing-token",
+      scopes: ["orchestration:read"],
+      subject: "one-time-token",
+      createdAt: DateTime.makeUnsafe("2026-04-08T09:00:00.000Z"),
+      expiresAt: DateTime.makeUnsafe("2026-04-08T10:00:00.000Z"),
+    },
+    { json: false },
+  );
+
+  expect(output).toContain("secret-pairing-token");
+  expect(output).not.toContain("█");
+});
+
+it("keeps JSON output machine-readable rather than embedding a QR code", () => {
+  const output = formatIssuedPairingCredential(
+    {
+      id: "pairing-1",
+      credential: "secret-pairing-token",
+      scopes: ["orchestration:read"],
+      subject: "one-time-token",
+      createdAt: DateTime.makeUnsafe("2026-04-08T09:00:00.000Z"),
+      expiresAt: DateTime.makeUnsafe("2026-04-08T10:00:00.000Z"),
+    },
+    { baseUrl: "https://example.com", json: true },
+  );
+
+  expect(output).not.toContain("█");
+  expect(JSON.parse(output)).toMatchObject({
+    pairUrl: "https://example.com/pair#token=secret-pairing-token",
+  });
 });
 
 it("formats pairing listings without exposing the secret token", () => {

@@ -91,10 +91,15 @@ export const preparePairingRegistration = Effect.fn(
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  // Deliberately request no scopes: the server then grants exactly what the
+  // pairing credential carries. Naming a wider set is rejected outright rather
+  // than clamped, so asking for administrative scopes would break pairing with
+  // an ordinary link — while always asking for the standard set silently
+  // discarded the administrative scopes on a server's own startup token,
+  // leaving that client unable to manage the access it was handed.
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
-    scopes: presentation.scopes,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = `bearer:${descriptor.environmentId}`;

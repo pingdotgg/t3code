@@ -113,7 +113,11 @@ describe("connection onboarding", () => {
           : String(tokenRequest?.init.body);
       const tokenParams = new URLSearchParams(tokenBody);
       expect(tokenParams.get("subject_token")).toBe("pairing-token");
-      expect(tokenParams.get("scope")).toBe(AuthStandardClientScopes.join(" "));
+      // No requested scope: the server grants exactly what the pairing
+      // credential carries. Naming a set is rejected rather than clamped when
+      // it exceeds the grant, and naming the standard set would silently drop
+      // the administrative scopes on a server's own startup token.
+      expect(tokenParams.get("scope")).toBeNull();
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
     }),
   );

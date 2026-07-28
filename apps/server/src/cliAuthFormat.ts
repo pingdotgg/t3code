@@ -2,6 +2,7 @@ import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@t3
 import * as DateTime from "effect/DateTime";
 
 import type { IssuedBearerSession, IssuedPairingLink } from "./auth/EnvironmentAuth.ts";
+import { renderTerminalQrCode } from "./startupAccess.ts";
 
 const newline = "\n";
 
@@ -62,6 +63,10 @@ export function formatIssuedPairingCredential(
       `Token: ${credential.credential}`,
       ...(pairUrl ? [`Pair URL: ${pairUrl}`] : []),
       `Expires at: ${credential.expiresAt}`,
+      // Match `t3 serve`, which prints a scannable code alongside its startup
+      // pairing URL. Only a URL is worth encoding; a bare token is not
+      // actionable on the device that scans it.
+      ...(pairUrl ? ["", renderTerminalQrCode(pairUrl)] : []),
     ].join(newline) + newline
   );
 }
