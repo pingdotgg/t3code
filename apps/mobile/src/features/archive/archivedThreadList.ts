@@ -318,18 +318,21 @@ export function buildArchivedThreadGroups(input: {
         title: Order.String,
         key: Order.String,
       }),
-      (group: ArchivedThreadGroup) => ({
-        timestamp:
-          input.sort.direction === "asc"
-            ? Math.min(
-                ...group.threads.map((thread) => archivedThreadTimestamp(thread, input.sort.field)),
-              )
-            : Math.max(
-                ...group.threads.map((thread) => archivedThreadTimestamp(thread, input.sort.field)),
-              ),
-        title: group.project.title,
-        key: group.key,
-      }),
+      (group: ArchivedThreadGroup) => {
+        let timestamp = archivedThreadTimestamp(group.threads[0]!, input.sort.field);
+        for (let index = 1; index < group.threads.length; index += 1) {
+          const candidate = archivedThreadTimestamp(group.threads[index]!, input.sort.field);
+          timestamp =
+            input.sort.direction === "asc"
+              ? Math.min(timestamp, candidate)
+              : Math.max(timestamp, candidate);
+        }
+        return {
+          timestamp,
+          title: group.project.title,
+          key: group.key,
+        };
+      },
     ),
   );
 }
