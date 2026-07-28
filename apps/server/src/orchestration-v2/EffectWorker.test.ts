@@ -13,7 +13,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
 import type { OrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -21,6 +23,9 @@ import {
   executorLayer,
   isNonRetryableProviderTurnControlFailure,
   OrchestrationEffectExecutorV2,
+  OrchestrationEffectWorkerError,
+  OrchestrationEffectWorkerV2,
+  runDaemonWithOptions,
 } from "./EffectWorker.ts";
 import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -170,6 +175,112 @@ it("does not retry pure interrupt races where the turn is already gone", () => {
     ),
   );
 });
+
+it.effect("uses durable deadlines, notifications, and a slow liveness poll", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const available = yield* Queue.unbounded<void>();
+    const now = yield* DateTime.now;
+    const nextClaimableAt = yield* Ref.make<Option.Option<DateTime.Utc>>(
+      Option.some(DateTime.add(now, { milliseconds: 100 })),
+    );
+    const worker = OrchestrationEffectWorkerV2.of({
+      awaitWork: Queue.take(available),
+      runOnce: Effect.gen(function* () {
+        const count = yield* Ref.updateAndGet(attempts, (current) => current + 1);
+        if (count === 2) {
+          yield* Ref.set(nextClaimableAt, Option.some(DateTime.add(now, { milliseconds: 5_000 })));
+        }
+        if (count === 3) yield* Ref.set(nextClaimableAt, Option.none());
+        return false;
+      }),
+      nextClaimableAt: Ref.get(nextClaimableAt),
+      drain: () => Effect.succeed(0),
+    });
+    const awaitAttempts = Effect.fnUntraced(function* (expected: number) {
+      while ((yield* Ref.get(attempts)) < expected) {
+        yield* Effect.yieldNow;
+      }
+    });
+
+    yield* runDaemonWithOptions({
+      concurrency: 1,
+      livenessPollIntervalMs: 1_000,
+    }).pipe(Effect.provideService(OrchestrationEffectWorkerV2, worker), Effect.forkScoped);
+
+    yield* awaitAttempts(1);
+    yield* TestClock.adjust("99 millis");
+    assert.equal(yield* Ref.get(attempts), 1);
+
+    yield* TestClock.adjust("1 millis");
+    yield* awaitAttempts(2);
+    yield* TestClock.adjust("999 millis");
+    assert.equal(yield* Ref.get(attempts), 2);
+
+    yield* Queue.offer(available, undefined);
+    yield* awaitAttempts(3);
+    yield* TestClock.adjust("999 millis");
+    assert.equal(yield* Ref.get(attempts), 3);
+
+    yield* TestClock.adjust("1 millis");
+    yield* awaitAttempts(4);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("does not hot-loop when a claim fails", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const now = yield* DateTime.now;
+    const worker = OrchestrationEffectWorkerV2.of({
+      awaitWork: Effect.never,
+      runOnce: Ref.update(attempts, (count) => count + 1).pipe(
+        Effect.andThen(
+          new OrchestrationEffectWorkerError({
+            operation: "claim",
+            cause: "simulated database failure",
+          }),
+        ),
+      ),
+      nextClaimableAt: Effect.succeed(Option.some(now)),
+      drain: () => Effect.succeed(0),
+    });
+
+    yield* runDaemonWithOptions({
+      concurrency: 1,
+      livenessPollIntervalMs: 1_000,
+    }).pipe(Effect.provideService(OrchestrationEffectWorkerV2, worker), Effect.forkScoped);
+
+    while ((yield* Ref.get(attempts)) < 1) yield* Effect.yieldNow;
+    yield* TestClock.adjust("999 millis");
+    assert.equal(yield* Ref.get(attempts), 1);
+    yield* TestClock.adjust("1 millis");
+    while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("backs off briefly when a due deadline loses a claim race", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    const now = yield* DateTime.now;
+    const worker = OrchestrationEffectWorkerV2.of({
+      awaitWork: Effect.never,
+      runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),
+      nextClaimableAt: Effect.succeed(Option.some(now)),
+      drain: () => Effect.succeed(0),
+    });
+
+    yield* runDaemonWithOptions({
+      concurrency: 1,
+      livenessPollIntervalMs: 1_000,
+    }).pipe(Effect.provideService(OrchestrationEffectWorkerV2, worker), Effect.forkScoped);
+
+    while ((yield* Ref.get(attempts)) < 1) yield* Effect.yieldNow;
+    yield* TestClock.adjust("24 millis");
+    assert.equal(yield* Ref.get(attempts), 1);
+    yield* TestClock.adjust("1 millis");
+    while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
+  }).pipe(Effect.provide(TestClock.layer())),
+);
 
 it.effect("detaches a handed-off session only after the old turn terminalizes", () =>
   Effect.gen(function* () {
