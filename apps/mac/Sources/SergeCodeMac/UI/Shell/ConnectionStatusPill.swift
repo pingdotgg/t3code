@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Dot + label summarizing the sidecar/websocket connection phase, shown in
-/// the toolbar. Uses a non-interactive Alpine glass chip after the system
-/// per-item capsule is suppressed with `.sharedBackgroundVisibility(.hidden)`.
+/// Dot + label summarizing the sidecar/websocket connection phase, shown
+/// inside the navigation toolbar's connected control group.
 struct ConnectionStatusPill: View {
     let phase: ConnectionPhase
 
@@ -27,7 +26,8 @@ struct ConnectionStatusPill: View {
                 .contentTransition(.numericText())
         }
         .fixedSize(horizontal: false, vertical: true)
-        .alpineToolbarChip(interactive: false)
+        .padding(.horizontal, 9)
+        .frame(height: 28)
         .animation(Motion.ambient, value: phase)
         .help(label)
         .accessibilityElement(children: .ignore)
