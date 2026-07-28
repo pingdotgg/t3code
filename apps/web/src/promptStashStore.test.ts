@@ -114,6 +114,19 @@ describe("promptStashStore", () => {
     expect(entries[0]?.id).toBe("overflow");
   });
 
+  // This test environment has no `localStorage`, so the store runs on its
+  // in-memory fallback — the exact "kept for this session, gone on reload"
+  // case the composer must distinguish from an outright write failure.
+  it("distinguishes a memory-only write (written, not durable) from a failed one", () => {
+    const store = usePromptStashStore.getState();
+    const result = store.stashEntry(makeEntry({ id: "memory-only" }));
+    expect(result.written).toBe(true);
+    expect(result.durable).toBe(false);
+    expect(usePromptStashStore.getState().entries.map((entry) => entry.id)).toEqual([
+      "memory-only",
+    ]);
+  });
+
   it("takeEntry removes and returns the entry; second take returns null", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry(makeEntry({ id: "keep" }));

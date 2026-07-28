@@ -2073,7 +2073,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // mid-encode still leaves the prompt recoverable, while clearing before
       // the async image work means edits typed during encoding are not wiped.
       // Images are appended to the stored entry as they finish encoding.
-      const { evicted, durable } = stashEntryToQueue({
+      const { evicted, written, durable } = stashEntryToQueue({
         id: entryId,
         createdAt: new Date().toISOString(),
         prompt,
@@ -2083,11 +2083,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingImageCount: images.length,
       });
 
-      // Clearing the composer is only safe once the entry is durable. If the
-      // write was rejected (quota, blocked storage) the store has already
-      // rolled itself back, so leave the composer untouched rather than
-      // making it the second casualty of a reload.
-      if (!durable) {
+      // Clearing the composer is only safe once the write actually landed.
+      // If it was rejected (quota) the store has already rolled itself back,
+      // so leave the composer untouched rather than making it the second
+      // casualty of a reload.
+      if (!written) {
         toastManager.add({
           type: "error",
           title: "Could not stash this prompt",
@@ -2096,6 +2096,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data: { hideCopyButton: true },
         });
         return;
+      }
+      // Written but only into the in-memory fallback (localStorage blocked):
+      // the entry is visible and restorable this session, so proceed with the
+      // clear, but say it won't survive a reload.
+      if (!durable) {
+        toastManager.add({
+          type: "warning",
+          title: "Stashed prompt will not survive a reload",
+          description:
+            "Browser storage is unavailable, so this stash is kept in memory only for this session.",
+          data: { hideCopyButton: true },
+        });
       }
 
       // Only the prompt and images are cleared — terminal/element contexts,

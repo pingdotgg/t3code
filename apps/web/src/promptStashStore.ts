@@ -193,7 +193,12 @@ interface PromptStashStoreState {
    */
   stashEntry: (entry: PromptStashEntry) => {
     evicted: PromptStashEntry | null;
-    /** False when the write did not reach durable storage; nothing was kept. */
+    /** False when the write failed outright (e.g. quota); nothing was kept. */
+    written: boolean;
+    /**
+     * False when the write will not survive a reload: either it failed, or it
+     * landed only in the in-memory fallback because localStorage is blocked.
+     */
     durable: boolean;
   };
   /**
@@ -228,10 +233,10 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     // keeps the composer intact on failure, so a stashed copy would
     // duplicate the prompt. Eviction likewise only sticks on success.
     if (!written) {
-      return { evicted: null, durable: false };
+      return { evicted: null, written: false, durable: false };
     }
     set(() => ({ entries: nextEntries }));
-    return { evicted, durable };
+    return { evicted, written: true, durable };
   },
   takeEntry: (entryId) => {
     const entries = get().entries;
