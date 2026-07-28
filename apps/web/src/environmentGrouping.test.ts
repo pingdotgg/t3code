@@ -281,6 +281,25 @@ describe("environment grouping", () => {
     );
   });
 
+  it("reports the remote environments backing a group's remote labels", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) =>
+        environmentId === remoteEnvironmentId ? "ryzen-shine" : null,
+    });
+
+    expect(group?.remoteEnvironmentIds).toEqual([remoteEnvironmentId]);
+    expect(group?.remoteEnvironmentLabels).toEqual(["ryzen-shine"]);
+  });
+
   it("builds one picker entry per logical project and targets the preferred environment", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({

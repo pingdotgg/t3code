@@ -6,26 +6,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } 
 import { ColorSelector } from "../color-selector";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { normalizeProviderAccentColor } from "../../providerInstances";
+import {
+  ACCENT_COLOR_SWATCHES,
+  FALLBACK_ACCENT_COLOR,
+  normalizeAccentColor,
+} from "../../accentColors";
 import { cn } from "../../lib/utils";
-
-const PROVIDER_ACCENT_SWATCHES = [
-  "#2563eb",
-  "#16a34a",
-  "#ea580c",
-  "#dc2626",
-  "#7c3aed",
-  "#0891b2",
-] as const;
-
-const FALLBACK_ACCENT_COLOR = PROVIDER_ACCENT_SWATCHES[0];
 
 function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
 function hexToHsv(hex: string) {
-  const normalized = normalizeProviderAccentColor(hex) ?? FALLBACK_ACCENT_COLOR;
+  const normalized = normalizeAccentColor(hex) ?? FALLBACK_ACCENT_COLOR;
   const numeric = Number.parseInt(normalized.slice(1), 16);
   const red = ((numeric >> 16) & 255) / 255;
   const green = ((numeric >> 8) & 255) / 255;
@@ -80,7 +73,7 @@ function hsvToHex(hue: number, saturation: number, value: number) {
     .join("")}`;
 }
 
-function ProviderCustomColorPanel(props: {
+function CustomColorPanel(props: {
   readonly value: string;
   readonly onCommit: (value: string) => void;
 }) {
@@ -178,13 +171,13 @@ function ProviderCustomColorPanel(props: {
   );
 }
 
-function ProviderCustomColorPicker(props: {
+function CustomColorPicker(props: {
   readonly displayName: string;
   readonly value: string | undefined;
   readonly selected: boolean;
   readonly onCommit: (value: string) => void;
 }) {
-  const normalized = normalizeProviderAccentColor(props.value) ?? FALLBACK_ACCENT_COLOR;
+  const normalized = normalizeAccentColor(props.value) ?? FALLBACK_ACCENT_COLOR;
 
   return (
     <Popover>
@@ -216,20 +209,30 @@ function ProviderCustomColorPicker(props: {
         sideOffset={6}
         className="overflow-hidden rounded-md p-0 [--viewport-inline-padding:0px] [&_[data-slot=popover-viewport]]:p-0"
       >
-        <ProviderCustomColorPanel value={normalized} onCommit={props.onCommit} />
+        <CustomColorPanel value={normalized} onCommit={props.onCommit} />
       </PopoverPopup>
     </Popover>
   );
 }
 
-export function ProviderAccentColorPicker(props: {
+export function AccentColorPicker(props: {
+  /** Name of the thing being colored; used to disambiguate the aria labels. */
   readonly displayName: string;
   readonly value: string | undefined;
   readonly onCommit: (value: string) => void;
+  /** Heading above the swatches. Pass `null` where the surrounding UI already names it. */
+  readonly label?: string | null;
   readonly description?: string;
   readonly commitDelayMs?: number;
 }) {
-  const { commitDelayMs = 0, description, displayName, onCommit, value } = props;
+  const {
+    commitDelayMs = 0,
+    description,
+    displayName,
+    label = "Accent color",
+    onCommit,
+    value,
+  } = props;
   const [optimisticValue, setOptimisticValue] = useState(() => value ?? "");
   const commitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCommitRef = useRef<string | null>(null);
@@ -258,7 +261,7 @@ export function ProviderAccentColorPicker(props: {
 
   const commitAccentColor = useCallback(
     (value: string) => {
-      const normalizedValue = normalizeProviderAccentColor(value) ?? "";
+      const normalizedValue = normalizeAccentColor(value) ?? "";
       setOptimisticValue(normalizedValue);
 
       if (commitDelayMs <= 0) {
@@ -287,19 +290,19 @@ export function ProviderAccentColorPicker(props: {
     [commitDelayMs, onCommit],
   );
 
-  const normalized = normalizeProviderAccentColor(optimisticValue);
+  const normalized = normalizeAccentColor(optimisticValue);
   const selectedValue =
     normalized &&
-    PROVIDER_ACCENT_SWATCHES.includes(normalized as (typeof PROVIDER_ACCENT_SWATCHES)[number])
+    ACCENT_COLOR_SWATCHES.includes(normalized as (typeof ACCENT_COLOR_SWATCHES)[number])
       ? normalized
       : "";
   const customSelected = Boolean(normalized && selectedValue === "");
 
   return (
     <div className="grid gap-2">
-      <span className="text-xs font-medium text-foreground">Accent color</span>
+      {label === null ? null : <span className="text-xs font-medium text-foreground">{label}</span>}
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <ProviderCustomColorPicker
+        <CustomColorPicker
           displayName={displayName}
           value={normalized}
           selected={customSelected}
@@ -307,7 +310,7 @@ export function ProviderAccentColorPicker(props: {
         />
         <ColorSelector
           key={selectedValue}
-          colors={[...PROVIDER_ACCENT_SWATCHES]}
+          colors={[...ACCENT_COLOR_SWATCHES]}
           defaultValue={selectedValue}
           size="lg"
           onColorSelect={commitAccentColor}

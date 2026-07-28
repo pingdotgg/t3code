@@ -29,6 +29,10 @@ export interface SidebarProjectSnapshot extends Project {
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
+  // Environments backing `remoteEnvironmentLabels`, in the same order. The
+  // header badge stands for all of them at once, so it can only take on an
+  // accent color when they agree on one.
+  remoteEnvironmentIds: readonly EnvironmentId[];
 }
 
 export interface SidebarProjectPickerEntry {
@@ -191,6 +195,11 @@ export function buildSidebarProjectSnapshots(input: {
     const remoteEnvironmentLabels = remoteMembers
       .flatMap((member) => (member.environmentLabel ? [member.environmentLabel] : []))
       .filter((label, index, labels) => labels.indexOf(label) === index);
+    const remoteEnvironmentIds = remoteMembers
+      .map((member) => member.environmentId)
+      .filter(
+        (environmentId, index, environmentIds) => environmentIds.indexOf(environmentId) === index,
+      );
     const isDesktopLocal = input.isDesktopLocalEnvironment ?? (() => false);
     const allRemoteMembersAreDesktopLocal =
       remoteMembers.length > 0 &&
@@ -213,6 +222,7 @@ export function buildSidebarProjectSnapshots(input: {
       memberProjects: members,
       memberProjectRefs: projectRefsByLogicalKey.get(logicalKey) ?? [],
       remoteEnvironmentLabels,
+      remoteEnvironmentIds,
     });
   }
 
