@@ -181,6 +181,14 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     expect(resolveInlineCodeFileLinkMeta("Makefile:12")).toBeNull();
   });
 
+  it("does not treat arbitrary name:digits shapes as files", () => {
+    expect(resolveInlineCodeFileLinkMeta("error:1", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("TODO:12", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("exit:0", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("port:3000", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("http:80", "/Users/julius/project")).toBeNull();
+  });
+
   it("links dot-prefixed relative paths without extensions", () => {
     expect(
       resolveInlineCodeFileLinkMeta("./scripts/deploy", "/Users/julius/project"),

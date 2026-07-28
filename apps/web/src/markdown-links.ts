@@ -175,6 +175,37 @@ const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 const BARE_EXTENSIONLESS_POSITION_PATTERN = /^[A-Za-z0-9_-]+(?::\d+){1,2}$/;
+// Any `Name:digits` shape also matches `error:1`, `port:3000`, `TODO:12`, so
+// extensionless linking is limited to conventional filenames.
+const EXTENSIONLESS_FILE_NAMES = new Set([
+  "Makefile",
+  "makefile",
+  "GNUmakefile",
+  "Dockerfile",
+  "Containerfile",
+  "Justfile",
+  "justfile",
+  "Rakefile",
+  "Gemfile",
+  "Procfile",
+  "Brewfile",
+  "Caddyfile",
+  "Vagrantfile",
+  "Jenkinsfile",
+  "Podfile",
+  "Fastfile",
+  "BUILD",
+  "WORKSPACE",
+  "LICENSE",
+  "LICENCE",
+  "COPYING",
+  "NOTICE",
+  "AUTHORS",
+  "CONTRIBUTORS",
+  "CHANGELOG",
+  "README",
+  "CODEOWNERS",
+]);
 const SINGLE_LABEL_HOSTNAMES = new Set(["localhost"]);
 // Allowlists, not full public-suffix detection: treating every dotted first
 // segment as a host would swallow real paths like `conf.d/x.conf` or
@@ -298,10 +329,14 @@ export function resolveInlineCodeFileLinkMeta(
   const resolved = resolveMarkdownFileLinkMeta(candidate, cwd);
   if (resolved) return resolved;
 
-  // `Makefile:12` — extensionless bare names fail the generic markdown-link
-  // candidate patterns, but here the :line suffix already marked the span as
-  // a file reference.
-  if (cwd && BARE_EXTENSIONLESS_POSITION_PATTERN.test(candidate)) {
+  // `Makefile:12` — conventional extensionless names fail the generic
+  // markdown-link candidate patterns, but here the :line suffix already
+  // marked the span as a file reference.
+  if (
+    cwd &&
+    BARE_EXTENSIONLESS_POSITION_PATTERN.test(candidate) &&
+    EXTENSIONLESS_FILE_NAMES.has(candidate.replace(POSITION_SUFFIX_PATTERN, ""))
+  ) {
     return buildFileLinkMetaFromTarget(resolvePathLinkTarget(candidate, cwd), cwd);
   }
   return null;
