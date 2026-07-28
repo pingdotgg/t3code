@@ -387,7 +387,9 @@ function AboutVersionSection() {
   );
 }
 
-export function useSettingsRestore(onRestored?: () => void) {
+export type SettingsOwnership = "client" | "environment";
+
+export function useSettingsRestore(ownership: SettingsOwnership, onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -397,8 +399,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
 
-  const changedSettingLabels = useMemo(
-    () => [
+  const changedSettingLabels = useMemo(() => {
+    const clientSettingLabels = [
       ...(theme !== "system" ? ["Theme"] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
@@ -418,6 +420,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
+        ? ["Archive confirmation"]
+        : []),
+      ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
+        ? ["Delete confirmation"]
+        : []),
+    ];
+    const environmentSettingLabels = [
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -439,34 +449,29 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
-      ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
-        ? ["Archive confirmation"]
-        : []),
-      ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
-        ? ["Delete confirmation"]
-        : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
-    ],
-    [
-      isTextGenerationModelDirty,
-      settings.autoOpenPlanSidebar,
-      settings.confirmThreadArchive,
-      settings.confirmThreadDelete,
-      settings.addProjectBaseDirectory,
-      settings.defaultThreadEnvMode,
-      settings.newWorktreesStartFromOrigin,
-      settings.diffIgnoreWhitespace,
-      settings.glassOpacity,
-      settings.automaticGitFetchInterval,
-      settings.enableAssistantStreaming,
-      settings.enableProviderUpdateChecks,
-      settings.sidebarProjectGroupingMode,
-      settings.sidebarThreadPreviewCount,
-      settings.timestampFormat,
-      settings.wordWrap,
-      theme,
-    ],
-  );
+    ];
+    return ownership === "client" ? clientSettingLabels : environmentSettingLabels;
+  }, [
+    isTextGenerationModelDirty,
+    ownership,
+    settings.autoOpenPlanSidebar,
+    settings.confirmThreadArchive,
+    settings.confirmThreadDelete,
+    settings.addProjectBaseDirectory,
+    settings.defaultThreadEnvMode,
+    settings.newWorktreesStartFromOrigin,
+    settings.diffIgnoreWhitespace,
+    settings.glassOpacity,
+    settings.automaticGitFetchInterval,
+    settings.enableAssistantStreaming,
+    settings.enableProviderUpdateChecks,
+    settings.sidebarProjectGroupingMode,
+    settings.sidebarThreadPreviewCount,
+    settings.timestampFormat,
+    settings.wordWrap,
+    theme,
+  ]);
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
@@ -478,6 +483,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
+    if (ownership === "client") {
     setTheme("system");
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -487,18 +493,22 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+        confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+        confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      });
+    } else {
+      updateSettings({
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-      confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
     });
+    }
     onRestored?.();
-  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
+  }, [changedSettingLabels, onRestored, ownership, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -506,7 +516,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
-export function GeneralSettingsPanel() {
+function OwnershipSettingsPanel({ ownership }: { ownership: SettingsOwnership }) {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -554,7 +564,9 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="General">
+      <SettingsSection title={ownership === "client" ? "Client" : "Environment"}>
+        {ownership === "client" ? (
+          <>
         <SettingsRow
           title="Theme"
           description="Choose how T3 Code looks across the app."
@@ -644,7 +656,8 @@ export function GeneralSettingsPanel() {
                 label="project grouping"
                 onClick={() =>
                   updateSettings({
-                    sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+                        sidebarProjectGroupingMode:
+                          DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
                   })
                 }
               />
@@ -761,7 +774,11 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+          </>
+        ) : null}
 
+        {ownership === "environment" ? (
+          <>
         <SettingsRow
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."
@@ -799,7 +816,8 @@ export function GeneralSettingsPanel() {
                 label="provider update checks"
                 onClick={() =>
                   updateSettings({
-                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+                        enableProviderUpdateChecks:
+                          DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
                   })
                 }
               />
@@ -815,7 +833,10 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+          </>
+        ) : null}
 
+        {ownership === "client" ? (
         <SettingsRow
           title="Auto-open task panel"
           description="Open the right-side plan and task panel automatically when steps appear."
@@ -841,7 +862,10 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        ) : null}
 
+        {ownership === "environment" ? (
+          <>
         <SettingsRow
           title="New threads"
           description="Pick the default workspace mode for newly created draft threads."
@@ -945,7 +969,11 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+          </>
+        ) : null}
 
+        {ownership === "client" ? (
+          <>
         <SettingsRow
           title="Archive confirmation"
           description="Require a second click on the inline archive action before a thread is archived."
@@ -997,7 +1025,10 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+          </>
+        ) : null}
 
+        {ownership === "environment" ? (
         <SettingsRow
           title="Text generation model"
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
@@ -1071,8 +1102,10 @@ export function GeneralSettingsPanel() {
             </div>
           }
         />
+        ) : null}
       </SettingsSection>
 
+      {ownership === "client" ? (
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
@@ -1082,6 +1115,9 @@ export function GeneralSettingsPanel() {
             description="Current version of the application."
           />
         )}
+        </SettingsSection>
+      ) : (
+        <SettingsSection title="Diagnostics">
         <SettingsRow
           title="Diagnostics"
           description={diagnosticsDescription}
@@ -1092,8 +1128,17 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+      )}
     </SettingsPageContainer>
   );
+}
+
+export function GeneralSettingsPanel() {
+  return <OwnershipSettingsPanel ownership="client" />;
+}
+
+export function EnvironmentSettingsPanel() {
+  return <OwnershipSettingsPanel ownership="environment" />;
 }
 
 export function ProviderSettingsPanel() {
