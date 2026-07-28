@@ -145,7 +145,7 @@ describe("cached VCS refs", () => {
     registry.dispose();
   });
 
-  it.effect("forces a repository snapshot refresh for filtered ref requests", () =>
+  it.effect("preserves the caller's repository snapshot refresh policy", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const requests = yield* Ref.make<ReadonlyArray<VcsListRefsInput>>([]);
@@ -176,6 +176,34 @@ describe("cached VCS refs", () => {
         ).pipe(Stream.runHead);
 
         expect(yield* Ref.get(requests)).toEqual([
+          {
+            cwd: "/repo",
+            limit: 20,
+            query: "release",
+            refKind: "remote",
+          },
+        ]);
+
+        yield* Stream.unwrap(
+          makeCachedVcsRefsChanges({
+            cwd: "/repo",
+            limit: 20,
+            query: "release",
+            refKind: "remote",
+            refresh: true,
+          }).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        ).pipe(Stream.runHead);
+
+        expect(yield* Ref.get(requests)).toEqual([
+          {
+            cwd: "/repo",
+            limit: 20,
+            query: "release",
+            refKind: "remote",
+          },
           {
             cwd: "/repo",
             limit: 20,

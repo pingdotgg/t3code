@@ -139,7 +139,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
         )
       : Option.none<VcsListRefsResult>();
   const refresh = Effect.fn("CachedVcsRefsState.refresh")(function* () {
-    const refs = yield* request(WS_METHODS.vcsListRefs, { ...input, refresh: true }).pipe(
+    const refs = yield* request(WS_METHODS.vcsListRefs, input).pipe(
       Effect.provideService(EnvironmentSupervisor, supervisor),
     );
     const persist = cache.saveVcsRefs(environmentId, input.cwd, refs).pipe(

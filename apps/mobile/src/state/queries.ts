@@ -71,7 +71,6 @@ export function useBranches(input: {
           input: {
             cwd: input.cwd,
             ...(query.length > 0 ? { query } : {}),
-            ...(query.length === 0 ? { refresh: true } : {}),
             limit: VCS_REF_LIST_LIMIT,
           },
         })
