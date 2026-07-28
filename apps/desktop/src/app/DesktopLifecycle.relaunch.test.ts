@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Skip predicate runs at collection time, outside any Effect runtime.
 import * as NodeFS from "node:fs";
 
 import { assert, describe, it } from "@effect/vitest";
@@ -83,14 +84,23 @@ describe("resolveDesktopRelaunchPlan", () => {
 describe("buildAppImageRelaunchShellCommand", () => {
   it.effect("quotes the AppImage path and delays before exec", () =>
     Effect.sync(() => {
-      assert.equal(
-        buildAppImageRelaunchShellCommand({
-          appImagePath: "/home/user/T3 Code.AppImage",
-          args: ["--no-sandbox"],
-          delayMs: 1_000,
-        }),
-        `sleep 1 && exec ${posixShellSingleQuote("/home/user/T3 Code.AppImage")} ${posixShellSingleQuote("--no-sandbox")}`,
+      const command = buildAppImageRelaunchShellCommand({
+        appImagePath: "/home/user/T3 Code.AppImage",
+        args: ["--no-sandbox"],
+        delayMs: 1_000,
+      });
+
+      assert.isTrue(
+        command.endsWith(
+          `sleep 1 && exec ${posixShellSingleQuote("/home/user/T3 Code.AppImage")} ${posixShellSingleQuote("--no-sandbox")}`,
+        ),
+        command,
       );
+      // Inherited Chromium fds keep the outgoing AppImage's FUSE mount busy, so
+      // they must be dropped before the re-exec — and before the sleep, so the
+      // unmount can happen during it.
+      assert.isTrue(command.startsWith("for fd in /proc/$$/fd/*;"), command);
+      assert.isTrue(command.indexOf("exec $n>&-") < command.indexOf("sleep 1"), command);
 
       assert.equal(posixShellSingleQuote("it's"), `'it'\\''s'`);
     }),

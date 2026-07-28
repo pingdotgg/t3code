@@ -57,6 +57,25 @@ export function posixShellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+/**
+ * Drop file descriptors inherited from the exiting app before re-exec.
+ *
+ * Chromium keeps fds open without CLOEXEC (`app.asar`, `icudtl.dat`, the `.pak`
+ * files, the mount directory itself), and `spawn` cannot close them for us.
+ * Inherited through this helper's `exec`, they keep the *outgoing* AppImage's
+ * FUSE mount busy forever: its runtime process parks in `fuse_dev_do_read` and
+ * never unmounts, so every restart strands a mount and a process.
+ *
+ * The multi-digit `exec N>&-` is inside an `eval` string on purpose. Shells
+ * differ on whether they accept fd numbers above 9, and a parse error in the
+ * script body would mean never reaching the exec at all — an app that quits and
+ * never returns. Deferring the parse to `eval` makes the worst case "fds stay
+ * open", not "the app is gone".
+ */
+const CLOSE_INHERITED_FDS_SNIPPET =
+  'for fd in /proc/$$/fd/*; do n=${fd##*/}; case "$n" in 0|1|2) continue;; esac; ' +
+  'eval "exec $n>&-" 2>/dev/null || true; done';
+
 export function buildAppImageRelaunchShellCommand(input: {
   readonly appImagePath: string;
   readonly args: readonly string[];
@@ -71,5 +90,7 @@ export function buildAppImageRelaunchShellCommand(input: {
   const quotedPath = posixShellSingleQuote(input.appImagePath);
   const quotedArgs = input.args.map(posixShellSingleQuote).join(" ");
   const execTarget = quotedArgs.length > 0 ? `${quotedPath} ${quotedArgs}` : quotedPath;
-  return `sleep ${sleepSeconds} && exec ${execTarget}`;
+  // Close first, then sleep: releasing the fds up front lets the outgoing
+  // mount unmount *during* the delay rather than after it.
+  return `${CLOSE_INHERITED_FDS_SNIPPET}; sleep ${sleepSeconds} && exec ${execTarget}`;
 }
