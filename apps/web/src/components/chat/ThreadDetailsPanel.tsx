@@ -37,6 +37,7 @@ export interface ThreadDetailsPanelProps {
   environmentConnection: EnvironmentConnectionPresentation | null;
   threadId: ThreadId;
   draftId?: DraftId;
+  isProjectlessConversation: boolean;
   activeProjectName: string | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -119,104 +120,118 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           props.mode === "inline" ? "max-h-full" : "max-h-[calc(100dvh-6.5rem)]",
         )}
       >
-        <section aria-labelledby="thread-details-workspace-heading">
-          <div className="flex min-h-10 items-center justify-between gap-3 px-3.5 pb-1 pt-3">
-            <h3
-              id="thread-details-workspace-heading"
-              className="text-[11px] font-medium text-muted-foreground"
-            >
-              Workspace
-            </h3>
-          </div>
+        {!props.isProjectlessConversation ? (
+          <section aria-labelledby="thread-details-workspace-heading">
+            <div className="flex min-h-10 items-center justify-between gap-3 px-3.5 pb-1 pt-3">
+              <h3
+                id="thread-details-workspace-heading"
+                className="text-[11px] font-medium text-muted-foreground"
+              >
+                Workspace
+              </h3>
+            </div>
 
-          {connectionIssue ? (
-            <div className="mx-3 mb-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-              <div className="flex gap-2">
-                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium">Environment unavailable</p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                    {props.environmentConnection?.error ??
-                      "Reconnect this environment before sending messages or running actions."}
-                  </p>
-                  <div className="mt-2 flex items-center gap-1.5">
-                    <Button
-                      size="xs"
-                      disabled={isReconnecting}
-                      onClick={props.onReconnectEnvironment}
-                    >
-                      {isReconnecting ? "Reconnecting..." : "Reconnect"}
-                    </Button>
-                    <Button size="xs" variant="ghost" onClick={props.onOpenConnectionSettings}>
-                      Connections
-                    </Button>
+            {connectionIssue ? (
+              <div className="mx-3 mb-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
+                <div className="flex gap-2">
+                  <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium">Environment unavailable</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                      {props.environmentConnection?.error ??
+                        "Reconnect this environment before sending messages or running actions."}
+                    </p>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <Button
+                        size="xs"
+                        disabled={isReconnecting}
+                        onClick={props.onReconnectEnvironment}
+                      >
+                        {isReconnecting ? "Reconnecting..." : "Reconnect"}
+                      </Button>
+                      <Button size="xs" variant="ghost" onClick={props.onOpenConnectionSettings}>
+                        Connections
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {props.versionMismatch ? (
-            <div className="mx-3 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium">Client and server versions differ</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                  Client {props.versionMismatch.clientVersion} · {props.versionMismatch.serverLabel}{" "}
-                  {props.versionMismatch.serverVersion}
-                </p>
+            {props.versionMismatch ? (
+              <div className="mx-3 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium">Client and server versions differ</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                    Client {props.versionMismatch.clientVersion} ·{" "}
+                    {props.versionMismatch.serverLabel} {props.versionMismatch.serverVersion}
+                  </p>
+                </div>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Dismiss version mismatch warning"
+                  onClick={props.onDismissVersionMismatch}
+                >
+                  <XIcon className="size-3.5" />
+                </Button>
               </div>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Dismiss version mismatch warning"
-                onClick={props.onDismissVersionMismatch}
-              >
-                <XIcon className="size-3.5" />
-              </Button>
+            ) : null}
+
+            <div className="flex flex-col px-2 pb-2.5">
+              {props.availableEnvironments.length > 1 ? (
+                <BranchToolbarEnvironmentSelector
+                  displayMode="panel"
+                  envLocked={props.envLocked}
+                  environmentId={props.environmentId}
+                  availableEnvironments={props.availableEnvironments}
+                  onEnvironmentChange={props.onEnvironmentChange}
+                />
+              ) : null}
+
+              <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
+
+              {props.showOpenInPicker ? (
+                <OpenInPicker
+                  environmentId={props.environmentId}
+                  keybindings={props.keybindings}
+                  availableEditors={props.availableEditors}
+                  openInCwd={props.gitCwd}
+                  displayMode="panel"
+                />
+              ) : null}
+
+              {props.activeProjectScripts ? (
+                <ProjectScriptsControl
+                  displayMode="panel"
+                  scripts={props.activeProjectScripts}
+                  fileScripts={fileScripts}
+                  keybindings={props.keybindings}
+                  preferredScriptId={props.preferredScriptId}
+                  onRunScript={props.onRunProjectScript}
+                  onAddScript={props.onAddProjectScript}
+                  onUpdateScript={props.onUpdateProjectScript}
+                  onDeleteScript={props.onDeleteProjectScript}
+                />
+              ) : null}
             </div>
-          ) : null}
+          </section>
+        ) : props.draftId ? (
+          <section className="px-3.5 py-3" aria-labelledby="thread-details-delegation-heading">
+            <h3
+              id="thread-details-delegation-heading"
+              className="text-[11px] font-medium text-muted-foreground"
+            >
+              Delegated tasks
+            </h3>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              Coding tasks Hermes delegates through T3 Code will appear here.
+            </p>
+          </section>
+        ) : null}
 
-          <div className="flex flex-col px-2 pb-2.5">
-            {props.availableEnvironments.length > 1 ? (
-              <BranchToolbarEnvironmentSelector
-                displayMode="panel"
-                envLocked={props.envLocked}
-                environmentId={props.environmentId}
-                availableEnvironments={props.availableEnvironments}
-                onEnvironmentChange={props.onEnvironmentChange}
-              />
-            ) : null}
-
-            <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
-
-            {props.showOpenInPicker ? (
-              <OpenInPicker
-                environmentId={props.environmentId}
-                keybindings={props.keybindings}
-                availableEditors={props.availableEditors}
-                openInCwd={props.gitCwd}
-                displayMode="panel"
-              />
-            ) : null}
-
-            {props.activeProjectScripts ? (
-              <ProjectScriptsControl
-                displayMode="panel"
-                scripts={props.activeProjectScripts}
-                fileScripts={fileScripts}
-                keybindings={props.keybindings}
-                preferredScriptId={props.preferredScriptId}
-                onRunScript={props.onRunProjectScript}
-                onAddScript={props.onAddProjectScript}
-                onUpdateScript={props.onUpdateProjectScript}
-                onDeleteScript={props.onDeleteProjectScript}
-              />
-            ) : null}
-          </div>
-        </section>
-
-        {props.gitCwd ? (
+        {!props.isProjectlessConversation && props.gitCwd ? (
           <section
             aria-labelledby="thread-details-version-control-heading"
             className="border-t border-border/65"
@@ -246,7 +261,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           </section>
         ) : null}
 
-        {!props.draftId ? (
+        {!props.isProjectlessConversation && !props.draftId ? (
           <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
         ) : null}
 

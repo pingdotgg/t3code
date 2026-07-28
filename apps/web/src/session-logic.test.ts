@@ -8,6 +8,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
@@ -22,11 +23,423 @@ import {
   findLatestProposedPlan,
   isLatestRunSettled,
   type TimelineEntry,
+  workLogEntryIsVisible,
 } from "./session-logic";
 import { makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
 
 describe("V2 session presentation", () => {
+  it("renders provider-hydrated messages that do not have turn-item identities", () => {
+    const threadId = ThreadId.make("thread-hermes-imported-history");
+    const userAt = DateTime.makeUnsafe("2026-07-25T12:00:00.000Z");
+    const assistantAt = DateTime.makeUnsafe("2026-07-25T12:00:01.000Z");
+    const userMessageId = MessageId.make("message-hermes-history-user");
+    const assistantMessageId = MessageId.make("message-hermes-history-assistant");
+    const attachmentId = "thread-hermes-imported-history-00000000-0000-0000-0000-000000000001";
+    const projectionMessages: ReadonlyArray<OrchestrationV2ConversationMessage> = [
+      {
+        id: userMessageId,
+        threadId,
+        runId: null,
+        nodeId: null,
+        role: "user",
+        text: "Existing question",
+        attachments: [
+          {
+            type: "image",
+            id: attachmentId,
+            name: "img_fixture.webp",
+            mimeType: "image/webp",
+            sizeBytes: 12,
+          },
+        ],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "provider",
+        createdAt: userAt,
+        updatedAt: userAt,
+      },
+      {
+        id: assistantMessageId,
+        threadId,
+        runId: null,
+        nodeId: null,
+        role: "assistant",
+        text: "Existing answer",
+        attachments: [],
+        streaming: false,
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: assistantAt,
+        updatedAt: assistantAt,
+      },
+    ];
+    const assistantItem = {
+      id: TurnItemId.make("item-hermes-history-assistant"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: assistantAt,
+      completedAt: assistantAt,
+      updatedAt: assistantAt,
+      type: "assistant_message" as const,
+      messageId: assistantMessageId,
+      text: "Existing answer",
+      streaming: false,
+    } satisfies OrchestrationV2TurnItem;
+    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
+      {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: assistantItem.id,
+        item: assistantItem,
+      },
+    ];
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems,
+      projectionMessages,
+      optimisticMessages: [],
+      attachmentUrlById: new Map([[attachmentId, "/assets/imported-image"]]),
+    });
+
+    expect(
+      entries.flatMap((entry) =>
+        entry.kind === "message" ? [[entry.message.role, entry.message.text]] : [],
+      ),
+    ).toEqual([
+      ["user", "Existing question"],
+      ["assistant", "Existing answer"],
+    ]);
+    expect(
+      entries.find((entry) => entry.kind === "message" && entry.message.id === userMessageId),
+    ).toMatchObject({
+      message: {
+        attachments: [
+          {
+            id: attachmentId,
+            previewUrl: "/assets/imported-image",
+          },
+        ],
+      },
+    });
+  });
+
+  it("skips provider-hydrated orphan rows whose text is already committed", () => {
+    const threadId = ThreadId.make("thread-hermes-dedup");
+    const at = DateTime.makeUnsafe("2026-07-25T12:00:00.000Z");
+    const committedMessageId = MessageId.make("message-web-user");
+    const makeProjectionMessage = (
+      id: string,
+      text: string,
+      createdAt: DateTime.Utc = at,
+    ): OrchestrationV2ConversationMessage => ({
+      id: MessageId.make(id),
+      threadId,
+      runId: null,
+      nodeId: null,
+      role: "user",
+      text,
+      attachments: [],
+      streaming: false,
+      createdBy: "user",
+      creationSource: "provider",
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const userItem = {
+      id: TurnItemId.make("item-web-user"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+      type: "user_message" as const,
+      messageId: committedMessageId,
+      text: "make me a script",
+      attachments: [],
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      inputIntent: "turn_start" as const,
+    } satisfies OrchestrationV2TurnItem;
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: userItem.id,
+          item: userItem,
+        },
+      ],
+      projectionMessages: [
+        // Hydrated duplicate of the committed web message: skipped.
+        makeProjectionMessage("message:provider:hermes:native-item:abc123", "make me a script"),
+        // Distinct hydrated history: kept.
+        makeProjectionMessage("message:provider:hermes:native-item:def456", "another question"),
+        // Imported history reusing the same text once the committed
+        // occurrence budget is spent: kept.
+        makeProjectionMessage(
+          "message:provider:hermes:native-item:old789",
+          "make me a script",
+          DateTime.makeUnsafe("2026-07-20T12:00:00.000Z"),
+        ),
+        // Non-hydrated orphan rows are never text-deduped: kept.
+        makeProjectionMessage("message-app-created", "another question"),
+      ],
+      optimisticMessages: [],
+    });
+
+    expect(
+      entries.flatMap((entry) => (entry.kind === "message" ? [entry.message.text] : [])),
+    ).toEqual(["make me a script", "make me a script", "another question", "another question"]);
+  });
+
+  it("merges attachment-bearing hydrated echoes onto their committed entry", () => {
+    const threadId = ThreadId.make("thread-hermes-echo-attach");
+    const at = DateTime.makeUnsafe("2026-07-25T12:00:00.000Z");
+    const committedMessageId = MessageId.make("message-web-user-attach");
+    const attachmentId = "thread-hermes-echo-attach-00000000-0000-0000-0000-000000000001";
+    const userItem = {
+      id: TurnItemId.make("item-web-user-attach"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+      type: "user_message" as const,
+      messageId: committedMessageId,
+      text: "look at this",
+      attachments: [],
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      inputIntent: "turn_start" as const,
+    } satisfies OrchestrationV2TurnItem;
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: userItem.id,
+          item: userItem,
+        },
+      ],
+      projectionMessages: [
+        {
+          id: MessageId.make("message:provider:hermes:native-item:echo1"),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: "look at this",
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "photo.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+          streaming: false,
+          createdBy: "user",
+          creationSource: "provider",
+          createdAt: at,
+          updatedAt: at,
+        },
+      ],
+      attachmentUrlById: new Map([[attachmentId, "blob:photo"]]),
+      optimisticMessages: [],
+    });
+
+    const messages = entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : []));
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe(committedMessageId);
+    expect(messages[0]?.attachments).toEqual([
+      {
+        type: "image",
+        id: attachmentId,
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        previewUrl: "blob:photo",
+      },
+    ]);
+  });
+
+  it("merges durable attachments into committed assistant turn items", () => {
+    const threadId = ThreadId.make("thread-hermes-media");
+    const at = DateTime.makeUnsafe("2026-07-25T12:00:00.000Z");
+    const assistantMessageId = MessageId.make("message-hermes-media-assistant");
+    const attachmentId = "thread-hermes-media-00000000-0000-0000-0000-000000000002";
+    const projectionMessages: ReadonlyArray<OrchestrationV2ConversationMessage> = [
+      {
+        id: assistantMessageId,
+        threadId,
+        runId: null,
+        nodeId: null,
+        role: "assistant",
+        text: "",
+        attachments: [
+          {
+            type: "image",
+            id: attachmentId,
+            name: "generated.png",
+            mimeType: "image/png",
+            sizeBytes: 34,
+          },
+        ],
+        streaming: false,
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: at,
+        updatedAt: at,
+      },
+    ];
+    const assistantItem = {
+      id: TurnItemId.make("item-hermes-media-assistant"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+      type: "assistant_message" as const,
+      messageId: assistantMessageId,
+      text: "",
+      streaming: false,
+    } satisfies OrchestrationV2TurnItem;
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: assistantItem.id,
+          item: assistantItem,
+        },
+      ],
+      projectionMessages,
+      optimisticMessages: [],
+      attachmentUrlById: new Map([[attachmentId, "/assets/generated-image"]]),
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: "message",
+      message: {
+        id: assistantMessageId,
+        role: "assistant",
+        attachments: [
+          {
+            id: attachmentId,
+            previewUrl: "/assets/generated-image",
+          },
+        ],
+      },
+    });
+  });
+
+  it("keeps projected V2 tool calls visible throughout their lifecycle", () => {
+    const now = DateTime.makeUnsafe("2026-07-25T12:00:00.000Z");
+    const threadId = ThreadId.make("thread-hermes-tools");
+    const statuses = ["running", "completed", "failed"] as const;
+    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = statuses.map(
+      (status, position) => {
+        const item = {
+          id: TurnItemId.make(`tool-${status}`),
+          threadId,
+          runId: RunId.make("run-hermes-tools"),
+          nodeId: NodeId.make(`node-${status}`),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: position,
+          status,
+          title: null,
+          startedAt: now,
+          completedAt: status === "running" ? null : now,
+          updatedAt: now,
+          type: "dynamic_tool" as const,
+          toolName: "browser.search",
+          input: { query: status },
+          ...(status === "running" ? {} : { output: { status } }),
+        } satisfies OrchestrationV2TurnItem;
+        return {
+          position,
+          visibility: "local" as const,
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        };
+      },
+    );
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems,
+      optimisticMessages: [],
+    });
+    const workEntries = entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : []));
+
+    expect(workEntries.map((entry) => entry.toolLifecycleStatus)).toEqual([
+      "inProgress",
+      "completed",
+      "failed",
+    ]);
+    expect(workEntries.every(workLogEntryIsVisible)).toBe(true);
+    expect(workEntries.map((entry) => entry.toolData)).toEqual([
+      { input: { query: "running" }, output: undefined },
+      { input: { query: "completed" }, output: { status: "completed" } },
+      { input: { query: "failed" }, output: { status: "failed" } },
+    ]);
+
+    expect(
+      workLogEntryIsVisible({
+        id: "legacy-placeholder",
+        createdAt: "2026-07-25T12:00:00.000Z",
+        label: "Tool call",
+        tone: "tool",
+        toolLifecycleStatus: "inProgress",
+      }),
+    ).toBe(false);
+  });
+
   it("uses run status as the settlement boundary", () => {
     const runId = RunId.make("run-1");
     expect(

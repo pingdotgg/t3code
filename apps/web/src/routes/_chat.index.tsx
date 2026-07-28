@@ -12,12 +12,14 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
   useAllEnvironmentShellsBootstrapped,
   useProjects,
+  useServerConfigs,
   useThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { cn } from "~/lib/utils";
+import { isT3WorkBackingProject } from "~/t3WorkProject";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 function ChatIndexRouteView() {
@@ -39,21 +41,34 @@ function ChatIndexRouteView() {
 function IndexDraftLanding() {
   const projects = useProjects();
   const threads = useThreadShells();
+  const serverConfigs = useServerConfigs();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
+  // The index draft is the Code composer; the T3 Work backing project is
+  // Hermes-only, so it must never be the auto-selected draft target.
+  const codeProjects = useMemo(
+    () => projects.filter((project) => !isT3WorkBackingProject(project, serverConfigs)),
+    [projects, serverConfigs],
+  );
   const mostRecentProject = useMemo(
     () =>
       bootstrapped
-        ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
+        ? (sortScopedProjectsForSidebar(codeProjects, threads, "updated_at")[0] ?? null)
         : null,
-    [bootstrapped, projects, threads],
+    [bootstrapped, codeProjects, threads],
   );
 
   useEffect(() => {
     if (mostRecentProject === null || startingRef.current) {
+      return;
+    }
+    // Until the environment's server config arrives, the Work-backing check
+    // above cannot classify this project; starting the draft now could latch
+    // onto the T3 Work project. The effect re-runs once configs load.
+    if (!serverConfigs.has(mostRecentProject.environmentId)) {
       return;
     }
     startingRef.current = true;
@@ -63,7 +78,7 @@ function IndexDraftLanding() {
       startingRef.current = false;
       setStartState((state) => ({ ...state, failed: true }));
     });
-  }, [handleNewThread, mostRecentProject, startState.retryRequest]);
+  }, [handleNewThread, mostRecentProject, serverConfigs, startState.retryRequest]);
 
   if (!bootstrapped) {
     return null;

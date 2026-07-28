@@ -7,18 +7,42 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
+import * as ServerConfig from "../../../config.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+
+const ToolsListPayload = Schema.fromJsonString(
+  Schema.Struct({
+    result: Schema.Struct({
+      tools: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          inputSchema: Schema.Struct({ type: Schema.optional(Schema.String) }),
+          annotations: Schema.optional(
+            Schema.Struct({
+              readOnlyHint: Schema.optional(Schema.Boolean),
+              destructiveHint: Schema.optional(Schema.Boolean),
+              openWorldHint: Schema.optional(Schema.Boolean),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+const decodeToolsListPayload = Schema.decodeUnknownEffect(ToolsListPayload);
 
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
@@ -29,6 +53,9 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
+  Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({}),
+  WorkspacePaths.layer,
+  ServerConfig.layerTest(process.cwd(), { prefix: "mcp-registration-test-" }),
 );
 
 it.effect("production mcp layer lists worktree tools over http", () =>
@@ -52,6 +79,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const registry = McpSessionRegistry.issueActiveMcpCredential({
         threadId: ThreadId.make("thread-scratch"),
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        capabilities: new Set(["worktree"]),
       });
       const credential = yield* registry;
       expect(credential).toBeDefined();
@@ -83,28 +111,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         ),
       });
       const bodyText = yield* listResponse.text;
-      const ToolsListPayload = Schema.fromJsonString(
-        Schema.Struct({
-          result: Schema.Struct({
-            tools: Schema.Array(
-              Schema.Struct({
-                name: Schema.String,
-                inputSchema: Schema.Struct({ type: Schema.optional(Schema.String) }),
-                annotations: Schema.optional(
-                  Schema.Struct({
-                    readOnlyHint: Schema.optional(Schema.Boolean),
-                    destructiveHint: Schema.optional(Schema.Boolean),
-                    openWorldHint: Schema.optional(Schema.Boolean),
-                  }),
-                ),
-              }),
-            ),
-          }),
-        }),
-      );
-      const payload = yield* Schema.decodeUnknownEffect(ToolsListPayload)(
-        bodyText.match(/\{.*\}/s)![0],
-      );
+      const payload = yield* decodeToolsListPayload(bodyText.match(/\{.*\}/s)![0]);
       const tools = payload.result.tools;
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("t3_worktree_handoff");

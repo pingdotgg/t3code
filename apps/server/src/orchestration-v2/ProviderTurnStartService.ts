@@ -21,6 +21,7 @@ import {
 } from "./ContextHandoffService.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { canRouteRelatedSubagent, RunExecutionServiceV2 } from "./RunExecutionService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -35,8 +36,18 @@ export class ProviderTurnStartError extends Schema.TaggedErrorClass<ProviderTurn
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
+export function canTerminalizeProviderTurnStartFailure(
+  status: OrchestrationV2Run["status"],
+): boolean {
+  return status === "starting" || status === "running";
+}
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+  }) => Effect.Effect<void, ProviderTurnStartError>;
+  readonly failPermanently: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, ProviderTurnStartError>;
@@ -459,6 +470,8 @@ export const layer: Layer.Layer<
             }),
             Effect.catchCause(() => Effect.succeed(false)),
           ),
+        captureFilesystemCheckpoint:
+          session.providerSession.capabilities.checkpointing.appCanCheckpointFilesystem,
         message: {
           messageId: message.id,
           text:
@@ -477,9 +490,134 @@ export const layer: Layer.Layer<
       });
     });
 
+    const failPermanently = Effect.fn("orchestrationV2.providerTurnStart.failPermanently")(
+      function* (input: { readonly threadId: ThreadId; readonly runId: RunId }) {
+        const projection = yield* projectionStore.getThreadProjection(input.threadId);
+        const run = projection.runs.find((candidate) => candidate.id === input.runId);
+        if (run === undefined) {
+          return yield* new ProviderTurnStartError({
+            runId: input.runId,
+            cause: `Run ${input.runId} was not found.`,
+          });
+        }
+        if (!canTerminalizeProviderTurnStartFailure(run.status)) {
+          return;
+        }
+        const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
+        const attempt = projection.attempts.find(
+          (candidate) => candidate.id === run.activeAttemptId,
+        );
+        const providerThread = projection.providerThreads.find(
+          (candidate) => candidate.id === run.providerThreadId,
+        );
+        if (rootNode === undefined || attempt === undefined || providerThread === undefined) {
+          return yield* new ProviderTurnStartError({
+            runId: input.runId,
+            cause: `Run ${input.runId} is missing its execution projection state.`,
+          });
+        }
+
+        const now = yield* DateTime.now;
+        const failure = makeProviderFailure({
+          message: "Could not connect to the provider after repeated attempts.",
+          code: "provider_turn_start_failed",
+          class: "transport_error",
+          retryable: false,
+        });
+        const errorItemId = idAllocator.derive.turnItemFromProviderItem({
+          driver: providerThread.driver,
+          nativeItemId: `provider-turn-start-failure:${run.id}`,
+        });
+        const errorItemOrdinal =
+          Math.max(
+            run.ordinal * 1_000_000,
+            ...projection.turnItems
+              .filter((item) => item.runId === run.id)
+              .map((item) => item.ordinal),
+          ) + 1;
+        yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: run.status,
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "run-attempt.updated",
+              threadId: projection.thread.id,
+              runId: run.id,
+              nodeId: rootNode.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...attempt, status: "failed", completedAt: now },
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "node.updated",
+              threadId: projection.thread.id,
+              runId: run.id,
+              nodeId: rootNode.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...rootNode, status: "failed", completedAt: now },
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "turn-item.updated",
+              threadId: projection.thread.id,
+              runId: run.id,
+              nodeId: rootNode.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: errorItemId,
+                threadId: projection.thread.id,
+                runId: run.id,
+                nodeId: rootNode.id,
+                providerThreadId: providerThread.id,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: errorItemOrdinal,
+                status: "failed",
+                title: "Provider failed to start",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "error",
+                failure,
+              },
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "run.updated",
+              threadId: projection.thread.id,
+              runId: run.id,
+              nodeId: rootNode.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+          ],
+        });
+        yield* Effect.logWarning("Provider turn start permanently failed", {
+          threadId: input.threadId,
+          runId: input.runId,
+        });
+      },
+    );
+
     return ProviderTurnStartServiceV2.of({
       start: (input) =>
         start(input).pipe(
+          Effect.mapError((cause) =>
+            isProviderTurnStartError(cause)
+              ? cause
+              : new ProviderTurnStartError({ runId: input.runId, cause }),
+          ),
+        ),
+      failPermanently: (input) =>
+        failPermanently(input).pipe(
           Effect.mapError((cause) =>
             isProviderTurnStartError(cause)
               ? cause

@@ -81,6 +81,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
 export function canForkProjectedAssistantItem(input: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
+  readonly isLatestRun?: boolean;
 }): boolean {
   const item = input.projectedItem.item;
   if (item.type !== "assistant_message" || item.runId === null || item.status !== "completed") {
@@ -95,7 +96,7 @@ export function canForkProjectedAssistantItem(input: {
   const capabilities = input.capabilities;
   const canForkNatively =
     capabilities.threads.canForkThread &&
-    capabilities.threads.canForkFromTurn &&
+    (capabilities.threads.canForkFromTurn || input.isLatestRun === true) &&
     capabilities.identity.nativeThreadIds === "strong";
   return canForkNatively || capabilities.context.supportsFullThreadHandoff;
 }

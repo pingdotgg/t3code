@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetBrowserArtifactNotFoundError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -16,10 +17,15 @@ import {
 import {
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
+  isWorkspaceVideoPreviewPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
+  WORKSPACE_VIDEO_PREVIEW_EXTENSIONS,
 } from "@t3tools/shared/filePreview";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - O_NOFOLLOW open and fd-backed streaming have no Effect FileSystem equivalent.
+import * as NodeFS from "node:fs";
+import * as NodeStream from "node:stream";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -47,6 +53,7 @@ const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
+  ...WORKSPACE_VIDEO_PREVIEW_EXTENSIONS,
   ".css",
   ".js",
   ".mjs",
@@ -79,6 +86,12 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("browser-artifact"),
+    fileName: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("project-favicon"),
     workspaceRoot: Schema.String,
     relativePath: Schema.NullOr(Schema.String),
@@ -91,7 +104,18 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export interface OpenedAssetFile {
+  readonly name: string;
+  readonly lastModified: number;
+  readonly size: number;
+  readonly type: string;
+  readonly stream: () => ReadableStream<Uint8Array>;
+  readonly close: () => Promise<void>;
+}
+
+export type ResolvedAsset =
+  | { readonly kind: "file"; readonly path: string }
+  | { readonly kind: "open-file"; readonly file: OpenedAssetFile };
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -119,6 +143,62 @@ const optionOnNotFound = <A, R>(
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
     }),
   );
+
+function normalizeBrowserArtifactFileName(fileName: string): string | null {
+  const trimmed = fileName.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.includes("/") ||
+    trimmed.includes("\\") ||
+    trimmed.includes("\0") ||
+    trimmed.startsWith(".")
+  ) {
+    return null;
+  }
+  if (!isWorkspaceImagePreviewPath(trimmed) && !isWorkspaceVideoPreviewPath(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+const openBrowserArtifact = Effect.fn("AssetAccess.openBrowserArtifact")(function* (
+  browserArtifactsDir: string,
+  fileName: string,
+) {
+  const normalizedFileName = normalizeBrowserArtifactFileName(fileName);
+  if (normalizedFileName === null) return null;
+
+  const path = yield* Path.Path;
+  const artifactPath = path.join(browserArtifactsDir, normalizedFileName);
+  const handle = yield* Effect.tryPromise(() =>
+    NodeFS.promises.open(artifactPath, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW),
+  ).pipe(
+    Effect.map((value): NodeFS.promises.FileHandle | null => value),
+    Effect.orElseSucceed(() => null),
+  );
+  if (handle === null) return null;
+
+  const close = () => handle.close().catch(() => undefined);
+  const info = yield* Effect.tryPromise(() => handle.stat()).pipe(
+    Effect.map((value) => Option.some(value)),
+    Effect.orElseSucceed(() => Option.none<NodeFS.Stats>()),
+  );
+  if (Option.isNone(info) || !info.value.isFile()) {
+    yield* Effect.promise(close);
+    return null;
+  }
+  return {
+    name: normalizedFileName,
+    lastModified: info.value.mtimeMs,
+    size: info.value.size,
+    type: "",
+    stream: () =>
+      NodeStream.Readable.toWeb(
+        handle.createReadStream({ autoClose: true }),
+      ) as ReadableStream<Uint8Array>,
+    close,
+  } satisfies OpenedAssetFile;
+});
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
   function* (input: { readonly workspaceRoot: string; readonly relativePath: string }) {
@@ -234,21 +314,23 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
-        ? {
-            version: 1,
-            kind: "workspace-file-exact",
-            workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
-            expiresAt,
-          }
-        : {
-            version: 1,
-            kind: "workspace-file",
-            workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
-            expiresAt,
-          };
+      claims =
+        isWorkspaceImagePreviewPath(resolved.relativePath) ||
+        isWorkspaceVideoPreviewPath(resolved.relativePath)
+          ? {
+              version: 1,
+              kind: "workspace-file-exact",
+              workspaceRoot: canonicalWorkspaceRoot,
+              relativePath: resolved.relativePath,
+              expiresAt,
+            }
+          : {
+              version: 1,
+              kind: "workspace-file",
+              workspaceRoot: canonicalWorkspaceRoot,
+              baseRelativePath: path.dirname(resolved.relativePath),
+              expiresAt,
+            };
       fileName = path.basename(resolved.relativePath);
       break;
     }
@@ -270,6 +352,28 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         expiresAt,
       };
       fileName = path.basename(attachmentPath);
+      break;
+    }
+    case "browser-artifact": {
+      const config = yield* ServerConfig.ServerConfig;
+      const artifactFileName = normalizeBrowserArtifactFileName(input.resource.fileName);
+      const artifact =
+        artifactFileName === null
+          ? null
+          : yield* openBrowserArtifact(config.browserArtifactsDir, artifactFileName);
+      if (artifactFileName === null || artifact === null) {
+        return yield* new AssetBrowserArtifactNotFoundError({
+          resource: input.resource,
+        });
+      }
+      yield* Effect.promise(artifact.close);
+      claims = {
+        version: 1,
+        kind: "browser-artifact",
+        fileName: artifactFileName,
+        expiresAt,
+      };
+      fileName = artifactFileName;
       break;
     }
     case "project-favicon": {
@@ -385,6 +489,16 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     );
     return Option.isSome(info) && info.value.type === "File"
       ? ({ kind: "file", path: attachmentPath } satisfies ResolvedAsset)
+      : null;
+  }
+
+  if (claims.kind === "browser-artifact") {
+    const config = yield* ServerConfig.ServerConfig;
+    const artifactFileName = normalizeBrowserArtifactFileName(claims.fileName);
+    if (!artifactFileName) return null;
+    const artifact = yield* openBrowserArtifact(config.browserArtifactsDir, artifactFileName);
+    return artifact !== null
+      ? ({ kind: "open-file", file: artifact } satisfies ResolvedAsset)
       : null;
   }
 

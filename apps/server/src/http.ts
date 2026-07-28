@@ -201,6 +201,15 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
+    if (asset.kind === "open-file") {
+      return yield* HttpServerResponse.fileWeb(asset.file, {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, max-age=3600",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
       headers: {

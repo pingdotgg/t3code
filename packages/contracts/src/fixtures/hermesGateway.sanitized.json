@@ -1,0 +1,181 @@
+{
+  "sourceRevision": "2c1a38a3cc4b5727c817f007a46c377cafddde4c",
+  "sanitized": true,
+  "frames": [
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "gateway.ready",
+        "payload": {
+          "skin": "default"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": "request-001",
+      "result": {
+        "session_id": "<session-id:01>",
+        "stored_session_id": "<stored-session-id:01>",
+        "message_count": 0
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "session.info",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "model": "<redacted-content>",
+          "desktop_contract": 4
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "message.start",
+        "session_id": "<session-id:01>",
+        "payload": {}
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "message.delta",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "text": "<redacted-content>"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "tool.start",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "tool_id": "<tool-id:01>",
+          "name": "<redacted-content>",
+          "arguments": "<redacted-content>"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "tool.complete",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "tool_id": "<tool-id:01>",
+          "name": "<redacted-content>",
+          "result": "<redacted-content>"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "approval.request",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "command": "<redacted-content>",
+          "choices": ["once", "session", "deny"]
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "clarify.request",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "prompt": "<redacted-content>",
+          "questions": ["<redacted-content>"]
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "message.complete",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "text": "<redacted-content>",
+          "status": "complete"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": "request-attachment",
+      "result": {
+        "attached": true,
+        "uploaded": true,
+        "bytes": 68
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": "request-cron",
+      "result": {
+        "success": true,
+        "jobs": []
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "future.unknown",
+        "session_id": "<session-id:01>",
+        "payload": {
+          "opaque": "<redacted-content>"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "event",
+      "params": {
+        "type": "gateway.ready",
+        "payload": {
+          "skin": "default",
+          "protocol": {
+            "major": 1,
+            "minor": 0,
+            "build_revision": "<redacted-revision>",
+            "capabilities": {
+              "version": "1",
+              "session.lifecycle": "supported",
+              "event.stable_ids": "supported",
+              "mutation.stable_ids": "supported",
+              "errors.disposition": "supported",
+              "branching": {
+                "mode": "latest",
+                "stable_boundaries": false
+              }
+            }
+          },
+          "server_version": "<redacted-version>",
+          "revision": "<redacted-revision>"
+        },
+        "event_id": "<event-id:ready>",
+        "event_sequence": 17,
+        "emitted_at": "2026-07-24T00:00:00Z",
+        "session_key": "<stored-session-id:01>",
+        "run_id": "<run-id:01>",
+        "message_id": "<message-id:01>"
+      }
+    }
+  ]
+}

@@ -25,6 +25,9 @@ import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+import { HermesAcpDriver, type HermesAcpDriverEnv } from "./Drivers/HermesAcpDriver.ts";
+import { HermesDriver, type HermesDriverEnv } from "./Drivers/HermesDriver.ts";
+import { OpenClawDriver, type OpenClawDriverEnv } from "./Drivers/OpenClawDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
 
@@ -39,6 +42,9 @@ export type BuiltInDriversEnv =
   | CodexDriverEnv
   | CursorDriverEnv
   | GrokDriverEnv
+  | HermesAcpDriverEnv
+  | HermesDriverEnv
+  | OpenClawDriverEnv
   | OpenCodeDriverEnv;
 
 /**
@@ -53,4 +59,7 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GrokDriver,
   OpenCodeDriver,
   AcpRegistryDriver,
+  HermesAcpDriver,
+  OpenClawDriver,
+  HermesDriver,
 ];

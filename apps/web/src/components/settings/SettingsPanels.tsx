@@ -85,6 +85,7 @@ import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  hasEnabledHermesInstance,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
@@ -142,6 +143,7 @@ function withoutProviderInstanceFavorites(
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
   provider: definition.value,
   hasDefaultInstance: definition.hasDefaultInstance !== false,
+  defaultInstance: definition.defaultInstance,
 }));
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
@@ -1098,7 +1100,14 @@ export function GeneralSettingsPanel() {
   );
 }
 
-export function ProviderSettingsPanel() {
+export function ProviderSettingsPanel(
+  props: {
+    readonly includeDriver?: (driver: ProviderDriverKind) => boolean;
+    readonly isComingSoonDriver?: (driver: ProviderDriverKind) => boolean;
+    readonly title?: string;
+    readonly allowAddInstance?: boolean;
+  } = {},
+) {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -1127,11 +1136,12 @@ export function ProviderSettingsPanel() {
   );
   const visibleProviderSettings = PROVIDER_SETTINGS.filter(
     (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
+      (props.includeDriver?.(providerSettings.provider) ?? true) &&
+      (providerSettings.provider !== "cursor" ||
+        serverProviders.some(
+          (provider) =>
+            provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
+        )),
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -1255,15 +1265,29 @@ export function ProviderSettingsPanel() {
       }
       continue;
     }
+    const driver = providerSettings.provider;
+    const defaultInstanceId = defaultInstanceIdForDriver(driver);
+    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
+    if (providerSettings.defaultInstance !== undefined) {
+      rows.push({
+        instanceId: defaultInstanceId,
+        instance: explicitInstance ?? providerSettings.defaultInstance,
+        driver,
+        isDefault: true,
+        isDirty: explicitInstance !== undefined,
+      });
+      for (const [id, instance] of instancesByDriver.get(driver) ?? []) {
+        if (id === defaultInstanceId) continue;
+        rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+      }
+      continue;
+    }
     type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
     const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
     const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
       string,
       LegacyProviderSettings
     >;
-    const driver = providerSettings.provider;
-    const defaultInstanceId = defaultInstanceIdForDriver(driver);
-    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
     const legacyConfig = legacyProviders[providerSettings.provider]!;
     const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
     const effectiveInstance: ProviderInstanceConfig =
@@ -1288,7 +1312,7 @@ export function ProviderSettingsPanel() {
     }
   }
   for (const [driver, list] of instancesByDriver) {
-    if (visibleDriverKinds.has(driver)) continue;
+    if (visibleDriverKinds.has(driver) || props.includeDriver?.(driver) === false) continue;
     for (const [id, instance] of list) {
       rows.push({
         instanceId: id,
@@ -1298,6 +1322,9 @@ export function ProviderSettingsPanel() {
       });
     }
   }
+  const displayedRows = rows.filter(
+    (row) => row.isDefault || !(props.isComingSoonDriver?.(row.driver) ?? false),
+  );
 
   const updateProviderInstance = (
     row: InstanceRow,
@@ -1321,8 +1348,13 @@ export function ProviderSettingsPanel() {
   };
 
   const deleteProviderInstance = (id: ProviderInstanceId) => {
+    const deletedInstance = settings.providerInstances?.[id];
+    const providerInstances = withoutProviderInstanceKey(settings.providerInstances, id);
     updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+      providerInstances,
+      ...(deletedInstance?.driver === "hermes"
+        ? { enableHermes: hasEnabledHermesInstance(providerInstances) }
+        : {}),
       providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
       favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
     });
@@ -1380,13 +1412,25 @@ export function ProviderSettingsPanel() {
     >;
     const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
     const defaultLegacyProvider = defaultLegacyProviders[driverKind];
-    if (defaultLegacyProvider === undefined) return;
+    const defaultInstance = getDriverOption(driverKind)?.defaultInstance;
+    if (defaultLegacyProvider === undefined && defaultInstance === undefined) return;
+    const providerInstances = withoutProviderInstanceKey(
+      settings.providerInstances,
+      defaultInstanceId,
+    );
     updateSettings({
-      providers: {
-        ...settings.providers,
-        [driverKind]: defaultLegacyProvider,
-      } as typeof settings.providers,
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
+      ...(defaultLegacyProvider !== undefined
+        ? {
+            providers: {
+              ...settings.providers,
+              [driverKind]: defaultLegacyProvider,
+            } as typeof settings.providers,
+          }
+        : {}),
+      providerInstances,
+      ...(driverKind === "hermes"
+        ? { enableHermes: hasEnabledHermesInstance(providerInstances) }
+        : {}),
       providerModelPreferences: withoutProviderInstanceKey(
         settings.providerModelPreferences,
         defaultInstanceId,
@@ -1398,26 +1442,28 @@ export function ProviderSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Providers"
+        title={props.title ?? "Providers"}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
-                    aria-label="Add provider instance"
-                  >
-                    <PlusIcon className="size-3" />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Add provider instance</TooltipPopup>
-            </Tooltip>
+            {props.allowAddInstance !== false ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => setIsAddInstanceDialogOpen(true)}
+                      aria-label="Add provider instance"
+                    >
+                      <PlusIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Add provider instance</TooltipPopup>
+              </Tooltip>
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1442,7 +1488,7 @@ export function ProviderSettingsPanel() {
           </div>
         }
       >
-        {rows.map((row) => {
+        {displayedRows.map((row) => {
           const driverOption = getDriverOption(row.driver);
           const liveProvider = serverProviders.find(
             (candidate) => candidate.instanceId === row.instanceId,
@@ -1472,8 +1518,9 @@ export function ProviderSettingsPanel() {
             favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
           );
           const resetLabel = driverOption?.label ?? String(row.driver);
+          const isComingSoon = props.isComingSoonDriver?.(row.driver) ?? false;
           const headerAction =
-            row.isDefault && row.isDirty ? (
+            !isComingSoon && row.isDefault && row.isDirty ? (
               <SettingResetButton
                 label={`${resetLabel} provider settings`}
                 onClick={() => resetDefaultInstance(row.driver)}
@@ -1486,8 +1533,14 @@ export function ProviderSettingsPanel() {
               instance={row.instance}
               driverOption={driverOption}
               liveProvider={liveProvider}
+              effectiveEnabled={
+                row.driver === "hermes"
+                  ? settings.enableHermes && row.instance.enabled === true
+                  : undefined
+              }
               isExpanded={openInstanceDetails[row.instanceId] ?? false}
               onExpandedChange={(open) =>
+                !isComingSoon &&
                 setOpenInstanceDetails((existing) => ({
                   ...existing,
                   [row.instanceId]: open,
@@ -1506,7 +1559,11 @@ export function ProviderSettingsPanel() {
                   updateProviderInstance(row, next);
                 }
               }}
-              onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
+              onDelete={
+                row.isDefault || isComingSoon
+                  ? undefined
+                  : () => deleteProviderInstance(row.instanceId)
+              }
               headerAction={headerAction}
               hiddenModels={modelPreferences.hiddenModels}
               favoriteModels={favoriteModels}
@@ -1537,6 +1594,7 @@ export function ProviderSettingsPanel() {
                   : undefined
               }
               isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
+              comingSoon={isComingSoon}
             />
           );
         })}

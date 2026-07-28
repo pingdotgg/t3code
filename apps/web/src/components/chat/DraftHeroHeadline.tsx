@@ -27,11 +27,13 @@ import {
 interface DraftHeroHeadlineProps {
   readonly activeProjectRef: ScopedProjectRef | null;
   readonly activeProjectTitle: string | null;
+  readonly isProjectlessConversation: boolean;
 }
 
 export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
+  isProjectlessConversation,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
@@ -144,7 +146,11 @@ export function DraftHeroHeadline({
     </button>
   );
 
-  return (
+  return isProjectlessConversation ? (
+    <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+      What&apos;s on your mind?
+    </h1>
+  ) : (
     <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
       {hasResolvedProject ? (
         <>What should we build in {projectSelector}?</>

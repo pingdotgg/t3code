@@ -128,6 +128,41 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(applyOrchestrationV2ProjectionEvent(emptyProjection, event)).toBe(emptyProjection);
   });
 
+  it("applies only newer reconciled Hermes titles", () => {
+    const projection = {
+      ...emptyProjection,
+      thread: {
+        ...emptyProjection.thread,
+        titleRevision: 2,
+        titleOrigin: "hermes",
+      },
+    };
+    const staleEvent = {
+      id: "event-title-stale",
+      type: "thread.title-reconciled",
+      threadId,
+      occurredAt: now,
+      payload: { title: "Stale title", revision: 2, origin: "hermes" },
+    } as OrchestrationV2DomainEvent;
+    const nextAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
+    const freshEvent = {
+      id: "event-title-fresh",
+      type: "thread.title-reconciled",
+      threadId,
+      occurredAt: nextAt,
+      payload: { title: "Fresh title", revision: 3, origin: "hermes" },
+    } as OrchestrationV2DomainEvent;
+
+    expect(applyOrchestrationV2ProjectionEvent(projection, staleEvent)).toBe(projection);
+    const next = applyOrchestrationV2ProjectionEvent(projection, freshEvent);
+    expect(next?.thread).toMatchObject({
+      title: "Fresh title",
+      titleRevision: 3,
+      titleOrigin: "hermes",
+    });
+    expect(next?.updatedAt).toEqual(nextAt);
+  });
+
   it("preserves visible row identity when run updates do not change membership", () => {
     const item = commandItem("item-stable");
     const visibleTurnItems = [

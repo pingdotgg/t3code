@@ -25,11 +25,13 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(NodeServices.layer));
 
 const scope = {
+  credentialId: "credential-preview-test",
   environmentId: EnvironmentId.make("environment-1"),
   threadId: ThreadId.make("thread-1"),
   providerSessionId: "provider-session-1",
   providerInstanceId: ProviderInstanceId.make("codex"),
   capabilities: new Set(["preview"] as const),
+  audience: "urn:t3-code:mcp:environment-1",
   issuedAt: 1,
 };
 

@@ -49,8 +49,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import {
+  HermesSessionBindingRepository,
+  HermesSessionBindingRepositoryError,
+} from "../../hermes/HermesSessionBindingRepository.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
@@ -61,9 +66,71 @@ import {
   ProviderOrchestrationAdapterInfrastructureLive,
 } from "./ProviderOrchestrationAdapterInfrastructure.ts";
 
+// Hermes persistence is late-bound by the production server wrapper. Keeping
+// it out of this base layer's public environment lets non-Hermes test/build
+// compositions hydrate the other built-in drivers without constructing a
+// database-backed Hermes repository.
 type ProviderInstanceRegistryHydrationEnv =
-  | Exclude<BuiltInDriversEnv, ProviderOrchestrationAdapterInfrastructure>
+  | Exclude<
+      BuiltInDriversEnv,
+      ProviderOrchestrationAdapterInfrastructure | HermesSessionBindingRepository
+    >
   | ServerSettingsService;
+
+const unavailableHermesRepositoryOperation = <A>(
+  operation: string,
+): Effect.Effect<A, HermesSessionBindingRepositoryError> =>
+  Effect.fail(
+    new HermesSessionBindingRepositoryError({
+      operation,
+      detail: "Hermes persistence was not supplied to this runtime composition.",
+    }),
+  );
+
+const UnavailableHermesSessionBindingRepository = HermesSessionBindingRepository.of({
+  createBinding: () => unavailableHermesRepositoryOperation("createBinding"),
+  getByThreadId: () => unavailableHermesRepositoryOperation("getByThreadId"),
+  getByStoredIdentity: () => unavailableHermesRepositoryOperation("getByStoredIdentity"),
+  updateNegotiation: () => unavailableHermesRepositoryOperation("updateNegotiation"),
+  updateReconciliation: () => unavailableHermesRepositoryOperation("updateReconciliation"),
+  updateTitleState: () => unavailableHermesRepositoryOperation("updateTitleState"),
+  acquireOwnerLease: () => unavailableHermesRepositoryOperation("acquireOwnerLease"),
+  renewOwnerLease: () => unavailableHermesRepositoryOperation("renewOwnerLease"),
+  releaseOwnerLease: () => unavailableHermesRepositoryOperation("releaseOwnerLease"),
+  prepareMutationIntent: () => unavailableHermesRepositoryOperation("prepareMutationIntent"),
+  setSessionImportInheritedCount: () =>
+    unavailableHermesRepositoryOperation("setSessionImportInheritedCount"),
+  prepareSessionCreateIntent: () =>
+    unavailableHermesRepositoryOperation("prepareSessionCreateIntent"),
+  transitionSessionCreateIntent: () =>
+    unavailableHermesRepositoryOperation("transitionSessionCreateIntent"),
+  transitionMutationIntent: () => unavailableHermesRepositoryOperation("transitionMutationIntent"),
+  getMutationIntent: () => unavailableHermesRepositoryOperation("getMutationIntent"),
+  listUnsettledMutationIntents: () =>
+    unavailableHermesRepositoryOperation("listUnsettledMutationIntents"),
+  prepareSessionImport: () => unavailableHermesRepositoryOperation("prepareSessionImport"),
+  getSessionImportByStoredIdentity: () =>
+    unavailableHermesRepositoryOperation("getSessionImportByStoredIdentity"),
+  getMainSessionImport: () => unavailableHermesRepositoryOperation("getMainSessionImport"),
+  transitionSessionImport: () => unavailableHermesRepositoryOperation("transitionSessionImport"),
+  listHistoryThreadIds: () => unavailableHermesRepositoryOperation("listHistoryThreadIds"),
+  clearHistoryRecords: () => unavailableHermesRepositoryOperation("clearHistoryRecords"),
+});
+
+const remoteHermesEnabled = (settings: ServerSettings, config: unknown): boolean => {
+  if (typeof config !== "object" || config === null) return true;
+  const endpoint = Reflect.get(config, "endpoint");
+  if (typeof endpoint !== "string" || endpoint.trim() === "") return true;
+  let remote = true;
+  try {
+    remote = !["127.0.0.1", "localhost", "::1"].includes(new URL(endpoint).hostname);
+  } catch {
+    // Invalid endpoints remain visible to the provider's configuration diagnostics.
+    return true;
+  }
+  if (!remote) return true;
+  return settings.enableRemoteHermes && Reflect.get(config, "remoteAccessEnabled") === true;
+};
 
 /**
  * Synthesize a `ProviderInstanceConfigMap` from a `ServerSettings` snapshot.
@@ -82,6 +149,20 @@ export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
 ): ProviderInstanceConfigMap => {
   const merged: Record<string, ProviderInstanceConfig> = { ...settings.providerInstances };
+
+  for (const [instanceId, entry] of Object.entries(merged)) {
+    if (entry.driver !== "hermes") continue;
+    // Hermes is intentionally gated twice: the global rollout flag must be
+    // enabled and the explicit instance must opt in. Missing `enabled` is
+    // therefore false for Hermes even though other providers default it true.
+    merged[instanceId] = {
+      ...entry,
+      enabled:
+        settings.enableHermes &&
+        entry.enabled === true &&
+        remoteHermesEnabled(settings, entry.config),
+    };
+  }
 
   for (const driver of BUILT_IN_DRIVERS) {
     const instanceId = defaultInstanceIdForDriver(driver.driverKind);
@@ -104,6 +185,14 @@ export const deriveProviderInstanceConfigMap = (
 
     merged[instanceId] = {
       driver: driver.driverKind,
+      ...(driver.driverKind === "hermes"
+        ? {
+            enabled:
+              settings.enableHermes &&
+              legacyConfig.enabled === true &&
+              remoteHermesEnabled(settings, legacyConfig),
+          }
+        : {}),
       config: legacyConfig,
     };
   }
@@ -164,6 +253,7 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
 > = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
+    const hermesRepository = yield* Effect.serviceOption(HermesSessionBindingRepository);
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
@@ -175,8 +265,18 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
-    }).pipe(Layer.provide(ProviderOrchestrationAdapterInfrastructureLive));
+    }).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ProviderOrchestrationAdapterInfrastructureLive,
+          Layer.succeed(
+            HermesSessionBindingRepository,
+            Option.getOrElse(hermesRepository, () => UnavailableHermesSessionBindingRepository),
+          ),
+        ),
+      ),
+    );
 
     return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
   }),
-) as Layer.Layer<ProviderInstanceRegistry, never, ProviderInstanceRegistryHydrationEnv>;
+);

@@ -14,7 +14,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import { type ComposerAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells } from "../state/threads";
@@ -186,10 +186,9 @@ export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
     return;
   }
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") {
-      continue;
+    if ("previewUrl" in attachment) {
+      revokeBlobPreviewUrl(attachment.previewUrl);
     }
-    revokeBlobPreviewUrl(attachment.previewUrl);
   }
 }
 
@@ -199,9 +198,9 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   }
   const previewUrls: string[] = [];
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") continue;
-    if (!attachment.previewUrl || !attachment.previewUrl.startsWith("blob:")) continue;
-    previewUrls.push(attachment.previewUrl);
+    if ("previewUrl" in attachment && attachment.previewUrl?.startsWith("blob:")) {
+      previewUrls.push(attachment.previewUrl);
+    }
   }
   return previewUrls;
 }
@@ -239,13 +238,68 @@ export function shouldShowComposerContextStrip(input: {
   routeKind: "draft" | "server";
   isGitRepo: boolean;
   hasActiveProject: boolean;
+  isProjectlessConversation: boolean;
 }): boolean {
-  return input.routeKind === "draft" && input.isGitRepo && input.hasActiveProject;
+  return (
+    !input.isProjectlessConversation &&
+    input.routeKind === "draft" &&
+    input.isGitRepo &&
+    input.hasActiveProject
+  );
 }
 
-export function cloneComposerImageForRetry(
-  image: ComposerImageAttachment,
-): ComposerImageAttachment {
+export function shouldExposeWorkspaceArtifacts(input: {
+  readonly isProjectlessConversation: boolean;
+}): boolean {
+  return !input.isProjectlessConversation;
+}
+
+export function isHermesFreshChatCommand(input: {
+  readonly text: string;
+  readonly isHermesConversation: boolean;
+}): boolean {
+  if (!input.isHermesConversation) return false;
+  return /^\/(?:new|reset)(?:\s+.*)?$/iu.test(input.text.trim());
+}
+
+export function isHermesClearChatCommand(input: {
+  readonly text: string;
+  readonly isHermesConversation: boolean;
+}): boolean {
+  if (!input.isHermesConversation) return false;
+  return /^\/clear$/iu.test(input.text.trim());
+}
+
+export function shouldShowWorkingTimeline(input: {
+  readonly phase: SessionPhase;
+  readonly isSendBusy: boolean;
+  readonly isConnecting: boolean;
+  readonly isRevertingCheckpoint: boolean;
+}): boolean {
+  return (
+    input.phase === "connecting" ||
+    input.phase === "running" ||
+    input.isSendBusy ||
+    input.isConnecting ||
+    input.isRevertingCheckpoint
+  );
+}
+
+export function isWorkspacePreparationTurnItem(item: {
+  readonly type: string;
+  readonly input?: unknown;
+  readonly providerTurnId?: string | null | undefined;
+  readonly nativeItemRef?: unknown;
+}): boolean {
+  return (
+    item.type === "command_execution" &&
+    item.input === "Preparing workspace" &&
+    item.providerTurnId === null &&
+    item.nativeItemRef === null
+  );
+}
+
+export function cloneComposerImageForRetry(image: ComposerAttachment): ComposerAttachment {
   if (typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
     return image;
   }
@@ -354,39 +408,31 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
 }
 
-// `threadProvider` is the open branded driver kind carried by the session.
-// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
-// rollback / fork behavior — the routing layer is the right place to surface
-// "driver not installed" errors, not the lock state.
-//
-// `selectedProvider` takes the same open-string shape because the composer
-// now tracks the picker selection as a `ProviderInstanceId` (e.g.
-// `codex_personal`). Custom instance ids that don't directly match a
-// registered driver resolve to `null` here, which matches the existing
-// "unknown driver -> unlocked" semantics. Callers that want the lock to track
-// a custom instance's underlying driver kind should resolve the instance id
-// upstream and pass the correlated kind.
+// Session/model routing values are provider instance ids. Resolve them through
+// the environment's provider inventory before falling back to the open driver
+// slug shape used by rollback/fork builds. This keeps a custom instance such
+// as `hermes_local` locked to its actual `hermes` driver after the first turn.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  providerInstances: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
 }): ProviderDriverKind | null {
   if (!threadHasStarted(input.thread)) {
     return null;
   }
+  const resolveDriverKind = (selection: string | null): ProviderDriverKind | null => {
+    if (!selection) return null;
+    const instance = input.providerInstances.find((entry) => entry.instanceId === selection);
+    if (instance) return instance.driver;
+    return isProviderDriverKind(selection) ? selection : null;
+  };
   const sessionProvider = input.thread?.runtime?.providerName ?? null;
-  if (sessionProvider && isProviderDriverKind(sessionProvider)) {
-    return sessionProvider;
-  }
-  const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
-  const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
-  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+  return (
+    resolveDriverKind(sessionProvider) ??
+    resolveDriverKind(input.threadProvider) ??
+    resolveDriverKind(input.selectedProvider)
+  );
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {

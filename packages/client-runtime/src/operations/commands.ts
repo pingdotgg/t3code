@@ -4,6 +4,9 @@ import {
   OrchestrationV2CheckpointUnavailableError,
   WS_METHODS,
   type ChatAttachment,
+  type HermesSessionDiscoveryInput,
+  type HermesHistoryResetInput,
+  type HermesSessionImportInput,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
@@ -90,6 +93,9 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly modelSelection?: ModelSelection;
   readonly branch?: string | null;
   readonly worktreePath?: string | null;
+  readonly pinned?: boolean;
+  readonly workInboxRole?: "main" | null;
+  readonly clearTimeline?: true;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -117,6 +123,7 @@ interface StartThreadBootstrap {
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
   };
+  readonly prepareWorkspace?: boolean;
   readonly runSetupScript?: boolean;
 }
 
@@ -164,6 +171,7 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
+  readonly latestOnly?: boolean;
   readonly title?: string;
 }
 
@@ -354,6 +362,24 @@ export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(functi
   return yield* simpleThreadCommand("thread.settle", input);
 });
 
+export const discoverHermesSessions = Effect.fn("EnvironmentCommands.discoverHermesSessions")(
+  function* (input: HermesSessionDiscoveryInput) {
+    return yield* request(WS_METHODS.hermesSessionsDiscover, input);
+  },
+);
+
+export const importHermesSessions = Effect.fn("EnvironmentCommands.importHermesSessions")(
+  function* (input: HermesSessionImportInput) {
+    return yield* request(WS_METHODS.hermesSessionsImport, input);
+  },
+);
+
+export const resetHermesHistory = Effect.fn("EnvironmentCommands.resetHermesHistory")(function* (
+  input: HermesHistoryResetInput,
+) {
+  return yield* request(WS_METHODS.hermesHistoryReset, input);
+});
+
 export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (
   input: UnsettleThreadInput,
 ) {
@@ -394,7 +420,10 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
     if (
       input.title !== undefined ||
       input.branch !== undefined ||
-      input.worktreePath !== undefined
+      input.worktreePath !== undefined ||
+      input.pinned !== undefined ||
+      input.workInboxRole !== undefined ||
+      input.clearTimeline !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",
@@ -403,6 +432,9 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+        ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
+        ...(input.workInboxRole === undefined ? {} : { workInboxRole: input.workInboxRole }),
+        ...(input.clearTimeline === undefined ? {} : { clearTimeline: input.clearTimeline }),
       });
     }
     if (input.modelSelection !== undefined) {
@@ -492,6 +524,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,
+      ...(input.bootstrap?.prepareWorkspace === undefined
+        ? {}
+        : { prepareWorkspace: input.bootstrap.prepareWorkspace }),
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,
@@ -659,7 +694,9 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     creationSource: input.creationSource ?? "web",
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
-    sourcePoint: { type: "run", runId: input.runId },
+    sourcePoint: input.latestOnly
+      ? { type: "latest_stable" as const }
+      : { type: "run" as const, runId: input.runId },
     ...(input.title === undefined ? {} : { title: input.title }),
   });
 });

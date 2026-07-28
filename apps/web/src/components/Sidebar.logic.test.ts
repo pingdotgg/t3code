@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
+  canPinWorkInboxThread,
   createThreadJumpHintVisibilityController,
   filterSidebarV2VisibleThreads,
   getSidebarThreadIdsToPrewarm,
@@ -13,7 +14,9 @@ import {
   getSidebarForkParentThreadId,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isSidebarLifecycleThread,
   isSidebarSubagentThread,
+  isThreadVisibleInSidebarWorkspace,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -22,6 +25,9 @@ import {
   resolveSidebarV2Status,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  resolveWorkspaceSwitchNavigation,
+  sidebarProjectKey,
+  sidebarProviderInstanceKey,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -29,11 +35,19 @@ import {
   sortSidebarV2ProjectGroups,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
+  workInboxActiveSection,
   sortScopedProjectsForSidebar,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -43,6 +57,64 @@ import {
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("Hermes Work inbox semantics", () => {
+  const hermesEnvironmentId = EnvironmentId.make("environment-hermes");
+  const hermesInstanceId = ProviderInstanceId.make("hermes-primary");
+  const driverKinds = new Map([
+    [`${hermesEnvironmentId}\u0000${hermesInstanceId}`, ProviderDriverKind.make("hermes")] as const,
+  ]);
+
+  it("projects durable main and needs-you roles into structured sections", () => {
+    expect(workInboxActiveSection(makeThreadFixture({ workInboxRole: "main" }))).toBe("main");
+    expect(workInboxActiveSection(makeThreadFixture({ hasPendingApprovals: true }))).toBe(
+      "needs-you",
+    );
+    expect(workInboxActiveSection(makeThreadFixture({ hasPendingUserInput: true }))).toBe(
+      "needs-you",
+    );
+    expect(workInboxActiveSection(makeThreadFixture())).toBe("active");
+  });
+
+  it("only permits unsettled ordinary Hermes sidebar threads to be pinned", () => {
+    const ordinaryHermes = makeThreadFixture({
+      environmentId: hermesEnvironmentId,
+      providerInstanceId: hermesInstanceId,
+    });
+    const canPin = (overrides: Partial<Parameters<typeof canPinWorkInboxThread>[0]>) =>
+      canPinWorkInboxThread({
+        thread: ordinaryHermes,
+        providerDriverKindByInstance: driverKinds,
+        isSnoozed: false,
+        isSettled: false,
+        ...overrides,
+      });
+
+    expect(canPin({})).toBe(true);
+    expect(canPin({ isSettled: true })).toBe(false);
+    expect(canPin({ isSnoozed: true })).toBe(false);
+    expect(canPin({ thread: { ...ordinaryHermes, workInboxRole: "main" } })).toBe(false);
+    expect(
+      canPin({
+        thread: {
+          ...ordinaryHermes,
+          lineage: {
+            ...ordinaryHermes.lineage,
+            relationshipToParent: "subagent",
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      canPin({
+        thread: {
+          ...ordinaryHermes,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
@@ -263,6 +335,207 @@ describe("sidebar thread lineage helpers", () => {
     expect(isSidebarSubagentThread(makeThreadFixture())).toBe(false);
   });
 
+  it("keeps subagent threads out of every sidebar lifecycle bucket", () => {
+    const parentId = ThreadId.make("thread-parent");
+    const subagentLineage = {
+      rootThreadId: parentId,
+      parentThreadId: parentId,
+      relationshipToParent: "subagent" as const,
+    };
+
+    const activeSubagent = makeThreadFixture({ lineage: subagentLineage });
+    const snoozedSubagent = makeThreadFixture({
+      lineage: subagentLineage,
+      snoozedUntil: "2026-03-10T12:00:00.000Z",
+    });
+    const settledSubagent = makeThreadFixture({
+      lineage: subagentLineage,
+      settledOverride: "settled",
+      settledAt: "2026-03-09T12:00:00.000Z",
+    });
+
+    expect(
+      [activeSubagent, snoozedSubagent, settledSubagent].map(isSidebarLifecycleThread),
+    ).toEqual([false, false, false]);
+    expect(isSidebarLifecycleThread(makeThreadFixture())).toBe(true);
+    expect(
+      isSidebarLifecycleThread(makeThreadFixture({ archivedAt: "2026-03-09T12:00:00.000Z" })),
+    ).toBe(false);
+  });
+
+  it("filters lifecycle threads by workspace using provider driver metadata", () => {
+    const environmentId = EnvironmentId.make("environment-workspaces");
+    const codexInstanceId = ProviderInstanceId.make("codex_personal");
+    const defaultHermesInstanceId = ProviderInstanceId.make("hermes");
+    const customHermesInstanceId = ProviderInstanceId.make("research_assistant");
+    const parentId = ThreadId.make("thread-parent");
+    const providerDriverKindByInstance = new Map([
+      [
+        sidebarProviderInstanceKey(environmentId, codexInstanceId),
+        ProviderDriverKind.make("codex"),
+      ],
+      [
+        sidebarProviderInstanceKey(environmentId, defaultHermesInstanceId),
+        ProviderDriverKind.make("hermes"),
+      ],
+      [
+        sidebarProviderInstanceKey(environmentId, customHermesInstanceId),
+        ProviderDriverKind.make("hermes"),
+      ],
+    ]);
+    const ordinaryThread = makeThreadFixture({
+      environmentId,
+      id: ThreadId.make("thread-code"),
+      providerInstanceId: codexInstanceId,
+    });
+    const hermesThread = makeThreadFixture({
+      environmentId,
+      id: ThreadId.make("thread-hermes"),
+      providerInstanceId: defaultHermesInstanceId,
+    });
+    const customHermesThread = makeThreadFixture({
+      environmentId,
+      id: ThreadId.make("thread-custom-hermes"),
+      providerInstanceId: customHermesInstanceId,
+    });
+    const subagentThread = makeThreadFixture({
+      environmentId,
+      id: ThreadId.make("thread-hermes-subagent"),
+      providerInstanceId: customHermesInstanceId,
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    });
+    const threads = [ordinaryThread, hermesThread, customHermesThread, subagentThread];
+
+    expect(
+      threads.filter((thread) =>
+        isThreadVisibleInSidebarWorkspace(thread, "code", providerDriverKindByInstance),
+      ),
+    ).toEqual([ordinaryThread]);
+    expect(
+      threads.filter((thread) =>
+        isThreadVisibleInSidebarWorkspace(thread, "work", providerDriverKindByInstance),
+      ),
+    ).toEqual([hermesThread, customHermesThread]);
+  });
+
+  it("keeps Hermes threads on known Code projects in the code workspace", () => {
+    const environmentId = EnvironmentId.make("environment-partition");
+    const hermesInstanceId = ProviderInstanceId.make("hermes-main");
+    const providerDriverKindByInstance = new Map([
+      [
+        sidebarProviderInstanceKey(environmentId, hermesInstanceId),
+        ProviderDriverKind.make("hermes"),
+      ],
+    ]);
+    const workProjectId = ProjectId.make("project:t3-work");
+    const codeProjectId = ProjectId.make("project-code");
+    const hermesWorkThread = makeThreadFixture({
+      environmentId,
+      id: ThreadId.make("thread-hermes-work"),
+      providerInstanceId: hermesInstanceId,
+      projectId: workProjectId,
+    });
+    const hermesCodeThread = makeThreadFixture({
+      environmentId,
+      id: ThreadId.make("thread-hermes-code"),
+      providerInstanceId: hermesInstanceId,
+      projectId: codeProjectId,
+    });
+    const codeProjectKeys = new Set([sidebarProjectKey(environmentId, codeProjectId)]);
+
+    expect(
+      isThreadVisibleInSidebarWorkspace(
+        hermesWorkThread,
+        "work",
+        providerDriverKindByInstance,
+        codeProjectKeys,
+      ),
+    ).toBe(true);
+    expect(
+      isThreadVisibleInSidebarWorkspace(
+        hermesCodeThread,
+        "code",
+        providerDriverKindByInstance,
+        codeProjectKeys,
+      ),
+    ).toBe(true);
+    expect(
+      isThreadVisibleInSidebarWorkspace(
+        hermesCodeThread,
+        "work",
+        providerDriverKindByInstance,
+        codeProjectKeys,
+      ),
+    ).toBe(false);
+    // While projects/configs are still loading the set is absent, so Hermes
+    // threads conservatively stay in the work workspace.
+    expect(
+      isThreadVisibleInSidebarWorkspace(hermesCodeThread, "work", providerDriverKindByInstance),
+    ).toBe(true);
+  });
+
+  it("uses the literal Hermes instance only as a missing-metadata fallback", () => {
+    const environmentId = EnvironmentId.make("environment-history");
+    const historicalHermesThread = makeThreadFixture({
+      environmentId,
+      providerInstanceId: ProviderInstanceId.make("hermes"),
+    });
+    const misleadingCustomThread = makeThreadFixture({
+      environmentId,
+      providerInstanceId: ProviderInstanceId.make("hermes_personal"),
+    });
+
+    expect(isThreadVisibleInSidebarWorkspace(historicalHermesThread, "work", new Map())).toBe(true);
+    expect(isThreadVisibleInSidebarWorkspace(misleadingCustomThread, "work", new Map())).toBe(
+      false,
+    );
+    expect(isThreadVisibleInSidebarWorkspace(historicalHermesThread, "code", new Map())).toBe(
+      false,
+    );
+    expect(isThreadVisibleInSidebarWorkspace(misleadingCustomThread, "code", new Map())).toBe(true);
+  });
+
+  it("scopes Hermes membership to the thread's own environment", () => {
+    const homeEnvironmentId = EnvironmentId.make("environment-home");
+    const otherEnvironmentId = EnvironmentId.make("environment-other");
+    const sharedInstanceId = ProviderInstanceId.make("assistant");
+    const providerDriverKindByInstance = new Map([
+      [
+        sidebarProviderInstanceKey(homeEnvironmentId, sharedInstanceId),
+        ProviderDriverKind.make("hermes"),
+      ],
+      [
+        sidebarProviderInstanceKey(otherEnvironmentId, sharedInstanceId),
+        ProviderDriverKind.make("codex"),
+      ],
+    ]);
+    const homeThread = makeThreadFixture({
+      environmentId: homeEnvironmentId,
+      providerInstanceId: sharedInstanceId,
+    });
+    const otherThread = makeThreadFixture({
+      environmentId: otherEnvironmentId,
+      providerInstanceId: sharedInstanceId,
+    });
+
+    expect(
+      isThreadVisibleInSidebarWorkspace(homeThread, "work", providerDriverKindByInstance),
+    ).toBe(true);
+    expect(
+      isThreadVisibleInSidebarWorkspace(homeThread, "code", providerDriverKindByInstance),
+    ).toBe(false);
+    expect(
+      isThreadVisibleInSidebarWorkspace(otherThread, "work", providerDriverKindByInstance),
+    ).toBe(false);
+    expect(
+      isThreadVisibleInSidebarWorkspace(otherThread, "code", providerDriverKindByInstance),
+    ).toBe(true);
+  });
+
   it("resolves the parent thread for fork sidebar affordances", () => {
     const parentId = ThreadId.make("thread-parent");
     const fallbackParentId = ThreadId.make("thread-fallback-parent");
@@ -285,6 +558,127 @@ describe("sidebar thread lineage helpers", () => {
     expect(getSidebarForkParentThreadId(runFork)).toBe(parentId);
     expect(getSidebarForkParentThreadId(lineageFork)).toBe(fallbackParentId);
     expect(getSidebarForkParentThreadId(makeThreadFixture())).toBeNull();
+  });
+});
+
+describe("resolveWorkspaceSwitchNavigation", () => {
+  const environmentId = EnvironmentId.make("environment-switch");
+  const hermesInstanceId = ProviderInstanceId.make("hermes-main");
+  const codexInstanceId = ProviderInstanceId.make("codex-main");
+  const providerDriverKindByInstance = new Map([
+    [
+      sidebarProviderInstanceKey(environmentId, hermesInstanceId),
+      ProviderDriverKind.make("hermes"),
+    ],
+    [sidebarProviderInstanceKey(environmentId, codexInstanceId), ProviderDriverKind.make("codex")],
+  ]);
+  const codeThread = {
+    ...makeThreadFixture({ environmentId, providerInstanceId: codexInstanceId }),
+    threadKey: "code-thread",
+  };
+  const workThread = {
+    ...makeThreadFixture({ environmentId, providerInstanceId: hermesInstanceId }),
+    threadKey: "work-thread",
+  };
+  const threads = [codeThread, workThread];
+
+  it("navigates to the remembered thread when it is still visible in the target workspace", () => {
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "work",
+        rememberedThreadKey: "work-thread",
+        routeThreadKey: "code-thread",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "remembered-thread", threadKey: "work-thread" });
+  });
+
+  it("opens the target-mode composer when the open thread belongs to the other workspace", () => {
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "work",
+        rememberedThreadKey: undefined,
+        routeThreadKey: "code-thread",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "new-chat" });
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "code",
+        rememberedThreadKey: undefined,
+        routeThreadKey: "work-thread",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "new-chat" });
+  });
+
+  it("falls back to the composer when the remembered thread is no longer visible", () => {
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "work",
+        rememberedThreadKey: "archived-work-thread",
+        routeThreadKey: "code-thread",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "new-chat" });
+  });
+
+  it("stays put on workspace-neutral routes and threads already valid in the target workspace", () => {
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "work",
+        rememberedThreadKey: undefined,
+        routeThreadKey: null,
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "stay" });
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "work",
+        rememberedThreadKey: undefined,
+        routeThreadKey: "work-thread",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "stay" });
+  });
+
+  it("routes to the target composer when the open draft belongs to the other workspace", () => {
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "code",
+        rememberedThreadKey: undefined,
+        routeThreadKey: null,
+        routeDraftWorkspace: "work",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "new-chat" });
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "work",
+        rememberedThreadKey: undefined,
+        routeThreadKey: null,
+        routeDraftWorkspace: "code",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "new-chat" });
+    expect(
+      resolveWorkspaceSwitchNavigation({
+        nextWorkspace: "code",
+        rememberedThreadKey: undefined,
+        routeThreadKey: null,
+        routeDraftWorkspace: "code",
+        threads,
+        providerDriverKindByInstance,
+      }),
+    ).toEqual({ kind: "stay" });
   });
 });
 
@@ -762,6 +1156,26 @@ describe("sortThreadsForSidebarV2", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("keeps pinned unsettled threads first while preserving creation order within each group", () => {
+    const pinnedIds = new Set(["pinned-old", "pinned-new"]);
+    const sorted = sortThreadsForSidebarV2(
+      [
+        sortable({ id: "regular-new", createdAt: "2026-03-09T13:00:00.000Z" }),
+        sortable({ id: "pinned-old", createdAt: "2026-03-09T08:00:00.000Z" }),
+        sortable({ id: "regular-old", createdAt: "2026-03-09T09:00:00.000Z" }),
+        sortable({ id: "pinned-new", createdAt: "2026-03-09T12:00:00.000Z" }),
+      ],
+      (thread) => pinnedIds.has(thread.id),
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "pinned-new",
+      "pinned-old",
+      "regular-new",
+      "regular-old",
+    ]);
   });
 });
 

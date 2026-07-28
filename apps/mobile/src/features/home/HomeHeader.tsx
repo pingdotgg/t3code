@@ -17,6 +17,7 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
 import type { HomeProjectSortOrder } from "./homeThreadList";
+import type { MobileWorkspace } from "../../lib/mobileWorkspace";
 import {
   buildHomeListFilterMenu,
   type HomeListFilterMenuEnvironment,
@@ -32,6 +33,7 @@ export type HomeHeaderEnvironment = HomeListFilterMenuEnvironment;
 
 export function HomeHeader(props: {
   readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
+  readonly workspace: MobileWorkspace;
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -40,6 +42,7 @@ export function HomeHeader(props: {
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
+  readonly onWorkspaceChange: (workspace: MobileWorkspace) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
@@ -57,6 +60,23 @@ type HomeHeaderProps = Parameters<typeof HomeHeader>[0];
 
 function checkedMenuState(checked: boolean) {
   return checked ? ("on" as const) : undefined;
+}
+
+function workspaceMenuActions(props: HomeHeaderProps): MenuAction[] {
+  return [
+    {
+      id: "workspace:work",
+      title: "T3 Work",
+      subtitle: "Create, learn, and explore",
+      state: checkedMenuState(props.workspace === "work"),
+    },
+    {
+      id: "workspace:code",
+      title: "T3 Code",
+      subtitle: "Build, debug, and ship",
+      state: checkedMenuState(props.workspace === "code"),
+    },
+  ];
 }
 
 /** Thread List v2 lays the list out in fixed creation order, so the
@@ -148,6 +168,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       threadListV2Enabled,
     ],
   );
+  const workspaceActions = useMemo(() => workspaceMenuActions(props), [props.workspace]);
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
       const id = event.nativeEvent.event;
@@ -196,6 +217,13 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
     },
     [props],
   );
+  const handleWorkspaceAction = useCallback(
+    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "workspace:work") props.onWorkspaceChange("work");
+      if (nativeEvent.event === "workspace:code") props.onWorkspaceChange("code");
+    },
+    [props],
+  );
 
   return (
     <>
@@ -208,18 +236,29 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       >
         <View className="w-full max-w-[720px] self-center gap-3">
           <View className="flex-row items-center gap-2.5">
-            <View className="flex-1 flex-row items-center gap-2">
-              {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
-              <T3Wordmark color={iconColor} height={15} />
-              <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
-                Code
-              </RNText>
-              <View className="rounded-full bg-subtle px-2 py-0.75">
-                <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
-                  Alpha
+            <ControlPillMenu actions={workspaceActions} onPressAction={handleWorkspaceAction}>
+              <Pressable
+                accessibilityLabel={`Switch workspace. Current workspace: T3 ${props.workspace === "work" ? "Work" : "Code"}`}
+                accessibilityRole="button"
+                className="flex-1 flex-row items-center gap-2"
+              >
+                <T3Wordmark color={iconColor} height={15} />
+                <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
+                  {props.workspace === "work" ? "Work" : "Code"}
                 </RNText>
-              </View>
-            </View>
+                <SymbolView
+                  name="chevron.down"
+                  size={12}
+                  tintColor={mutedColor}
+                  type="monochrome"
+                />
+                <View className="rounded-full bg-subtle px-2 py-0.75">
+                  <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
+                    Alpha
+                  </RNText>
+                </View>
+              </Pressable>
+            </ControlPillMenu>
 
             <ControlPillMenu
               actions={menuActions}
@@ -308,7 +347,7 @@ function IosHomeHeader(props: HomeHeaderProps) {
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={filterMenu.items}
+        optionsVersion={[filterMenu.items, props.workspace]}
         options={{
           // Static header config (glass, title, fonts) lives in Stack.tsx
           // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
@@ -329,6 +368,33 @@ function IosHomeHeader(props: HomeHeaderProps) {
           unstable_headerToolbarItems:
             Platform.OS === "ios"
               ? () => [
+                  {
+                    type: "menu" as const,
+                    label: `T3 ${props.workspace === "work" ? "Work" : "Code"}`,
+                    accessibilityLabel: `Switch workspace. Current workspace: T3 ${props.workspace === "work" ? "Work" : "Code"}`,
+                    icon: { type: "sfSymbol", name: "chevron.up.chevron.down" } as const,
+                    identifier: "home-workspace",
+                    sharesBackground: false,
+                    variant: "plain" as const,
+                    menu: {
+                      items: [
+                        {
+                          type: "action" as const,
+                          label: "T3 Work",
+                          description: "Create, learn, and explore",
+                          onPress: () => props.onWorkspaceChange("work"),
+                          state: props.workspace === "work" ? ("on" as const) : undefined,
+                        },
+                        {
+                          type: "action" as const,
+                          label: "T3 Code",
+                          description: "Build, debug, and ship",
+                          onPress: () => props.onWorkspaceChange("code"),
+                          state: props.workspace === "code" ? ("on" as const) : undefined,
+                        },
+                      ],
+                    },
+                  },
                   createNativeMailSearchToolbarItem({
                     composeButtonId: "home-new-task",
                     composeSystemImageName: "square.and.pencil",

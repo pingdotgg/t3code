@@ -73,6 +73,7 @@ export function makeReplayServerConfig(
     const providerLogsDir = path.join(logsDir, "provider");
     const terminalLogsDir = path.join(logsDir, "terminals");
     const attachmentsDir = path.join(stateDir, "attachments");
+    const browserArtifactsDir = path.join(stateDir, "browser-artifacts");
     const worktreesDir = path.join(baseDir, "worktrees");
     const providerStatusCacheDir = path.join(baseDir, "caches");
 
@@ -82,6 +83,7 @@ export function makeReplayServerConfig(
       providerLogsDir,
       terminalLogsDir,
       attachmentsDir,
+      browserArtifactsDir,
       worktreesDir,
       providerStatusCacheDir,
     ]) {
@@ -121,6 +123,7 @@ export function makeReplayServerConfig(
       providerStatusCacheDir,
       worktreesDir,
       attachmentsDir,
+      browserArtifactsDir,
       logsDir,
       serverLogPath: path.join(logsDir, "server.log"),
       serverTracePath: path.join(logsDir, "server.trace.ndjson"),
@@ -186,13 +189,17 @@ export function makeCodexProviderAdapterRegistryReplayLayer(input: {
   return registryLayer;
 }
 
+const decodeCodexReplayTranscript = Schema.decodeUnknownEffect(
+  CodexReplay.CodexAppServerReplayTranscript,
+);
+
 export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   CodexReplay.CodexAppServerReplayTranscript,
   CodexOrchestratorReplayHarnessError
 > = {
   driver: CODEX_DRIVER_KIND,
   decodeTranscript: (transcript) =>
-    Schema.decodeUnknownEffect(CodexReplay.CodexAppServerReplayTranscript)(transcript).pipe(
+    decodeCodexReplayTranscript(transcript).pipe(
       Effect.mapError(
         (cause) =>
           new CodexReplayTranscriptDecodeError({

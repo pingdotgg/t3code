@@ -109,6 +109,14 @@ export const PROCESS_BOUND_EFFECT_TYPES = [
   "runtime-request.respond",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
+/**
+ * Prefix persisted in `last_error` when an effect has permanently failed but
+ * its terminal projection could not be committed. A reclaim that sees this
+ * marker must only retry the terminal projection and never re-run the
+ * side-effecting provider execution.
+ */
+export const PENDING_TERMINALIZATION_MARKER = "[pending-terminalization] ";
+
 export const OrchestrationEffectStatusV2 = Schema.Literals([
   "pending",
   "running",
@@ -434,7 +442,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               lease_owner = ${workerId},
               lease_expires_at = ${leaseExpiresAt},
               updated_at = ${nowIso},
-              last_error = NULL
+              last_error = CASE
+                WHEN last_error LIKE ${`${PENDING_TERMINALIZATION_MARKER}%`} THEN last_error
+                ELSE NULL
+              END
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate

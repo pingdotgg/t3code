@@ -70,6 +70,96 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues exact-file workspace URLs for video files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-video-" });
+      const videoPath = path.join(root, "recordings", "demo.webm");
+      yield* fileSystem.makeDirectory(path.join(root, "recordings"), { recursive: true });
+      yield* fileSystem.writeFileString(videoPath, "webm-bytes");
+      const canonicalVideoPath = yield* fileSystem.realPath(videoPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: "recordings/demo.webm",
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      expect(yield* resolveAsset(token, "demo.webm")).toEqual({
+        kind: "file",
+        path: canonicalVideoPath,
+      });
+      expect(yield* resolveAsset(token, "other.webm")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues browser artifact URLs by safe media file name only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const artifactPath = path.join(config.browserArtifactsDir, "browser-recording-demo.webm");
+      yield* fileSystem.writeFileString(artifactPath, "webm-bytes");
+      yield* fileSystem.writeFileString(
+        path.join(config.browserArtifactsDir, "notes.txt"),
+        "not media",
+      );
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "browser-artifact", fileName: "browser-recording-demo.webm" },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      const resolved = yield* resolveAsset(token, "browser-recording-demo.webm");
+      expect(resolved?.kind).toBe("open-file");
+      if (resolved?.kind !== "open-file") throw new Error("expected an opened browser artifact");
+      expect(resolved.file.name).toBe("browser-recording-demo.webm");
+      expect(yield* Effect.promise(() => new Response(resolved.file.stream()).text())).toBe(
+        "webm-bytes",
+      );
+
+      expect(
+        (yield* issueAssetUrl({
+          resource: { _tag: "browser-artifact", fileName: "notes.txt" },
+        }).pipe(Effect.flip))._tag,
+      ).toBe("AssetBrowserArtifactNotFoundError");
+      expect(
+        (yield* issueAssetUrl({
+          resource: { _tag: "browser-artifact", fileName: "../state.sqlite" },
+        }).pipe(Effect.flip))._tag,
+      ).toBe("AssetBrowserArtifactNotFoundError");
+
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-browser-artifact-outside-",
+      });
+      const outsideVideo = path.join(outside, "outside.webm");
+      const artifactSymlink = path.join(
+        config.browserArtifactsDir,
+        "browser-recording-escape.webm",
+      );
+      yield* fileSystem.writeFileString(outsideVideo, "outside-webm");
+      yield* fileSystem.symlink(outsideVideo, artifactSymlink);
+      expect(
+        (yield* issueAssetUrl({
+          resource: {
+            _tag: "browser-artifact",
+            fileName: "browser-recording-escape.webm",
+          },
+        }).pipe(Effect.flip))._tag,
+      ).toBe("AssetBrowserArtifactNotFoundError");
+
+      yield* fileSystem.remove(artifactPath);
+      yield* fileSystem.symlink(outsideVideo, artifactPath);
+      expect(yield* resolveAsset(token, "browser-recording-demo.webm")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

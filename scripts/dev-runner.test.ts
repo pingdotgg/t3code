@@ -334,7 +334,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
-          baseEnv: {},
+          baseEnv: { T3CODE_PORT: "3773" },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,

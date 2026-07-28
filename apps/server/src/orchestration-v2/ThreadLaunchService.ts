@@ -61,6 +61,7 @@ export interface ThreadLaunchInput {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
+  readonly prepareWorkspace?: boolean;
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
@@ -178,26 +179,12 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
-    input: ThreadLaunchInput,
-    threadId: ThreadId,
-    runId: RunId | null,
-  ) {
-    const project = yield* projects.getById(input.projectId).pipe(
-      Effect.mapError(mapError(input, "resolve-project", threadId)),
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(mapError(input, "resolve-project", threadId)("Project no longer exists.")),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
-
-    if (input.title === "New thread" && input.initialMessage !== undefined) {
+  const scheduleTitleGeneration = Effect.fn("ThreadLaunchService.scheduleTitleGeneration")(
+    function* (input: ThreadLaunchInput, threadId: ThreadId, workspaceRoot: string) {
+      if (input.title !== "New thread" || input.initialMessage === undefined) return;
       yield* textGeneration
         .generateThreadTitle({
-          cwd: project.workspaceRoot,
+          cwd: workspaceRoot,
           message: input.initialMessage.text,
           attachments: input.initialMessage.attachments,
           modelSelection: input.modelSelection,
@@ -220,7 +207,26 @@ export const make = Effect.gen(function* () {
           ),
           Effect.forkIn(preparationScope),
         );
-    }
+    },
+  );
+
+  const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
+    input: ThreadLaunchInput,
+    threadId: ThreadId,
+    runId: RunId | null,
+  ) {
+    const project = yield* projects.getById(input.projectId).pipe(
+      Effect.mapError(mapError(input, "resolve-project", threadId)),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(mapError(input, "resolve-project", threadId)("Project no longer exists.")),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+
+    yield* scheduleTitleGeneration(input, threadId, project.workspaceRoot);
 
     let branch =
       input.workspaceStrategy.type === "worktree" &&
@@ -491,7 +497,10 @@ export const make = Effect.gen(function* () {
               text: input.initialMessage.text,
               attachments: input.initialMessage.attachments,
               modelSelection: input.modelSelection,
-              dispatchMode: { type: "defer_start" },
+              dispatchMode:
+                input.prepareWorkspace === false
+                  ? { type: "start_immediately" }
+                  : { type: "defer_start" },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
             })
@@ -515,7 +524,16 @@ export const make = Effect.gen(function* () {
         const runIsPreparing =
           runId !== null &&
           projection.runs.some((run) => run.id === runId && run.status === "preparing");
-        const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
+        const shouldSchedule =
+          input.prepareWorkspace !== false &&
+          (runId === null ? Option.isNone(launchReceipt) : runIsPreparing);
+        if (
+          input.prepareWorkspace === false &&
+          Option.isNone(launchReceipt) &&
+          !messageWasAlreadyAccepted
+        ) {
+          yield* scheduleTitleGeneration(input, threadId, project.workspaceRoot);
+        }
         if (shouldSchedule) {
           const ownsPreparation = yield* reservePreparation(input.commandId);
           if (ownsPreparation) {

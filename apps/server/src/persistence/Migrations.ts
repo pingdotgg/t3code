@@ -56,6 +56,12 @@ import Migration0040 from "./Migrations/040_ApplicationEventSource.ts";
 import Migration0041 from "./Migrations/041_OrchestrationV2EffectCancellation.ts";
 import Migration0042 from "./Migrations/042_ScheduledTasks.ts";
 import Migration0043 from "./Migrations/043_LegacyV1ImportState.ts";
+import Migration0044 from "./Migrations/044_HermesSessionBindings.ts";
+import Migration0045 from "./Migrations/045_HermesProactiveEvents.ts";
+import Migration0046 from "./Migrations/046_HermesTitleBranchLineage.ts";
+import Migration0047 from "./Migrations/047_HermesSessionImports.ts";
+import Migration0048 from "./Migrations/048_HermesImportProjectScope.ts";
+import Migration0049 from "./Migrations/049_HermesImportInheritedBoundary.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -111,6 +117,12 @@ export const migrationEntries = [
   [41, "OrchestrationV2EffectCancellation", Migration0041],
   [42, "ScheduledTasks", Migration0042],
   [43, "LegacyV1ImportState", Migration0043],
+  [44, "HermesSessionBindings", Migration0044],
+  [45, "HermesProactiveEvents", Migration0045],
+  [46, "HermesTitleBranchLineage", Migration0046],
+  [47, "HermesSessionImports", Migration0047],
+  [48, "HermesImportProjectScope", Migration0048],
+  [49, "HermesImportInheritedBoundary", Migration0049],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

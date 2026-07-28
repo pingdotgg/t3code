@@ -6,6 +6,9 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
+  HermesAcpSettings,
+  HermesSettings,
+  OpenClawSettings,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -15,6 +18,9 @@ const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeHermesSettings = Schema.decodeUnknownSync(HermesSettings);
+const decodeHermesAcpSettings = Schema.decodeUnknownSync(HermesAcpSettings);
+const decodeOpenClawSettings = Schema.decodeUnknownSync(OpenClawSettings);
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -119,6 +125,156 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     expect(() =>
       decodeServerSettings({
         providerInstances: { "1bad": { driver: "codex" } },
+      }),
+    ).toThrow();
+  });
+});
+
+describe("ServerSettings Hermes rollout", () => {
+  it("defaults the global feature off and accepts an explicit instance envelope", () => {
+    expect(decodeServerSettings({}).enableHermes).toBe(false);
+    expect(decodeServerSettings({}).enableRemoteHermes).toBe(false);
+    expect(decodeServerSettingsPatch({ enableHermes: true }).enableHermes).toBe(true);
+    expect(decodeServerSettingsPatch({ enableRemoteHermes: true }).enableRemoteHermes).toBe(true);
+    expect(
+      decodeServerSettingsPatch({
+        providers: { hermes: { managedServerEnabled: false } },
+      }).providers?.hermes?.managedServerEnabled,
+    ).toBe(false);
+
+    const decoded = decodeServerSettings({
+      enableHermes: true,
+      providerInstances: {
+        hermes_local: {
+          driver: "hermes",
+          enabled: true,
+          environment: [
+            {
+              name: "HERMES_GATEWAY_TOKEN",
+              value: "",
+              sensitive: true,
+              valueRedacted: true,
+            },
+          ],
+          config: {
+            endpoint: "ws://127.0.0.1:9119/api/ws",
+            profileKey: "real-profile",
+          },
+        },
+      },
+    });
+
+    expect(decoded.providerInstances[ProviderInstanceId.make("hermes_local")]).toMatchObject({
+      driver: "hermes",
+      enabled: true,
+      config: {
+        endpoint: "ws://127.0.0.1:9119/api/ws",
+        profileKey: "real-profile",
+      },
+    });
+    expect(decoded.providers.hermes).toEqual({
+      enabled: false,
+      endpoint: "",
+      remoteAccessEnabled: false,
+      profileKey: "default",
+      managedServerEnabled: true,
+      customModels: [],
+      importEnabled: false,
+      mcpEnabled: true,
+      attachmentsEnabled: true,
+      proactiveEnabled: false,
+      voiceEnabled: false,
+    });
+  });
+
+  it("accepts dormant encrypted remote configuration but rejects plaintext or credentials", () => {
+    expect(
+      decodeHermesSettings({
+        endpoint: "wss://gateway.example.com/api/ws",
+        profileKey: "profile",
+      }),
+    ).toMatchObject({
+      endpoint: "wss://gateway.example.com/api/ws",
+      remoteAccessEnabled: false,
+    });
+    expect(() =>
+      decodeHermesSettings({
+        endpoint: "ws://gateway.example.com/api/ws",
+        profileKey: "profile",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeHermesSettings({
+        endpoint: "ws://127.0.0.1:9119/api/ws?token=plain-text-secret",
+        profileKey: "profile",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("Hermes in Code ACP settings", () => {
+  it("defaults to the real Hermes ACP executable boundary", () => {
+    expect(decodeHermesAcpSettings({})).toEqual({
+      enabled: true,
+      binaryPath: "hermes",
+      customModels: [],
+    });
+  });
+
+  it("preserves an explicit executable and custom model list", () => {
+    expect(
+      decodeHermesAcpSettings({
+        binaryPath: "/opt/hermes/bin/hermes",
+        customModels: ["openrouter/model"],
+      }),
+    ).toMatchObject({
+      binaryPath: "/opt/hermes/bin/hermes",
+      customModels: ["openrouter/model"],
+    });
+  });
+});
+
+describe("OpenClaw ACP settings", () => {
+  it("defaults to OpenClaw's normal config and environment boundary", () => {
+    expect(decodeOpenClawSettings({})).toEqual({
+      enabled: true,
+      binaryPath: "openclaw",
+      url: "",
+      tokenFile: "",
+      passwordFile: "",
+      session: "",
+      resetSession: false,
+      customModels: [],
+    });
+  });
+
+  it("accepts file-based authentication and gateway session overrides", () => {
+    expect(
+      decodeOpenClawSettings({
+        url: "wss://gateway.example.com",
+        tokenFile: "/run/secrets/openclaw-token",
+        passwordFile: "/run/secrets/openclaw-password",
+        session: "agent:main:main",
+        resetSession: true,
+      }),
+    ).toMatchObject({
+      url: "wss://gateway.example.com",
+      tokenFile: "/run/secrets/openclaw-token",
+      passwordFile: "/run/secrets/openclaw-password",
+      session: "agent:main:main",
+      resetSession: true,
+    });
+  });
+
+  it("rejects credentials embedded in the Gateway URL", () => {
+    expect(() =>
+      decodeOpenClawSettings({
+        url: "wss://gateway.example.com?token=plain-text-secret",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeOpenClawSettings({
+        url: "wss://user:password@gateway.example.com",
       }),
     ).toThrow();
   });

@@ -142,6 +142,15 @@ export interface OrchestratorV2DispatchResult {
 
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
+  /**
+   * Lazily materializes a provider-owned conversation snapshot into the durable
+   * T3 projection. Snapshot entities have provider-stable ids, so retries only
+   * append entities that are not already projected.
+   */
+  readonly hydrateProviderThreadSnapshot: (input: {
+    readonly threadId: ThreadId;
+    readonly providerInstanceId: ProviderInstanceId;
+  }) => Effect.Effect<void, OrchestratorV2Error>;
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
@@ -831,7 +840,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
-    const now = yield* DateTime.now;
+    const now = command.createdAt ?? (yield* DateTime.now);
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
       createdBy: command.createdBy,
@@ -857,6 +866,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       archivedAt: null,
       settledOverride: null,
       settledAt: null,
+      pinnedAt: null,
+      workInboxRole: null,
       snoozedUntil: null,
       snoozedAt: null,
       deletedAt: null,
@@ -938,6 +949,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
+      thread.workInboxRole === "main" &&
+      (command.type === "thread.settle" || command.type === "thread.snooze")
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is the Work inbox main thread and cannot be settled or snoozed.`,
+      });
+    }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.pinned === true &&
+      (thread.settledOverride === "settled" || thread.snoozedUntil != null)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} must be active before it can be pinned.`,
+      });
+    }
+    if (
       command.type === "thread.settle" &&
       (projection.runs.some((run) =>
         ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
@@ -1013,11 +1045,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return { ...thread, deletedAt: thread.deletedAt ?? now, updatedAt: now };
         case "thread.settle": {
           const alreadySettled = thread.settledOverride === "settled" && thread.settledAt !== null;
+          // Historical settles (provider imports) supply their own settledAt
+          // so imported threads sort and age by when the work actually ended.
+          const settledAt =
+            command.settledAt !== undefined
+              ? Option.getOrElse(DateTime.make(command.settledAt), () => now)
+              : now;
           return {
             ...thread,
             settledOverride: "settled",
-            settledAt: alreadySettled ? thread.settledAt : now,
-            updatedAt: alreadySettled ? thread.updatedAt : now,
+            settledAt: alreadySettled ? thread.settledAt : settledAt,
+            pinnedAt: null,
+            updatedAt: alreadySettled ? thread.updatedAt : settledAt,
           };
         }
         case "thread.unsettle": {
@@ -1039,6 +1078,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             snoozedUntil,
             snoozedAt: existingSnoozedAt ?? now,
+            pinnedAt: null,
             updatedAt: existingSnoozedAt === null ? now : thread.updatedAt,
           };
         }
@@ -1057,6 +1097,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.pinned === undefined
+              ? {}
+              : { pinnedAt: command.pinned || thread.workInboxRole === "main" ? now : null }),
+            ...(command.workInboxRole === undefined
+              ? {}
+              : {
+                  workInboxRole: command.workInboxRole,
+                  ...(command.workInboxRole === "main"
+                    ? {
+                        pinnedAt: thread.pinnedAt ?? now,
+                        settledOverride: null,
+                        settledAt: null,
+                        snoozedUntil: null,
+                        snoozedAt: null,
+                      }
+                    : {}),
+                }),
+            ...(command.clearTimeline === true ? { timelineClearedAt: now } : {}),
             updatedAt: now,
           };
         case "thread.runtime-mode.set":
@@ -5632,6 +5690,134 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = (command: OrchestrationV2Command) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
 
+  const hydrateProviderThreadSnapshot = (input: {
+    readonly threadId: ThreadId;
+    readonly providerInstanceId: ProviderInstanceId;
+  }) =>
+    threadDispatch.withLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const threadId = input.threadId;
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const modelSelection = projection.thread.modelSelection;
+        if (modelSelection.instanceId !== input.providerInstanceId) {
+          return;
+        }
+        const adapter = yield* providerAdapters.get(modelSelection.instanceId);
+        const existingProviderThread = rootProviderThreadsForProvider(
+          projection,
+          modelSelection.instanceId,
+        )[0];
+        const providerSessionId =
+          existingProviderThread?.providerSessionId ??
+          (yield* providerSessionIdFor({
+            adapter,
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          }));
+        const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+          thread: projection.thread,
+          modelSelection,
+        });
+        const session = yield* providerSessions.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: resolvedRuntimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: resolvedRuntimePolicy,
+          ...(existingProviderThread === undefined ? {} : { existingProviderThread }),
+        });
+        const snapshot = yield* session.readThreadSnapshot({ providerThread });
+
+        // Opening the runtime persists its provider-session attachment, so
+        // compare against a fresh projection before appending snapshot rows.
+        const current = yield* projectionStore.getThreadProjection(threadId);
+        const projectedMessageIds = new Set(current.messages.map((message) => String(message.id)));
+        const missingMessages = snapshot.messages.filter(
+          (message) => !projectedMessageIds.has(String(message.id)),
+        );
+        const projectedTurnItemIds = new Set(current.turnItems.map((item) => String(item.id)));
+        const missingTurnItems = (snapshot.turnItems ?? []).filter(
+          (item) => !projectedTurnItemIds.has(String(item.id)),
+        );
+        const projectedProviderThread = current.providerThreads.find(
+          (candidate) => candidate.id === snapshot.providerThread.id,
+        );
+        if (
+          projectedProviderThread !== undefined &&
+          missingMessages.length === 0 &&
+          missingTurnItems.length === 0
+        ) {
+          return;
+        }
+
+        // Hydrated snapshots carry the provider's historical message
+        // timestamps; stamping hydration time here would mark imported
+        // threads as active "now".
+        const latestSnapshotAt = [...missingMessages, ...missingTurnItems].reduce<
+          DateTime.Utc | undefined
+        >(
+          (latest, entity) =>
+            latest === undefined ? entity.updatedAt : DateTime.max(latest, entity.updatedAt),
+          undefined,
+        );
+        const occurredAt = latestSnapshotAt ?? (yield* DateTime.now);
+        const events: Array<OrchestrationV2DomainEvent> = [];
+        if (projectedProviderThread === undefined) {
+          events.push({
+            id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+            type: "provider-thread.updated",
+            threadId,
+            providerInstanceId: modelSelection.instanceId,
+            driver: adapter.driver,
+            occurredAt,
+            payload: snapshot.providerThread,
+          });
+        }
+        for (const message of missingMessages) {
+          events.push({
+            id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+            type: "message.updated",
+            threadId,
+            ...(message.runId === null ? {} : { runId: message.runId }),
+            ...(message.nodeId === null ? {} : { nodeId: message.nodeId }),
+            providerInstanceId: modelSelection.instanceId,
+            driver: adapter.driver,
+            occurredAt,
+            payload: message,
+          });
+        }
+        for (const turnItem of missingTurnItems) {
+          events.push({
+            id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+            type: "turn-item.updated",
+            threadId,
+            ...(turnItem.runId === null ? {} : { runId: turnItem.runId }),
+            ...(turnItem.nodeId === null ? {} : { nodeId: turnItem.nodeId }),
+            providerInstanceId: modelSelection.instanceId,
+            driver: adapter.driver,
+            occurredAt,
+            payload: turnItem,
+          });
+        }
+        if (events.length > 0) {
+          yield* eventSink.write({ events });
+        }
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: input.threadId,
+              cause,
+            }),
+        ),
+      ),
+    );
+
   yield* eventSink.stream().pipe(
     Stream.filter(
       (stored) =>
@@ -5664,6 +5850,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   return OrchestratorV2.of({
     resumeQueuedRuns,
+    hydrateProviderThreadSnapshot,
     dispatch: dispatchWithReceipt,
     getThreadProjection: (threadId) =>
       projectionStore
@@ -5743,6 +5930,13 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         cause: "Orchestration V2 live runtime is not configured.",
       }),
     ),
+    hydrateProviderThreadSnapshot: (input) =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId: input.threadId,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
     dispatch: (command) =>
       Effect.fail(
         new OrchestratorDispatchError({

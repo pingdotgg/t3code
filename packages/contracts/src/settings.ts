@@ -371,6 +371,138 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
 
+export const HermesAcpSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("hermes").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to a Hermes Agent CLI that exposes the `hermes acp` stdio protocol.",
+        providerSettingsForm: {
+          placeholder: "hermes",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath"],
+  },
+);
+export type HermesAcpSettings = typeof HermesAcpSettings.Type;
+
+const OpenClawGatewayUrl = TrimmedString.check(
+  Schema.makeFilter((value) => {
+    if (value === "") return true;
+    let gatewayUrl: URL;
+    try {
+      gatewayUrl = new URL(value);
+    } catch {
+      return "OpenClaw Gateway URL must be a valid ws:// or wss:// URL.";
+    }
+    const sensitiveQueryKeys = new Set(["access_token", "apikey", "api_key", "password", "token"]);
+    const hasSecretQuery = [...gatewayUrl.searchParams.keys()].some((key) =>
+      sensitiveQueryKeys.has(key.toLowerCase()),
+    );
+    return (
+      (["ws:", "wss:"].includes(gatewayUrl.protocol) &&
+        !gatewayUrl.username &&
+        !gatewayUrl.password &&
+        !gatewayUrl.hash &&
+        !hasSecretQuery) ||
+      "OpenClaw Gateway URL must be credential-free; use environment, --token-file, or --password-file authentication."
+    );
+  }),
+);
+
+export const OpenClawSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("openclaw").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the OpenClaw CLI binary that exposes `openclaw acp`.",
+        providerSettingsForm: {
+          placeholder: "openclaw",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    url: OpenClawGatewayUrl.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Gateway URL",
+        description: "Optional OpenClaw Gateway URL passed to `openclaw acp --url`.",
+        providerSettingsForm: {
+          placeholder: "ws://127.0.0.1:18789",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    tokenFile: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Token file",
+        description:
+          "Optional path passed to `--token-file`. The token itself is never placed on the command line.",
+        providerSettingsForm: {
+          placeholder: "/path/to/openclaw-token",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    passwordFile: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Password file",
+        description:
+          "Optional path passed to `--password-file`. The password itself is never placed on the command line.",
+        providerSettingsForm: {
+          placeholder: "/path/to/openclaw-password",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    session: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Gateway session",
+        description: "Optional OpenClaw Gateway session override passed to `--session`.",
+        providerSettingsForm: {
+          placeholder: "agent:main:main",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    resetSession: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Reset gateway session",
+        description: "Start `openclaw acp` with `--reset-session`.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "persist" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "url", "tokenFile", "passwordFile", "session", "resetSession"],
+  },
+);
+export type OpenClawSettings = typeof OpenClawSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -421,6 +553,125 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+const HermesGatewayEndpoint = TrimmedString.check(
+  Schema.makeFilter((value) => {
+    if (value === "") return true;
+    let endpoint: URL;
+    try {
+      endpoint = new URL(value);
+    } catch {
+      return "Hermes endpoint must be a valid WebSocket URL.";
+    }
+    const loopback = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(endpoint.hostname);
+    const hasToken = [...endpoint.searchParams.keys()].some((key) => key.toLowerCase() === "token");
+    return (
+      (((endpoint.protocol === "ws:" && loopback) || (endpoint.protocol === "wss:" && !loopback)) &&
+        !endpoint.username &&
+        !endpoint.password &&
+        !endpoint.hash &&
+        !hasToken) ||
+      "Hermes endpoint must be credential-free loopback ws:// or remote wss://; supply authentication through sensitive provider environment."
+    );
+  }),
+);
+
+const HermesProfileKey = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+);
+
+const HermesFeatureSwitch = (defaultValue: boolean, title: string, description: string) =>
+  Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(defaultValue)),
+    Schema.annotateKey({
+      title,
+      description,
+      providerSettingsForm: { control: "switch", clearWhenEmpty: "persist" },
+    }),
+  );
+
+export const HermesSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    endpoint: HermesGatewayEndpoint.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Gateway endpoint",
+        description:
+          "Leave blank to use ws://127.0.0.1:9119/api/ws. T3 attaches there first and can start Hermes Serve when it is unused.",
+        providerSettingsForm: {
+          placeholder: "ws://127.0.0.1:9119/api/ws",
+          clearWhenEmpty: "persist",
+        },
+      }),
+    ),
+    remoteAccessEnabled: HermesFeatureSwitch(
+      false,
+      "Remote gateway",
+      "Allow this instance to connect to a credential-free wss:// endpoint.",
+    ),
+    profileKey: HermesProfileKey.pipe(
+      Schema.withDecodingDefault(Effect.succeed("default")),
+      Schema.annotateKey({
+        title: "Profile key",
+        description: "Durable Hermes profile containing the sessions owned by this instance.",
+        providerSettingsForm: { placeholder: "default", clearWhenEmpty: "persist" },
+      }),
+    ),
+    managedServerEnabled: HermesFeatureSwitch(
+      true,
+      "Start Hermes automatically",
+      "Attach to a compatible gateway at this endpoint, or launch and supervise `hermes serve` when no local gateway is running.",
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    importEnabled: HermesFeatureSwitch(
+      false,
+      "Profile import",
+      "Expose import controls only when the gateway advertises a compatible import API.",
+    ),
+    mcpEnabled: HermesFeatureSwitch(
+      true,
+      "MCP",
+      "Allow MCP only when session-scoped registration and revocation are advertised.",
+    ),
+    attachmentsEnabled: HermesFeatureSwitch(
+      true,
+      "Attachments",
+      "Allow attachment uploads supported by the connected gateway.",
+    ),
+    proactiveEnabled: HermesFeatureSwitch(
+      false,
+      "Proactive mode",
+      "Allow proactive features only when explicitly supported by the gateway.",
+    ),
+    voiceEnabled: HermesFeatureSwitch(
+      false,
+      "Voice",
+      "Allow voice features only when explicitly supported by the gateway.",
+    ),
+  },
+  {
+    order: [
+      "endpoint",
+      "profileKey",
+      "managedServerEnabled",
+      "remoteAccessEnabled",
+      "importEnabled",
+      "mcpEnabled",
+      "attachmentsEnabled",
+      "proactiveEnabled",
+      "voiceEnabled",
+    ],
+  },
+);
+export type HermesSettings = typeof HermesSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -431,6 +682,8 @@ export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  enableHermes: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  enableRemoteHermes: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
     Schema.withDecodingDefault(
@@ -464,6 +717,7 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    hermes: HermesSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -566,9 +820,25 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const HermesSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  endpoint: Schema.optionalKey(HermesGatewayEndpoint),
+  remoteAccessEnabled: Schema.optionalKey(Schema.Boolean),
+  profileKey: Schema.optionalKey(HermesProfileKey),
+  managedServerEnabled: Schema.optionalKey(Schema.Boolean),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  importEnabled: Schema.optionalKey(Schema.Boolean),
+  mcpEnabled: Schema.optionalKey(Schema.Boolean),
+  attachmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  proactiveEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceEnabled: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
+  enableHermes: Schema.optionalKey(Schema.Boolean),
+  enableRemoteHermes: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
@@ -587,6 +857,7 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
+      hermes: Schema.optionalKey(HermesSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
     }),
   ),

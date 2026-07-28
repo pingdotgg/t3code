@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -315,15 +316,21 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        supportsMcpTools: boolean,
+        runtimePolicy: ProviderAdapterV2RuntimePolicy,
       ): Effect.Effect<PreparedMcpCredential> =>
-        options.configureMcp === false
+        options.configureMcp === false || !supportsMcpTools
           ? Effect.sync((): PreparedMcpCredential => {
-              McpProviderSession.clearMcpProviderSession(threadId);
               return { mcpCredentialId: undefined, issued: false };
             })
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                const capabilities = new Set<McpInvocationContext.McpCapability>([
+                  "preview",
+                  "orchestration",
+                  ...(runtimePolicy.runtimeMode === "full-access" ? (["worktree"] as const) : []),
+                ]);
                 // Reuse a still-valid credential for this thread instead of
                 // rotating: long-lived provider processes (codex app-server)
                 // build their MCP client once per conversation and keep using
@@ -336,20 +343,25 @@ export const layerWithOptions = (
                   // revoke the credential between validation and reservation.
                   reserveMcpCredential(threadId, existing.providerSessionId);
                   const rawToken = existing.authorizationHeader.replace(/^Bearer\s+/, "");
-                  const resolved = yield* mcpSessionRegistry.resolve(rawToken);
+                  const resolved = yield* mcpSessionRegistry.resolve(
+                    rawToken,
+                    mcpSessionRegistry.audience,
+                  );
                   if (
                     resolved !== undefined &&
                     resolved.threadId === threadId &&
-                    resolved.providerInstanceId === providerInstanceId
+                    resolved.providerInstanceId === providerInstanceId &&
+                    resolved.capabilities.size === capabilities.size &&
+                    [...capabilities].every((capability) => resolved.capabilities.has(capability))
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
-                yield* mcpSessionRegistry.revokeThread(threadId);
-                const credential = yield* mcpSessionRegistry.issue({
+                const credential = yield* mcpSessionRegistry.rotate({
                   threadId,
                   providerInstanceId,
+                  capabilities,
                 });
                 McpProviderSession.setMcpProviderSession(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
@@ -961,6 +973,8 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        readonly supportsMcpTools: boolean;
+        readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
       }) =>
         Effect.suspend(() => {
           let preparedForCleanup: PreparedMcpCredential | undefined;
@@ -974,7 +988,12 @@ export const layerWithOptions = (
           return Effect.gen(function* () {
             const attached = yield* attachThread(input);
             if (attached) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.supportsMcpTools,
+                input.runtimePolicy,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -1146,6 +1165,8 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.threadId,
                 providerInstanceId: runtime.instanceId,
+                supportsMcpTools: runtime.providerSession.capabilities.tools.supportsMcpTools,
+                runtimePolicy: input.runtimePolicy,
               }),
             ).pipe(
               Effect.andThen(runtime.ensureThread(input)),
@@ -1179,6 +1200,12 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId,
                 providerInstanceId: runtime.instanceId,
+                supportsMcpTools: runtime.providerSession.capabilities.tools.supportsMcpTools,
+                runtimePolicy: input.runtimePolicy ?? {
+                  runtimeMode: "approval-required",
+                  interactionMode: "default",
+                  cwd: runtime.providerSession.cwd,
+                },
               }),
             ).pipe(
               Effect.andThen(
@@ -1211,6 +1238,12 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.targetThreadId,
                 providerInstanceId: runtime.instanceId,
+                supportsMcpTools: runtime.providerSession.capabilities.tools.supportsMcpTools,
+                runtimePolicy: input.runtimePolicy ?? {
+                  runtimeMode: "approval-required",
+                  interactionMode: "default",
+                  cwd: runtime.providerSession.cwd,
+                },
               }),
             ).pipe(
               Effect.andThen(runtime.forkThread(input)),
@@ -1237,6 +1270,8 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.threadId,
                 providerInstanceId: runtime.instanceId,
+                supportsMcpTools: runtime.providerSession.capabilities.tools.supportsMcpTools,
+                runtimePolicy: input.runtimePolicy,
               }),
             ).pipe(
               Effect.andThen(observeActivity(providerSessionId, markBusy(providerSessionId))),
@@ -1384,6 +1419,9 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
                   providerInstanceId: existing.runtime.instanceId,
+                  supportsMcpTools:
+                    existing.runtime.providerSession.capabilities.tools.supportsMcpTools,
+                  runtimePolicy: input.runtimePolicy,
                 });
                 yield* touchActivity(input.providerSessionId);
                 return existing.exposedRuntime;
@@ -1399,9 +1437,21 @@ export const layerWithOptions = (
                     }),
                 ),
               );
+              const adapterCapabilities = yield* adapter.getCapabilities().pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
+                adapterCapabilities.tools.supportsMcpTools,
+                input.runtimePolicy,
               );
               const mcpCredentialId = prepared.mcpCredentialId;
               // The reservation from prepare protects the credential (which

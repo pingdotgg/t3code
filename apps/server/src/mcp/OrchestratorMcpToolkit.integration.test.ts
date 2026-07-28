@@ -570,11 +570,13 @@ describe("orchestrator MCP toolkit", () => {
             expect(parentRun?.status).toBe("running");
 
             const invocation: McpInvocationContext.McpInvocationScope = {
+              credentialId: "credential-orchestrator-test",
               environmentId: EnvironmentId.make("environment:mcp-orchestrator"),
               threadId: parentThreadId,
               providerSessionId: "mcp-provider-session-parent",
               providerInstanceId: codexInstanceId,
               capabilities: new Set(["orchestration"]),
+              audience: "urn:t3-code:mcp:environment-orchestrator",
               issuedAt: 1,
             };
             const invoke = (name: string, args: Record<string, unknown>) =>

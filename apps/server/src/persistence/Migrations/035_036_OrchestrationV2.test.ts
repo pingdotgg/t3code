@@ -13,7 +13,7 @@ layer("035_036_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 43 }, (_, index) => index + 1),
+        Array.from({ length: 49 }, (_, index) => index + 1),
       );
     }),
   );
@@ -122,7 +122,7 @@ it.effect("upgrades a database already at released main migration 034", () =>
     assert.ok(snoozeColumns.some((column) => column.name === "snoozed_until"));
     assert.ok(snoozeColumns.some((column) => column.name === "snoozed_at"));
 
-    yield* runMigrations({ toMigrationInclusive: 43 });
+    yield* runMigrations({ toMigrationInclusive: 44 });
 
     const migrations = yield* sql<{
       readonly migration_id: number;
@@ -130,7 +130,7 @@ it.effect("upgrades a database already at released main migration 034", () =>
     }>`
       SELECT migration_id, name
       FROM effect_sql_migrations
-      WHERE migration_id BETWEEN 34 AND 43
+      WHERE migration_id BETWEEN 34 AND 44
       ORDER BY migration_id
     `;
     assert.deepStrictEqual(
@@ -146,6 +146,7 @@ it.effect("upgrades a database already at released main migration 034", () =>
         [41, "OrchestrationV2EffectCancellation"],
         [42, "ScheduledTasks"],
         [43, "LegacyV1ImportState"],
+        [44, "HermesSessionBindings"],
       ],
     );
 
@@ -162,5 +163,12 @@ it.effect("upgrades a database already at released main migration 034", () =>
       WHERE type = 'table' AND name = 'orchestration_v2_legacy_imports'
     `;
     assert.strictEqual(legacyImportTables.length, 1);
+
+    const hermesBindingTables = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'hermes_session_bindings'
+    `;
+    assert.strictEqual(hermesBindingTables.length, 1);
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
 );

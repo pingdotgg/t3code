@@ -65,6 +65,91 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("exposes Hermes in Code as a distinct instance-only ACP driver", () => {
+    const hermesAcp = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hermesAcp")];
+
+    expect(hermesAcp).toBeDefined();
+    expect(hermesAcp?.label).toBe("Hermes in Code");
+    expect(hermesAcp?.hasDefaultInstance).toBe(false);
+    expect(deriveProviderSettingsFields(hermesAcp!).map((field) => field.key)).toEqual([
+      "binaryPath",
+    ]);
+    expect(hermesAcp?.environmentFields).toBeUndefined();
+  });
+
+  it("exposes Hermes as a built-in provider with its required settings and secret", () => {
+    const hermes = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hermes")];
+
+    expect(hermes).toBeDefined();
+    expect(hermes?.hasDefaultInstance).not.toBe(false);
+    expect(hermes?.defaultInstance).toEqual({
+      driver: ProviderDriverKind.make("hermes"),
+      enabled: false,
+      config: {
+        endpoint: "",
+        remoteAccessEnabled: false,
+        profileKey: "default",
+        managedServerEnabled: true,
+        customModels: [],
+        importEnabled: false,
+        mcpEnabled: true,
+        attachmentsEnabled: true,
+        proactiveEnabled: false,
+        voiceEnabled: false,
+      },
+    });
+    expect(deriveProviderSettingsFields(hermes!).map((field) => field.key)).toEqual([
+      "endpoint",
+      "profileKey",
+      "managedServerEnabled",
+      "remoteAccessEnabled",
+      "importEnabled",
+      "mcpEnabled",
+      "attachmentsEnabled",
+      "proactiveEnabled",
+      "voiceEnabled",
+    ]);
+    expect(hermes?.environmentFields).toEqual([
+      {
+        name: "HERMES_GATEWAY_TOKEN",
+        label: "Hermes gateway token",
+        description:
+          "Shared only with the attached gateway or a Hermes Serve process launched by T3.",
+        placeholder: "Paste gateway token",
+        sensitive: true,
+      },
+    ]);
+  });
+
+  it("exposes OpenClaw as a disabled-by-default ACP provider", () => {
+    const openClaw = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("openclaw")];
+
+    expect(openClaw).toBeDefined();
+    expect(openClaw?.label).toBe("OpenClaw");
+    expect(openClaw?.badgeLabel).toBe("ACP");
+    expect(openClaw?.defaultInstance).toEqual({
+      driver: ProviderDriverKind.make("openclaw"),
+      enabled: false,
+      config: {
+        binaryPath: "openclaw",
+        url: "",
+        tokenFile: "",
+        passwordFile: "",
+        session: "",
+        resetSession: false,
+        customModels: [],
+      },
+    });
+    expect(deriveProviderSettingsFields(openClaw!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "url",
+      "tokenFile",
+      "passwordFile",
+      "session",
+      "resetSession",
+    ]);
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

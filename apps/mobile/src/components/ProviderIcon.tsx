@@ -1,5 +1,5 @@
 import { useColorScheme } from "react-native";
-import { Path, Svg } from "react-native-svg";
+import { Circle, Path, Rect, Svg } from "react-native-svg";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -9,6 +9,42 @@ type ProviderIconProps = {
 export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = useColorScheme() === "dark";
   const size = props.size ?? 16;
+
+  if (props.provider === "hermes") {
+    const color = isDarkMode ? "#f4f4f5" : "#18181b";
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path fill={color} d="M4 4.5h3.2v5.8h9.6V4.5H20v15h-3.2v-6.1H7.2v6.1H4v-15Z" />
+        <Path
+          fill={color}
+          opacity={0.55}
+          d="M1.5 7.2 4 8.5v3L1.5 10V7.2Zm21 0L20 8.5v3l2.5-1.5V7.2Z"
+        />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "openclaw") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 32 32" fill="none">
+        <Rect width={32} height={32} rx={8} fill="#F04F3D" />
+        <Path
+          d="M12.2 14.6c-2.9-.1-5.2-1.8-5.9-4.5 1.7 0 3.2.6 4.2 1.7-.2-2 .5-3.8 2-5 1.1 2.4 1.2 5 .3 7.5m7.2.3c2.9-.1 5.2-1.8 5.9-4.5-1.7 0-3.2.6-4.2 1.7.2-2-.5-3.8-2-5-1.1 2.4-1.2 5-.3 7.5"
+          stroke="white"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <Path
+          d="M11.4 17.8c0-2.5 2.1-4.6 4.6-4.6s4.6 2.1 4.6 4.6v2.7c0 3.1-2 5.7-4.6 5.7s-4.6-2.6-4.6-5.7v-2.7Z"
+          fill="white"
+        />
+        <Path d="M12 18.2h8m-8.5 3.6h9" stroke="#F04F3D" strokeWidth={1.3} strokeLinecap="round" />
+        <Circle cx={14.1} cy={16.7} r={0.85} fill="#F04F3D" />
+        <Circle cx={17.9} cy={16.7} r={0.85} fill="#F04F3D" />
+      </Svg>
+    );
+  }
 
   if (props.provider === "claudeAgent") {
     return (

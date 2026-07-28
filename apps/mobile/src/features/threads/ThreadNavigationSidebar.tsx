@@ -23,9 +23,14 @@ import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
+import {
+  buildProviderDriverMap,
+  isHermesProviderInstance,
+  isMobileWorkspaceThread,
+} from "../../lib/mobileWorkspace";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, useMobileWorkspace } from "../../state/preferences";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks, type PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -63,7 +68,7 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "./thread-list-items";
-import { ThreadListV2Row } from "./thread-list-v2-items";
+import { ThreadListV2InboxHeader, ThreadListV2Row } from "./thread-list-v2-items";
 import {
   buildThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
@@ -82,6 +87,7 @@ type SidebarListItem =
       readonly pendingTask: PendingNewTask;
       readonly isLast: boolean;
     }
+  | { readonly type: "v2-inbox"; readonly key: string }
   | { readonly type: "v2-thread"; readonly key: string; readonly item: ThreadListV2Item }
   | { readonly type: "v2-show-more"; readonly key: string; readonly hiddenCount: number };
 
@@ -197,10 +203,33 @@ function ThreadNavigationSidebarPane(
   const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
     useThreadListActions();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const [workspace, setWorkspace] = useMobileWorkspace();
   const threadListV2Enabled =
-    AsyncResult.isSuccess(preferencesResult) &&
-    preferencesResult.value.threadListV2Enabled === true;
-  const pendingTasks = usePendingNewTasks();
+    workspace === "work" ||
+    (AsyncResult.isSuccess(preferencesResult) &&
+      preferencesResult.value.threadListV2Enabled === true);
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const providerDrivers = useMemo(() => buildProviderDriverMap(serverConfigs), [serverConfigs]);
+  const visibleThreads = useMemo(
+    () => threads.filter((thread) => isMobileWorkspaceThread(thread, workspace, providerDrivers)),
+    [providerDrivers, threads, workspace],
+  );
+  const allPendingTasks = usePendingNewTasks();
+  const pendingTasks = useMemo(
+    () =>
+      workspace === "code"
+        ? allPendingTasks
+        : allPendingTasks.filter(
+            (task) =>
+              task.message.modelSelection !== undefined &&
+              isHermesProviderInstance(
+                task.message.environmentId,
+                task.message.modelSelection.instanceId,
+                providerDrivers,
+              ),
+          ),
+    [allPendingTasks, providerDrivers, workspace],
+  );
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
     () =>
@@ -289,11 +318,11 @@ function ThreadNavigationSidebarPane(
   const scopedThreads = useMemo(
     () =>
       selectedProjectRefs === null
-        ? threads
-        : threads.filter((thread) =>
+        ? visibleThreads
+        : visibleThreads.filter((thread) =>
             selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
-    [selectedProjectRefs, threads],
+    [selectedProjectRefs, visibleThreads],
   );
   const scopedPendingTasks = useMemo(
     () =>
@@ -414,7 +443,6 @@ function ThreadNavigationSidebarPane(
   }, [threadListV2Enabled]);
   // Threads on servers without the settlement capability never classify as
   // settled (the user could neither un-settle nor pin them).
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const settlementEnvironmentIds = useMemo(() => {
     const supported = new Set<EnvironmentId>();
     for (const [environmentId, config] of serverConfigs) {
@@ -437,9 +465,12 @@ function ThreadNavigationSidebarPane(
     if (!threadListV2Enabled)
       return { items: [], hiddenSettledCount: 0, snoozedCount: 0, nextSnoozeWakeAt: null };
     return buildThreadListV2Items({
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads: visibleThreads,
       environmentId: options.selectedEnvironmentId,
-      projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
+      projectRefs:
+        workspace === "work" || selectedProjectScope === null
+          ? null
+          : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
@@ -458,7 +489,8 @@ function ThreadNavigationSidebarPane(
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     threadListV2Enabled,
-    threads,
+    visibleThreads,
+    workspace,
     selectedProjectScope,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
@@ -487,19 +519,29 @@ function ThreadNavigationSidebarPane(
       (pendingTask) =>
         (options.selectedEnvironmentId === null ||
           pendingTask.message.environmentId === options.selectedEnvironmentId) &&
-        (selectedProjectRefs === null ||
+        (workspace === "work" ||
+          selectedProjectRefs === null ||
           selectedProjectRefs.has(
             scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
           )) &&
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
-    const items: SidebarListItem[] = v2PendingTasks.map((pendingTask, index) => ({
-      type: "v2-pending-task" as const,
-      key: `v2-pending:${pendingTask.message.messageId}`,
-      pendingTask,
-      isLast: index === v2PendingTasks.length - 1,
-    }));
+    const items: SidebarListItem[] = [];
+    if (workspace === "work") {
+      items.push({
+        type: "v2-inbox",
+        key: "v2-inbox",
+      });
+    }
+    items.push(
+      ...v2PendingTasks.map((pendingTask, index) => ({
+        type: "v2-pending-task" as const,
+        key: `v2-pending:${pendingTask.message.messageId}`,
+        pendingTask,
+        isLast: index === v2PendingTasks.length - 1,
+      })),
+    );
     for (const item of threadListV2Layout.items) {
       items.push({
         type: "v2-thread" as const,
@@ -528,6 +570,24 @@ function ThreadNavigationSidebarPane(
   const listMenuActions = useMemo<MenuAction[]>(
     () => [
       {
+        id: "workspace",
+        title: "Workspace",
+        subactions: [
+          {
+            id: "workspace:work",
+            title: "T3 Work",
+            subtitle: "Create, learn, and explore",
+            state: workspace === "work" ? "on" : "off",
+          },
+          {
+            id: "workspace:code",
+            title: "T3 Code",
+            subtitle: "Build, debug, and ship",
+            state: workspace === "code" ? "on" : "off",
+          },
+        ],
+      },
+      {
         id: "environment",
         title: "Environment",
         subactions: [
@@ -547,7 +607,7 @@ function ThreadNavigationSidebarPane(
           })),
         ],
       },
-      ...(projectFilterOptions.length === 0
+      ...(workspace === "work" || projectFilterOptions.length === 0
         ? []
         : ([
             {
@@ -594,11 +654,26 @@ function ThreadNavigationSidebarPane(
             },
           ] satisfies MenuAction[])),
     ],
-    [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
+    [
+      environments,
+      options,
+      projectFilterOptions,
+      selectedProjectKey,
+      threadListV2Enabled,
+      workspace,
+    ],
   );
   const handleListMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       const event = nativeEvent.event;
+      if (event === "workspace:work") {
+        setWorkspace("work");
+        return;
+      }
+      if (event === "workspace:code") {
+        setWorkspace("code");
+        return;
+      }
       if (event === "environment:all") {
         setSelectedEnvironmentId(null);
         return;
@@ -642,6 +717,7 @@ function ThreadNavigationSidebarPane(
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
+      setWorkspace,
     ],
   );
 
@@ -715,6 +791,9 @@ function ThreadNavigationSidebarPane(
       if (previous.type === "v2-show-more" && item.type === "v2-show-more") {
         return previous.hiddenCount === item.hiddenCount;
       }
+      if (previous.type === "v2-inbox" && item.type === "v2-inbox") {
+        return true;
+      }
       if (previous.type === "v2-pending-task" && item.type === "v2-pending-task") {
         return previous.pendingTask === item.pendingTask && previous.isLast === item.isLast;
       }
@@ -722,9 +801,11 @@ function ThreadNavigationSidebarPane(
         previous.type === "v2-thread" ||
         previous.type === "v2-show-more" ||
         previous.type === "v2-pending-task" ||
+        previous.type === "v2-inbox" ||
         item.type === "v2-thread" ||
         item.type === "v2-show-more" ||
-        item.type === "v2-pending-task"
+        item.type === "v2-pending-task" ||
+        item.type === "v2-inbox"
       ) {
         return false;
       }
@@ -752,6 +833,8 @@ function ThreadNavigationSidebarPane(
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
+        case "v2-inbox":
+          return <ThreadListV2InboxHeader pane="sidebar" />;
         case "v2-pending-task":
           return (
             <PendingTaskListRow
@@ -922,7 +1005,8 @@ function ThreadNavigationSidebarPane(
   // v2 ignores the sort/group options, so only the environment filter can
   // light the "customized" state while the beta is on.
   const filterCustomized = threadListV2Enabled
-    ? options.selectedEnvironmentId !== null || selectedProjectKey !== null
+    ? options.selectedEnvironmentId !== null ||
+      (workspace === "code" && selectedProjectKey !== null)
     : hasCustomHomeListOptions({ ...options, selectedProjectKey });
   const filterIcon = filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"
@@ -931,9 +1015,9 @@ function ThreadNavigationSidebarPane(
     () =>
       buildHomeListFilterMenu({
         environments,
-        projects: projectFilterOptions,
+        projects: workspace === "work" ? [] : projectFilterOptions,
         selectedEnvironmentId: options.selectedEnvironmentId,
-        selectedProjectKey,
+        selectedProjectKey: workspace === "work" ? null : selectedProjectKey,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         onEnvironmentChange: setSelectedEnvironmentId,
@@ -951,6 +1035,7 @@ function ThreadNavigationSidebarPane(
       setSelectedEnvironmentId,
       setThreadSortOrder,
       threadListV2Enabled,
+      workspace,
     ],
   );
   const nativeHeaderItems = useMemo(
@@ -958,9 +1043,11 @@ function ThreadNavigationSidebarPane(
       createSidebarHeaderItems({
         filterIcon,
         filterMenu,
+        workspace,
+        onWorkspaceChange: setWorkspace,
         onOpenSettings: props.onOpenSettings,
       }),
-    [filterIcon, filterMenu, props.onOpenSettings],
+    [filterIcon, filterMenu, props.onOpenSettings, setWorkspace, workspace],
   );
   // "No threads yet" over an inbox that is merely all-snoozed reads as
   // data loss; name the snoozed threads instead.
@@ -993,6 +1080,7 @@ function ThreadNavigationSidebarPane(
         <NativeStackScreenOptions
           optionsVersion={nativeHeaderItems}
           options={{
+            title: `T3 ${workspace === "work" ? "Work" : "Code"}`,
             headerSearchBarOptions: {
               ref: searchBarRef,
               autoCapitalize: "none",
@@ -1145,7 +1233,7 @@ function ThreadNavigationSidebarPane(
         </View>
         <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
           <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
-            Threads
+            T3 {workspace === "work" ? "Work" : "Code"}
           </Text>
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>
             <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>

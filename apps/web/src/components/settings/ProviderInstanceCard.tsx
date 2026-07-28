@@ -419,6 +419,8 @@ interface ProviderInstanceCardProps {
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
   readonly liveProvider: ServerProvider | undefined;
+  /** Effective enabled state after any driver-wide rollout gate is applied. */
+  readonly effectiveEnabled?: boolean | undefined;
   readonly isExpanded: boolean;
   readonly onExpandedChange: (open: boolean) => void;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
@@ -445,6 +447,8 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  /** Render the standard provider row as a muted, fully non-interactive availability preview. */
+  readonly comingSoon?: boolean | undefined;
 }
 
 /**
@@ -476,6 +480,7 @@ export function ProviderInstanceCard({
   instance,
   driverOption,
   liveProvider,
+  effectiveEnabled,
   isExpanded,
   onExpandedChange,
   onUpdate,
@@ -489,13 +494,15 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  comingSoon = false,
 }: ProviderInstanceCardProps) {
-  const enabled = instance.enabled ?? true;
+  const enabled = effectiveEnabled ?? instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
   // "disabled"/"warning" based on the local `enabled` flag so the dot
   // reflects the persisted intent even before the first probe completes.
   const statusKey: ProviderStatusKey =
-    (liveProvider?.status as ProviderStatusKey | undefined) ?? (enabled ? "warning" : "disabled");
+    (comingSoon ? "disabled" : (liveProvider?.status as ProviderStatusKey | undefined)) ??
+    (enabled ? "warning" : "disabled");
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const rawSummary = getProviderSummary(liveProvider);
   const authEmail = liveProvider?.auth.email;
@@ -505,8 +512,10 @@ export function ProviderInstanceCard({
     ? (liveProvider?.auth.label ?? liveProvider?.auth.type ?? null)
     : null;
   const summary = rawSummary;
-  const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const versionLabel = comingSoon ? null : getProviderVersionLabel(liveProvider?.version);
+  const versionAdvisory = comingSoon
+    ? null
+    : getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
@@ -658,9 +667,9 @@ export function ProviderInstanceCard({
           {instanceId}
         </code>
       ) : null}
-      {driverOption?.badgeLabel ? (
-        <Badge variant="warning" size="sm" className="shrink-0">
-          {driverOption.badgeLabel}
+      {comingSoon || driverOption?.badgeLabel ? (
+        <Badge variant={comingSoon ? "outline" : "warning"} size="sm" className="shrink-0">
+          {comingSoon ? "Soon" : driverOption?.badgeLabel}
         </Badge>
       ) : null}
     </>
@@ -698,7 +707,9 @@ export function ProviderInstanceCard({
 
   const authRowNode = (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
-      {hasAuthenticatedEmail ? (
+      {comingSoon ? (
+        <span>OpenClaw agent gateway support is coming soon.</span>
+      ) : hasAuthenticatedEmail ? (
         <>
           <span>Authenticated as</span>
           <ProviderAuthEmail email={authEmail} />
@@ -710,7 +721,7 @@ export function ProviderInstanceCard({
           <ProviderAuthEmail email={authEmail} separator prefix="Email" />
         </>
       )}
-      {summary.detail ? <span>- {summary.detail}</span> : null}
+      {!comingSoon && summary.detail ? <span>- {summary.detail}</span> : null}
     </p>
   );
 
@@ -719,7 +730,13 @@ export function ProviderInstanceCard({
   ) : null;
 
   return (
-    <div className="rounded-xl transition-colors hover:bg-muted/20">
+    <div
+      aria-disabled={comingSoon || undefined}
+      className={cn(
+        "rounded-xl transition-colors",
+        comingSoon ? "pointer-events-none opacity-50" : "hover:bg-muted/20",
+      )}
+    >
       <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
@@ -830,6 +847,7 @@ export function ProviderInstanceCard({
               size="sm"
               variant="ghost"
               className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+              disabled={comingSoon}
               onClick={() => onExpandedChange(!isExpanded)}
               aria-label={`Toggle ${displayName} details`}
             >
@@ -838,7 +856,8 @@ export function ProviderInstanceCard({
               />
             </Button>
             <Switch
-              checked={enabled}
+              checked={comingSoon ? false : enabled}
+              disabled={comingSoon}
               onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
               aria-label={`Enable ${displayName}`}
             />
@@ -846,7 +865,10 @@ export function ProviderInstanceCard({
         </div>
       </div>
 
-      <Collapsible open={isExpanded} onOpenChange={onExpandedChange}>
+      <Collapsible
+        open={comingSoon ? false : isExpanded}
+        onOpenChange={comingSoon ? undefined : onExpandedChange}
+      >
         <CollapsibleContent>
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
             <div>

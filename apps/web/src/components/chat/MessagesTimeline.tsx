@@ -33,6 +33,7 @@ import {
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
+  workLogEntryIsVisible,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
@@ -49,6 +50,7 @@ import {
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  DownloadIcon,
   EyeIcon,
   GitForkIcon,
   GlobeIcon,
@@ -56,6 +58,7 @@ import {
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  ReplyIcon,
   MinusIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -103,6 +106,7 @@ import {
   extractTrailingPreviewAnnotation,
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
+import { extractLeadingMessageReply } from "~/lib/messageReply";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -149,6 +153,7 @@ interface TimelineRowSharedState {
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly latestOnly?: boolean;
   }) => Promise<void>;
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
@@ -182,6 +187,7 @@ interface MessagesTimelineProps {
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  timelineClearedAt?: string | null;
   latestRun: TimelineLatestRun | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
@@ -194,6 +200,7 @@ interface MessagesTimelineProps {
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly latestOnly?: boolean;
   }) => Promise<void>;
   onRollbackCheckpoint: (input: {
     readonly checkpointId: string;
@@ -229,6 +236,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeTurnStartedAt,
   listRef,
   timelineEntries,
+  timelineClearedAt = null,
   latestRun,
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
@@ -318,6 +326,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () =>
       deriveMessagesTimelineRows({
         timelineEntries,
+        timelineClearedAt,
         latestRun,
         expandedRunIds,
         expandedAttemptIds,
@@ -328,6 +337,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }),
     [
       timelineEntries,
+      timelineClearedAt,
       latestRun,
       expandedRunIds,
       expandedAttemptIds,
@@ -900,6 +910,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
+      {row.kind === "chat-cleared" ? <ChatClearedTimelineRow /> : null}
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
@@ -914,9 +925,19 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   );
 });
 
+function ChatClearedTimelineRow() {
+  return (
+    <div className="flex items-center gap-3 py-2 text-xs text-muted-foreground/70">
+      <div className="h-px flex-1 bg-border/60" />
+      <span>Chat cleared</span>
+      <div className="h-px flex-1 bg-border/60" />
+    </div>
+  );
+}
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const userImages = row.message.attachments ?? [];
+  const userAttachments = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
@@ -932,8 +953,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
   ];
-  const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
-  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const messageReply = extractLeadingMessageReply(elementContextState.promptText);
+  const messageBodyText = messageReply?.messageText ?? elementContextState.promptText;
+  const previewImages = userAttachments.filter(
+    (attachment) =>
+      attachment.type === "image" && attachment.name.startsWith("preview-annotation-"),
+  );
+  const regularAttachments = userAttachments.filter(
+    (attachment) =>
+      attachment.type !== "image" || !attachment.name.startsWith("preview-annotation-"),
+  );
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
@@ -947,37 +976,58 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </p>
       ) : null}
       <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
-        {regularImages.length > 0 && (
+        {regularAttachments.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-              <div
-                key={image.id}
-                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-              >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
-                  >
-                    <img
-                      src={image.previewUrl}
-                      alt={image.name}
-                      className="block h-auto max-h-[220px] w-full object-cover"
+            {regularAttachments.map(
+              (attachment: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                <div
+                  key={attachment.id}
+                  className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                >
+                  {attachment.type === "image" && attachment.previewUrl ? (
+                    <button
+                      type="button"
+                      className="h-full w-full cursor-zoom-in"
+                      aria-label={`Preview ${attachment.name}`}
+                      onClick={() => {
+                        const preview = buildExpandedImagePreview(
+                          regularAttachments.filter((item) => item.type === "image"),
+                          attachment.id,
+                        );
+                        if (!preview) return;
+                        ctx.onImageExpand(preview);
+                      }}
+                    >
+                      <img
+                        src={attachment.previewUrl}
+                        alt={attachment.name}
+                        className="block h-auto max-h-[220px] w-full object-cover"
+                      />
+                    </button>
+                  ) : attachment.type === "video" && attachment.previewUrl ? (
+                    <video
+                      src={attachment.previewUrl}
+                      controls
+                      preload="metadata"
+                      className="block h-auto max-h-[220px] w-full bg-black object-contain"
                     />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                    {image.name}
-                  </div>
-                )}
-              </div>
-            ))}
+                  ) : attachment.previewUrl ? (
+                    <a
+                      href={attachment.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-xs text-foreground underline-offset-2 hover:underline"
+                    >
+                      {attachment.name}
+                    </a>
+                  ) : (
+                    <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                      {attachment.name}
+                    </div>
+                  )}
+                </div>
+              ),
+            )}
           </div>
         )}
         {previewAnnotations.map((annotation, index) => (
@@ -997,8 +1047,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         ) : null}
+        {messageReply ? <UserMessageReplyPreview text={messageReply.referencedText} /> : null}
         <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
+          text={messageBodyText}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
@@ -1042,6 +1093,26 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </div>
       </div>
     </div>
+  );
+}
+
+function UserMessageReplyPreview({ text }: { readonly text: string }) {
+  return (
+    <aside
+      aria-label="Replying to message"
+      className="mb-2 min-w-0 rounded-lg border-l-2 border-foreground/25 bg-background/55 px-3 py-2"
+    >
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+        <ReplyIcon className="size-3" aria-hidden="true" />
+        <span>Replying to</span>
+      </div>
+      <p
+        className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/70"
+        title={text}
+      >
+        {text}
+      </p>
+    </aside>
   );
 }
 
@@ -1145,7 +1216,9 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const attachments = row.message.attachments ?? [];
+  const messageText =
+    row.message.text || (row.message.streaming || attachments.length > 0 ? "" : "(empty response)");
 
   return (
     <>
@@ -1157,6 +1230,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
         />
+        {attachments.length > 0 ? <AssistantMessageAttachments attachments={attachments} /> : null}
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
@@ -1193,12 +1267,145 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
 }
 
+function AssistantMessageAttachments({
+  attachments,
+}: {
+  attachments: NonNullable<TimelineMessage["attachments"]>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const previewableImages = attachments.filter(
+    (attachment) => attachment.type === "image" && attachment.previewUrl,
+  );
+
+  return (
+    <div
+      className="mt-3 grid max-w-3xl grid-cols-1 gap-2 sm:grid-cols-2"
+      data-assistant-attachments
+    >
+      {attachments.map((attachment) => {
+        if (attachment.type === "image" && attachment.previewUrl) {
+          return (
+            <figure
+              key={attachment.id}
+              className="group/media relative min-w-0 overflow-hidden rounded-xl border border-border/60 bg-muted/20"
+            >
+              <button
+                type="button"
+                className="block w-full cursor-zoom-in"
+                aria-label={`Preview ${attachment.name}`}
+                onClick={() => {
+                  const preview = buildExpandedImagePreview(previewableImages, attachment.id);
+                  if (preview) ctx.onImageExpand(preview);
+                }}
+              >
+                <img
+                  src={attachment.previewUrl}
+                  alt={attachment.name}
+                  loading="lazy"
+                  className="block max-h-[28rem] w-full bg-black/5 object-contain"
+                />
+              </button>
+              <figcaption className="flex min-w-0 items-center gap-2 border-t border-border/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate" title={attachment.name}>
+                  {attachment.name}
+                </span>
+                <a
+                  href={attachment.previewUrl}
+                  download={attachment.name}
+                  className="shrink-0 rounded p-1 transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label={`Download ${attachment.name}`}
+                  title={`Download ${attachment.name}`}
+                >
+                  <DownloadIcon className="size-3.5" />
+                </a>
+              </figcaption>
+            </figure>
+          );
+        }
+        if (attachment.type === "video" && attachment.previewUrl) {
+          return (
+            <figure
+              key={attachment.id}
+              className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-muted/20 sm:col-span-2"
+            >
+              <video
+                src={attachment.previewUrl}
+                controls
+                playsInline
+                preload="metadata"
+                aria-label={attachment.name}
+                className="block max-h-[32rem] w-full bg-black object-contain"
+              />
+              <figcaption className="truncate border-t border-border/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                {attachment.name}
+              </figcaption>
+            </figure>
+          );
+        }
+        if (attachment.mimeType.startsWith("audio/") && attachment.previewUrl) {
+          return (
+            <figure
+              key={attachment.id}
+              className="min-w-0 rounded-xl border border-border/60 bg-muted/20 p-3 sm:col-span-2"
+            >
+              <figcaption className="mb-2 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate" title={attachment.name}>
+                  {attachment.name}
+                </span>
+                <a
+                  href={attachment.previewUrl}
+                  download={attachment.name}
+                  className="shrink-0 rounded p-1 transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label={`Download ${attachment.name}`}
+                  title={`Download ${attachment.name}`}
+                >
+                  <DownloadIcon className="size-3.5" />
+                </a>
+              </figcaption>
+              <audio
+                src={attachment.previewUrl}
+                controls
+                preload="metadata"
+                aria-label={attachment.name}
+                className="block h-9 w-full"
+              />
+            </figure>
+          );
+        }
+        if (attachment.previewUrl) {
+          return (
+            <a
+              key={attachment.id}
+              href={attachment.previewUrl}
+              download={attachment.name}
+              className="flex min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-foreground/80 transition-colors hover:bg-muted/40 hover:text-foreground"
+            >
+              <DownloadIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{attachment.name}</span>
+            </a>
+          );
+        }
+        return (
+          <div
+            key={attachment.id}
+            className="min-w-0 truncate rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs text-muted-foreground"
+            title={attachment.name}
+          >
+            Media unavailable · {attachment.name}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AssistantForkButton({
   projectedItem,
 }: {
   readonly projectedItem: NonNullable<Extract<TimelineRow, { kind: "message" }>["projectedItem"]>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
   const [busy, setBusy] = useState(false);
   const support = useV2ItemSupport({
     environmentId: ctx.activeThreadEnvironmentId,
@@ -1208,10 +1415,15 @@ function AssistantForkButton({
   const canFork = canForkProjectedAssistantItem({
     projectedItem,
     capabilities: support.providerSession?.capabilities,
+    isLatestRun: activity.latestRunId === projectedItem.item.runId,
   });
 
   if (!canFork || projectedItem.item.runId === null) return null;
   const runId = projectedItem.item.runId;
+  const latestOnly =
+    support.providerSession?.capabilities.threads.canForkThread === true &&
+    support.providerSession.capabilities.threads.canForkFromTurn === false;
+  const label = latestOnly ? "Fork latest conversation head" : "Fork from this response";
 
   return (
     <Tooltip>
@@ -1225,16 +1437,20 @@ function AssistantForkButton({
             onClick={() => {
               setBusy(true);
               void ctx
-                .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
+                .onForkFromRun({
+                  sourceThreadId: projectedItem.sourceThreadId,
+                  runId,
+                  ...(latestOnly ? { latestOnly: true } : {}),
+                })
                 .finally(() => setBusy(false));
             }}
-            aria-label="Fork from this response"
+            aria-label={label}
           />
         }
       >
         <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
       </TooltipTrigger>
-      <TooltipPopup side="top">Fork from this response</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -1522,7 +1738,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   const sectionRef = useRef<HTMLElement>(null);
   const anchorBottomBeforeToggleRef = useRef<number | null>(null);
   const nonEmptyEntries = useMemo(
-    () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
+    () => groupedEntries.filter(workLogEntryIsVisible),
     [groupedEntries],
   );
   const hasOverflow = nonEmptyEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
@@ -2389,10 +2605,16 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? "font-medium text-destructive"
       : "font-medium text-foreground/82";
   const turnSettled = !activity.activeTurnInProgress;
-  const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
+  const lifecycleStatus = workEntry.toolLifecycleStatus;
+  const showRunningIndicator = lifecycleStatus === "inProgress";
+  const showStoppedIndicator = lifecycleStatus === "stopped" || lifecycleStatus === "declined";
+  const showNeutralIndicator =
+    lifecycleStatus === undefined && !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||
-    (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
+    (lifecycleStatus === undefined &&
+      turnSettled &&
+      workEntryIndicatesToolNeutralStatus(workEntry));
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
@@ -2416,6 +2638,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       data-tool-logo={toolPresentation?.logo}
+      data-tool-call-status={lifecycleStatus}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
       {...rowToggleProps}
@@ -2476,10 +2699,33 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                   </TooltipTrigger>
                   <TooltipPopup>Failed</TooltipPopup>
                 </Tooltip>
+              ) : showRunningIndicator ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="flex size-4 items-center justify-center"
+                        aria-label="Tool call running"
+                      />
+                    }
+                  >
+                    <span className="inline-flex items-center gap-px" aria-hidden>
+                      <span className="size-1 rounded-full bg-current animate-status-pulse" />
+                      <span className="size-1 rounded-full bg-current animate-status-pulse [animation-delay:200ms]" />
+                      <span className="size-1 rounded-full bg-current animate-status-pulse [animation-delay:400ms]" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipPopup>Running</TooltipPopup>
+                </Tooltip>
               ) : showSuccessIndicator ? (
                 <Tooltip>
                   <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
+                    render={
+                      <span
+                        className="flex size-4 items-center justify-center"
+                        aria-label="Tool call completed"
+                      />
+                    }
                   >
                     <span className="inline-flex size-4 items-center justify-center">
                       <CheckIcon
@@ -2490,6 +2736,20 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                     </span>
                   </TooltipTrigger>
                   <TooltipPopup>Completed</TooltipPopup>
+                </Tooltip>
+              ) : showStoppedIndicator ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        className="flex size-4 items-center justify-center"
+                        aria-label="Tool call stopped"
+                      />
+                    }
+                  >
+                    <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipPopup>Stopped</TooltipPopup>
                 </Tooltip>
               ) : showNeutralIndicator ? (
                 <Tooltip>

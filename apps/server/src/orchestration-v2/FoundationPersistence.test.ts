@@ -35,7 +35,11 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CommandReceiptStoreV2, layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
-import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
+import {
+  EffectOutboxV2,
+  layer as effectOutboxLayer,
+  PENDING_TERMINALIZATION_MARKER,
+} from "./EffectOutbox.ts";
 import {
   layerWithOptions as effectWorkerLayerWithOptions,
   OrchestrationEffectExecutorV2,
@@ -885,6 +889,51 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       }
       if (Option.isSome(claimedByB)) {
         yield* outbox.succeed({ effectId: claimedByB.value.id, workerId: "worker-b" });
+      }
+    }),
+  );
+
+  it.effect("preserves the pending-terminalization marker across a reclaim", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-pending-terminalization");
+      const effectId = "effect:foundation-pending-terminalization";
+      yield* outbox.enqueue([
+        {
+          id: effectId,
+          commandId,
+          threadId: ThreadId.make("thread:foundation-pending-terminalization"),
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-pending-terminalization"),
+          },
+        },
+      ]);
+
+      const claimed = yield* outbox.claimNext({ workerId: "worker-a", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(claimed));
+      yield* outbox.retry({
+        effectId,
+        workerId: "worker-a",
+        error: `${PENDING_TERMINALIZATION_MARKER}projection failed`,
+        delayMs: 0,
+      });
+      const reclaimed = yield* outbox.claimNext({ workerId: "worker-b", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(reclaimed));
+      if (Option.isSome(reclaimed)) {
+        assert.equal(
+          reclaimed.value.lastError,
+          `${PENDING_TERMINALIZATION_MARKER}projection failed`,
+        );
+      }
+
+      // Ordinary retry errors are still cleared on the next claim.
+      yield* outbox.retry({ effectId, workerId: "worker-b", error: "transient", delayMs: 0 });
+      const thirdClaim = yield* outbox.claimNext({ workerId: "worker-c", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(thirdClaim));
+      if (Option.isSome(thirdClaim)) {
+        assert.isNull(thirdClaim.value.lastError);
+        yield* outbox.succeed({ effectId, workerId: "worker-c" });
       }
     }),
   );

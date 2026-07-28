@@ -190,7 +190,7 @@ import {
 } from "../logicalProject";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
-  type ComposerImageAttachment,
+  type ComposerAttachment,
   type DraftThreadEnvMode,
   useComposerDraftStore,
   type DraftId,
@@ -280,6 +280,9 @@ import {
   dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isHermesClearChatCommand,
+  isHermesFreshChatCommand,
+  isWorkspacePreparationTurnItem,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -292,6 +295,8 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  shouldExposeWorkspaceArtifacts,
+  shouldShowWorkingTimeline,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldShowComposerContextStrip,
@@ -326,12 +331,13 @@ import {
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
 
-const IMAGE_ONLY_BOOTSTRAP_PROMPT =
-  "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Respond using the conversation context and the attachment(s).]";
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_ATTACHMENT_IDS: string[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_TURN_DIFF_SUMMARIES: ReadonlyArray<TurnDiffSummary> = [];
 
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -1282,7 +1288,7 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
   );
   const promptRef = useRef("");
-  const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerImagesRef = useRef<ComposerAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
@@ -1925,17 +1931,19 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
     null;
-  const lockedProvider = deriveLockedProvider({
-    thread: activeThread,
-    selectedProvider: selectedProviderByThreadId,
-    threadProvider,
-  });
-  const modelPickerLockedProvider = supportsProviderSwitchingViaHandoff ? null : lockedProvider;
   // Once a thread selects an environment, never substitute the primary
   // environment's config while the selected environment is still loading.
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
+  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const lockedProvider = deriveLockedProvider({
+    thread: activeThread,
+    selectedProvider: selectedProviderByThreadId,
+    threadProvider,
+    providerInstances: providerStatuses,
+  });
+  const modelPickerLockedProvider = supportsProviderSwitchingViaHandoff ? null : lockedProvider;
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -2056,13 +2064,13 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchSelfUpdate,
     versionMismatchServerLabel,
   ]);
-  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider,
   );
   const selectedProvider: ProviderDriverKind =
     modelPickerLockedProvider ?? unlockedSelectedProvider;
+  const isHermesConversation = selectedProvider === ProviderDriverKind.make("hermes");
   const phase = derivePhase(activeRuntime);
   const pendingRequests = useMemo(
     () =>
@@ -2156,7 +2164,12 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isWorking = shouldShowWorkingTimeline({
+    phase,
+    isSendBusy,
+    isConnecting,
+    isRevertingCheckpoint,
+  });
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestRun,
     activeRuntime,
@@ -2230,8 +2243,13 @@ function ChatViewContent(props: ChatViewProps) {
         attachmentIds.add(attachment.id);
       }
     }
+    for (const message of serverProjection?.messages ?? []) {
+      for (const attachment of message.attachments) {
+        attachmentIds.add(attachment.id);
+      }
+    }
     return [...attachmentIds];
-  }, [serverVisibleTurnItems]);
+  }, [serverProjection?.messages, serverVisibleTurnItems]);
   const serverAttachmentIds = isServerThread ? committedServerAttachmentIds : EMPTY_ATTACHMENT_IDS;
   const serverAttachmentResources = useMemo(
     () =>
@@ -2277,11 +2295,9 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image"
-          ? [serverAttachmentUrlById.get(attachment.id)].filter(
-              (previewUrl): previewUrl is string => previewUrl !== undefined,
-            )
-          : [],
+        [serverAttachmentUrlById.get(attachment.id)].filter(
+          (previewUrl): previewUrl is string => previewUrl !== undefined,
+        ),
       );
       if (
         serverPreviewUrls.length === 0 ||
@@ -2296,8 +2312,15 @@ function ChatViewContent(props: ChatViewProps) {
       let cancelled = false;
       const imageInstances: HTMLImageElement[] = [];
 
+      const imagePreviewUrls = serverMessage.attachments.flatMap((attachment) =>
+        attachment.type === "image"
+          ? [serverAttachmentUrlById.get(attachment.id)].filter(
+              (previewUrl): previewUrl is string => previewUrl !== undefined,
+            )
+          : [],
+      );
       const preloadServerPreviews = Promise.all(
-        serverPreviewUrls.map(
+        imagePreviewUrls.map(
           (previewUrl) =>
             new Promise<void>((resolve, reject) => {
               const image = new Image();
@@ -2351,20 +2374,26 @@ function ChatViewContent(props: ChatViewProps) {
       if (row.item.type !== "user_message") continue;
       const handoffUrls = attachmentPreviewHandoffByMessageId[row.item.messageId];
       if (handoffUrls === undefined) continue;
-      let imageIndex = 0;
-      for (const attachment of row.item.attachments) {
-        if (attachment.type !== "image") continue;
-        const handoffUrl = handoffUrls[imageIndex];
-        imageIndex += 1;
+      for (const [attachmentIndex, attachment] of row.item.attachments.entries()) {
+        const handoffUrl = handoffUrls[attachmentIndex];
         if (handoffUrl !== undefined) urls.set(attachment.id, handoffUrl);
       }
     }
     return urls;
   }, [attachmentPreviewHandoffByMessageId, serverAttachmentUrlById, serverVisibleTurnItems]);
+  const displayedServerTurnItems = useMemo(
+    () =>
+      isHermesConversation
+        ? serverVisibleTurnItems.filter((row) => !isWorkspacePreparationTurnItem(row.item))
+        : serverVisibleTurnItems,
+    [isHermesConversation, serverVisibleTurnItems],
+  );
   const serverTimelineEntries = useMemo(
     () =>
       deriveTimelineEntriesFromVisibleTurnItems({
-        visibleTurnItems: serverVisibleTurnItems,
+        visibleTurnItems: displayedServerTurnItems,
+        projectionMessages:
+          isHermesConversation && serverProjection !== null ? serverProjection.messages : [],
         optimisticMessages: optimisticUserMessages,
         attachmentUrlById: timelineAttachmentUrlById,
         ...(serverProjection === null
@@ -2374,7 +2403,13 @@ function ChatViewContent(props: ChatViewProps) {
               nodes: serverProjection.nodes,
             }),
       }),
-    [optimisticUserMessages, serverVisibleTurnItems, serverProjection, timelineAttachmentUrlById],
+    [
+      displayedServerTurnItems,
+      isHermesConversation,
+      optimisticUserMessages,
+      serverProjection,
+      timelineAttachmentUrlById,
+    ],
   );
   const draftTimelineEntries = useMemo(
     () =>
@@ -2398,30 +2433,37 @@ function ChatViewContent(props: ChatViewProps) {
   const draftHeroTransition = useDraftHeroLayoutTransition(isDraftHeroState);
   const captureDraftHeroComposerRect = draftHeroTransition.captureComposerRect;
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
+  const exposeWorkspaceArtifacts = shouldExposeWorkspaceArtifacts({
+    isProjectlessConversation: isHermesConversation,
+  });
+  const visibleTurnDiffSummaries = exposeWorkspaceArtifacts
+    ? turnDiffSummaries
+    : EMPTY_TURN_DIFF_SUMMARIES;
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
+    for (const summary of visibleTurnDiffSummaries) {
       if (!summary.assistantMessageId) continue;
       byMessageId.set(summary.assistantMessageId, summary);
     }
     return byMessageId;
-  }, [turnDiffSummaries]);
+  }, [visibleTurnDiffSummaries]);
   const revertTurnCountByUserMessageId = useMemo(
     () =>
       deriveRevertTurnCountByUserMessageId({
         timelineEntries,
-        checkpoints: turnDiffSummaries,
+        checkpoints: visibleTurnDiffSummaries,
       }),
-    [timelineEntries, turnDiffSummaries],
+    [timelineEntries, visibleTurnDiffSummaries],
   );
 
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitCwd =
+    exposeWorkspaceArtifacts && activeProject
+      ? projectScriptCwd({
+          project: { cwd: activeProject.workspaceRoot },
+          worktreePath: activeThread?.worktreePath ?? null,
+        })
+      : null;
+  const gitStatusCwd = exposeWorkspaceArtifacts ? (activeThread?.worktreePath ?? gitCwd) : null;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -2484,7 +2526,9 @@ function ChatViewContent(props: ChatViewProps) {
   const hasTimelineTopBanner = Boolean(threadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
-  const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const activeWorkspaceRoot = exposeWorkspaceArtifacts
+    ? (activeThreadWorktreePath ?? activeProjectCwd ?? undefined)
+    : undefined;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -2493,6 +2537,7 @@ function ChatViewContent(props: ChatViewProps) {
     routeKind,
     isGitRepo,
     hasActiveProject: activeProject !== null,
+    isProjectlessConversation: isHermesConversation,
   });
   const initialDiffPanelGitScope =
     gitStatusQuery.data?.hasWorkingTreeChanges === true ? "unstaged" : "branch";
@@ -4638,7 +4683,11 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const onForkFromRun = useCallback(
-    async (input: { readonly sourceThreadId: ThreadId; readonly runId: RunId }) => {
+    async (input: {
+      readonly sourceThreadId: ThreadId;
+      readonly runId: RunId;
+      readonly latestOnly?: boolean;
+    }) => {
       if (!activeThread || activeEnvironmentUnavailable) return;
       const targetThreadId = newThreadId();
       const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
@@ -4648,6 +4697,7 @@ function ChatViewContent(props: ChatViewProps) {
           sourceThreadId: input.sourceThreadId,
           targetThreadId,
           runId: input.runId,
+          ...(input.latestOnly ? { latestOnly: true } : {}),
           title: `${activeThread.title} fork`,
         },
       });
@@ -4683,6 +4733,46 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError,
     ],
   );
+
+  const clearCurrentHermesTimeline = useCallback(async () => {
+    if (!activeThread || !isHermesConversation) {
+      return false;
+    }
+    if (!isServerThread) {
+      scheduleComposerFocus();
+      return true;
+    }
+    const result = await updateThreadMetadata({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        clearTimeline: true,
+      },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to clear chat",
+            description: chatActionErrorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+      return false;
+    }
+    scrollToEnd();
+    scheduleComposerFocus();
+    return true;
+  }, [
+    activeThread,
+    environmentId,
+    isHermesConversation,
+    isServerThread,
+    scheduleComposerFocus,
+    scrollToEnd,
+    updateThreadMetadata,
+  ]);
 
   const onSend = async (
     e?: { preventDefault: () => void },
@@ -4752,6 +4842,44 @@ function ChatViewContent(props: ChatViewProps) {
       composerReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
+    const isStandaloneHermesCommand =
+      composerImages.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerElementContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0;
+    if (
+      isStandaloneHermesCommand &&
+      isHermesClearChatCommand({
+        text: trimmed,
+        isHermesConversation,
+      })
+    ) {
+      const cleared = await clearCurrentHermesTimeline();
+      if (cleared) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
+      return;
+    }
+    if (
+      isStandaloneHermesCommand &&
+      isHermesFreshChatCommand({
+        text: trimmed,
+        isHermesConversation,
+      }) &&
+      activeProject
+    ) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      await handleNewThread(scopeProjectRef(activeProject.environmentId, activeProject.id), {
+        fresh: true,
+        modelSelection: ctxSelectedModelSelection,
+      });
+      return;
+    }
     if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
@@ -4843,19 +4971,49 @@ function ChatViewContent(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
+      composerImagesSnapshot.map(async (image) => {
+        const dataUrl = await readFileAsDataUrl(image.file);
+        switch (image.type) {
+          case "image":
+            return {
+              type: "image" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl,
+            };
+          case "file":
+            return {
+              type: "file" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl,
+            };
+          case "pdf":
+            return {
+              type: "pdf" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl,
+            };
+          case "video":
+            return {
+              type: "video" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl,
+            };
+        }
+      }),
     );
     const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
+      type: image.type,
       id: image.id,
       name: image.name,
       mimeType: image.mimeType,
@@ -4912,17 +5070,17 @@ function ChatViewContent(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let firstComposerImageName: string | null = null;
+    let firstComposerAttachmentName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
-      const firstComposerImage = composerImagesSnapshot[0];
-      if (firstComposerImage) {
-        firstComposerImageName = firstComposerImage.name;
+      const firstComposerAttachment = composerImagesSnapshot[0];
+      if (firstComposerAttachment) {
+        firstComposerAttachmentName = firstComposerAttachment.name;
       }
     }
     let titleSeed = trimmed;
     if (!titleSeed) {
-      if (firstComposerImageName) {
-        titleSeed = `Image: ${firstComposerImageName}`;
+      if (firstComposerAttachmentName) {
+        titleSeed = `Attachment: ${firstComposerAttachmentName}`;
       } else if (composerTerminalContextsSnapshot.length > 0) {
         titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
       } else if (composerElementContextsSnapshot.length > 0) {
@@ -4977,7 +5135,7 @@ function ChatViewContent(props: ChatViewProps) {
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
+        isLocalDraftThread || (baseBranchForWorktree && !isHermesConversation)
           ? {
               ...(isLocalDraftThread
                 ? {
@@ -4987,13 +5145,14 @@ function ChatViewContent(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      branch: isHermesConversation ? null : activeThreadBranch,
+                      worktreePath: isHermesConversation ? null : activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
+                    ...(isHermesConversation ? { prepareWorkspace: false } : {}),
                   }
                 : {}),
-              ...(baseBranchForWorktree
+              ...(baseBranchForWorktree && !isHermesConversation
                 ? {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
@@ -5843,6 +6002,7 @@ function ChatViewContent(props: ChatViewProps) {
     environmentConnection: activeEnvironment?.connection ?? null,
     threadId: activeThread.id,
     ...(draftId ? { draftId } : {}),
+    isProjectlessConversation: isHermesConversation,
     activeProjectName: activeProject?.title,
     activeProjectScripts: activeProject?.scripts,
     preferredScriptId: activeProject
@@ -5888,7 +6048,7 @@ function ChatViewContent(props: ChatViewProps) {
     onDeleteProjectScript: deleteProjectScript,
   };
   const panelToggleControlProps = {
-    terminalAvailable: activeProject !== null,
+    terminalAvailable: activeProject !== null && !isHermesConversation,
     terminalOpen: terminalUiState.terminalOpen,
     terminalShortcutLabel: shortcutLabelForCommand(keybindings, "terminal.toggle"),
     threadPanelOpen,
@@ -5908,7 +6068,7 @@ function ChatViewContent(props: ChatViewProps) {
     threadPanelShortcutLabel: shortcutLabelForCommand(keybindings, "threadPanel.toggle"),
     threadPanelHasAttention:
       activeEnvironmentUnavailableState !== null || showVersionMismatchBanner,
-    rightPanelAvailable: activeProject !== null,
+    rightPanelAvailable: activeProject !== null && !isHermesConversation,
     rightPanelOpen,
     rightPanelShortcutLabel: shortcutLabelForCommand(keybindings, "rightPanel.toggle"),
     onToggleTerminal: toggleTerminalVisibility,
@@ -5919,10 +6079,12 @@ function ChatViewContent(props: ChatViewProps) {
     <PanelLayoutControls
       {...panelToggleControlProps}
       showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
+      showTerminalControl={!isHermesConversation}
+      showRightPanelControl={!isHermesConversation}
     />
   );
   const threadPanelHeaderControl = (
-    <div className="workspace-titlebar-controls z-50 [-webkit-app-region:no-drag]">
+    <div className="workspace-titlebar-controls z-40 [-webkit-app-region:no-drag]">
       <PanelLayoutControls
         {...panelToggleControlProps}
         showTerminalControl={false}
@@ -5931,7 +6093,7 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const panelLayoutControls = (
-    <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
+    <div className="workspace-titlebar-controls z-40 gap-1 [-webkit-app-region:no-drag]">
       {rightPanelOpen && !shouldUsePlanSidebarSheet ? (
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
@@ -6015,6 +6177,9 @@ function ChatViewContent(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
+                timelineClearedAt={
+                  isHermesConversation ? (activeThread.timelineClearedAt ?? null) : null
+                }
                 latestRun={activeLatestRun}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                 activeThreadEnvironmentId={activeThread.environmentId}
@@ -6091,6 +6256,7 @@ function ChatViewContent(props: ChatViewProps) {
                         <DraftHeroHeadline
                           activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
+                          isProjectlessConversation={isHermesConversation}
                         />
                       </div>
                       <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
@@ -6133,6 +6299,7 @@ function ChatViewContent(props: ChatViewProps) {
                             activeThread={activeThread}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}
+                            isProjectlessConversation={isHermesConversation}
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
@@ -6176,6 +6343,29 @@ function ChatViewContent(props: ChatViewProps) {
                             shouldAutoScrollRef={isAtEndRef}
                             scheduleStickToBottom={scrollToEnd}
                             onSend={onSend}
+                            onStartFreshChat={() => {
+                              const sendContext = composerRef.current?.getSendContext();
+                              if (!activeProject || !sendContext) return;
+                              promptRef.current = "";
+                              clearComposerDraftContent(composerDraftTarget);
+                              composerRef.current?.resetCursorState();
+                              void handleNewThread(
+                                scopeProjectRef(activeProject.environmentId, activeProject.id),
+                                {
+                                  fresh: true,
+                                  modelSelection: sendContext.selectedModelSelection,
+                                },
+                              );
+                            }}
+                            onClearChat={() => {
+                              void (async () => {
+                                const cleared = await clearCurrentHermesTimeline();
+                                if (!cleared) return;
+                                promptRef.current = "";
+                                clearComposerDraftContent(composerDraftTarget);
+                                composerRef.current?.resetCursorState();
+                              })();
+                            }}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

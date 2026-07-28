@@ -25,6 +25,7 @@ import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import type { MobileWorkspace } from "../../lib/mobileWorkspace";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -35,7 +36,7 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
-import { ThreadListV2Row } from "../threads/thread-list-v2-items";
+import { ThreadListV2InboxHeader, ThreadListV2Row } from "../threads/thread-list-v2-items";
 import {
   buildThreadListV2Items,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
@@ -77,6 +78,7 @@ interface HomeScreenProps {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly workspace: MobileWorkspace;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
@@ -182,8 +184,9 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled =
-    AsyncResult.isSuccess(preferencesResult) &&
-    preferencesResult.value.threadListV2Enabled === true;
+    props.workspace === "work" ||
+    (AsyncResult.isSuccess(preferencesResult) &&
+      preferencesResult.value.threadListV2Enabled === true);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -736,7 +739,11 @@ export function HomeScreen(props: HomeScreenProps) {
       </View>
     ) : null;
 
-  if (!hasAnyThreads) {
+  const catalogNotReady =
+    props.catalogState.isLoadingConnections ||
+    !props.catalogState.hasConnections ||
+    !props.catalogState.hasLoadedShellSnapshot;
+  if (!hasAnyThreads && (props.workspace === "code" || catalogNotReady)) {
     return (
       <View
         className="flex-1 items-center justify-center bg-screen px-8"
@@ -822,6 +829,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onDeletePendingTask={props.onDeletePendingTask}
         />
       ))}
+      {props.workspace === "work" ? <ThreadListV2InboxHeader /> : null}
     </>
   );
 

@@ -144,6 +144,11 @@ export type TimelineLatestRun = Pick<
 
 export type MessagesTimelineRow =
   | {
+      kind: "chat-cleared";
+      id: string;
+      createdAt: string;
+    }
+  | {
       kind: "work";
       id: string;
       createdAt: string;
@@ -484,6 +489,7 @@ function deriveTurnFolds(input: {
 
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  timelineClearedAt?: string | null;
   latestRun?: TimelineLatestRun | null;
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
@@ -493,14 +499,28 @@ export function deriveMessagesTimelineRows(input: {
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
+  const timelineClearedAtMs =
+    input.timelineClearedAt === null || input.timelineClearedAt === undefined
+      ? Number.NaN
+      : Date.parse(input.timelineClearedAt);
+  const timelineEntries = Number.isFinite(timelineClearedAtMs)
+    ? input.timelineEntries.filter((entry) => Date.parse(entry.createdAt) > timelineClearedAtMs)
+    : input.timelineEntries;
+  if (Number.isFinite(timelineClearedAtMs) && input.timelineClearedAt) {
+    nextRows.push({
+      kind: "chat-cleared",
+      id: `chat-cleared:${input.timelineClearedAt}`,
+      createdAt: input.timelineClearedAt,
+    });
+  }
   const durationStartByMessageId = computeMessageDurationStart(
-    input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
+    timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
-  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
+  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null);
-  const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(input.timelineEntries);
+  const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(timelineEntries);
   const foldsByAnchorEntryId = deriveTurnFolds({
-    timelineEntries: input.timelineEntries,
+    timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
     unsettledRunId,
@@ -522,8 +542,8 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
-    const timelineEntry = input.timelineEntries[index];
+  for (let index = 0; index < timelineEntries.length; index += 1) {
+    const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
       continue;
     }
@@ -564,8 +584,8 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "work") {
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
-      while (cursor < input.timelineEntries.length) {
-        const nextEntry = input.timelineEntries[cursor];
+      while (cursor < timelineEntries.length) {
+        const nextEntry = timelineEntries[cursor];
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
@@ -685,6 +705,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
+    case "chat-cleared":
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
 

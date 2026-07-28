@@ -289,6 +289,54 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("hides entries at or before the clear boundary and keeps a durable marker", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineClearedAt: "2026-01-01T00:00:10Z",
+      timelineEntries: [
+        {
+          id: "old-user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "old-user" as never,
+            role: "user",
+            text: "Old message",
+            runId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "new-user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:11Z",
+          message: {
+            id: "new-user" as never,
+            role: "user",
+            text: "New message",
+            runId: null,
+            createdAt: "2026-01-01T00:00:11Z",
+            updatedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["chat-cleared", "message"]);
+    expect(rows[0]).toEqual({
+      kind: "chat-cleared",
+      id: "chat-cleared:2026-01-01T00:00:10Z",
+      createdAt: "2026-01-01T00:00:10Z",
+    });
+    expect(rows[1]?.id).toBe("new-user-entry");
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

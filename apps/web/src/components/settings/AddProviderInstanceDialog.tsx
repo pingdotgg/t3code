@@ -199,7 +199,10 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
       [brandedId]: nextInstance,
     };
     try {
-      updateSettings({ providerInstances: nextMap });
+      updateSettings({
+        providerInstances: nextMap,
+        ...(driver === "hermes" ? { enableHermes: true } : {}),
+      });
       toastManager.add({
         type: "success",
         title: "Provider instance added",

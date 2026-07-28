@@ -382,6 +382,9 @@ const ThreadSettleCommand = Schema.Struct({
   type: Schema.Literal("thread.settle"),
   commandId: CommandId,
   threadId: ThreadId,
+  // Provider imports settle with the session's historical activity time so
+  // imported rows sort and label by when the work actually ended.
+  settledAt: Schema.optional(IsoDateTime),
 });
 
 const ThreadUnsettleCommand = Schema.Struct({

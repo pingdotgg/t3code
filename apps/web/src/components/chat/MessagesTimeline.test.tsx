@@ -439,6 +439,128 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-accent p-3");
   });
 
+  it("renders imported Hermes replies as a compact reference and separate message", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              '[Replying to: "~ [ ] Post the edited video',
+              "",
+              '[ ] Make an “evil CEO” edit"]',
+              "i already said that the last item is done",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Replying to message"');
+    expect(markup).toContain("lucide-reply");
+    expect(markup).toContain("Replying to");
+    expect(markup).toContain("[ ] Post the edited video");
+    expect(markup).toContain("i already said that the last item is done");
+    expect(markup).not.toContain("[Replying to:");
+    expect(markup).not.toContain("Show full message");
+  });
+
+  it("renders a normalized imported Hermes screenshot as an attachment without transport text", () => {
+    const entry = buildUserTimelineEntry("rewrite better");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attachments: [
+                {
+                  type: "image",
+                  id: "hermes-screenshot-1",
+                  name: "img_fixture.webp",
+                  mimeType: "image/webp",
+                  sizeBytes: 12,
+                  previewUrl: "/assets/hermes-screenshot",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("rewrite better");
+    expect(markup).toContain('src="/assets/hermes-screenshot"');
+    expect(markup).toContain('alt="img_fixture.webp"');
+    expect(markup).not.toContain("[maria]");
+    expect(markup).not.toContain("[Image attached at:");
+    expect(markup).not.toContain("[screenshot]");
+    expect(markup).not.toContain("/Users/maria/.hermes");
+  });
+
+  it("renders Hermes assistant output media as a named, downloadable gallery", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-assistant-media",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-media"),
+              role: "assistant",
+              text: "Here are the renditions.",
+              runId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+              attachments: [
+                {
+                  type: "image",
+                  id: "rendition-1",
+                  name: "wall-quote.jpg",
+                  mimeType: "image/jpeg",
+                  sizeBytes: 12,
+                  previewUrl: "/assets/wall-quote",
+                },
+                {
+                  type: "image",
+                  id: "rendition-2",
+                  name: "bottom-right.jpg",
+                  mimeType: "image/jpeg",
+                  sizeBytes: 13,
+                  previewUrl: "/assets/bottom-right",
+                },
+                {
+                  type: "file",
+                  id: "voice-note",
+                  name: "voice-note.mp3",
+                  mimeType: "audio/mpeg",
+                  sizeBytes: 14,
+                  previewUrl: "/assets/voice-note",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("data-assistant-attachments");
+    expect(markup).toContain('src="/assets/wall-quote"');
+    expect(markup).toContain('aria-label="Preview wall-quote.jpg"');
+    expect(markup).toContain('href="/assets/wall-quote"');
+    expect(markup).toContain('download="wall-quote.jpg"');
+    expect(markup).toContain("bottom-right.jpg");
+    expect(markup).toContain("<audio");
+    expect(markup).toContain('src="/assets/voice-note"');
+    expect(markup).toContain('download="voice-note.mp3"');
+    expect(markup).not.toContain("MEDIA:");
+  });
+
   it("identifies user-role messages sent by another agent", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const entry = buildUserTimelineEntry("Review this area");
@@ -1293,6 +1415,86 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('src="/apple-touch-icon.png"');
     expect(markup).toContain("Read a T3 thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
+    expect(markup).toContain('role="button"');
+    expect(markup).toContain('data-tool-call-status="completed"');
+    expect(markup).toContain('aria-label="Tool call completed"');
+  });
+
+  it("renders projected V2 tool calls with running, completed, and failed states", () => {
+    const renderTool = (
+      status: "running" | "completed" | "failed",
+      lifecycleStatus: "inProgress" | "completed" | "failed",
+    ) => {
+      const item = {
+        id: `tool-${status}`,
+        threadId: "thread-source",
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status,
+        title: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: {},
+        type: "dynamic_tool",
+        toolName: "browser.search",
+        input: { query: "Hermes" },
+        ...(status === "running" ? {} : { output: { matches: 3 } }),
+      } as const;
+      const projectedItem = {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: "thread-source",
+        sourceItemId: item.id,
+        item,
+      } as const;
+      return renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          activeTurnInProgress={status === "running"}
+          timelineEntries={
+            [
+              {
+                id: item.id,
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: item.id,
+                  createdAt: MESSAGE_CREATED_AT,
+                  runId: null,
+                  label: item.toolName,
+                  tone: status === "failed" ? "error" : "tool",
+                  itemType: item.type,
+                  toolTitle: item.toolName,
+                  toolLifecycleStatus: lifecycleStatus,
+                  toolData: { input: item.input, output: item.output },
+                  structuredPayload: item,
+                  projectedItem,
+                },
+              },
+            ] as never
+          }
+        />,
+      );
+    };
+
+    const runningMarkup = renderTool("running", "inProgress");
+    expect(runningMarkup).toContain("Browser.search");
+    expect(runningMarkup).toContain('data-tool-call-status="inProgress"');
+    expect(runningMarkup).toContain('aria-label="Tool call running"');
+    expect(runningMarkup).toContain('role="button"');
+
+    const completedMarkup = renderTool("completed", "completed");
+    expect(completedMarkup).toContain('data-tool-call-status="completed"');
+    expect(completedMarkup).toContain('aria-label="Tool call completed"');
+
+    const failedMarkup = renderTool("failed", "failed");
+    expect(failedMarkup).toContain('data-tool-call-status="failed"');
+    expect(failedMarkup).toContain('aria-label="Tool call failed"');
   });
 
   it("formats changed file paths from the workspace root", async () => {

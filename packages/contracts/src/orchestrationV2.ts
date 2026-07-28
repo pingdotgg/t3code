@@ -293,6 +293,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  titleRevision: Schema.optional(NonNegativeInt),
+  titleOrigin: Schema.optional(TrimmedNonEmptyString),
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -322,6 +324,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   settledAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  workInboxRole: Schema.optional(Schema.NullOr(Schema.Literal("main"))),
+  timelineClearedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1014,6 +1019,15 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.title-reconciled"),
+    payload: Schema.Struct({
+      title: TrimmedNonEmptyString,
+      revision: NonNegativeInt,
+      origin: TrimmedNonEmptyString,
+    }),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.created"),
     payload: OrchestrationV2Run,
   }),
@@ -1165,6 +1179,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
+  titleRevision: Schema.optional(NonNegativeInt),
+  titleOrigin: Schema.optional(TrimmedNonEmptyString),
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -1189,6 +1205,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
   settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
   settledAt: Schema.NullOr(Schema.DateTimeUtc),
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  workInboxRole: Schema.optional(Schema.NullOr(Schema.Literal("main"))),
+  timelineClearedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1263,6 +1282,8 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   settledAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  timelineClearedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -1628,6 +1649,8 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   settledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  timelineClearedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -1679,6 +1702,15 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.provider-switched",
     ]),
     payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.title-reconciled"),
+    payload: Schema.Struct({
+      title: TrimmedNonEmptyString,
+      revision: NonNegativeInt,
+      origin: TrimmedNonEmptyString,
+    }),
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -1803,6 +1835,7 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.archive"),
@@ -1823,6 +1856,9 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,
     threadId: ThreadId,
+    // Historical settle time supplied by provider imports so imported
+    // threads keep their upstream age instead of the import wall-clock.
+    settledAt: Schema.optional(IsoDateTime),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),
@@ -1849,6 +1885,9 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    pinned: Schema.optional(Schema.Boolean),
+    workInboxRole: Schema.optional(Schema.NullOr(Schema.Literal("main"))),
+    clearTimeline: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),
@@ -2080,6 +2119,11 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  /**
+   * Defaults to true. Projectless conversation providers can opt out so the
+   * first turn starts directly without worktree/setup-script preparation.
+   */
+  prepareWorkspace: Schema.optional(Schema.Boolean),
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),

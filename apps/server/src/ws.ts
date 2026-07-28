@@ -74,6 +74,9 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as HermesCron from "./hermes/HermesCron.ts";
+import * as HermesSkills from "./hermes/HermesSkills.ts";
+import * as HermesSessionImport from "./hermes/HermesSessionImportService.ts";
 import {
   archivedShellStreamItemFromSnapshot,
   coalesceShellApplicationEvents,
@@ -141,7 +144,7 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
   readonly attachments: ReadonlyArray<{
-    readonly type: "image";
+    readonly type: "image" | "file" | "pdf" | "video";
     readonly name: string;
     readonly mimeType: string;
     readonly sizeBytes: number;
@@ -157,7 +160,7 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
       const parsed = parseBase64DataUrl(attachment.dataUrl);
       if (parsed === null || parsed.mimeType !== attachment.mimeType.toLowerCase()) {
         return yield* new PersistChatAttachmentsError({
-          message: `Attachment ${attachment.name} has an invalid image payload.`,
+          message: `Attachment ${attachment.name} has an invalid payload.`,
         });
       }
       const bytes = yield* Effect.fromResult(Encoding.decodeBase64(parsed.base64)).pipe(
@@ -181,7 +184,7 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
         });
       }
       const persisted = {
-        type: "image" as const,
+        type: attachment.type,
         id: ChatAttachmentId.make(rawId),
         name: attachment.name,
         mimeType: attachment.mimeType,
@@ -340,6 +343,15 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.scheduledTasksSetEnabled, AuthOrchestrationOperateScope],
   [WS_METHODS.scheduledTasksDelete, AuthOrchestrationOperateScope],
   [WS_METHODS.scheduledTasksRunNow, AuthOrchestrationOperateScope],
+  [WS_METHODS.hermesCronList, AuthOrchestrationReadScope],
+  [WS_METHODS.hermesCronMutate, AuthOrchestrationOperateScope],
+  [WS_METHODS.hermesSkillsList, AuthOrchestrationReadScope],
+  [WS_METHODS.hermesSkillsSearch, AuthOrchestrationReadScope],
+  [WS_METHODS.hermesSkillsInspect, AuthOrchestrationReadScope],
+  [WS_METHODS.hermesSkillsReload, AuthOrchestrationOperateScope],
+  [WS_METHODS.hermesSessionsDiscover, AuthOrchestrationReadScope],
+  [WS_METHODS.hermesSessionsImport, AuthOrchestrationOperateScope],
+  [WS_METHODS.hermesHistoryReset, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -478,6 +490,9 @@ const makeWsRpcLayer = (
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const hermesCron = yield* HermesCron.HermesCron;
+      const hermesSkills = yield* HermesSkills.HermesSkills;
+      const hermesSessions = yield* HermesSessionImport.make;
       const projectService = yield* ProjectService.ProjectService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
@@ -493,6 +508,7 @@ const makeWsRpcLayer = (
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
+      const path = yield* Path.Path;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -602,6 +618,7 @@ const makeWsRpcLayer = (
           environment,
           auth,
           cwd: config.cwd,
+          t3WorkDirectory: config.t3WorkDir ?? path.join(config.baseDir, "t3-work"),
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -647,6 +664,7 @@ const makeWsRpcLayer = (
                 }),
             ),
           );
+          yield* hermesSessions.hydrateThread(input.threadId);
 
           const eventStreamFrom = (afterSequence: number) =>
             threadManagement
@@ -1170,6 +1188,9 @@ const makeWsRpcLayer = (
                   runtimeMode: input.runtimeMode,
                   interactionMode: input.interactionMode,
                   workspaceStrategy: input.workspaceStrategy,
+                  ...(input.prepareWorkspace === undefined
+                    ? {}
+                    : { prepareWorkspace: input.prepareWorkspace }),
                   ...(input.initialMessage === undefined
                     ? {}
                     : {
@@ -1251,6 +1272,42 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {
             "rpc.aggregate": "scheduledTasks",
             "scheduled_task.id": input.id,
+          }),
+        [WS_METHODS.hermesCronList]: (_input) =>
+          observeRpcEffect(WS_METHODS.hermesCronList, hermesCron.list(), {
+            "rpc.aggregate": "hermesCron",
+          }),
+        [WS_METHODS.hermesCronMutate]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesCronMutate, hermesCron.mutate(input), {
+            "rpc.aggregate": "hermesCron",
+          }),
+        [WS_METHODS.hermesSkillsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.hermesSkillsList, hermesSkills.list(), {
+            "rpc.aggregate": "hermesSkills",
+          }),
+        [WS_METHODS.hermesSkillsSearch]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesSkillsSearch, hermesSkills.search(input), {
+            "rpc.aggregate": "hermesSkills",
+          }),
+        [WS_METHODS.hermesSkillsInspect]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesSkillsInspect, hermesSkills.inspect(input), {
+            "rpc.aggregate": "hermesSkills",
+          }),
+        [WS_METHODS.hermesSkillsReload]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesSkillsReload, hermesSkills.reload(input), {
+            "rpc.aggregate": "hermesSkills",
+          }),
+        [WS_METHODS.hermesSessionsDiscover]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesSessionsDiscover, hermesSessions.discover(input), {
+            "rpc.aggregate": "hermesSessions",
+          }),
+        [WS_METHODS.hermesSessionsImport]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesSessionsImport, hermesSessions.importSessions(input), {
+            "rpc.aggregate": "hermesSessions",
+          }),
+        [WS_METHODS.hermesHistoryReset]: (input) =>
+          observeRpcEffect(WS_METHODS.hermesHistoryReset, hermesSessions.resetHistory(input), {
+            "rpc.aggregate": "hermesSessions",
           }),
         [WS_METHODS.serverProbe]: (_input) =>
           observeRpcEffect(WS_METHODS.serverProbe, Effect.succeed({}), {

@@ -35,6 +35,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
   [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5",
   [ProviderDriverKind.make("cursor")]: "claude-sonnet-4-6",
   [ProviderDriverKind.make("opencode")]: "openai/gpt-5",
+  [ProviderDriverKind.make("hermes")]: "model-slug",
 };
 
 interface ProviderModelsSectionProps {
@@ -396,7 +397,10 @@ export function ProviderModelsSection({
             event.preventDefault();
             handleAdd();
           }}
-          placeholder={driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : "model-slug"}
+          aria-label="Custom model slug"
+          placeholder={
+            (driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : undefined) ?? "model-slug"
+          }
           spellCheck={false}
         />
         <Button className="shrink-0" variant="outline" onClick={handleAdd}>

@@ -15,6 +15,18 @@ import {
 } from "./Adapters/CursorAdapterV2.ts";
 import { GrokAdapterV2Driver, type GrokAdapterV2DriverEnv } from "./Adapters/GrokAdapterV2.ts";
 import {
+  HermesAcpAdapterV2Driver,
+  type HermesAcpAdapterV2DriverEnv,
+} from "./Adapters/HermesAcpAdapterV2.ts";
+import {
+  HermesServeAdapterV2Driver,
+  type HermesServeAdapterV2DriverEnv,
+} from "./Adapters/HermesServeAdapterV2.ts";
+import {
+  OpenClawAdapterV2Driver,
+  type OpenClawAdapterV2DriverEnv,
+} from "./Adapters/OpenClawAdapterV2.ts";
+import {
   OpenCodeAdapterV2Driver,
   type OpenCodeAdapterV2DriverEnv,
 } from "./Adapters/OpenCodeAdapterV2.ts";
@@ -26,6 +38,9 @@ export type BuiltInProviderAdapterDriversV2Env =
   | CodexAdapterV2DriverEnv
   | CursorAdapterV2DriverEnv
   | GrokAdapterV2DriverEnv
+  | HermesAcpAdapterV2DriverEnv
+  | HermesServeAdapterV2DriverEnv
+  | OpenClawAdapterV2DriverEnv
   | OpenCodeAdapterV2DriverEnv;
 
 export const BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2: ReadonlyArray<
@@ -37,6 +52,9 @@ export const BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2: ReadonlyArray<
   OpenCodeAdapterV2Driver,
   GrokAdapterV2Driver,
   AcpRegistryAdapterV2Driver,
+  HermesAcpAdapterV2Driver,
+  OpenClawAdapterV2Driver,
+  HermesServeAdapterV2Driver,
 ];
 
 export const BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2: ReadonlySet<ProviderDriverKind> = new Set(

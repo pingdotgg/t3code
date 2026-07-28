@@ -37,3 +37,7 @@ export * from "./previewAutomation.ts";
 export * from "./scheduledTask.ts";
 export * from "./worktreeMcp.ts";
 export * from "./rpc.ts";
+export * from "./hermesGateway.ts";
+export * from "./hermesProactive.ts";
+export * from "./hermesSkills.ts";
+export * from "./hermesSessions.ts";

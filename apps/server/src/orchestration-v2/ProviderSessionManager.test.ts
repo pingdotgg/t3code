@@ -85,6 +85,13 @@ const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
     supportsMultipleProviderThreadsPerSession: false,
   },
 };
+const NoMcpCapabilities: OrchestrationV2ProviderCapabilities = {
+  ...CodexCapabilities,
+  tools: {
+    ...CodexCapabilities.tools,
+    supportsMcpTools: false,
+  },
+};
 
 interface TestProviderRuntimeState {
   readonly openCount: number;
@@ -760,15 +767,16 @@ it.effect(
         assert.equal(captured?.threadId, threadId);
         assert.equal(captured?.providerInstanceId, modelSelection.instanceId);
         assert.equal(captured?.endpoint, "http://127.0.0.1:43123/mcp");
+        assert.notProperty(captured, "expiresAt");
         const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.isDefined(token);
-        const resolved = yield* registry.resolve(token!);
+        const resolved = yield* registry.resolve(token!, registry.audience);
         assert.equal(resolved?.threadId, threadId);
         assert.deepEqual(resolved?.capabilities, new Set(["preview", "orchestration", "worktree"]));
 
         yield* manager.close(providerSessionId);
         assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
-        assert.isUndefined(yield* registry.resolve(token!));
+        assert.isUndefined(yield* registry.resolve(token!, registry.audience));
       });
 
       yield* effect.pipe(
@@ -779,6 +787,100 @@ it.effect(
             mcpConfigs,
           }),
         ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not issue MCP credentials to an adapter without MCP support",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-no-mcp");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.deepEqual(yield* Ref.get(mcpConfigs), [undefined]);
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        yield* manager.close(providerSessionId);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 1_000,
+            capabilities: NoMcpCapabilities,
+            mcpConfigs,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 scopes non-full-access credentials away from worktree mutation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-scoped-mcp");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, runtimeMode: "approval-required" },
+        });
+
+        const config = (yield* Ref.get(mcpConfigs))[0];
+        assert.deepEqual(config?.capabilities, ["orchestration", "preview"]);
+        const token = config?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+        assert.deepEqual(
+          (yield* registry.resolve(token!, registry.audience))?.capabilities,
+          new Set(["preview", "orchestration"]),
+        );
+        yield* manager.close(providerSessionId);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1_000, mcpConfigs })),
       );
     }),
 );
@@ -814,12 +916,12 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       const captured = (yield* Ref.get(mcpConfigs))[0];
       const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
       assert.isDefined(token);
-      assert.isDefined(yield* registry.resolve(token!));
+      assert.isDefined(yield* registry.resolve(token!, registry.audience));
 
       const closeError = yield* manager.close(providerSessionId).pipe(Effect.flip);
       assert.equal(closeError._tag, "ProviderSessionCloseError");
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
-      assert.isUndefined(yield* registry.resolve(token!));
+      assert.isUndefined(yield* registry.resolve(token!, registry.audience));
     });
 
     yield* effect.pipe(
@@ -889,7 +991,10 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
         McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
         replacement?.providerSessionId,
       );
-      assert.equal((yield* registry.resolve(replacementToken!))?.threadId, threadId);
+      assert.equal(
+        (yield* registry.resolve(replacementToken!, registry.audience))?.threadId,
+        threadId,
+      );
     });
 
     yield* effect.pipe(
@@ -965,7 +1070,10 @@ it.effect(
           McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
           replacement?.providerSessionId,
         );
-        assert.equal((yield* registry.resolve(replacementToken!))?.threadId, threadId);
+        assert.equal(
+          (yield* registry.resolve(replacementToken!, registry.audience))?.threadId,
+          threadId,
+        );
       });
 
       yield* effect.pipe(
@@ -1021,7 +1129,7 @@ it.effect(
         // process's MCP client keeps using the credential it was started with.
         yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
         assert.equal(
-          (yield* registry.resolve(originalToken!))?.threadId,
+          (yield* registry.resolve(originalToken!, registry.audience))?.threadId,
           threadId,
           "detach must not revoke the credential the live provider process still holds",
         );
@@ -1040,11 +1148,14 @@ it.effect(
           original?.providerSessionId,
           "re-attach must reuse the existing credential, not rotate it",
         );
-        assert.equal((yield* registry.resolve(originalToken!))?.threadId, threadId);
+        assert.equal(
+          (yield* registry.resolve(originalToken!, registry.audience))?.threadId,
+          threadId,
+        );
 
         // Releasing the session (provider process gone) still revokes.
         yield* manager.close(providerSessionId);
-        assert.isUndefined(yield* registry.resolve(originalToken!));
+        assert.isUndefined(yield* registry.resolve(originalToken!, registry.audience));
       });
 
       yield* effect.pipe(
@@ -1097,13 +1208,13 @@ it.effect(
         const rotated = McpProviderSession.readMcpProviderSession(threadId);
         assert.isDefined(rotated);
         const rotatedToken = rotated?.authorizationHeader.replace(/^Bearer\s+/, "");
-        assert.isDefined(yield* registry.resolve(rotatedToken!));
+        assert.isDefined(yield* registry.resolve(rotatedToken!, registry.audience));
 
         // Releasing S2 must revoke C2 even though S1 still carries a stale
         // record (of dead C1) for the same thread.
         yield* manager.close(s2);
         assert.isUndefined(
-          yield* registry.resolve(rotatedToken!),
+          yield* registry.resolve(rotatedToken!, registry.audience),
           "stale record on S1 must not veto revoking S2's rotated credential",
         );
         yield* manager.close(s1);
@@ -1164,7 +1275,7 @@ it.effect(
           "the credential the adapter was configured with must remain current",
         );
         assert.equal(
-          (yield* registry.resolve(originalToken!))?.threadId,
+          (yield* registry.resolve(originalToken!, registry.audience))?.threadId,
           threadId,
           "the predecessor release must not revoke a credential reserved by an in-flight open",
         );
@@ -1214,7 +1325,7 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
       yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
       const issued = (yield* Ref.get(mcpConfigs)).at(-1);
       const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
-      assert.isDefined(yield* registry.resolve(token!));
+      assert.isDefined(yield* registry.resolve(token!, registry.audience));
 
       // Archive/delete detaches carry revokeMcpCredential: the token must die
       // with the thread even though the shared provider process lives on.
@@ -1224,7 +1335,7 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
         detail: "Thread deleted.",
         revokeMcpCredential: true,
       });
-      assert.isUndefined(yield* registry.resolve(token!));
+      assert.isUndefined(yield* registry.resolve(token!, registry.audience));
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
     });
 

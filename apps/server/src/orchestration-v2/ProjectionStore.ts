@@ -190,6 +190,21 @@ export function applyToProjection(
         ...base,
         thread: event.payload,
       };
+    case "thread.title-reconciled": {
+      const currentRevision = projection.thread.titleRevision ?? 0;
+      if (event.payload.revision <= currentRevision) {
+        return projection;
+      }
+      return {
+        ...base,
+        thread: {
+          ...base.thread,
+          title: event.payload.title,
+          titleRevision: event.payload.revision,
+          titleOrigin: event.payload.origin,
+        },
+      };
+    }
     case "run.created":
     case "run.updated":
       return withLocalVisibleTurnItems({
@@ -456,44 +471,60 @@ const encodeContextTransferPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
 );
 
-const decodeThreadPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema))(json);
-const decodeRunPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RunJsonSchema))(json);
-const decodeRunAttemptPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema))(json);
-const decodeNodePayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema))(json);
-const decodeSubagentPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2SubagentJsonSchema))(json);
-const decodeProviderSessionPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema))(json);
-const decodeProviderThreadPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema))(json);
-const decodeProviderTurnPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ProviderTurnJsonSchema))(json);
-const decodeRuntimeRequestPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RuntimeRequestJsonSchema))(json);
-const decodeMessagePayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema))(
-    json,
-  );
-const decodePlanPayload = (json: string) =>
-  Schema.decodeUnknownEffect(OrchestrationV2PlanArtifactSchema)(parseEncodedPayload(json));
-const decodeTurnItemPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema))(json);
-const decodeCheckpointScopePayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema))(json);
-const decodeCheckpointPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2CheckpointJsonSchema))(json);
-const decodeContextHandoffPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema))(json);
-const decodeContextTransferPayload = (json: string) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema))(json);
+const decodeThreadPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
+);
+const decodeRunPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2RunJsonSchema),
+);
+const decodeRunAttemptPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
+);
+const decodeNodePayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ExecutionNodeJsonSchema),
+);
+const decodeSubagentPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
+);
+const decodeProviderSessionPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
+);
+const decodeProviderThreadPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema),
+);
+const decodeProviderTurnPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderTurnJsonSchema),
+);
+const decodeRuntimeRequestPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2RuntimeRequestJsonSchema),
+);
+const decodeMessagePayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema),
+);
+const decodePlanArtifact = Schema.decodeUnknownEffect(OrchestrationV2PlanArtifactSchema);
+const decodePlanPayload = (json: string) => decodePlanArtifact(parseEncodedPayload(json));
+const decodeTurnItemPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
+);
+const decodeCheckpointScopePayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
+);
+const decodeCheckpointPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2CheckpointJsonSchema),
+);
+const decodeContextHandoffPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema),
+);
+const decodeContextTransferPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
+);
 
 function parseEncodedPayload(json: string): Record<string, unknown> {
   return JSON.parse(json) as Record<string, unknown>;
 }
+
+const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
+const isProjectionStoreReadError = Schema.is(ProjectionStoreReadError);
 
 function stringField(payload: Record<string, unknown>, field: string): string {
   const value = payload[field];
@@ -938,6 +969,8 @@ function shellFromState(input: {
     id: input.state.thread.id,
     projectId: input.state.thread.projectId,
     title: input.state.thread.title,
+    titleRevision: input.state.thread.titleRevision,
+    titleOrigin: input.state.thread.titleOrigin,
     providerInstanceId: input.state.thread.providerInstanceId,
     modelSelection: input.state.thread.modelSelection,
     runtimeMode: input.state.thread.runtimeMode,
@@ -979,6 +1012,9 @@ function shellFromState(input: {
     archivedAt: input.state.thread.archivedAt,
     settledOverride: input.state.thread.settledOverride,
     settledAt: input.state.thread.settledAt,
+    pinnedAt: input.state.thread.pinnedAt ?? null,
+    workInboxRole: input.state.thread.workInboxRole ?? null,
+    timelineClearedAt: input.state.thread.timelineClearedAt ?? null,
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
     deletedAt: input.state.thread.deletedAt,
@@ -1053,6 +1089,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
+            `;
+            break;
+          }
+          case "thread.title-reconciled": {
+            const rows = yield* sql<PayloadRow>`
+              SELECT payload_json
+              FROM orchestration_v2_projection_threads
+              WHERE thread_id = ${event.threadId}
+              LIMIT 1
+            `;
+            const row = rows[0];
+            if (row === undefined) break;
+            const thread = yield* decodeThreadPayload(row.payload_json);
+            if (event.payload.revision <= (thread.titleRevision ?? 0)) break;
+            const updatedThread = {
+              ...thread,
+              title: event.payload.title,
+              titleRevision: event.payload.revision,
+              titleOrigin: event.payload.origin,
+              updatedAt: event.occurredAt,
+            };
+            const payloadJson = yield* encodeThreadPayload(updatedThread);
+            yield* sql`
+              UPDATE orchestration_v2_projection_threads
+              SET
+                title = ${event.payload.title},
+                updated_at = ${stringField(parseEncodedPayload(payloadJson), "updatedAt")},
+                payload_json = ${payloadJson}
+              WHERE thread_id = ${event.threadId}
             `;
             break;
           }
@@ -1778,7 +1843,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.runtime-mode-updated" &&
           event.type !== "thread.interaction-mode-updated" &&
           event.type !== "thread.model-selection-updated" &&
-          event.type !== "thread.provider-switched"
+          event.type !== "thread.provider-switched" &&
+          event.type !== "thread.title-reconciled"
         ) {
           const rows = yield* sql<PayloadRow>`
             SELECT payload_json
@@ -2004,7 +2070,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return withLocalVisibleTurnItems(projection);
       }).pipe(
         Effect.mapError((cause) =>
-          Schema.is(ProjectionStoreThreadNotFoundError)(cause)
+          isProjectionStoreThreadNotFoundError(cause)
             ? cause
             : new ProjectionStoreReadError({
                 threadId,
@@ -2061,8 +2127,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(
           Effect.mapError((cause) =>
-            Schema.is(ProjectionStoreThreadNotFoundError)(cause) ||
-            Schema.is(ProjectionStoreReadError)(cause)
+            isProjectionStoreThreadNotFoundError(cause) || isProjectionStoreReadError(cause)
               ? cause
               : new ProjectionStoreReadError({ threadId, cause }),
           ),

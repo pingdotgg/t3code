@@ -147,6 +147,18 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
                   payload: input.event.appThread,
                 }),
               ];
+            case "app_thread.title_reconciled":
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "thread.title-reconciled",
+                  threadId: input.event.threadId,
+                  payload: {
+                    title: input.event.title,
+                    revision: input.event.revision,
+                    origin: input.event.origin,
+                  },
+                }),
+              ];
             case "provider_session.updated":
               return [
                 yield* makeDomainEvent(input, {

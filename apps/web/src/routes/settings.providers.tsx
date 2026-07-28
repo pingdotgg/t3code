@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ProviderSettingsPanel } from "../components/settings/SettingsPanels";
 
 function SettingsProvidersRoute() {
-  return <ProviderSettingsPanel />;
+  return <ProviderSettingsPanel includeDriver={(driver) => driver !== "hermes"} />;
 }
 
 export const Route = createFileRoute("/settings/providers")({

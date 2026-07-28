@@ -38,8 +38,11 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   createProject,
+  discoverHermesSessions,
   forkThreadFromRun,
   mergeThreadBack,
+  importHermesSessions,
+  resetHermesHistory,
   promoteQueuedRun,
   reorderQueuedRun,
   revertThreadCheckpoint,
@@ -69,6 +72,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
+  readonly rpcCalls?: Array<{ readonly method: string; readonly input: unknown }>;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -103,6 +107,53 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           updatedAt: "2026-06-06T00:00:00.000Z",
           deletedAt: null,
         };
+      }),
+    [WS_METHODS.hermesSessionsDiscover]: (requestInput: unknown) =>
+      Effect.sync(() => {
+        input.rpcCalls?.push({ method: WS_METHODS.hermesSessionsDiscover, input: requestInput });
+        return {
+          providerInstanceId: "hermes-work",
+          profileKey: "default",
+          sessions: [],
+          capabilities: {
+            discovery: true,
+            lazyHistory: true,
+            transportSources: ["discord", "telegram"],
+            activityTimestamp: {
+              field: "started_at",
+              limitation: "last_active is unavailable",
+            },
+            childSessionLineage: { available: false, reason: "not exposed" },
+            copyChildSession: { available: false, reason: "latest head only" },
+          },
+          mainThreadId: null,
+        };
+      }),
+    [WS_METHODS.hermesSessionsImport]: (requestInput: unknown) =>
+      Effect.sync(() => {
+        input.rpcCalls?.push({ method: WS_METHODS.hermesSessionsImport, input: requestInput });
+        return {
+          providerInstanceId: "hermes-work",
+          profileKey: "default",
+          imported: [],
+          mainThreadId: "thread-main",
+          capabilities: {
+            discovery: true,
+            lazyHistory: true,
+            transportSources: ["discord", "telegram"],
+            activityTimestamp: {
+              field: "started_at",
+              limitation: "last_active is unavailable",
+            },
+            childSessionLineage: { available: false, reason: "not exposed" },
+            copyChildSession: { available: false, reason: "latest head only" },
+          },
+        };
+      }),
+    [WS_METHODS.hermesHistoryReset]: (requestInput: unknown) =>
+      Effect.sync(() => {
+        input.rpcCalls?.push({ method: WS_METHODS.hermesHistoryReset, input: requestInput });
+        return { deletedThreadCount: 2, clearedImportCount: 2 };
       }),
   } as unknown as WsRpcProtocolClient;
   const session: RpcSession.RpcSession = {
@@ -287,6 +338,45 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
+  it.effect("marks projectless first-message launches to skip workspace preparation", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-projectless"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-projectless"),
+          role: "user",
+          text: "Hello Hermes",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Hello Hermes",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+          prepareWorkspace: false,
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({
+        threadId: v2ThreadId,
+        prepareWorkspace: false,
+        workspaceStrategy: { type: "root" },
+      });
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect("provisions an origin-based worktree for an existing empty thread", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
@@ -455,6 +545,79 @@ describe("V2 environment commands", () => {
           commandId: "switch-provider",
           threadId: v2ThreadId,
           modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches durable Work inbox metadata through the thread metadata command", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+
+      yield* updateThreadMetadata({
+        commandId: CommandId.make("pin-work-thread"),
+        threadId: v2ThreadId,
+        pinned: true,
+        workInboxRole: "main",
+        clearTimeline: true,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toEqual([
+        {
+          type: "thread.metadata.update",
+          commandId: "pin-work-thread",
+          threadId: v2ThreadId,
+          pinned: true,
+          workInboxRole: "main",
+          clearTimeline: true,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("routes Hermes discovery, import, and reset through their capability-gated RPCs", () =>
+    Effect.gen(function* () {
+      const rpcCalls: Array<{ readonly method: string; readonly input: unknown }> = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], rpcCalls });
+
+      yield* discoverHermesSessions({
+        providerInstanceId: ProviderInstanceId.make("hermes-work"),
+        limit: 50,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* importHermesSessions({
+        providerInstanceId: ProviderInstanceId.make("hermes-work"),
+        backingProjectId: ProjectId.make("internal-work-backing"),
+        selection: { type: "selected", sessionIds: ["session-1"] },
+        activeWithinDays: 1,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* resetHermesHistory({
+        providerInstanceId: ProviderInstanceId.make("hermes-work"),
+        backingProjectId: ProjectId.make("internal-work-backing"),
+        operationId: "history-reset-1",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(rpcCalls).toEqual([
+        {
+          method: WS_METHODS.hermesSessionsDiscover,
+          input: { providerInstanceId: "hermes-work", limit: 50 },
+        },
+        {
+          method: WS_METHODS.hermesSessionsImport,
+          input: {
+            providerInstanceId: "hermes-work",
+            backingProjectId: "internal-work-backing",
+            selection: { type: "selected", sessionIds: ["session-1"] },
+            activeWithinDays: 1,
+          },
+        },
+        {
+          method: WS_METHODS.hermesHistoryReset,
+          input: {
+            providerInstanceId: "hermes-work",
+            backingProjectId: "internal-work-backing",
+            operationId: "history-reset-1",
+          },
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

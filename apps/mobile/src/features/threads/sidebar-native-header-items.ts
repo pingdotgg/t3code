@@ -39,9 +39,36 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
 export function createSidebarHeaderItems(input: {
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
+  readonly workspace: "work" | "code";
+  readonly onWorkspaceChange: (workspace: "work" | "code") => void;
   readonly onOpenSettings: () => void;
 }): NativeStackHeaderItem[] {
   return [
+    withNativeGlassHeaderItem({
+      type: "menu",
+      label: "",
+      accessibilityLabel: `Switch workspace. Current workspace: T3 ${input.workspace === "work" ? "Work" : "Code"}`,
+      icon: sfSymbolIcon("rectangle.2.swap"),
+      menu: {
+        title: "Workspace",
+        items: [
+          {
+            type: "action" as const,
+            label: "T3 Work",
+            description: "Create, learn, and explore",
+            state: input.workspace === "work" ? ("on" as const) : undefined,
+            onPress: () => input.onWorkspaceChange("work"),
+          },
+          {
+            type: "action" as const,
+            label: "T3 Code",
+            description: "Build, debug, and ship",
+            state: input.workspace === "code" ? ("on" as const) : undefined,
+            onPress: () => input.onWorkspaceChange("code"),
+          },
+        ],
+      },
+    }),
     withNativeGlassHeaderItem({
       type: "menu",
       label: "",

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useState } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
@@ -72,16 +72,26 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         </Button>
       )}
       <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="absolute right-2 top-2"
-          onClick={onClose}
-          aria-label="Close image preview"
-        >
-          <XIcon />
-        </Button>
+        <div className="absolute right-2 top-2 z-20 flex items-center gap-1">
+          <Button
+            render={<a href={item.src} download={item.name} />}
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Download ${item.name}`}
+            title={`Download ${item.name}`}
+          >
+            <DownloadIcon />
+          </Button>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            onClick={onClose}
+            aria-label="Close image preview"
+          >
+            <XIcon />
+          </Button>
+        </div>
         <img
           src={item.src}
           alt={item.name}

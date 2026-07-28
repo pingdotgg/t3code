@@ -33,6 +33,7 @@ export function useCreateProjectThread() {
       readonly branch: string | null;
       readonly worktreePath: string | null;
       readonly startFromOrigin?: boolean;
+      readonly prepareWorkspace?: boolean;
       readonly runtimeMode: RuntimeMode;
       readonly interactionMode: ProviderInteractionMode;
       readonly initialMessageText: string;
@@ -74,6 +75,7 @@ export function useCreateProjectThread() {
           branch: input.branch,
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
+          prepareWorkspace: input.prepareWorkspace,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });

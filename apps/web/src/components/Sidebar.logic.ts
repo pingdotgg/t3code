@@ -1,5 +1,10 @@
 import * as React from "react";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -108,6 +113,165 @@ export function filterSidebarV2VisibleThreads<
       !isSidebarSubagentThread(thread) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+  );
+}
+
+/**
+ * Threads eligible for the left sidebar's lifecycle buckets.
+ *
+ * Subagent child threads are backing storage for delegated work, not
+ * top-level conversations. They remain discoverable through the parent
+ * thread's relationship/details panel, but never enter active, snoozed, or
+ * settled sidebar lists.
+ */
+export function isSidebarLifecycleThread(
+  thread: Pick<SidebarThreadSummary, "archivedAt" | "lineage">,
+): boolean {
+  return thread.archivedAt === null && !isSidebarSubagentThread(thread);
+}
+
+export type SidebarWorkspace = "work" | "code";
+
+export function sidebarProviderInstanceKey(
+  environmentId: EnvironmentId,
+  providerInstanceId: ProviderInstanceId,
+): string {
+  return `${environmentId}\u0000${providerInstanceId}`;
+}
+
+export function isHermesSidebarThread(
+  thread: Pick<SidebarThreadSummary, "environmentId" | "providerInstanceId">,
+  providerDriverKindByInstance: ReadonlyMap<string, ProviderDriverKind>,
+): boolean {
+  const driverKind = providerDriverKindByInstance.get(
+    sidebarProviderInstanceKey(thread.environmentId, thread.providerInstanceId),
+  );
+  return (
+    driverKind === "hermes" || (driverKind === undefined && thread.providerInstanceId === "hermes")
+  );
+}
+
+export function sidebarProjectKey(
+  environmentId: EnvironmentId,
+  projectId: SidebarThreadSummary["projectId"],
+): string {
+  return `${environmentId}:${projectId}`;
+}
+
+/**
+ * Applies the selected workspace to the sidebar lifecycle lists.
+ *
+ * The work and code workspaces partition lifecycle threads on Hermes
+ * membership: Hermes conversations belong to work, everything else to code.
+ * Provider instance ids are user-configurable, so Hermes membership comes
+ * from the environment's provider metadata. The literal `hermes` fallback is
+ * only for cached historical shells whose server config has not loaded yet.
+ *
+ * A Hermes-driven thread on a regular Code project (Hermes as a coding
+ * provider) belongs to code, not work; `hermesCodeProjectKeys` holds the
+ * project keys known NOT to be the T3 Work backing project. While projects
+ * or server configs are still loading the set is conservative, so Hermes
+ * threads default to work rather than flickering into code.
+ */
+export function isThreadVisibleInSidebarWorkspace(
+  thread: Pick<
+    SidebarThreadSummary,
+    "archivedAt" | "environmentId" | "lineage" | "projectId" | "providerInstanceId"
+  >,
+  workspace: SidebarWorkspace,
+  providerDriverKindByInstance: ReadonlyMap<string, ProviderDriverKind>,
+  hermesCodeProjectKeys?: ReadonlySet<string>,
+): boolean {
+  if (!isSidebarLifecycleThread(thread)) return false;
+  const isWork =
+    isHermesSidebarThread(thread, providerDriverKindByInstance) &&
+    !hermesCodeProjectKeys?.has(sidebarProjectKey(thread.environmentId, thread.projectId));
+  return workspace === "work" ? isWork : !isWork;
+}
+
+/**
+ * Where the sidebar should route after a workspace switch.
+ *
+ * The remembered thread for the target workspace wins when it is still
+ * visible there. Otherwise, leaving a thread that belongs to the other
+ * workspace open would strand the user on stale content, so the switch
+ * falls back to the target workspace's new-chat composer. Routes that are
+ * already workspace-neutral (the index composer) stay put, but a draft
+ * composer pinned to the other workspace's project (e.g. a Hermes Work
+ * draft) is not neutral and also routes to the target composer.
+ */
+export type WorkspaceSwitchNavigation =
+  | { kind: "remembered-thread"; threadKey: string }
+  | { kind: "new-chat" }
+  | { kind: "stay" };
+
+export function resolveWorkspaceSwitchNavigation(input: {
+  nextWorkspace: SidebarWorkspace;
+  rememberedThreadKey: string | undefined;
+  routeThreadKey: string | null;
+  routeDraftWorkspace?: SidebarWorkspace | null;
+  threads: readonly (Pick<
+    SidebarThreadSummary,
+    "archivedAt" | "environmentId" | "lineage" | "projectId" | "providerInstanceId"
+  > & { readonly threadKey: string })[];
+  providerDriverKindByInstance: ReadonlyMap<string, ProviderDriverKind>;
+  hermesCodeProjectKeys?: ReadonlySet<string>;
+}): WorkspaceSwitchNavigation {
+  const isVisible = (threadKey: string | null): boolean => {
+    if (threadKey === null) return false;
+    const thread = input.threads.find((candidate) => candidate.threadKey === threadKey);
+    return (
+      thread !== undefined &&
+      isThreadVisibleInSidebarWorkspace(
+        thread,
+        input.nextWorkspace,
+        input.providerDriverKindByInstance,
+        input.hermesCodeProjectKeys,
+      )
+    );
+  };
+  if (input.rememberedThreadKey !== undefined && isVisible(input.rememberedThreadKey)) {
+    return { kind: "remembered-thread", threadKey: input.rememberedThreadKey };
+  }
+  if (input.routeThreadKey === null) {
+    return input.routeDraftWorkspace != null && input.routeDraftWorkspace !== input.nextWorkspace
+      ? { kind: "new-chat" }
+      : { kind: "stay" };
+  }
+  if (isVisible(input.routeThreadKey)) {
+    return { kind: "stay" };
+  }
+  return { kind: "new-chat" };
+}
+
+export type WorkInboxActiveSection = "main" | "needs-you" | "active";
+
+export function workInboxActiveSection(
+  thread: Pick<
+    SidebarThreadSummary,
+    "hasPendingApprovals" | "hasPendingUserInput" | "workInboxRole"
+  >,
+): WorkInboxActiveSection {
+  if (thread.workInboxRole === "main") return "main";
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return "needs-you";
+  return "active";
+}
+
+export function canPinWorkInboxThread(input: {
+  thread: Pick<
+    SidebarThreadSummary,
+    "archivedAt" | "environmentId" | "lineage" | "providerInstanceId" | "workInboxRole"
+  >;
+  providerDriverKindByInstance: ReadonlyMap<string, ProviderDriverKind>;
+  isSnoozed: boolean;
+  isSettled: boolean;
+}): boolean {
+  return (
+    input.thread.workInboxRole !== "main" &&
+    isSidebarLifecycleThread(input.thread) &&
+    isHermesSidebarThread(input.thread, input.providerDriverKindByInstance) &&
+    !input.isSnoozed &&
+    !input.isSettled
   );
 }
 
@@ -494,12 +658,15 @@ export function firstValidTimestamp(
 // approval) is carried by each card's edge strip, not by position.
 export function sortThreadsForSidebarV2<
   T extends { readonly id: string; readonly createdAt: string },
->(threads: readonly T[]): T[] {
-  return [...threads].toSorted(
-    (left, right) =>
+>(threads: readonly T[], isPinned: (thread: T) => boolean = () => false): T[] {
+  return [...threads].toSorted((left, right) => {
+    const pinOrder = Number(isPinned(right)) - Number(isPinned(left));
+    return (
+      pinOrder ||
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
+      left.id.localeCompare(right.id)
+    );
+  });
 }
 
 type SettledTimestampInput = Pick<

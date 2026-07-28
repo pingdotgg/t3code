@@ -4,7 +4,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type ModelSelection,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -51,6 +55,8 @@ export function useNewThreadHandler() {
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
         replace?: boolean;
+        modelSelection?: ModelSelection;
+        fresh?: boolean;
       },
     ): Promise<void> => {
       const {
@@ -90,6 +96,7 @@ export function useNewThreadHandler() {
         : null;
       const carryModelSelection =
         composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+      const nextModelSelection = options?.modelSelection ?? carryModelSelection;
       const carryRuntimeMode =
         carrySourceComposer?.runtimeMode ??
         carrySourceShell?.runtimeMode ??
@@ -116,11 +123,11 @@ export function useNewThreadHandler() {
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
         : null;
+      const storedDraftThreadWasPromoted =
+        storedDraftThreadRef !== null && readThreadShell(storedDraftThreadRef) !== null;
       const reusableStoredDraftThread =
-        storedDraftThreadRef && readThreadShell(storedDraftThreadRef) !== null
-          ? null
-          : storedDraftThread;
-      if (storedDraftThreadRef && reusableStoredDraftThread === null) {
+        options?.fresh === true ? null : storedDraftThreadWasPromoted ? null : storedDraftThread;
+      if (storedDraftThreadRef && storedDraftThreadWasPromoted) {
         markPromotedDraftThreadByRef(storedDraftThreadRef);
       }
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
@@ -171,11 +178,11 @@ export function useNewThreadHandler() {
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
-            if (carryModelSelection) {
+            if (nextModelSelection) {
               // The carried selection is a complete snapshot of the viewed
               // thread's model state: absent options mean "no options", not
               // "keep the stale draft's options".
-              setModelSelection(reusableStoredDraftThread.draftId, carryModelSelection, {
+              setModelSelection(reusableStoredDraftThread.draftId, nextModelSelection, {
                 replaceOptions: true,
               });
             }
@@ -191,7 +198,7 @@ export function useNewThreadHandler() {
             reusableStoredDraftThread.draftId,
             {
               threadId: reusableStoredDraftThread.threadId,
-              ...(workspaceContext ?? {}),
+              ...workspaceContext,
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
@@ -212,6 +219,7 @@ export function useNewThreadHandler() {
 
       if (
         latestActiveDraftThread &&
+        options?.fresh !== true &&
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
         latestActiveDraftThread.promotedTo == null
@@ -263,13 +271,13 @@ export function useNewThreadHandler() {
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
-        if (carryModelSelection) {
+        if (nextModelSelection) {
           // After sticky state so the viewed thread's exact selection
           // (model + options like effort and context window) wins over the
           // globally sticky one. replaceOptions: the carried selection is a
           // complete snapshot — absent options mean "no options", not "keep
           // whatever sticky state just wrote".
-          setModelSelection(draftId, carryModelSelection, { replaceOptions: true });
+          setModelSelection(draftId, nextModelSelection, { replaceOptions: true });
         }
 
         await router.navigate({

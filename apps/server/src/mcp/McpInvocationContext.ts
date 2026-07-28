@@ -11,11 +11,14 @@ export const ALL_MCP_CAPABILITIES = ["preview", "orchestration", "worktree"] as 
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
 export interface McpInvocationScope {
+  /** Opaque, non-secret handle suitable for audit correlation and revocation. */
+  readonly credentialId: string;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpCapability>;
+  readonly audience: string;
   readonly issuedAt: number;
 }
 

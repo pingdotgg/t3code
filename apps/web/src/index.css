@@ -365,6 +365,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     -webkit-app-region: no-drag;
   }
 
+  /* The collapsed-sidebar trigger floats at the titlebar's left inset; keep
+     the right-anchored panel controls from stretching underneath it so both
+     stay clickable in narrow header columns. */
+  [data-sidebar-state="collapsed"] .workspace-titlebar-controls {
+    max-width: calc(
+      100% - var(--workspace-titlebar-content-left) - var(--workspace-controls-right)
+    );
+    overflow: hidden;
+  }
+
   .surface-subheader {
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
   }
@@ -626,20 +636,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   .panel-glass {
     position: relative;
     isolation: isolate;
-    contain: paint;
-    clip-path: inset(0 round 20px);
     border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
     box-shadow: inset 0 1px rgb(255 255 255 / 8%);
   }
 
   .panel-glass::before {
+    pointer-events: none;
     position: absolute;
-    z-index: -1;
+    z-index: 0;
     inset: 0;
     background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
     content: "";
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .panel-glass > * {
+    position: relative;
+    z-index: 1;
   }
 
   .dialog-glass {

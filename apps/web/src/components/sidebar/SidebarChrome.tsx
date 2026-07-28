@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { SettingsIcon } from "lucide-react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, type ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import { APP_STAGE_LABEL } from "../../branding";
@@ -22,14 +22,18 @@ import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
+  workspaceSelector,
 }: {
   isElectron: boolean;
+  workspaceSelector?: ReactNode;
 }) {
   const stageLabel = useSidebarStageLabel();
   const backdropVariant = resolveSidebarStageBackdropVariant(stageLabel);
+  const onBackdrop = backdropVariant !== null;
 
   return (
     <SidebarHeader
+      data-on-backdrop={onBackdrop || undefined}
       className={cn(
         "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
         isElectron && "drag-region",
@@ -43,7 +47,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
             "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
+      {workspaceSelector ?? <SidebarBrand onBackdrop={onBackdrop} />}
     </SidebarHeader>
   );
 });
@@ -81,7 +85,7 @@ function useSidebarStageLabel() {
   });
 }
 
-function T3Wordmark() {
+export function T3Wordmark() {
   return (
     <svg
       aria-label="T3"

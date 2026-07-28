@@ -14,6 +14,7 @@ import {
   PreviewAutomationOpenInput,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
+  PreviewAutomationSnapshotInput,
   PreviewAutomationStatus,
 } from "./previewAutomation.ts";
 
@@ -25,6 +26,7 @@ const decodeViewport = Schema.decodeUnknownSync(PreviewViewportSetting);
 const decodeResizeInput = Schema.decodeUnknownSync(PreviewAutomationResizeInput);
 const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
 const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
+const decodeSnapshotInput = Schema.decodeUnknownSync(PreviewAutomationSnapshotInput);
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
@@ -137,6 +139,19 @@ describe("PreviewAutomationResizeInput", () => {
         viewport: { width: 180, height: 120 },
       }).viewport,
     ).toEqual({ width: 180, height: 120 });
+  });
+});
+
+describe("PreviewAutomationSnapshotInput", () => {
+  it("accepts one optional screenshot destination", () => {
+    expect(decodeSnapshotInput({ save: true })).toEqual({ save: true });
+    expect(decodeSnapshotInput({ savePath: "evidence/page.png" })).toEqual({
+      savePath: "evidence/page.png",
+    });
+  });
+
+  it("rejects save and savePath together", () => {
+    expect(() => decodeSnapshotInput({ save: true, savePath: "evidence/page.png" })).toThrow();
   });
 });
 
