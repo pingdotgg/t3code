@@ -105,10 +105,10 @@ const compressHttpResponse = Effect.fnUntraced(function* (
 
 export const httpCompressionLayer = HttpRouter.middleware(
   (httpEffect) =>
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      return yield* compressHttpResponse(yield* httpEffect, request.headers["accept-encoding"]);
-    }),
+    Effect.flatMap(
+      Effect.all([httpEffect, HttpServerRequest.HttpServerRequest]),
+      ([response, request]) => compressHttpResponse(response, request.headers["accept-encoding"]),
+    ),
   { global: true },
 );
 
