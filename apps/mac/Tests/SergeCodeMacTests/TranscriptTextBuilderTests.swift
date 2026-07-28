@@ -185,6 +185,20 @@ struct TranscriptTextBuilderTests {
         #expect(!plain.contains("Subagent · Migrate the call sites"))
     }
 
+    @Test("thread export carries handoff metadata before the continuous transcript")
+    func threadExportMetadata() {
+        let exported = ThreadTranscriptExport.text(
+            title: "Polish markdown",
+            projectRoot: "/tmp/SergeCode",
+            provider: "Codex",
+            modelID: "gpt-5",
+            transcript: "You\nPlease fix links.\n\nAssistant\nDone.")
+
+        #expect(exported.hasPrefix(
+            "# Polish markdown\nProject: /tmp/SergeCode\nAgent: Codex · gpt-5\n\n---\n\n"))
+        #expect(exported.hasSuffix("Assistant\nDone."))
+    }
+
     private func commandTask(
         taskId: String, description: String?, isBackgrounded: Bool, at: Date
     ) -> SubagentTaskItem {

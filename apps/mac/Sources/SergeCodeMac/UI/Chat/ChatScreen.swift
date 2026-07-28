@@ -63,7 +63,12 @@ public struct ChatScreen: View {
                 } else {
                     Group {
                     ChatHeaderView(
-                        thread: thread, model: model, scenery: scenery, threadKey: threadKey)
+                        thread: thread,
+                        model: model,
+                        scenery: scenery,
+                        threadKey: threadKey,
+                        onCopyThread: { copyThread(thread) },
+                        onSelectText: { showSelectableTranscript = true })
                     Divider()
                     VStack(spacing: 0) {
                         // A LazyVStack keeps substantial layout/realization state. Give
@@ -234,9 +239,26 @@ public struct ChatScreen: View {
             "\(threadID):\(model.timelineVersion(threadID: threadID)):\(selectedThreadIsSettled)"
         return SelectableTranscriptSheet(
             items: model.selectedTimeline(),
+            threadID: threadID,
+            model: model,
             projectRoot: selectedProjectRoot,
             threadIsSettled: selectedThreadIsSettled,
             contentKey: contentKey)
+    }
+
+    private func copyThread(_ thread: ChatThread) {
+        let projectRoot = model.projects.first { $0.id == thread.projectID }?.path
+        let transcript = TranscriptTextBuilder.attributedString(
+            from: model.timeline(threadID: thread.id),
+            projectRoot: projectRoot,
+            threadIsSettled: thread.status.isSettled)
+        Pasteboard.copy(
+            ThreadTranscriptExport.text(
+                title: thread.title,
+                projectRoot: projectRoot,
+                provider: thread.provider.displayName,
+                modelID: thread.modelID,
+                transcript: transcript.string))
     }
 }
 

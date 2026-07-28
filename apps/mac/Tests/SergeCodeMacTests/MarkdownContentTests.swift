@@ -290,6 +290,24 @@ struct MarkdownContentTests {
         #expect(serializedTarget == parsedTarget)
     }
 
+    @Test("turns explicit local Markdown links into editor targets")
+    func explicitLocalMarkdownLink() throws {
+        let blocks = parseMarkdownBlocks(
+            "Open [AppModel.swift](apps/mac/Sources/SergeCodeMac/Model/AppModel.swift#L2170)")
+        guard case .paragraph(let paragraph) = try #require(blocks.first) else {
+            Issue.record("expected a paragraph")
+            return
+        }
+
+        let target = paragraph.runs.compactMap { $0.link.flatMap(parseFileLinkURL) }.first
+        #expect(
+            target
+                == FileLinkTarget(
+                    path: "apps/mac/Sources/SergeCodeMac/Model/AppModel.swift",
+                    line: 2170))
+        #expect(markdownFileTargets(in: blocks) == [target].compactMap { $0 })
+    }
+
     @Test("parses fenced code and keeps its language")
     func fencedCode() throws {
         let blocks = parseMarkdownBlocks("before\n\n```swift\nlet answer = 42\n```")
