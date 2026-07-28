@@ -1801,19 +1801,18 @@ public actor LiveBackend: BackendService {
 
     /// Eager worktree creation at session-create time (vcs.createWorktree).
     /// startFromOrigin uses the base's origin tracking ref as the start point;
-    /// the server fetches that ref from the remote right before creating the
-    /// worktree (best-effort — on fetch failure it uses the ref as-is), so new
-    /// threads branch off the latest upstream state. Falls back to the local
-    /// base when the origin ref doesn't resolve.
+    /// the server must fetch that ref and resolve the fetched commit immediately
+    /// before creating the worktree. A fetch failure aborts this attempt rather
+    /// than silently creating a new thread checkout from stale code. The local
+    /// base is used only when startFromOrigin is disabled.
     private func createEagerWorktree(plan: WorktreePlan) async -> VcsWorktree? {
         guard let client = currentClient else { return nil }
         let branch = Self.temporaryWorktreeBranchName()
-        if plan.startFromOrigin,
+        if plan.startFromOrigin {
             let result = try? await client.createWorktree(
                 cwd: plan.projectCwd, refName: "origin/\(plan.baseBranch)",
                 newRefName: branch, baseRefName: plan.baseBranch)
-        {
-            return result.worktree
+            return result?.worktree
         }
         let result = try? await client.createWorktree(
             cwd: plan.projectCwd, refName: plan.baseBranch,
@@ -2768,6 +2767,10 @@ public actor LiveBackend: BackendService {
             newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
             addProjectBaseDirectory: settings.addProjectBaseDirectory,
             autoReview: autoReviewPatch,
+            workflowModelRouting: WorkflowModelRouting(
+                explore: Self.wireWorkflowRoute(settings.workflowModelRouting.explore),
+                implement: Self.wireWorkflowRoute(settings.workflowModelRouting.implement),
+                verify: Self.wireWorkflowRoute(settings.workflowModelRouting.verify)),
             autoArchiveSettledAfterMs: .some(settings.autoArchiveSettledAfterMs))
         return Self.uiSettings(
             try await client.updateSettings(patch: patch),
@@ -2831,6 +2834,10 @@ public actor LiveBackend: BackendService {
             defaultEnvMode: settings.defaultThreadEnvMode == .worktree ? .worktree : .local,
             newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
             addProjectBaseDirectory: settings.addProjectBaseDirectory,
+            workflowModelRouting: AppWorkflowModelRouting(
+                explore: Self.uiWorkflowRoute(settings.workflowModelRouting.explore),
+                implement: Self.uiWorkflowRoute(settings.workflowModelRouting.implement),
+                verify: Self.uiWorkflowRoute(settings.workflowModelRouting.verify)),
             autoReview: AppAutoReviewSettings(
                 enabled: ar.enabled,
                 mode: ar.mode,
@@ -2847,6 +2854,14 @@ public actor LiveBackend: BackendService {
                 fixConcurrency: ar.fixConcurrency,
                 projectOverrides: overrides),
             autoArchiveSettledAfterMs: settings.autoArchiveSettledAfterMs)
+    }
+
+    private static func wireWorkflowRoute(_ route: AppWorkflowModelRoute?) -> ModelSelection? {
+        route.map { ModelSelection(instanceId: $0.instanceID, model: $0.modelID) }
+    }
+
+    private static func uiWorkflowRoute(_ route: ModelSelection?) -> AppWorkflowModelRoute? {
+        route.map { AppWorkflowModelRoute(instanceID: $0.instanceId, modelID: $0.model) }
     }
 
     private static func projectIDs(from projects: JSONValue) -> Set<String> {

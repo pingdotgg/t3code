@@ -18,6 +18,25 @@ import {
 const decodeCustomInstructions = Schema.decodeUnknownSync(CustomInstructionsConfig);
 
 describe("serverSettings helpers", () => {
+  it("replaces workflow model routing as one coherent preference", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      workflowModelRouting: {
+        explore: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-luna",
+        },
+        implement: null,
+        verify: null,
+      },
+    });
+
+    expect(next.workflowModelRouting).toEqual({
+      explore: { instanceId: "codex", model: "gpt-5.6-luna" },
+      implement: null,
+      verify: null,
+    });
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

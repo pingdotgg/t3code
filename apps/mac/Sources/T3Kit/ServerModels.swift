@@ -465,6 +465,39 @@ public struct AutoReviewSettings: Decodable, Sendable {
     }
 }
 
+public struct WorkflowModelRouting: Codable, Hashable, Sendable {
+    public var explore: ModelSelection?
+    public var implement: ModelSelection?
+    public var verify: ModelSelection?
+
+    public init(
+        explore: ModelSelection? = nil, implement: ModelSelection? = nil,
+        verify: ModelSelection? = nil
+    ) {
+        self.explore = explore
+        self.implement = implement
+        self.verify = verify
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case explore, implement, verify
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        explore = try c.decodeIfPresent(ModelSelection.self, forKey: .explore)
+        implement = try c.decodeIfPresent(ModelSelection.self, forKey: .implement)
+        verify = try c.decodeIfPresent(ModelSelection.self, forKey: .verify)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(explore, forKey: .explore)
+        try c.encode(implement, forKey: .implement)
+        try c.encode(verify, forKey: .verify)
+    }
+}
+
 public struct ServerSettings: Decodable, Sendable {
     public var enableAssistantStreaming: Bool
     public var enableProviderUpdateChecks: Bool
@@ -474,6 +507,7 @@ public struct ServerSettings: Decodable, Sendable {
     public var newWorktreesStartFromOrigin: Bool
     public var addProjectBaseDirectory: String
     public var textGenerationModelSelection: ModelSelection
+    public var workflowModelRouting: WorkflowModelRouting
     /// Per-driver legacy settings blobs (`codex`, `claude`, `cursor`,
     /// `grok`) — opaque, not edited by v1 UI.
     public var providers: JSONValue
@@ -489,7 +523,7 @@ public struct ServerSettings: Decodable, Sendable {
         case enableAssistantStreaming, enableProviderUpdateChecks, automaticGitFetchInterval,
             defaultThreadEnvMode, newWorktreesStartFromOrigin, addProjectBaseDirectory,
             textGenerationModelSelection, providers, providerInstances, observability, autoReview,
-            autoArchiveSettledAfter
+            autoArchiveSettledAfter, workflowModelRouting
     }
 
     public init(from decoder: Decoder) throws {
@@ -508,6 +542,9 @@ public struct ServerSettings: Decodable, Sendable {
             String.self, forKey: .addProjectBaseDirectory, default: "")
         textGenerationModelSelection = try c.decode(
             ModelSelection.self, forKey: .textGenerationModelSelection)
+        workflowModelRouting = try c.decode(
+            WorkflowModelRouting.self, forKey: .workflowModelRouting,
+            default: WorkflowModelRouting())
         providers = try c.decode(JSONValue.self, forKey: .providers, default: .object([:]))
         providerInstances = try c.decode(
             JSONValue.self, forKey: .providerInstances, default: .object([:]))
