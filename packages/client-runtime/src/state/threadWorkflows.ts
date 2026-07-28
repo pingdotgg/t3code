@@ -11,6 +11,11 @@ type ProviderSession = Projection["providerSessions"][number];
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>(["preparing", "starting", "running", "waiting"]);
 const MERGE_BACK_RUN_STATUSES = new Set<Run["status"]>(["waiting", "completed"]);
+const MERGE_BACK_BLOCKING_RUN_STATUSES = new Set<Run["status"]>([
+  "preparing",
+  "starting",
+  "running",
+]);
 
 export interface QueuedThreadRun {
   readonly run: Run;
@@ -34,13 +39,21 @@ export function resolveActiveThreadRun(projection: Projection): Run | null {
  * instead of falling through to an older fully checkpointed run.
  */
 export function resolveLatestMergeBackRun(projection: Projection): Run | null {
-  return projection.runs.reduce<Run | null>(
+  const latestProviderFinishedRun = projection.runs.reduce<Run | null>(
     (latest, run) =>
       MERGE_BACK_RUN_STATUSES.has(run.status) && (latest === null || run.ordinal > latest.ordinal)
         ? run
         : latest,
     null,
   );
+  if (latestProviderFinishedRun === null) return null;
+
+  const hasNewerActiveRun = projection.runs.some(
+    (run) =>
+      run.ordinal > latestProviderFinishedRun.ordinal &&
+      MERGE_BACK_BLOCKING_RUN_STATUSES.has(run.status),
+  );
+  return hasNewerActiveRun ? null : latestProviderFinishedRun;
 }
 
 export function resolveThreadProviderSession(projection: Projection): ProviderSession | null {
