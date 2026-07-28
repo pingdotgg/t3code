@@ -444,14 +444,12 @@ function visibleDeltaRunOrdinals(
 }
 
 export function shouldPrepareLegacyImportHandoff(input: {
-  readonly hasNativeThreadRef: boolean;
+  readonly hasCompletedRun: boolean;
   readonly historyOrigin: OrchestrationV2AppThread["historyOrigin"];
   readonly legacyImportItemCount: number;
 }): boolean {
   return (
-    input.historyOrigin === "v1_import" &&
-    !input.hasNativeThreadRef &&
-    input.legacyImportItemCount > 0
+    input.historyOrigin === "v1_import" && !input.hasCompletedRun && input.legacyImportItemCount > 0
   );
 }
 
@@ -2449,8 +2447,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         const legacyImportHandoff = shouldPrepareLegacyImportHandoff({
           historyOrigin: projection.thread.historyOrigin,
-          hasNativeThreadRef:
-            activeProviderThread !== undefined && activeProviderThread.nativeThreadRef !== null,
+          hasCompletedRun: latestCompletedRun !== undefined,
           legacyImportItemCount: legacyImportItems.length,
         })
           ? yield* contextHandoffService
