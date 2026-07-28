@@ -4,6 +4,8 @@ import { beforeEach, vi } from "vite-plus/test";
 
 const {
   appendSwitchMock,
+  autoUpdaterOnMock,
+  autoUpdaterRemoveListenerMock,
   exitMock,
   getAppPathMock,
   getVersionMock,
@@ -23,6 +25,8 @@ const {
   whenReadyMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
+  autoUpdaterOnMock: vi.fn(),
+  autoUpdaterRemoveListenerMock: vi.fn(),
   exitMock: vi.fn(),
   getAppPathMock: vi.fn(() => "/app"),
   getVersionMock: vi.fn(() => "1.2.3"),
@@ -43,6 +47,10 @@ const {
 }));
 
 vi.mock("electron", () => ({
+  autoUpdater: {
+    on: autoUpdaterOnMock,
+    removeListener: autoUpdaterRemoveListenerMock,
+  },
   app: {
     commandLine: {
       appendSwitch: appendSwitchMock,
@@ -77,6 +85,8 @@ import * as ElectronApp from "./ElectronApp.ts";
 describe("ElectronApp", () => {
   beforeEach(() => {
     appendSwitchMock.mockClear();
+    autoUpdaterOnMock.mockClear();
+    autoUpdaterRemoveListenerMock.mockClear();
     exitMock.mockClear();
     onMock.mockClear();
     quitMock.mockClear();
@@ -151,6 +161,24 @@ describe("ElectronApp", () => {
 
       assert.deepEqual(onMock.mock.calls, [["activate", listener]]);
       assert.deepEqual(removeListenerMock.mock.calls, [["activate", listener]]);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("scopes native updater quit listeners", () =>
+    Effect.gen(function* () {
+      const listener = vi.fn();
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const electronApp = yield* ElectronApp.ElectronApp;
+          yield* electronApp.onBeforeQuitForUpdate(listener);
+        }),
+      );
+
+      assert.deepEqual(autoUpdaterOnMock.mock.calls, [["before-quit-for-update", listener]]);
+      assert.deepEqual(autoUpdaterRemoveListenerMock.mock.calls, [
+        ["before-quit-for-update", listener],
+      ]);
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 });
