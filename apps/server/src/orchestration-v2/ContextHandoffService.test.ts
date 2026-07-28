@@ -129,4 +129,36 @@ it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
       assert.notMatch(handoff.summaryText, /\n+x+ retained final words/);
     }),
   );
+
+  it.effect("retains the newest oversized import even when it has no whitespace", () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffServiceV2;
+      const handoff = yield* service.prepareLegacyImport({
+        threadId: ThreadId.make("thread:legacy-context"),
+        targetRunId: RunId.make("run:first-v2"),
+        toProviderThreadId: ProviderThreadId.make("provider-thread:first-v2"),
+        toProviderInstanceId: ProviderInstanceId.make("codex"),
+        items: [
+          importedItem({
+            role: "assistant",
+            id: "older",
+            text: "older message",
+            ordinal: 1,
+          }),
+          importedItem({
+            role: "user",
+            id: "long-single-token",
+            text: `${"🧪".repeat(20_000)}LATEST_SINGLE_TOKEN`,
+            ordinal: 2,
+          }),
+        ],
+        createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+      });
+
+      assert.isAtMost(handoff.summaryText.length, 32_000);
+      assert.include(handoff.summaryText, "User:\n... ");
+      assert.include(handoff.summaryText, "LATEST_SINGLE_TOKEN");
+      assert.notInclude(handoff.summaryText, "\ufffd");
+    }),
+  );
 });

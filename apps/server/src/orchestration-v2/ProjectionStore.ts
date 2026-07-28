@@ -392,6 +392,7 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
+  readonly runless_item_count: number;
 };
 
 type ShellRunRow = {
@@ -843,6 +844,7 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
   readonly itemCount: number;
+  readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
@@ -877,7 +879,7 @@ function itemCountThroughRun(input: {
     return 0;
   }
 
-  let count = 0;
+  let count = input.state.thread.historyOrigin === "v1_import" ? input.state.runlessItemCount : 0;
   for (const [runId, itemCount] of input.state.itemCountByRunId) {
     const itemRunOrdinal = input.state.runOrdinalById.get(runId);
     if (itemRunOrdinal !== undefined && itemRunOrdinal <= runOrdinal) {
@@ -2137,7 +2139,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ON r.run_id = i.run_id
                 WHERE i.thread_id = t.thread_id
                   AND (i.run_id IS NULL OR r.status <> 'rolled_back')
-              ) AS item_count
+              ) AS item_count,
+              (
+                SELECT COUNT(*)
+                FROM orchestration_v2_projection_turn_items i
+                WHERE i.thread_id = t.thread_id
+                  AND i.run_id IS NULL
+              ) AS runless_item_count
             FROM orchestration_v2_projection_threads t
             WHERE t.deleted_at IS NULL
             ORDER BY t.updated_at ASC, t.thread_id ASC
@@ -2203,6 +2211,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       : DateTime.makeUnsafe(row.latest_user_message_at),
                   hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
                   itemCount: row.item_count,
+                  runlessItemCount: row.runless_item_count,
                   updatedAt: thread.updatedAt,
                   runOrdinalById:
                     runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
