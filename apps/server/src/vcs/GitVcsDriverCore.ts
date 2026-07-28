@@ -55,6 +55,7 @@ const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_TTL = Duration.minutes(10);
+const REPOSITORY_PATHS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const NON_REPOSITORY_PATHS_CACHE_TTL = Duration.seconds(1);
 const LIST_REFS_SNAPSHOT_CACHE_CAPACITY = 64;
 const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
@@ -1085,9 +1086,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     },
   );
+  const repositoryPathsRefreshCache = yield* Cache.makeWith(
+    (cwd: string) =>
+      Cache.invalidate(repositoryPathsCache, cwd).pipe(
+        Effect.andThen(Cache.get(repositoryPathsCache, cwd)),
+      ),
+    {
+      capacity: REPOSITORY_PATHS_CACHE_CAPACITY,
+      timeToLive: Exit.match({
+        onSuccess: (repositoryPaths) =>
+          repositoryPaths === null
+            ? NON_REPOSITORY_PATHS_CACHE_TTL
+            : REPOSITORY_PATHS_REFRESH_COALESCE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
   const normalizeRepositoryPathsCacheKey = (cwd: string) => path.normalize(path.resolve(cwd));
-  const resolveRepositoryPaths = (cwd: string) =>
-    Cache.get(repositoryPathsCache, normalizeRepositoryPathsCacheKey(cwd));
+  const resolveRepositoryPaths = (cwd: string, refresh = false) => {
+    const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
+    return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
+  };
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const repositoryPaths = yield* resolveRepositoryPaths(cwd);
@@ -2189,15 +2208,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       defaultRefResult.exitCode === 0
         ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
         : null;
-    const worktreeMap =
+    const parsedWorktreeEntries =
       worktreeListResult.exitCode === 0
-        ? new Map(
-            [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
-              ([branchName, worktreePath]) =>
-                [branchName, path.normalize(path.resolve(worktreePath))] as const,
-            ),
+        ? [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
+            ([branchName, worktreePath]) =>
+              [branchName, path.normalize(path.resolve(worktreePath))] as const,
           )
-        : new Map<string, string>();
+        : [];
+    const existingWorktreeEntries = yield* Effect.filter(
+      parsedWorktreeEntries,
+      ([, worktreePath]) =>
+        fileSystem.stat(worktreePath).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      { concurrency: 16 },
+    );
+    const worktreeMap = new Map(existingWorktreeEntries);
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
@@ -2313,12 +2340,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (repositoryPaths === null) return;
     yield* Cache.invalidate(listRefsRefreshSnapshotCache, repositoryPaths.gitCommonDir);
     bumpListRefsEpoch(repositoryPaths.gitCommonDir);
+    yield* Cache.invalidate(repositoryPathsRefreshCache, repositoryPathsCacheKey);
     yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
 
   const listRefs: GitVcsDriver.GitVcsDriver["Service"]["listRefs"] = Effect.fn("listRefs")(
     function* (input) {
-      const repositoryPaths = yield* resolveRepositoryPaths(input.cwd).pipe(
+      const repositoryPaths = yield* resolveRepositoryPaths(input.cwd, input.refresh === true).pipe(
         Effect.catchTags({
           GitCommandError: (error) =>
             isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
@@ -2675,6 +2703,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     input,
   ) =>
     initRepo(input).pipe(
+      Effect.tap(() =>
+        Cache.invalidate(repositoryPathsRefreshCache, normalizeRepositoryPathsCacheKey(input.cwd)),
+      ),
       Effect.tap(() =>
         Cache.invalidate(repositoryPathsCache, normalizeRepositoryPathsCacheKey(input.cwd)),
       ),

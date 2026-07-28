@@ -42,6 +42,21 @@ const makeNonRepositoryHandle = () =>
     getOutputFd: () => Stream.empty,
   });
 
+const makeSuccessfulHandle = (stdout: string) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.encodeText(Stream.make(stdout)),
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+
 const makeTmpDir = (
   prefix = "git-vcs-driver-test-",
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> =>
@@ -319,6 +334,70 @@ it.effect("marks the current branch when worktree metadata is unavailable", () =
       assert.isTrue(refs.refs.find((ref) => ref.name === initialBranch)?.current);
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("ignores worktree metadata for directories that no longer exist", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const missingWorktreePath = "/missing/deleted-worktree";
+      const staleWorktreeSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          const isWorktreeList =
+            command.args.includes("worktree") && command.args.includes("--porcelain");
+          if (isWorktreeList) {
+            return makeSuccessfulHandle(
+              `worktree ${missingWorktreePath}\nHEAD deadbeef\nbranch refs/heads/stale-worktree\n\n`,
+            );
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, staleWorktreeSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      yield* git(cwd, ["branch", "stale-worktree"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+
+      const refs = yield* driver.listRefs({ cwd, refresh: true });
+
+      assert.equal(refs.refs.find((ref) => ref.name === "stale-worktree")?.worktreePath, null);
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("refreshes the current branch after an external checkout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["branch", "external-checkout"]);
+
+      const initialRefs = yield* driver.listRefs({ cwd, refresh: true });
+      assert.isTrue(initialRefs.refs.find((ref) => ref.name === initialBranch)?.current);
+
+      // Raw execute intentionally bypasses the driver's mutation invalidation,
+      // matching a checkout performed by another process.
+      yield* driver.execute({
+        operation: "GitVcsDriver.test.externalCheckout",
+        cwd,
+        args: ["checkout", "external-checkout"],
+        timeoutMs: 10_000,
+      });
+      yield* TestClock.adjust("6 seconds");
+
+      const refreshedRefs = yield* driver.listRefs({ cwd, refresh: true });
+      assert.isTrue(refreshedRefs.refs.find((ref) => ref.name === "external-checkout")?.current);
+      assert.isFalse(refreshedRefs.refs.find((ref) => ref.name === initialBranch)?.current);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("backs off failed upstream refreshes across linked worktrees", () =>
