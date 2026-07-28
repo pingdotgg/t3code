@@ -159,6 +159,9 @@ export function useSelectedThreadGitActions() {
           ? await run()
           : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
       if (AsyncResult.isFailure(result)) {
+        if (Cause.hasInterruptsOnly(result.cause)) {
+          return null;
+        }
         const error = Cause.squash(result.cause);
         const message = error instanceof Error ? error.message : "Git action failed.";
         setPendingConnectionError(message);
