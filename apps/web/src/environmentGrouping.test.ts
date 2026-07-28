@@ -12,6 +12,7 @@ import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  resolveSidebarProjectTargetRef,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -316,6 +317,62 @@ describe("environment grouping", () => {
     });
     expect(entries[0]?.isPreferred).toBe(true);
     expect(entries[1]?.group.displayName).toBe("separate");
+  });
+
+  it("resolves a selected project group to its preferred physical project", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(
+      resolveSidebarProjectTargetRef({
+        group: group!,
+        preferredProjectRef: {
+          environmentId: remoteEnvironmentId,
+          projectId: remote.id,
+        },
+      }),
+    ).toEqual({
+      environmentId: remoteEnvironmentId,
+      projectId: remote.id,
+    });
+  });
+
+  it("falls back to the representative project when the context is outside the selected group", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [remote, primary],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(
+      resolveSidebarProjectTargetRef({
+        group: group!,
+        preferredProjectRef: {
+          environmentId: primaryEnvironmentId,
+          projectId: ProjectId.make("another-project"),
+        },
+      }),
+    ).toEqual({
+      environmentId: primaryEnvironmentId,
+      projectId: primary.id,
+    });
   });
 
   it("keeps manual project order when building grouped sidebar entries", () => {

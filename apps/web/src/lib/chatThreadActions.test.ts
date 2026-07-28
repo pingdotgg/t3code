@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  resolveNewThreadAction,
   resolveThreadActionProjectRef,
   resolveNewDraftStartFromOrigin,
   startNewThreadFromContext,
@@ -72,6 +73,66 @@ describe("chatThreadActions", () => {
     );
 
     expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));
+  });
+
+  it("starts in the selected sidebar scope instead of the contextual project", () => {
+    const scopedProjectRef = scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID);
+
+    expect(
+      resolveNewThreadAction({
+        sidebarV2Enabled: true,
+        projectGroupCount: 2,
+        scopedProjectRef,
+        contextualProjectRef: scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID),
+        pickProjectWhenAmbiguous: true,
+      }),
+    ).toEqual({ kind: "start", projectRef: scopedProjectRef });
+  });
+
+  it("opens the project picker for an ambiguous all-projects action", () => {
+    expect(
+      resolveNewThreadAction({
+        sidebarV2Enabled: true,
+        projectGroupCount: 2,
+        scopedProjectRef: null,
+        contextualProjectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+        pickProjectWhenAmbiguous: true,
+      }),
+    ).toEqual({ kind: "pick-project" });
+  });
+
+  it("keeps an all-projects local action contextual", () => {
+    const contextualProjectRef = scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID);
+
+    expect(
+      resolveNewThreadAction({
+        sidebarV2Enabled: true,
+        projectGroupCount: 2,
+        scopedProjectRef: null,
+        contextualProjectRef,
+        pickProjectWhenAmbiguous: false,
+      }),
+    ).toEqual({
+      kind: "start",
+      projectRef: contextualProjectRef,
+    });
+  });
+
+  it("ignores sidebar v2 scope state while sidebar v1 is active", () => {
+    const contextualProjectRef = scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID);
+
+    expect(
+      resolveNewThreadAction({
+        sidebarV2Enabled: false,
+        projectGroupCount: 2,
+        scopedProjectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+        contextualProjectRef,
+        pickProjectWhenAmbiguous: true,
+      }),
+    ).toEqual({
+      kind: "start",
+      projectRef: contextualProjectRef,
+    });
   });
 
   it("inherits only the project from context, never branch or worktree state", async () => {

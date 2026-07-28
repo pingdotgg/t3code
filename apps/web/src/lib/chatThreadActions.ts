@@ -26,6 +26,11 @@ export interface ChatThreadActionContext {
   readonly handleNewThread: NewThreadHandler;
 }
 
+export type NewThreadAction =
+  | { readonly kind: "start"; readonly projectRef: ScopedProjectRef }
+  | { readonly kind: "pick-project" }
+  | { readonly kind: "none" };
+
 export function resolveNewDraftStartFromOrigin(input: {
   envMode: DraftThreadEnvMode;
   newWorktreesStartFromOrigin: boolean;
@@ -46,6 +51,24 @@ export function resolveThreadActionProjectRef(
     );
   }
   return context.defaultProjectRef;
+}
+
+export function resolveNewThreadAction(input: {
+  sidebarV2Enabled: boolean;
+  projectGroupCount: number;
+  scopedProjectRef: ScopedProjectRef | null;
+  contextualProjectRef: ScopedProjectRef | null;
+  pickProjectWhenAmbiguous: boolean;
+}): NewThreadAction {
+  if (input.sidebarV2Enabled && input.scopedProjectRef) {
+    return { kind: "start", projectRef: input.scopedProjectRef };
+  }
+  if (input.sidebarV2Enabled && input.pickProjectWhenAmbiguous && input.projectGroupCount > 1) {
+    return { kind: "pick-project" };
+  }
+  return input.contextualProjectRef
+    ? { kind: "start", projectRef: input.contextualProjectRef }
+    : { kind: "none" };
 }
 
 // New threads inherit only the *project* from the current context. Branch,
