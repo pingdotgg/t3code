@@ -1287,6 +1287,35 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("compresses large JSON responses through the composed routes", () =>
+    Effect.gen(function* () {
+      const descriptor = {
+        ...testEnvironmentDescriptor,
+        label: "Test environment".repeat(100),
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverEnvironment: {
+            getDescriptor: Effect.succeed(descriptor),
+          },
+        },
+      });
+
+      const url = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const response = yield* fetchEffect(url, {
+        headers: {
+          "accept-encoding": "gzip",
+        },
+      });
+      const body = yield* responseJsonEffect<typeof descriptor>(response);
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["content-encoding"], "gzip");
+      assert.equal(response.headers.vary, "Accept-Encoding");
+      assert.deepEqual(body, descriptor);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("includes CORS headers on public environment descriptor responses", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
