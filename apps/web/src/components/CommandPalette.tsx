@@ -486,6 +486,10 @@ function OpenCommandPaletteDialog(props: {
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
+  const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
@@ -710,6 +714,11 @@ function OpenCommandPaletteDialog(props: {
     browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
       ? currentProjectCwd
       : null;
+  const getBrowseCwdForEnvironment = useCallback(
+    (environmentId: EnvironmentId | null): string | null =>
+      environmentId && currentProjectEnvironmentId === environmentId ? currentProjectCwd : null,
+    [currentProjectCwd, currentProjectEnvironmentId],
+  );
   const relativePathNeedsActiveProject =
     isExplicitRelativeProjectPath(query.trim()) && currentProjectCwdForBrowse === null;
   const browseDirectoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
@@ -733,8 +742,29 @@ function OpenCommandPaletteDialog(props: {
   const isBrowsePending = browseQuery.isPending;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const { filteredEntries: filteredBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
-    () => filterBrowseEntries({ browseEntries, browseFilterQuery, highlightedItemValue }),
-    [browseEntries, browseFilterQuery, highlightedItemValue],
+    () => filterBrowseEntries({ browseEntries, browseFilterQuery }),
+    [browseEntries, browseFilterQuery],
+  );
+
+  const prefetchBrowsePath = useCallback(
+    async (
+      partialPath: string,
+      environmentId: EnvironmentId | null = browseEnvironmentId,
+      cwd: string | null = currentProjectCwdForBrowse,
+    ): Promise<void> => {
+      if (!environmentId) {
+        return;
+      }
+
+      await loadBrowsePath({
+        environmentId,
+        input: {
+          partialPath,
+          ...(cwd ? { cwd } : {}),
+        },
+      });
+    },
+    [browseEnvironmentId, currentProjectCwdForBrowse, loadBrowsePath],
   );
 
   const openProjectFromSearch = useMemo(
@@ -905,16 +935,24 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const startAddProjectBrowse = useCallback(
-    (environmentId: EnvironmentId): void => {
+    async (environmentId: EnvironmentId): Promise<void> => {
+      const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
+      const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
+      const browseCwd = getBrowseCwdForEnvironment(environmentId);
+
+      if (initialBrowsePath.length > 0) {
+        await prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd);
+      }
+
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: [],
-        initialQuery: getAddProjectInitialQueryForEnvironment(environmentId),
+        initialQuery,
       });
     },
-    [getAddProjectInitialQueryForEnvironment],
+    [getAddProjectInitialQueryForEnvironment, getBrowseCwdForEnvironment, prefetchBrowsePath],
   );
 
   const startAddProjectClone = useCallback(
@@ -950,7 +988,7 @@ function OpenCommandPaletteDialog(props: {
           icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
           keepOpen: true,
           run: async () => {
-            startAddProjectBrowse(environmentId);
+            await startAddProjectBrowse(environmentId);
           },
         },
       ];
@@ -1225,7 +1263,7 @@ function OpenCommandPaletteDialog(props: {
       icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {
-        startAddProjectBrowse(wslAddProjectEnvironmentOption.environmentId);
+        await startAddProjectBrowse(wslAddProjectEnvironmentOption.environmentId);
       },
     });
   }
@@ -1541,23 +1579,28 @@ function OpenCommandPaletteDialog(props: {
     await handleAddProject(cloneResult.value.cwd);
   }
 
-  function browseTo(name: string): void {
-    const nextQuery = appendBrowsePathSegment(query, name);
-    setHighlightedItemValue(null);
-    setQuery(nextQuery);
-    setBrowseGeneration((generation) => generation + 1);
-  }
+  const browseTo = useCallback(
+    async (name: string): Promise<void> => {
+      const nextQuery = appendBrowsePathSegment(query, name);
+      await prefetchBrowsePath(getBrowseDirectoryPath(nextQuery));
+      setHighlightedItemValue(null);
+      setQuery(nextQuery);
+      setBrowseGeneration((generation) => generation + 1);
+    },
+    [prefetchBrowsePath, query],
+  );
 
-  function browseUp(): void {
+  const browseUp = useCallback(async (): Promise<void> => {
     const parentPath = getBrowseParentPath(query);
     if (parentPath === null) {
       return;
     }
 
+    await prefetchBrowsePath(parentPath);
     setHighlightedItemValue(null);
     setQuery(parentPath);
     setBrowseGeneration((generation) => generation + 1);
-  }
+  }, [prefetchBrowsePath, query]);
 
   // Resolve the add-project path from browse data when available. When the
   // query has a trailing separator (e.g. "~/projects/foo/"), parentPath is the

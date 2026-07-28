@@ -73,10 +73,8 @@ export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-b
 export function filterBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   browseFilterQuery: string;
-  highlightedItemValue: string | null;
 }): {
   filteredEntries: FilesystemBrowseEntry[];
-  highlightedEntry: FilesystemBrowseEntry | null;
   exactEntry: FilesystemBrowseEntry | null;
 } {
   const lowerFilter = input.browseFilterQuery.toLowerCase();
@@ -88,18 +86,12 @@ export function filterBrowseEntries(input: {
       (showHidden || !entry.name.startsWith(".")),
   );
 
-  let highlightedEntry: FilesystemBrowseEntry | null = null;
-  if (input.highlightedItemValue?.startsWith("browse:")) {
-    const highlightedPath = input.highlightedItemValue.slice("browse:".length);
-    highlightedEntry = filteredEntries.find((entry) => entry.fullPath === highlightedPath) ?? null;
-  }
-
   const exactEntry =
     input.browseFilterQuery.length > 0
       ? (filteredEntries.find((entry) => entry.name === input.browseFilterQuery) ?? null)
       : null;
 
-  return { filteredEntries, highlightedEntry, exactEntry };
+  return { filteredEntries, exactEntry };
 }
 
 export function normalizeSearchText(value: string): string {
@@ -302,8 +294,8 @@ export function buildBrowseGroups(input: {
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
-  browseUp: () => void;
-  browseTo: (name: string) => void;
+  browseUp: () => void | Promise<void>;
+  browseTo: (name: string) => void | Promise<void>;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -316,7 +308,7 @@ export function buildBrowseGroups(input: {
       icon: input.upIcon,
       keepOpen: true,
       run: async () => {
-        input.browseUp();
+        await input.browseUp();
       },
     });
   }
@@ -330,7 +322,7 @@ export function buildBrowseGroups(input: {
       icon: input.directoryIcon,
       keepOpen: true,
       run: async () => {
-        input.browseTo(entry.name);
+        await input.browseTo(entry.name);
       },
     });
   }
