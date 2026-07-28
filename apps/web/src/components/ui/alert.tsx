@@ -68,6 +68,7 @@ function Alert({
     <div
       className={cn(alertVariants({ variant }), className)}
       data-slot="alert"
+      data-variant={variant ?? "default"}
       role="alert"
       {...props}
     >
