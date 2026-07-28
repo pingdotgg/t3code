@@ -508,51 +508,6 @@ const make = Effect.gen(function* () {
           yield* eventSink.write({ events: batch.flatMap(messageEvents) });
           yield* Effect.yieldNow;
         }
-        const threadRows = yield* sql<LegacyThreadRow>`
-          SELECT
-            thread_id,
-            project_id,
-            title,
-            model_selection_json,
-            runtime_mode,
-            interaction_mode,
-            branch,
-            worktree_path,
-            created_at,
-            updated_at,
-            archived_at,
-            settled_override,
-            settled_at,
-            deleted_at
-          FROM projection_threads
-          WHERE thread_id = ${threadId}
-          LIMIT 1
-        `;
-        const source = threadRows[0];
-        if (source !== undefined) {
-          const marker = `${IMPORT_EVENT_PREFIX}:thread:${threadId}:transcript`;
-          const markerRows = yield* sql<{ readonly event_id: string }>`
-            SELECT event_id
-            FROM orchestration_events
-            WHERE event_id = ${marker}
-            LIMIT 1
-          `;
-          if (markerRows.length === 0) {
-            const thread = importedThread(source);
-            yield* eventSink.write({
-              events: [
-                {
-                  id: EventId.make(marker),
-                  type: "thread.metadata-updated",
-                  threadId,
-                  providerInstanceId: thread.providerInstanceId,
-                  occurredAt: thread.updatedAt,
-                  payload: thread,
-                },
-              ],
-            });
-          }
-        }
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* sql`
           UPDATE orchestration_v2_legacy_imports
