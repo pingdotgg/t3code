@@ -67,6 +67,7 @@ import { turnInterruptInput } from "./turn_interrupt/input.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
+import { assertTurnInterruptMidToolOpenCodeOutput } from "./turn_interrupt_mid_tool/opencode_output.ts";
 import { turnInterruptMidToolInput } from "./turn_interrupt_mid_tool/input.ts";
 import { assertTurnInterruptRestartClaudeOutput } from "./turn_interrupt_restart/claude_output.ts";
 import { turnInterruptRestartInput } from "./turn_interrupt_restart/input.ts";
@@ -733,6 +734,16 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptMidToolCursorOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./turn_interrupt_mid_tool/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptMidToolOpenCodeOutput,
       },
     ],
   },
