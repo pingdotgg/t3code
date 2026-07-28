@@ -305,6 +305,29 @@ describe("context-window snapshot dedup", () => {
     );
   });
 
+  it("does not let a malformed row shadow an earlier valid row in the same turn", () => {
+    const valid = makeContextWindowActivity("ctx-valid", 5_000, "turn-a");
+    const malformed: OrchestrationThreadActivity = {
+      ...makeContextWindowActivity("ctx-broken", 0, "turn-a"),
+      payload: { usedTokens: null },
+    };
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([valid, malformed]),
+    });
+
+    // The malformed row passes through, the valid row survives, and the
+    // client's backward walk resolves the same value as with full history.
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      valid.id,
+      malformed.id,
+    ]);
+    expect(deriveLatestContextWindowSnapshot(projected.thread.activities)).toEqual(
+      deriveLatestContextWindowSnapshot([valid, malformed]),
+    );
+  });
+
   it("leaves snapshots without context-window activities untouched", () => {
     const projected = projectThreadDetailSnapshot({
       snapshotSequence: 7,

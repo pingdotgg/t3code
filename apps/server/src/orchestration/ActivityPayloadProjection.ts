@@ -202,21 +202,38 @@ export function projectActivityPayload(
 }
 
 /**
- * Drops all but the last context-window activity per turn from a snapshot.
- * Clients only ever read the latest usage value (walking the array backwards),
- * so shipping the full history — often thousands of rows on long threads —
- * buys nothing. Retention is per turn rather than per thread because a live
- * `thread.reverted` makes the client discard whole turns; keeping each turn's
- * latest row means the meter can still resolve a value from the turns that
- * survive. Live `thread.activity-appended` events are untouched: newer updates
- * still stream through and supersede the retained rows on the client.
+ * Matches the validity rule in the web client's
+ * `deriveLatestContextWindowSnapshot`: rows without a finite, non-negative
+ * `usedTokens` are skipped during its backward walk, so they must not shadow
+ * an earlier resolvable row here.
+ */
+function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "context-window.updated") {
+    return false;
+  }
+  const payload = asRecord(activity.payload);
+  const usedTokens = payload?.usedTokens;
+  return typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0;
+}
+
+/**
+ * Drops all but the last resolvable context-window activity per turn from a
+ * snapshot. Clients only ever read the latest usage value (walking the array
+ * backwards), so shipping the full history — often thousands of rows on long
+ * threads — buys nothing. Retention is per turn rather than per thread because
+ * a live `thread.reverted` makes the client discard whole turns; keeping each
+ * turn's latest row means the meter can still resolve a value from the turns
+ * that survive. Malformed rows pass through untouched rather than shadowing a
+ * valid earlier row. Live `thread.activity-appended` events are untouched:
+ * newer updates still stream through and supersede the retained rows on the
+ * client.
  */
 function dropStaleContextWindowActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const latestIndexByTurn = new Map<string | null, number>();
   for (let index = 0; index < activities.length; index += 1) {
-    if (activities[index]?.kind === "context-window.updated") {
+    if (isResolvableContextWindowActivity(activities[index]!)) {
       latestIndexByTurn.set(activities[index]!.turnId, index);
     }
   }
@@ -225,7 +242,7 @@ function dropStaleContextWindowActivities(
   }
   return activities.filter(
     (activity, index) =>
-      activity.kind !== "context-window.updated" ||
+      !isResolvableContextWindowActivity(activity) ||
       latestIndexByTurn.get(activity.turnId) === index,
   );
 }
