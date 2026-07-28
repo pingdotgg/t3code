@@ -42,14 +42,14 @@ enum ModelPickerCatalog {
         }
         let grouped = Dictionary(grouping: options) { key(for: $0) }
 
-        return grouped.values.map { matches in
-            let representative = matches.sorted { lhs, rhs in
+        return grouped.values.compactMap { matches in
+            guard let representative = matches.sorted(by: { lhs, rhs in
                 let lhsSelected = instanceKey(for: lhs) == selectedID
                 let rhsSelected = instanceKey(for: rhs) == selectedID
                 if lhsSelected != rhsSelected { return lhsSelected }
                 if lhs.isDefault != rhs.isDefault { return lhs.isDefault }
                 return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
-            }.first!
+            }).first else { return nil }
             return ModelPickerItem(option: representative, matchingInstanceCount: matches.count)
         }.sorted(by: catalogOrder)
     }
