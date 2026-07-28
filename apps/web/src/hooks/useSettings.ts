@@ -27,7 +27,7 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { ensureLocalApi } from "~/localApi";
 import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
-import { usePrimaryEnvironment } from "~/state/environments";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -278,7 +278,7 @@ export function useUpdateEnvironmentSettings(environmentId: EnvironmentId) {
 }
 
 export function useUpdatePrimarySettings() {
-  return useUpdateSettingsTarget(usePrimaryEnvironment()?.environmentId ?? null);
+  return useUpdateSettingsTarget(useAtomValue(primaryEnvironmentIdAtom));
 }
 
 export function useUpdateClientSettings() {

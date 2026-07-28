@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { EnvironmentId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
@@ -67,6 +67,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  environmentDisplayNames: Schema.Record(EnvironmentId, TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
   ),
@@ -605,6 +608,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  environmentDisplayNames: Schema.optionalKey(Schema.Record(EnvironmentId, TrimmedNonEmptyString)),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   favorites: Schema.optionalKey(
     Schema.Array(
