@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -21,6 +21,7 @@ import {
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -63,10 +64,10 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
-  it("keeps invalid turn values only in the schema cause", () => {
-    const secret = "codex-turn-input-secret-sentinel";
-    const error = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("keeps invalid turn values only in the schema cause", () =>
+    Effect.gen(function* () {
+      const secret = "codex-turn-input-secret-sentinel";
+      const error = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         attachments: [
@@ -75,61 +76,61 @@ describe("buildTurnStartParams", () => {
             url: { secret } as unknown as string,
           },
         ],
-      }).pipe(Effect.flip),
-    );
-    const { cause, ...directDiagnostics } = error;
+      }).pipe(Effect.flip);
+      const { cause, ...directDiagnostics } = error;
 
-    NodeAssert.equal(error.operation, "decode-request-payload");
-    NodeAssert.equal(error.method, "turn/start");
-    NodeAssert.ok((error.issueCount ?? 0) > 0);
-    NodeAssert.ok(error.issueKinds?.includes("Pointer"));
-    NodeAssert.ok((error.maximumPathDepth ?? 0) > 0);
-    NodeAssert.ok(Schema.isSchemaError(cause));
-    NodeAssert.doesNotMatch(error.message, new RegExp(secret));
-    NodeAssert.doesNotMatch(JSON.stringify(directDiagnostics), new RegExp(secret));
-  });
+      NodeAssert.equal(error.operation, "decode-request-payload");
+      NodeAssert.equal(error.method, "turn/start");
+      NodeAssert.ok((error.issueCount ?? 0) > 0);
+      NodeAssert.ok(error.issueKinds?.includes("Pointer"));
+      NodeAssert.ok((error.maximumPathDepth ?? 0) > 0);
+      NodeAssert.ok(Schema.isSchemaError(cause));
+      NodeAssert.doesNotMatch(error.message, new RegExp(secret));
+      NodeAssert.doesNotMatch(encodeUnknownJson(directDiagnostics), new RegExp(secret));
+    }),
+  );
 
-  it("includes plan collaboration mode when requested", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("includes plan collaboration mode when requested", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         prompt: "Make a plan",
         model: "gpt-5.3-codex",
         effort: "medium",
         interactionMode: "plan",
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "never",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "dangerFullAccess",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Make a plan",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "dangerFullAccess",
         },
-      ],
-      model: "gpt-5.3-codex",
-      effort: "medium",
-      collaborationMode: {
-        mode: "plan",
-        settings: {
-          model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
-          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+        input: [
+          {
+            type: "text",
+            text: "Make a plan",
+          },
+        ],
+        model: "gpt-5.3-codex",
+        effort: "medium",
+        collaborationMode: {
+          mode: "plan",
+          settings: {
+            model: "gpt-5.3-codex",
+            reasoning_effort: "medium",
+            developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+          },
         },
-      },
-    });
-  });
+      });
+    }),
+  );
 
-  it("includes default collaboration mode and image attachments", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("includes default collaboration mode and image attachments", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "auto-accept-edits",
         prompt: "Implement it",
@@ -141,53 +142,78 @@ describe("buildTurnStartParams", () => {
             url: "data:image/png;base64,abc",
           },
         ],
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "on-request",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "workspaceWrite",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Implement it",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "workspaceWrite",
         },
-        {
-          type: "image",
-          url: "data:image/png;base64,abc",
+        input: [
+          {
+            type: "text",
+            text: "Implement it",
+          },
+          {
+            type: "image",
+            url: "data:image/png;base64,abc",
+          },
+        ],
+        model: "gpt-5.3-codex",
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: "gpt-5.3-codex",
+            reasoning_effort: "medium",
+            developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+          },
         },
-      ],
-      model: "gpt-5.3-codex",
-      collaborationMode: {
-        mode: "default",
-        settings: {
-          model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
-          developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-        },
-      },
-    });
-  });
+      });
+    }),
+  );
 
-  it("upgrades auto-accept sandbox policy inside a worktree", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("injects configured routing only for Ultra turns", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Run the workflow",
+        model: "gpt-5.6-sol",
+        effort: "ultra",
+        interactionMode: "default",
+        workflowModelRouting: {
+          explore: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6-luna",
+          },
+          implement: null,
+          verify: null,
+        },
+      });
+
+      const instructions = params.collaborationMode?.settings.developer_instructions;
+      NodeAssert.match(instructions ?? "", /codex\/gpt-5\.6-luna/);
+      NodeAssert.match(instructions ?? "", /delegate_task/);
+    }),
+  );
+
+  it.effect("upgrades auto-accept sandbox policy inside a worktree", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-worktree",
         runtimeMode: "auto-accept-edits",
         isWorktree: true,
         prompt: "Implement it",
-      }),
-    );
+      });
 
-    NodeAssert.equal(params.approvalPolicy, "on-request");
-    NodeAssert.deepStrictEqual(params.sandboxPolicy, {
-      type: "dangerFullAccess",
-    });
-  });
+      NodeAssert.equal(params.approvalPolicy, "on-request");
+      NodeAssert.deepStrictEqual(params.sandboxPolicy, {
+        type: "dangerFullAccess",
+      });
+    }),
+  );
 
   it.effect("routes approvals to the auto reviewer in auto mode", () =>
     Effect.gen(function* () {
@@ -214,30 +240,30 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
-  it("omits collaboration mode when interaction mode is absent", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("omits collaboration mode when interaction mode is absent", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "approval-required",
         prompt: "Review",
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "untrusted",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "readOnly",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Review",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "readOnly",
         },
-      ],
-    });
-  });
+        input: [
+          {
+            type: "text",
+            text: "Review",
+          },
+        ],
+      });
+    }),
+  );
 });
 
 describe("hasConfiguredMcpServer", () => {

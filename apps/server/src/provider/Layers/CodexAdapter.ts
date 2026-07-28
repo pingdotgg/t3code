@@ -26,6 +26,7 @@ import {
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
+  type WorkflowModelRouting,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -85,6 +86,7 @@ export interface CodexAdapterLiveOptions {
   /** Optional allow-list for Codex-backed providers with a constrained effort set. */
   readonly allowedReasoningEfforts?: ReadonlyArray<EffectCodexSchema.V2TurnStartParams__ReasoningEffort>;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly getWorkflowModelRouting?: Effect.Effect<WorkflowModelRouting>;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
   ) => Effect.Effect<
@@ -1947,6 +1949,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(serviceTier ? { serviceTier } : {}),
           ...(options?.defaultReasoningEffort
             ? { defaultReasoningEffort: options.defaultReasoningEffort }
+            : {}),
+          ...(options?.getWorkflowModelRouting
+            ? { getWorkflowModelRouting: options.getWorkflowModelRouting }
             : {}),
           ...(mcpSession
             ? {

@@ -164,6 +164,7 @@ function makeHarness(config?: {
   readonly driverKind?: ProviderDriverKind;
   readonly getModelCapabilities?: ClaudeAdapterLiveOptions["getModelCapabilities"];
   readonly normalizeEffort?: ClaudeAdapterLiveOptions["normalizeEffort"];
+  readonly getWorkflowModelRouting?: ClaudeAdapterLiveOptions["getWorkflowModelRouting"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -178,6 +179,9 @@ function makeHarness(config?: {
     ...(config?.driverKind ? { driverKind: config.driverKind } : {}),
     ...(config?.getModelCapabilities ? { getModelCapabilities: config.getModelCapabilities } : {}),
     ...(config?.normalizeEffort ? { normalizeEffort: config.normalizeEffort } : {}),
+    ...(config?.getWorkflowModelRouting
+      ? { getWorkflowModelRouting: config.getWorkflowModelRouting }
+      : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -581,6 +585,17 @@ describe("ClaudeAdapterLive", () => {
       driverKind: ProviderDriverKind.make("claudeAgent"),
       getModelCapabilities: () => capabilities,
       normalizeEffort: (effort) => (effort === "ultracode" ? "xhigh" : (effort ?? undefined)),
+      getWorkflowModelRouting: Effect.succeed({
+        explore: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-fable-5",
+        },
+        implement: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-luna",
+        },
+        verify: null,
+      }),
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -600,6 +615,14 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settings, {
         ultracode: true,
       });
+      const systemPrompt = createInput?.options.systemPrompt;
+      assert.equal(typeof systemPrompt, "object");
+      if (typeof systemPrompt === "object" && !Array.isArray(systemPrompt)) {
+        assert.match(systemPrompt.append ?? "", /surge-explorer/);
+        assert.match(systemPrompt.append ?? "", /codex\/gpt-5\.6-luna/);
+      }
+      assert.equal(createInput?.options.agents?.["surge-explorer"]?.model, "claude-fable-5");
+      assert.equal(createInput?.options.agents?.["surge-implementer"], undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

@@ -32,7 +32,7 @@ struct RootView: View {
             SidebarView(multi: multi, scenery: scenery)
                 .navigationSplitViewColumnWidth(min: 230, ideal: 280, max: 360)
                 // The stock AppKit sidebar toggle renders larger than the custom
-                // 28×28 glass controls, and SwiftUI parks it in whichever column
+                // 28×28 controls, and SwiftUI parks it in whichever column
                 // is leading — so it hops as the column collapses. The window
                 // toolbar below vends a fixed replacement instead. The removal
                 // must be applied to the view inside the sidebar column to take
@@ -91,23 +91,25 @@ struct RootView: View {
         // instead of an opaque split-view plate over the desktop glass.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
-            // Sidebar toggle and connection pill share one item so the toggle
-            // is anchored to the pill and cannot drift. Previously the close
+            // Sidebar toggle and connection status share one connected group
+            // so the toggle is anchored and cannot drift. Previously the close
             // control lived in the sidebar's own command bar and a separate
             // "Show Sidebar" item was vended only while collapsed, so the
             // button the pointer had just clicked jumped to the other side of
             // the pill (and back) on every toggle. One always-present control
             // in one fixed slot: the sidebar moves, the button does not.
             ToolbarItem(placement: .navigation) {
-                HStack(spacing: 7) {
+                HStack(spacing: 0) {
                     Button(action: toggleSidebar) {
                         Label(sidebarToggleTitle, systemImage: "sidebar.leading")
                     }
                     .buttonStyle(AlpineToolbarIconButtonStyle())
                     .help(sidebarToggleTitle)
                     .accessibilityLabel(sidebarToggleTitle)
+                    AlpineToolbarDivider()
                     ConnectionStatusPill(phase: model.connection)
                 }
+                .alpineToolbarControlGroup()
             }
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) {

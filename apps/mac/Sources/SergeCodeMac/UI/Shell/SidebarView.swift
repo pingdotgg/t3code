@@ -240,9 +240,8 @@ struct SidebarView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             if let target = deleteTarget {
-                let count = target.model.sessionCount(for: target.project)
                 Text(
-                    "“\(target.project.name)” and ^[\(count) session](inflect: true) will be removed. Files on disk are not touched."
+                    "“\(target.project.name)” and all of its sessions, including archived sessions, will be removed. Files on disk are not touched."
                 )
             }
         }
@@ -708,11 +707,11 @@ struct SidebarView: View {
     }
 
     private func settle(_ item: SidebarThreadItem) {
-        Haptics.play(.commit)
         let wasSelected = multi.selection == item.id
         let next = activeThreads.first { $0.id != item.id && $0.isSelectable }
         Task {
-            await item.member.location.model.settleThread(item.thread)
+            guard await item.member.location.model.settleThread(item.thread) else { return }
+            Haptics.play(.commit)
             guard wasSelected else { return }
             if let next {
                 multi.select(threadID: next.thread.id, on: next.member.location.id)

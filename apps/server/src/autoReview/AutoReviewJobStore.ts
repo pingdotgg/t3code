@@ -70,6 +70,7 @@ export class AutoReviewJobStore extends Context.Service<
           | "reviewUrl"
           | "githubReviewId"
           | "originThreadId"
+          | "fixThreadId"
           | "autoFixEnqueued"
           | "autoFixDispatchedAt"
           | "pendingFix"
@@ -265,6 +266,7 @@ export const makeInMemory = Effect.gen(function* () {
         reviewUrl: null,
         githubReviewId: null,
         originThreadId: null,
+        fixThreadId: null,
         autoFixEnqueued: false,
         autoFixDispatchedAt: null,
         pendingFix: null,
@@ -334,6 +336,10 @@ export const makeInMemory = Effect.gen(function* () {
         ...job,
         autoFixEnqueued: true,
         autoFixDispatchedAt: input.now,
+        fixThreadId:
+          job.originThreadId != null && String(job.originThreadId) !== threadId
+            ? (threadId as AutoReviewJob["fixThreadId"])
+            : job.fixThreadId,
         originThreadId: (job.originThreadId ?? threadId) as AutoReviewJob["originThreadId"],
         pendingFix: null,
         updatedAt: input.now,
