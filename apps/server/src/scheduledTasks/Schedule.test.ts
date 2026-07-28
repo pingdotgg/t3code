@@ -23,6 +23,14 @@ describe("scheduled task schedule calculation", () => {
     expect(next ? DateTime.formatIso(DateTime.toUtc(next)) : null).toBe("2026-07-01T16:05:00.000Z");
   });
 
+  it("clamps legacy sub-minute intervals to the one-minute execution floor", () => {
+    const next = nextScheduledRunAt(
+      { type: "interval", everyMs: 1_000 },
+      DateTime.makeUnsafe("2026-07-01T16:00:00.000Z"),
+    );
+    expect(next ? DateTime.formatIso(DateTime.toUtc(next)) : null).toBe("2026-07-01T16:01:00.000Z");
+  });
+
   it("skips to the next matching fixed-time weekday", () => {
     const next = nextScheduledRunAt(
       { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
