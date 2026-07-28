@@ -30,8 +30,8 @@ const secondRef = CheckpointRef.make("refs/t3/test/second");
 function makeProjection(): OrchestrationV2ThreadProjection {
   return {
     runs: [
-      { id: firstRunId, ordinal: 1 },
-      { id: secondRunId, ordinal: 2 },
+      { id: firstRunId, ordinal: 1, status: "completed" },
+      { id: secondRunId, ordinal: 2, status: "completed" },
     ],
     checkpointScopes: [
       { id: firstScopeId, runId: firstRunId, kind: "root_run", cwd: "/repo" },
@@ -40,6 +40,7 @@ function makeProjection(): OrchestrationV2ThreadProjection {
     checkpoints: [
       {
         scopeId: secondScopeId,
+        runId: secondRunId,
         appRunOrdinal: 2,
         status: "ready",
         ref: secondRef,
@@ -130,6 +131,44 @@ it.effect("preserves the typed unavailable-range error contract", () => {
         availableTurnCount: error.availableTurnCount,
       },
       { requestedTurnCount: 3, availableTurnCount: 2 },
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("excludes ready checkpoints from rolled-back runs", () => {
+  const projection = makeProjection();
+  const layer = makeLayer({
+    projection: Effect.succeed({
+      ...projection,
+      runs: projection.runs.map((run) =>
+        run.id === secondRunId ? { ...run, status: "rolled_back" as const } : run,
+      ),
+      checkpoints: [
+        {
+          ...projection.checkpoints[0]!,
+          scopeId: firstScopeId,
+          runId: firstRunId,
+          appRunOrdinal: 1,
+          ref: CheckpointRef.make("refs/t3/test/first"),
+        },
+        ...projection.checkpoints,
+      ],
+    }),
+  });
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const error = yield* query
+      .getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 })
+      .pipe(Effect.flip);
+
+    assert.instanceOf(error, CheckpointTurnRangeUnavailableError);
+    assert.deepEqual(
+      {
+        requestedTurnCount: error.requestedTurnCount,
+        availableTurnCount: error.availableTurnCount,
+      },
+      { requestedTurnCount: 2, availableTurnCount: 1 },
     );
   }).pipe(Effect.provide(layer));
 });

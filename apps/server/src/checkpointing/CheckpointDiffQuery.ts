@@ -109,8 +109,15 @@ export const make = Effect.gen(function* () {
         ),
         Effect.withSpan("checkpoint.turnDiff.lookupProjection"),
       );
+      const completedRunIds = new Set(
+        projection.runs.filter((run) => run.status === "completed").map((run) => run.id),
+      );
       const readyCheckpoints = projection.checkpoints.filter(
-        (checkpoint) => checkpoint.status === "ready" && checkpoint.appRunOrdinal !== null,
+        (checkpoint) =>
+          checkpoint.status === "ready" &&
+          checkpoint.appRunOrdinal !== null &&
+          checkpoint.runId !== null &&
+          completedRunIds.has(checkpoint.runId),
       );
       const maxTurnCount = readyCheckpoints.reduce(
         (max, checkpoint) => Math.max(max, checkpoint.appRunOrdinal ?? 0),
