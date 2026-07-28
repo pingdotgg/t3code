@@ -131,7 +131,7 @@ jobs:
           body="$(mktemp)"
           commits="$(mktemp)"
           if [[ -n "$PREVIOUS_TAG" ]]; then
-            git log --first-parent --pretty=format:'- %s (`%h`)' "$PREVIOUS_TAG..origin/main" > "$commits"
+            git log --pretty=format:'- %s (`%h`)' "$PREVIOUS_TAG..origin/main" > "$commits"
           else
             echo "- No previous stable tag found." > "$commits"
           fi

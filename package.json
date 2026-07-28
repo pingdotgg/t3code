@@ -24,7 +24,7 @@
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
-    "test": "vp run -r test",
+    "test": "vp run -r --concurrency-limit 2 test",
     "test:desktop-smoke": "vp run --filter @t3tools/desktop smoke-test",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",

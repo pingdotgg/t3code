@@ -13,6 +13,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 ### Release And CI
 
 - Fork workflows create/update a daily stable release PR while main-branch pushes produce nightly releases.
+- Stable release PRs list every commit since the previous stable tag, including commits brought in by upstream merges.
 - Release PR preparation runs after release publication so tag-based version resolution sees the latest release.
 - Release build jobs skip relay client tracing config because the relay config job is disabled.
 - Release builds publish updater metadata against the fork repository.
@@ -22,6 +23,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 - macOS passkey entitlements are only enabled when Apple notarization/profile configuration is present.
 - Windows releases can sign with the static certificate when Azure Trusted Signing is not configured.
 - Fork GitHub Actions jobs use GitHub-hosted runners instead of upstream private or third-party runner pools.
+- Fork test runs limit package task concurrency to two to avoid starving tests on GitHub-hosted runners.
 - Web dist release archives are built as hosted static apps and carry the release channel.
 
 ### Nix Package
