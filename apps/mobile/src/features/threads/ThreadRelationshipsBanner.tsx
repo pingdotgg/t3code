@@ -128,6 +128,7 @@ export function ThreadRelationshipsBanner(props: {
         sourceThreadId: props.threadId,
         targetThreadId: mergeTargetThreadId,
         runId: latestCompletedRun.id,
+        creationSource: "mobile",
       },
     });
     setBusyAction(null);
