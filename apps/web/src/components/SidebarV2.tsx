@@ -511,15 +511,18 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     activeThreadBranch: thread.branch,
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
+  const retainTerminalOnBranchMismatch = thread.worktreePath === null;
   const pr = resolveDisplayedThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
     snapshot: changeRequestSnapshot,
+    retainTerminalOnBranchMismatch,
   });
   const prProvider = resolveDisplayedThreadPrProvider({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
     snapshot: changeRequestSnapshot,
+    retainTerminalOnBranchMismatch,
   });
   const prStatus = prStatusIndicator(pr, prProvider);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
@@ -529,10 +532,19 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     const nextSnapshot = nextThreadChangeRequestSnapshot({
       threadBranch: thread.branch,
       gitStatus: gitStatus.data,
+      snapshot: changeRequestSnapshot,
+      retainTerminalOnBranchMismatch,
     });
     if (nextSnapshot === undefined) return;
     onChangeRequestSnapshot(threadKey, nextSnapshot);
-  }, [gitStatus.data, onChangeRequestSnapshot, thread.branch, threadKey]);
+  }, [
+    gitStatus.data,
+    changeRequestSnapshot,
+    onChangeRequestSnapshot,
+    retainTerminalOnBranchMismatch,
+    thread.branch,
+    threadKey,
+  ]);
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
@@ -1420,10 +1432,13 @@ export default function SidebarV2() {
         serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const snapshot = changeRequestSnapshotByKey.get(threadKey);
-      // Same resolved terminal PR the row displays: retain merged/closed for
-      // this thread's branch even after the shared checkout switches away.
+      // Same resolved terminal PR the row displays: local thread branch
+      // metadata follows the shared checkout, while worktree snapshots remain
+      // scoped to the worktree's branch.
       const changeRequestState =
-        snapshot != null && snapshot.branch === thread.branch ? snapshot.pr.state : null;
+        snapshot != null && (thread.worktreePath === null || snapshot.branch === thread.branch)
+          ? snapshot.pr.state
+          : null;
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
