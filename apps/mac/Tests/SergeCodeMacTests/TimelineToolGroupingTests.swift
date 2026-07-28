@@ -67,33 +67,23 @@ struct TimelineToolGroupingTests {
         #expect(summary.failedCount == 0)
     }
 
-    @Test("long live run peels the running tool after the summary")
-    func longLiveRunKeepsRunningToolVisible() {
+    @Test("a running tool stays out of permanent transcript history")
+    func runningToolStaysInLiveSurface() {
         let items = tools(
             count: TimelineToolGrouping.liveAutoCollapseToolThreshold,
             lastStatus: .running)
         let display = items.groupedForDisplay(includeSeparators: false)
 
-        #expect(display.count == 2)
-        guard case .toolGroup(_, let groupItems, let summary) = display[0] else {
-            Issue.record("expected collapsed finished prefix, got \(display)")
-            return
+        #expect(display.count == TimelineToolGrouping.liveAutoCollapseToolThreshold - 1)
+        let visibleIDs = display.compactMap { row -> String? in
+            guard case .single(let item) = row else { return nil }
+            return item.id
         }
-        #expect(summary.toolCount == TimelineToolGrouping.liveAutoCollapseToolThreshold - 1)
-        #expect(groupItems.map(\.id) == items.dropLast().map(\.id))
-
-        guard case .single(let tail) = display[1],
-            case .toolEvent(let id, _, _, _, let status, _, _, _) = tail
-        else {
-            Issue.record("expected running tool as trailing single, got \(display[1])")
-            return
-        }
-        #expect(id == items.last?.id)
-        #expect(status == .running)
+        #expect(visibleIDs == items.dropLast().map(\.id))
     }
 
-    @Test("long live run peels trailing reasoning with the running tool")
-    func longLiveRunPeelsTrailingReasoning() {
+    @Test("reasoning remains visible while a running tool stays in the live surface")
+    func liveRunKeepsReasoningVisible() {
         var items = tools(
             count: TimelineToolGrouping.liveAutoCollapseToolThreshold,
             lastStatus: .running)
@@ -104,26 +94,28 @@ struct TimelineToolGroupingTests {
                 at: baseDate.addingTimeInterval(100)))
         let display = items.groupedForDisplay(includeSeparators: false)
 
-        #expect(display.count == 3)
-        guard case .toolGroup(_, _, let summary) = display[0] else {
-            Issue.record("expected tool group first, got \(display)")
-            return
-        }
-        #expect(summary.toolCount == TimelineToolGrouping.liveAutoCollapseToolThreshold - 1)
-
-        guard case .single(let running) = display[1],
-            case .toolEvent(_, _, _, _, .running, _, _, _) = running
-        else {
-            Issue.record("expected running tool second, got \(display[1])")
-            return
-        }
-        guard case .single(let reasoning) = display[2],
+        #expect(display.count == TimelineToolGrouping.liveAutoCollapseToolThreshold)
+        guard case .single(let reasoning) = display.last,
             case .reasoning(let id, _, _) = reasoning
         else {
-            Issue.record("expected reasoning third, got \(display[2])")
+            Issue.record("expected reasoning after completed rows, got \(display)")
             return
         }
         #expect(id == "reason-tail")
+    }
+
+    @Test("a terminal update promotes the same tool into transcript history")
+    func completedToolMaterializesInTranscript() {
+        let running = tool(id: "stable-tool", status: .running, offset: 1)
+        let completed = tool(id: "stable-tool", status: .succeeded, offset: 1)
+
+        #expect([running].groupedForDisplay(includeSeparators: false).isEmpty)
+        let display = [completed].groupedForDisplay(includeSeparators: false)
+        guard case .single(let item) = display.first else {
+            Issue.record("expected completed tool to materialize as a transcript row")
+            return
+        }
+        #expect(item.id == "stable-tool")
     }
 
     @Test("closed short run still collapses when the agent continues")
@@ -172,19 +164,20 @@ struct TimelineToolGroupingTests {
         #expect(summary.editedFileCount == 3)
     }
 
-    @Test("settled thread collapses a long trailing run even with stuck running status")
-    func settledThreadCollapsesStuckRunning() {
+    @Test("a settled thread does not promote a tool missing its terminal event")
+    func settledThreadKeepsStuckRunningToolOutOfHistory() {
         let items = tools(
             count: TimelineToolGrouping.liveAutoCollapseToolThreshold,
             lastStatus: .running)
         let display = items.groupedForDisplay(threadIsSettled: true, includeSeparators: false)
 
-        #expect(display.count == 1)
-        guard case .toolGroup(_, _, let summary) = display[0] else {
-            Issue.record("expected full collapse when settled, got \(display)")
-            return
-        }
-        #expect(summary.toolCount == TimelineToolGrouping.liveAutoCollapseToolThreshold)
+        #expect(display.count == TimelineToolGrouping.liveAutoCollapseToolThreshold - 1)
+        #expect(display.allSatisfy { row in
+            guard case .single(let item) = row,
+                case .toolEvent(_, _, _, _, let status, _, _, _) = item
+            else { return false }
+            return status != .running
+        })
     }
 
     // MARK: - Receive detection

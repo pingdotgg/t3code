@@ -33,6 +33,12 @@ struct TimelineGroupingCacheTests {
             outputIsError: false)
     }
 
+    private func runningTool(id: String, detail: String, at date: Date) -> TimelineItem {
+        .toolEvent(
+            id: id, name: "Bash", detail: detail, kind: .command, status: .running,
+            at: date, output: nil, outputIsError: false)
+    }
+
     @Test("content refresh updates assistant markdown without a full pass")
     func contentRefreshUpdatesAssistantMarkdown() {
         TimelineDisplayCache.resetForTesting()
@@ -61,6 +67,30 @@ struct TimelineGroupingCacheTests {
             return
         }
         #expect(markdown == "new markdown")
+    }
+
+    @Test("running tool refreshes stay hidden without a full regroup")
+    func runningToolRefreshUsesValidatedCacheGap() {
+        TimelineDisplayCache.resetForTesting()
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let initialItems: [TimelineItem] = [
+            .userMessage(id: "u", text: "work", attachments: [], at: date),
+            runningTool(id: "tool", detail: "Bash: one", at: date.addingTimeInterval(1)),
+        ]
+
+        let initial = grouped(initialItems, timelineVersion: 1, structureVersion: 1)
+        #expect(initial.count == 1)
+        #expect(TimelineDisplayCache.fullPassCount == 1)
+
+        let refreshedItems: [TimelineItem] = [
+            initialItems[0],
+            runningTool(id: "tool", detail: "Bash: two", at: date.addingTimeInterval(1)),
+        ]
+        let refreshed = grouped(refreshedItems, timelineVersion: 2, structureVersion: 1)
+
+        #expect(refreshed == initial)
+        #expect(TimelineDisplayCache.fullPassCount == 1)
+        #expect(TimelineDisplayCache.contentRefreshCount == 1)
     }
 
     // The next two tests deliberately use their own thread key and assert on the

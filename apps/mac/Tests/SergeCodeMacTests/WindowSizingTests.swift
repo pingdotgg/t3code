@@ -129,10 +129,10 @@ struct WindowSizingTests {
     @Test("content that outgrows the floor cannot raise the reported minimum")
     func growingContentDoesNotRaiseTheMinimum() {
         // The whole point, stated as a property: whatever the content's ideal
-        // does — the git strip measured 472pt growing to 1121pt when a long
-        // branch name, a draft PR, conflicts, and review counts landed — the
-        // minimum probe keeps answering the floor, and that is the number
-        // AppKit enforces by growing the window.
+        // does — including older layouts where the git strip measured 472pt
+        // growing to 1121pt as PR state landed — the minimum probe keeps
+        // answering the floor. The unified repository bar now prevents that
+        // growth too, while this remains the shell-level safeguard.
         for naturalWidth in [472.0, 938.0, 1121.0, 4000.0] {
             let natural = CGSize(width: naturalWidth, height: 1412)
             #expect(resolved(.zero, natural: natural).width == floorWidth)

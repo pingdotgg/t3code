@@ -2,18 +2,14 @@ import SwiftUI
 
 // MARK: - Metrics
 
-/// The one geometry every chip in the chat header's status bar is built from.
+/// The one geometry every segment in the chat header's repository bar is built from.
 ///
-/// Before this existed each chip carried its own padding, corner radius, and
-/// font: the branch trigger was a 8pt-radius rectangle with a 20pt icon tile
-/// inside it, the working-tree counts were 8/4 capsules, the PR affordances
-/// were 9/4.5 capsules, and merge was a 10/4 capsule with a shadow. Lined up
-/// in a row they read as a pile of unrelated buttons at four different
-/// heights. One height and one shape is what makes the bar read as a single
-/// control instead.
+/// The outer bar owns the material, border, and rounded silhouette. Individual
+/// segments only own their content and interaction state, so repository updates
+/// never create a row of unrelated floating pills.
 enum HeaderChipMetrics {
-    /// Every chip — readout, dropdown trigger, primary action — is exactly
-    /// this tall. Sized so a `.caption` label clears its capsule comfortably
+    /// Every segment — readout, dropdown trigger, primary action — is exactly
+    /// this tall. Sized so a `.caption` label clears its segment comfortably
     /// while two rows of chips would still fit the 61pt header band.
     static let height: CGFloat = 26
 
@@ -28,8 +24,11 @@ enum HeaderChipMetrics {
     /// text inside one chip.
     static let contentSpacing: CGFloat = 5
 
-    /// Gap between chips.
-    static let barSpacing: CGFloat = 6
+    /// A one-point seam is enough to separate adjacent segments while keeping
+    /// the controls visibly joined.
+    static let barSpacing: CGFloat = 1
+    static let barInset: CGFloat = 1
+    static let barCornerRadius: CGFloat = 8
 
     static let font: Font = .caption.weight(.medium)
     static let iconFont: Font = .system(size: 10.5, weight: .semibold)
@@ -56,18 +55,16 @@ enum HeaderChipRole: Equatable {
 
 // MARK: - Chrome
 
-/// The shared capsule chrome. Every chip in the bar goes through this exactly
-/// once, so a change to the bar's look is a change in one place.
+/// The shared segment chrome. The containing bar owns the silhouette; every
+/// segment goes through this exactly once for sizing and interaction feedback.
 private struct HeaderChipChrome: ViewModifier {
     let role: HeaderChipRole
     /// The chip's popover is open (dropdown triggers only).
     let isOn: Bool
     let isHovering: Bool
     let isPressed: Bool
-    /// Set only for chips whose label may be arbitrarily long (the branch
-    /// name). Everything else is `fixedSize`d so a cramped header can never
-    /// wrap "Conflicts" onto three lines the way it used to.
-    let maxWidth: CGFloat?
+    /// Exact slot width at the active density tier.
+    let width: CGFloat?
     /// Icon-only chips get the tighter padding.
     let isIconOnly: Bool
 
@@ -85,24 +82,19 @@ private struct HeaderChipChrome: ViewModifier {
                         : HeaderChipMetrics.horizontalPadding)
                 .frame(height: HeaderChipMetrics.height)
         )
-        .contentShape(Capsule())
+        .contentShape(Rectangle())
         .background {
-            Capsule()
-                .fill(fill)
-                .overlay {
-                    Capsule().strokeBorder(stroke, lineWidth: 1)
-                }
+            Rectangle().fill(fill)
         }
     }
 
-    /// A chip either truncates within a cap or takes exactly the width its
-    /// label needs. It never compresses: the header's row of chips is the one
-    /// place in the app where SwiftUI's default "squeeze everything" behavior
-    /// produced unreadable output.
+    /// Stable segments take an exact width; uncapped content takes its ideal
+    /// width. Exact widths are what keep branch, status, PR, and action changes
+    /// from moving the controls around.
     @ViewBuilder
     private func sized(_ content: some View) -> some View {
-        if let maxWidth {
-            content.frame(maxWidth: maxWidth, alignment: .leading)
+        if let width {
+            content.frame(width: width, alignment: .leading)
         } else {
             content.fixedSize(horizontal: true, vertical: false)
         }
@@ -111,26 +103,13 @@ private struct HeaderChipChrome: ViewModifier {
     private var fill: Color {
         switch role {
         case .readout:
-            Color.primary.opacity(0.05)
+            .clear
         case .tinted(let color):
-            color.opacity(isPressed ? 0.24 : isHovering ? 0.18 : 0.12)
+            color.opacity(isPressed ? 0.18 : isHovering ? 0.12 : 0.07)
         case .control:
-            Color.primary.opacity(isOn || isPressed ? 0.13 : isHovering ? 0.09 : 0.05)
+            Color.primary.opacity(isOn || isPressed ? 0.11 : isHovering ? 0.07 : 0)
         case .primary:
-            AlpineTheme.accent.opacity(isOn || isPressed ? 0.62 : isHovering ? 0.5 : 0.34)
-        }
-    }
-
-    private var stroke: Color {
-        switch role {
-        case .readout:
-            Color.primary.opacity(0.09)
-        case .tinted(let color):
-            color.opacity(isHovering ? 0.38 : 0.26)
-        case .control:
-            Color.primary.opacity(isOn || isHovering ? 0.16 : 0.10)
-        case .primary:
-            AlpineTheme.accent.opacity(0.95)
+            AlpineTheme.accent.opacity(isOn || isPressed ? 0.46 : isHovering ? 0.36 : 0.25)
         }
     }
 
@@ -144,15 +123,40 @@ private struct HeaderChipChrome: ViewModifier {
     }
 }
 
+// MARK: - Unified bar
+
+extension View {
+    /// One quiet material and one outline around the whole repository control.
+    /// The one-point HStack gaps reveal this surface as internal separators.
+    func headerControlBarChrome() -> some View {
+        padding(HeaderChipMetrics.barInset)
+            .background {
+                RoundedRectangle(
+                    cornerRadius: HeaderChipMetrics.barCornerRadius, style: .continuous
+                )
+                .fill(.regularMaterial)
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: HeaderChipMetrics.barCornerRadius, style: .continuous
+                    )
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                }
+            }
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: HeaderChipMetrics.barCornerRadius, style: .continuous)
+            )
+    }
+}
+
 // MARK: - Chips
 
 /// A non-interactive chip: working-tree counts, ahead/behind, anything the
 /// bar states rather than offers.
 struct HeaderChip<Label: View>: View {
     var role: HeaderChipRole = .readout
-    /// Cap for a chip whose label has no natural bound (the transient git
-    /// outcome). Left nil, the chip takes exactly the width its label needs.
-    var maxWidth: CGFloat?
+    /// Exact slot width. Left nil, the segment takes its ideal width.
+    var width: CGFloat?
     var isIconOnly: Bool = false
     @ViewBuilder var label: Label
 
@@ -160,7 +164,7 @@ struct HeaderChip<Label: View>: View {
         label.modifier(
             HeaderChipChrome(
                 role: role, isOn: false, isHovering: false, isPressed: false,
-                maxWidth: maxWidth, isIconOnly: isIconOnly))
+                width: width, isIconOnly: isIconOnly))
     }
 }
 
@@ -171,7 +175,7 @@ struct HeaderChipButton<Label: View>: View {
     var role: HeaderChipRole = .control
     /// The chip's popover is presented.
     var isOn: Bool = false
-    var maxWidth: CGFloat?
+    var width: CGFloat?
     var showsChevron: Bool = false
     var isIconOnly: Bool = false
     let action: () -> Void
@@ -194,7 +198,7 @@ struct HeaderChipButton<Label: View>: View {
         }
         .buttonStyle(
             HeaderChipButtonStyle(
-                role: role, isOn: isOn, isHovering: isHovering, maxWidth: maxWidth,
+                role: role, isOn: isOn, isHovering: isHovering, width: width,
                 isIconOnly: isIconOnly))
         .opacity(isEnabled ? 1 : 0.45)
         .onHover { isHovering = $0 }
@@ -207,7 +211,7 @@ private struct HeaderChipButtonStyle: ButtonStyle {
     let role: HeaderChipRole
     let isOn: Bool
     let isHovering: Bool
-    let maxWidth: CGFloat?
+    let width: CGFloat?
     let isIconOnly: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -215,7 +219,7 @@ private struct HeaderChipButtonStyle: ButtonStyle {
             .modifier(
                 HeaderChipChrome(
                     role: role, isOn: isOn, isHovering: isHovering,
-                    isPressed: configuration.isPressed, maxWidth: maxWidth,
+                    isPressed: configuration.isPressed, width: width,
                     isIconOnly: isIconOnly))
             .pressFeedback(configuration.isPressed)
     }

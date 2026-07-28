@@ -156,6 +156,19 @@ struct AgentActivityPresentationTests {
         #expect(!scan.turn.recentToolKinds.contains(.webSearch))
     }
 
+    @Test("the activity tape contains completed work, not the current tool")
+    func tapeContainsOnlyCompletedTools() {
+        let items: [TimelineItem] = [
+            userMessage(),
+            tool(id: "done", kind: .fileRead, status: .succeeded, offset: 2),
+            tool(id: "live", kind: .command, status: .running, offset: 4),
+        ]
+
+        let scan = TimelineActivityScan.scan(items: items)
+        #expect(scan.turn.completedToolCount == 1)
+        #expect(scan.turn.recentToolKinds == [.fileRead])
+    }
+
     // MARK: - Cross-turn leaks
 
     @Test("a tool left running by an old turn cannot drive the current one")
@@ -336,5 +349,19 @@ struct AgentActivityPresentationTests {
                 !AgentActivityPresentation
                     .accessibilityLabel(phase: phase, subject: nil).isEmpty)
         }
+    }
+
+    @Test("live context explains promotion into completed history")
+    func contextExplainsLifecycle() {
+        let running = TimelineActivityScan.RunningTool(
+            id: "t", name: "grep", detail: "", kind: .command, startedAt: base)
+        #expect(
+            AgentActivityPresentation.contextLabel(
+                phase: .tool(running), completedToolCount: 0)
+                == "In progress · moves to the thread when complete")
+        #expect(
+            AgentActivityPresentation.contextLabel(
+                phase: .thinking, completedToolCount: 2)
+                == "2 completed actions this turn")
     }
 }
