@@ -158,6 +158,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const adapter = yield* makeCodexAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        getWorkflowModelRouting: serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.workflowModelRouting),
+          Effect.orElseSucceed(() => ({ explore: null, implement: null, verify: null })),
+        ),
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);

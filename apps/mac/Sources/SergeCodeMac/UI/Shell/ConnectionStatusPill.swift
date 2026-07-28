@@ -20,11 +20,19 @@ struct ConnectionStatusPill: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .truncationMode(.tail)
+                // Backend failures can carry paths and transport details.
+                // Bound toolbar chrome so that content never grows the window.
+                .frame(maxWidth: 180, alignment: .leading)
                 .contentTransition(.numericText())
         }
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .alpineToolbarChip(interactive: false)
         .animation(Motion.ambient, value: phase)
+        .help(label)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(phase.accessibilityLabel)
+        .accessibilityValue(label)
         .onChange(of: phase) { oldPhase, newPhase in
             guard oldPhase != .ready, newPhase == .ready,
                 Motion.profile.allowsDecorativeEffects

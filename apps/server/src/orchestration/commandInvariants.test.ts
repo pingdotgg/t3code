@@ -16,8 +16,11 @@ import {
   findThreadById,
   listThreadsByProjectId,
   requireNonNegativeInteger,
+  requireProject,
+  requireProjectIncludingDeleted,
   requireThread,
   requireThreadAbsent,
+  requireThreadIncludingDeleted,
   requireValidParentThread,
 } from "./commandInvariants.ts";
 
@@ -156,6 +159,63 @@ describe("commandInvariants", () => {
     }),
   );
 
+  it.effect("rejects deleted aggregates except for explicit delete flows", () =>
+    Effect.gen(function* () {
+      const deletedAt = "2026-01-02T00:00:00.000Z";
+      const tombstonedReadModel: OrchestrationReadModel = {
+        ...readModel,
+        projects: readModel.projects.map((project) =>
+          project.id === ProjectId.make("project-a") ? { ...project, deletedAt } : project,
+        ),
+        threads: readModel.threads.map((thread) =>
+          thread.id === ThreadId.make("thread-1") ? { ...thread, deletedAt } : thread,
+        ),
+      };
+      const projectDeleteCommand: OrchestrationCommand = {
+        type: "project.delete",
+        commandId: CommandId.make("cmd-delete-project-tombstone"),
+        projectId: ProjectId.make("project-a"),
+      };
+      const threadDeleteCommand: OrchestrationCommand = {
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-delete-thread-tombstone"),
+        threadId: ThreadId.make("thread-1"),
+      };
+
+      const deletedProjectError = yield* Effect.flip(
+        requireProject({
+          readModel: tombstonedReadModel,
+          command: projectDeleteCommand,
+          projectId: ProjectId.make("project-a"),
+        }),
+      );
+      assert.include(deletedProjectError.detail, "has been deleted");
+
+      const deletedThreadError = yield* Effect.flip(
+        requireThread({
+          readModel: tombstonedReadModel,
+          command: messageSendCommand,
+          threadId: ThreadId.make("thread-1"),
+        }),
+      );
+      assert.include(deletedThreadError.detail, "has been deleted");
+
+      const deletedProject = yield* requireProjectIncludingDeleted({
+        readModel: tombstonedReadModel,
+        command: projectDeleteCommand,
+        projectId: ProjectId.make("project-a"),
+      });
+      expect(deletedProject.deletedAt).toBe(deletedAt);
+
+      const deletedThread = yield* requireThreadIncludingDeleted({
+        readModel: tombstonedReadModel,
+        command: threadDeleteCommand,
+        threadId: ThreadId.make("thread-1"),
+      });
+      expect(deletedThread.deletedAt).toBe(deletedAt);
+    }),
+  );
+
   it.effect("requires missing thread for create flows", () =>
     Effect.gen(function* () {
       yield* requireThreadAbsent({
@@ -259,6 +319,26 @@ describe("commandInvariants", () => {
         }),
       );
       assert.include(missingParentError.detail, "does not exist");
+
+      // Deleted parents are tombstones, not valid graph edges.
+      const deletedParentReadModel: OrchestrationReadModel = {
+        ...readModel,
+        threads: readModel.threads.map((thread) =>
+          thread.id === ThreadId.make("thread-1")
+            ? { ...thread, deletedAt: "2026-01-02T00:00:00.000Z" }
+            : thread,
+        ),
+      };
+      const deletedParentError = yield* Effect.flip(
+        requireValidParentThread({
+          readModel: deletedParentReadModel,
+          command: createCommand("thread-3", "thread-1"),
+          threadId: ThreadId.make("thread-3"),
+          projectId: ProjectId.make("project-a"),
+          parentThreadId: ThreadId.make("thread-1"),
+        }),
+      );
+      assert.include(deletedParentError.detail, "has been deleted");
 
       // Cross-project parent is rejected.
       const crossProjectError = yield* Effect.flip(

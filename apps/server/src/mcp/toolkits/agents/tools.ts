@@ -13,7 +13,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, DelegateCoordin
 
 export const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one self-contained task on a background agent that runs inside this thread's project and worktree. In Advisor/Planner mode it uses the configured executor model. Returns immediately with a task id and running status; call wait_for_delegate with that task id until it completes, then use the returned result. The agent does not see this conversation, so include everything it needs in the prompt. Advisor threads use their configured executor sub-agent limit, and delegated agents cannot delegate further.",
+    "Start one self-contained task on a background agent inside this thread's project and worktree. Set role to explore, implement, or verify so SurgeCode can apply the user's configured workflow model; an unconfigured role inherits the Advisor executor model or this session's model. Returns immediately with a task id and running status; call wait_for_delegate with that task id until it completes, then use the returned result. The agent does not see this conversation, so include everything it needs in the prompt. Advisor threads use their configured executor sub-agent limit, and delegated agents cannot delegate further.",
   parameters: DelegateTaskInput,
   success: DelegateTaskResult,
   failure: DelegateError,
