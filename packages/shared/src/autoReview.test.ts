@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { DEFAULT_AUTO_REVIEW_SETTINGS, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_AUTO_REVIEW_SETTINGS,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { AutoReviewJob } from "@t3tools/contracts";
 
 import {
@@ -449,7 +454,7 @@ describe("deriveAutoReviewThreadPhase", () => {
         jobs: [
           makeJob({
             actionableFindings: true,
-            fixThreadId: "fixer-1",
+            fixThreadId: ThreadId.make("fixer-1"),
             pendingFix: {
               threadId: "fixer-1",
               prompt: "fix it",
@@ -480,7 +485,7 @@ describe("deriveAutoReviewThreadPhase", () => {
           makeJob({
             actionableFindings: true,
             autoFixEnqueued: true,
-            fixThreadId: "fixer-1",
+            fixThreadId: ThreadId.make("fixer-1"),
           }),
         ],
         threadId: "thread-1",
