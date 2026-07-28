@@ -126,6 +126,7 @@ const waitForBrowserSurfaceVisibility = async (
   threadRef: ScopedThreadRef,
   requestId: string,
   tabId: string,
+  runtimeTabId: string,
   timeoutMs: number,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -133,7 +134,7 @@ const waitForBrowserSurfaceVisibility = async (
   let presentedSince: number | null = null;
   while (Date.now() <= deadline) {
     const now = Date.now();
-    if (isPreviewAutomationTabPresented(threadRef, tabId)) {
+    if (isPreviewAutomationTabPresented(threadRef, tabId, runtimeTabId)) {
       presentedSince ??= now;
       // Require the selection to survive multiple presentation updates. A
       // single transient `visible` frame can otherwise make open acknowledge
@@ -153,7 +154,7 @@ const waitForBrowserSurfaceVisibility = async (
     threadId: threadRef.threadId,
     tabId,
     timeoutMs,
-    ...readPreviewAutomationPresentationDiagnostics(threadRef, tabId),
+    ...readPreviewAutomationPresentationDiagnostics(threadRef, tabId, runtimeTabId),
   });
 };
 interface ExecutablePreviewWebview extends Element {
@@ -532,6 +533,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 threadRef,
                 request.requestId,
                 activeTabId,
+                activeRuntimeTabId,
                 remainingOperationBudget(),
               );
             }

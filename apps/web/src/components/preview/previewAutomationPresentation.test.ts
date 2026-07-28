@@ -42,6 +42,11 @@ describe("preview automation presentation", () => {
   it("selects the requested preview tab and its inline preview surface together", () => {
     applyPreviewServerSnapshot(threadRef, snapshot("tab-1", "2026-07-25T00:00:00.000Z"));
     applyPreviewServerSnapshot(threadRef, snapshot("tab-2", "2026-07-25T00:00:01.000Z"));
+    const tabOneRuntimeId = previewRuntimeTabId(
+      threadRef,
+      readThreadPreviewState(threadRef).serverEpoch,
+      "tab-1",
+    );
 
     revealPreviewAutomationTab(threadRef, "tab-1");
 
@@ -51,8 +56,10 @@ describe("preview automation presentation", () => {
     ).toMatchObject({
       tabId: "tab-1",
     });
-    expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
-    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1")).toEqual({
+    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(false);
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+    ).toEqual({
       activeSurfaceKind: "inline-preview",
       activeSurfaceId: "mini-player:tab-1",
       inlinePreviewOpen: true,
@@ -63,20 +70,33 @@ describe("preview automation presentation", () => {
       presentationRectAvailable: false,
     });
 
-    const surface = acquireBrowserSurface(
-      previewRuntimeTabId(threadRef, readThreadPreviewState(threadRef).serverEpoch, "tab-1"),
-    );
+    const serverIdSurface = acquireBrowserSurface("tab-1");
+    serverIdSurface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
+    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(false);
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+    ).toMatchObject({
+      surfaceRegistered: false,
+      presentationRectAvailable: false,
+    });
+    serverIdSurface.release();
+
+    const surface = acquireBrowserSurface(tabOneRuntimeId);
     surface.present({ x: 0, y: 0, width: 800, height: 600 }, true);
 
-    expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(true);
-    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1")).toMatchObject({
+    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(true);
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+    ).toMatchObject({
       surfaceRegistered: true,
       presentationRectAvailable: true,
     });
 
     usePreviewMiniPlayerStore.getState().open(threadRef, "tab-2");
-    expect(isPreviewAutomationTabPresented(threadRef, "tab-1")).toBe(false);
-    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1")).toEqual({
+    expect(isPreviewAutomationTabPresented(threadRef, "tab-1", tabOneRuntimeId)).toBe(false);
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-1", tabOneRuntimeId),
+    ).toEqual({
       activeSurfaceKind: "inline-preview",
       activeSurfaceId: "mini-player:tab-2",
       inlinePreviewOpen: true,
@@ -90,7 +110,9 @@ describe("preview automation presentation", () => {
   });
 
   it("reports presentation precedence and hidden retained panel state", () => {
-    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+    ).toEqual({
       activeSurfaceKind: "none",
       activeSurfaceId: null,
       inlinePreviewOpen: false,
@@ -104,7 +126,9 @@ describe("preview automation presentation", () => {
     useRightPanelStore.getState().openBrowser(threadRef, "tab-panel");
     usePreviewMiniPlayerStore.getState().open(threadRef, "tab-inline");
 
-    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+    ).toEqual({
       activeSurfaceKind: "inline-preview",
       activeSurfaceId: "mini-player:tab-inline",
       inlinePreviewOpen: true,
@@ -118,7 +142,9 @@ describe("preview automation presentation", () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
     useRightPanelStore.getState().close(threadRef);
 
-    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+    ).toEqual({
       activeSurfaceKind: "none",
       activeSurfaceId: null,
       inlinePreviewOpen: false,
@@ -133,7 +159,9 @@ describe("preview automation presentation", () => {
   it("reports a right-panel presentation separately from the inline preview", () => {
     useRightPanelStore.getState().openBrowser(threadRef, "tab-panel");
 
-    expect(readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested")).toEqual({
+    expect(
+      readPreviewAutomationPresentationDiagnostics(threadRef, "tab-requested", "runtime-requested"),
+    ).toEqual({
       activeSurfaceKind: "right-panel",
       activeSurfaceId: "browser:tab-panel",
       inlinePreviewOpen: false,
@@ -158,6 +186,7 @@ describe("preview automation presentation", () => {
         threadRef,
         requestId: "request-background",
         tabId: "tab-background",
+        runtimeTabId: "runtime-background",
         timeoutMs: 40,
       });
       const rejection = expect(presentation).rejects.toMatchObject({
@@ -190,6 +219,7 @@ describe("preview automation presentation", () => {
         threadRef,
         requestId: "request-foregrounded",
         tabId: "tab-foregrounded",
+        runtimeTabId: "tab-foregrounded",
         timeoutMs: 40,
       });
 
