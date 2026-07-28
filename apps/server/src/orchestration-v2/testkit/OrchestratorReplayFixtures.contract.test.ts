@@ -1,14 +1,18 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { OrchestrationV2Command, ProviderInstanceId } from "@t3tools/contracts";
+import { OrchestrationV2Command, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
-import { materializeFixtureInput } from "./fixtures/shared.ts";
+import {
+  CODEX_MODEL_SELECTION,
+  materializeFixtureInput,
+  type OrchestratorFixtureInput,
+} from "./fixtures/shared.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationV2Command);
@@ -23,6 +27,49 @@ function assertUnique(values: ReadonlyArray<string>, label: string) {
 }
 
 describe("orchestrator replay fixture contract", () => {
+  it.effect("keeps message ordinals separate from app run ordinals after steering", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocatorV2;
+      for (const steeringType of ["steer", "restart"] as const) {
+        const fixtureInput: OrchestratorFixtureInput = {
+          steps: [
+            { type: "message", text: "first run" },
+            { type: steeringType, text: "steer first run", targetRunIndex: 1 },
+            { type: "message", text: "second run" },
+            { type: "interrupt", targetRunIndex: 2 },
+          ],
+        };
+        const materialized = yield* materializeFixtureInput({
+          scenario: `run-index-after-${steeringType}`,
+          fixtureInput,
+          driver: ProviderDriverKind.make("codex"),
+          modelSelection: CODEX_MODEL_SELECTION,
+        });
+        const secondRunCommand = materialized.commands.find(
+          (command) => command.type === "message.dispatch" && command.text === "second run",
+        );
+        assert.isDefined(secondRunCommand);
+        const secondRunDispatch = materialized.steps.find(
+          (step) => step.type === "dispatch" && step.command === secondRunCommand,
+        );
+        assert.deepInclude(secondRunDispatch, {
+          type: "dispatch",
+          await: false,
+          key: "run:2",
+        });
+        const expectedSecondRunId = idAllocator.derive.run({
+          threadId: materialized.projectionThreadIds[0]!,
+          ordinal: 2,
+        });
+        assert.isTrue(
+          materialized.steps.some(
+            (step) => step.type === "await_run_steerable" && step.runId === expectedSecondRunId,
+          ),
+        );
+      }
+    }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+  );
+
   it.effect(
     "defines one stable input and provider-specific replay/output contracts per scenario",
     () =>
