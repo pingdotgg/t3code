@@ -7,6 +7,7 @@ import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import type { EffectPgDatabase } from "drizzle-orm/effect-postgres";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { relayDatabaseMode } from "./dbConfig.ts";
 
@@ -16,6 +17,23 @@ export class RelayDb extends Context.Service<
     readonly $client: PgClient;
   }
 >()("t3code-relay/db/RelayDb") {}
+
+export class RelayTransactions extends Context.Service<
+  RelayTransactions,
+  {
+    readonly withTransaction: RelayDb["Service"]["$client"]["withTransaction"];
+  }
+>()("t3code-relay/db/RelayTransactions") {
+  static readonly layer = Layer.effect(
+    RelayTransactions,
+    Effect.gen(function* () {
+      const db = yield* RelayDb;
+      return RelayTransactions.of({
+        withTransaction: db.$client.withTransaction,
+      });
+    }),
+  );
+}
 
 export const PlanetscaleDatabase = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
