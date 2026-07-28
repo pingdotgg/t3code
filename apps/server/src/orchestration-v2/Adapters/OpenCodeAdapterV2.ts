@@ -659,6 +659,26 @@ function toolStatus(part: ToolPart): {
   }
 }
 
+/**
+ * Node/item statuses for a tool that never reported its own terminal state.
+ * Mirrors the turn's outcome so an interrupted turn does not leave a spinner.
+ */
+export function terminalToolStatus(status: TerminalTurnStatus): {
+  readonly node: OrchestrationV2ExecutionNode["status"];
+  readonly item: OrchestrationV2TurnItem["status"];
+} {
+  switch (status) {
+    case "completed":
+      return { node: "completed", item: "completed" };
+    case "interrupted":
+      return { node: "interrupted", item: "interrupted" };
+    case "cancelled":
+      return { node: "cancelled", item: "cancelled" };
+    case "failed":
+      return { node: "failed", item: "failed" };
+  }
+}
+
 function toolInput(part: ToolPart): Record<string, unknown> {
   return part.state.input;
 }
@@ -1063,6 +1083,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
           part: ToolPart,
+          /** See emitToolPart: forces closure for a subagent the turn ended under. */
+          terminal?: TerminalTurnStatus,
         ) {
           const now = yield* DateTime.now;
           const nativeItemRef = providerRef(part.id);
@@ -1190,16 +1212,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           }
           const output = toolOutput(part);
           if (part.state.status === "completed" && output !== undefined) context.result = output;
-          const status = toolStatus(part);
-          const completedAt = toolCompletedAt(part, now);
-          const subagentStatus: OrchestrationV2Subagent["status"] =
-            status.item === "failed"
-              ? "failed"
-              : status.item === "completed"
-                ? "completed"
-                : status.item === "pending"
-                  ? "pending"
-                  : "running";
+          const status = terminal === undefined ? toolStatus(part) : terminalToolStatus(terminal);
+          const completedAt = terminal === undefined ? toolCompletedAt(part, now) : now;
+          // `OrchestrationV2Subagent["status"]` and `OrchestrationV2TurnItemStatus`
+          // carry the same literals, so the item status maps straight across and an
+          // interrupted subagent stays interrupted instead of collapsing to failed.
+          const subagentStatus: OrchestrationV2Subagent["status"] = status.item;
           const subagent: OrchestrationV2Subagent = {
             id: nodeId,
             threadId: turn.threadId,
@@ -1281,19 +1299,27 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
           part: ToolPart,
+          /**
+           * Force a terminal status for a tool the turn ended underneath.
+           * OpenCode's `session.abort` stops the run without emitting a final
+           * state for whatever tool was mid-flight, so the last observed part
+           * state stays `running` and the item would never close.
+           */
+          terminal?: TerminalTurnStatus,
         ) {
           const normalizedTool = part.tool.toLowerCase();
           if (normalizedTool === "task") {
-            yield* emitSubagent(state, turn, part);
+            yield* emitSubagent(state, turn, part, terminal);
             return;
           }
           // question.asked carries the respondable semantic item. Projecting
           // the implementation tool as well would duplicate it in the UI.
           if (normalizedTool === "question") return;
           const now = yield* DateTime.now;
-          const status = toolStatus(part);
+          const observed = toolStatus(part);
+          const status = terminal === undefined ? observed : terminalToolStatus(terminal);
           const startedAt = toolStartedAt(part, now);
-          const completedAt = toolCompletedAt(part, now);
+          const completedAt = terminal === undefined ? toolCompletedAt(part, now) : now;
           const nativeItemRef = providerRef(part.id);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: OPENCODE_PROVIDER,
@@ -1758,6 +1784,17 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           for (const part of turn.parts.values()) {
             if (part.type === "text" || part.type === "reasoning") {
               yield* emitTextPart(state, turn, part, true);
+              continue;
+            }
+            // OpenCode reports no final state for a tool that was mid-flight
+            // when the turn ended, which `session.abort` always leaves behind.
+            // Without this the item keeps its last observed `running` status
+            // and the row spins forever.
+            if (
+              part.type === "tool" &&
+              (part.state.status === "pending" || part.state.status === "running")
+            ) {
+              yield* emitToolPart(state, turn, part, status);
             }
           }
           for (const pending of Array.from(pendingRequests.values())) {
