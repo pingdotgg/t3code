@@ -7,7 +7,7 @@
     /// `.accessibilityLabel` do not reach the AppKit accessibility tree in a
     /// headless probe run (measured: a chat window's whole text walk comes back
     /// as ~144 characters of AppKit-backed transcript, with the header title
-    /// and the review pet's own label both absent), so a view built entirely
+    /// and the auto-review progress label both absent), so a view built entirely
     /// from SwiftUI primitives is invisible to it. Anything inferred from the
     /// view hierarchy instead — "the deepest split's first pane is the detail
     /// column" — is a guess about SwiftUI's private layout that can start
@@ -40,7 +40,7 @@
         }
 
         static let activityDock = "activity-dock"
-        static let reviewPet = "review-pet"
+        static let autoReviewProgress = "auto-review-progress"
 
         private(set) static var entries: [String: Entry] = [:]
 

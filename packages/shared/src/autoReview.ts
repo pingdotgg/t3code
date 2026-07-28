@@ -183,6 +183,7 @@ export type AutoReviewFixSlotJob = {
   readonly autoFixEnqueued: boolean;
   readonly pendingFix: { readonly threadId: string } | null | undefined;
   readonly originThreadId?: string | null | undefined;
+  readonly fixThreadId?: string | null | undefined;
   readonly autoFixDispatchedAt?: string | null | undefined;
 };
 
@@ -222,7 +223,12 @@ export function occupiedAutoReviewFixThreads(input: {
     if (!job.autoFixEnqueued || job.pendingFix != null) {
       continue;
     }
-    const threadId = job.originThreadId == null ? null : String(job.originThreadId);
+    const threadId =
+      job.fixThreadId != null
+        ? String(job.fixThreadId)
+        : job.originThreadId == null
+          ? null
+          : String(job.originThreadId);
     if (threadId == null) {
       continue;
     }
@@ -380,6 +386,8 @@ export function deriveAutoReviewThreadPhase(input: {
   readonly jobs: ReadonlyArray<AutoReviewJob>;
   readonly threadId: string;
   readonly threadBusy: boolean;
+  /** Busy state of a dedicated fixer thread, when this PR has one. */
+  readonly fixThreadBusy?: boolean;
 }): "reviewing" | "fixing" | "readyToMerge" | null {
   if (input.jobs.length === 0) {
     return null;
@@ -393,10 +401,14 @@ export function deriveAutoReviewThreadPhase(input: {
   if (!latestSucceeded) {
     return null;
   }
-  const hasPendingFix =
-    latestSucceeded.pendingFix != null &&
-    String(latestSucceeded.pendingFix.threadId) === input.threadId;
-  if (hasPendingFix || (latestSucceeded.autoFixEnqueued && input.threadBusy)) {
+  // `jobs` is already filtered to this origin thread. A dedicated fixer's
+  // parked prompt names the fixer thread, not the origin, but still means the
+  // origin PR is in the fixing stage.
+  const hasPendingFix = latestSucceeded.pendingFix != null;
+  if (
+    hasPendingFix ||
+    (latestSucceeded.autoFixEnqueued && (input.fixThreadBusy ?? input.threadBusy))
+  ) {
     return "fixing";
   }
   if (!latestSucceeded.actionableFindings) {

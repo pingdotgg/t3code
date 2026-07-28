@@ -55,6 +55,22 @@ struct RpcFailureTests {
         let failure = try rpcFailure(from: FixtureFrames.exitDieFailure)
         #expect(failure.primaryErrorTag == nil)
     }
+
+    @Test("user-facing failures stay short instead of dumping the cause tree")
+    func userFacingMessageIsConcise() {
+        let failure = RpcFailure(causes: [
+            .fail(
+                tag: "ServerSettingsError",
+                error: .object([
+                    "_tag": .string("ServerSettingsError"),
+                    "message": .string("Selected model is unavailable."),
+                    "cause": .string(String(repeating: "schema ", count: 2_000)),
+                ]))
+        ])
+        #expect(failure.userFacingMessage == "Selected model is unavailable.")
+        #expect((failure.userFacingMessage?.count ?? 0) < 100)
+    }
+
 }
 
 @Suite("T3Error")
