@@ -1,37 +1,13 @@
 /**
- * React Native SQLite client implementation for Effect SQL, backed by
+ * Connects Effect SQL to SQLite in React Native using
  * `@op-engineering/op-sqlite`.
  *
- * This module opens an on-device SQLite database and exposes it as both the
- * React Native-specific `SqliteClient` service and the generic Effect
- * `SqlClient` service. Use it for mobile application storage, offline caches,
- * local migrations, sync queues, and tests that need the same SQLite driver as
- * the app runtime.
- *
- * **Mental model**
- *
- * A client owns one scoped op-sqlite database handle configured with the
- * provided `filename`, optional `location`, and optional `encryptionKey`.
- * Queries are compiled through the Effect SQL SQLite compiler and serialized
- * through that single handle. A transaction keeps the serialized connection
- * permit for the whole transaction scope, so other fibers using the same client
- * wait until the transaction finishes.
- *
- * **Common tasks**
- *
- * Use `layer` when a React Native app should provide both `SqliteClient` and
- * the generic `SqlClient` from a concrete configuration, `layerConfig` when the
- * configuration should come from Effect `Config`, and `make` inside a custom
- * scoped layer when you need direct lifecycle control. Use `withAsyncQuery`
- * around UI-sensitive effects or longer migration steps to run statements with
- * the driver's asynchronous API instead of the default synchronous API.
- *
- * **Gotchas**
- *
- * The default synchronous op-sqlite API can block the JavaScript thread, so keep
- * transactions short and wrap multi-statement writes in a transaction to avoid
- * partial updates. `executeStream` is not implemented for this driver, and
- * SQLite does not support `updateValues`.
+ * This module opens an on-device SQLite database and exposes it as both
+ * `SqliteClient` and the generic Effect SQL client. It serializes access,
+ * supports normal and value-based queries, and uses the driver's synchronous
+ * query API by default. `AsyncQuery` and `withAsyncQuery` switch a scoped effect
+ * to the driver's asynchronous query API. Streaming queries and `updateValues`
+ * are not supported by this driver.
  *
  * @since 4.0.0
  */
@@ -89,7 +65,7 @@ export interface SqliteClient extends Client.SqlClient {
 /**
  * Service tag for the React Native SQLite client.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const SqliteClient = Context.Service<SqliteClient>("@effect/sql-sqlite-react-native/SqliteClient")
@@ -200,6 +176,9 @@ export const make = (
           return run(sql, params)
         },
         executeValues(sql, params) {
+          return run(sql, params, true)
+        },
+        executeValuesUnprepared(sql, params) {
           return run(sql, params, true)
         },
         executeUnprepared(sql, params, transformRows) {

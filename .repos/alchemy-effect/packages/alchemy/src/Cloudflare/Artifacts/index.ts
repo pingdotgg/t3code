@@ -1,2 +1,3 @@
-export * from "./Artifacts.ts";
-export * from "./ArtifactsBinding.ts";
+export * from "./Namespace.ts";
+export * from "./ReadWriteNamespace.ts";
+export * from "./ReadWriteNamespaceBinding.ts";

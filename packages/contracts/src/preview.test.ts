@@ -29,6 +29,16 @@ const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
 
+describe("PreviewAutomationOpenInput", () => {
+  it("accepts the inline preview visibility flag", () => {
+    expect(decodeOpenInput({ open: false })).toEqual({ open: false });
+  });
+
+  it("retains the legacy show visibility alias", () => {
+    expect(decodeOpenInput({ show: false })).toEqual({ show: false });
+  });
+});
+
 describe("PreviewNavStatus", () => {
   it("decodes Idle", () => {
     expect(decodeNavStatus({ _tag: "Idle" })).toEqual({ _tag: "Idle" });
@@ -216,6 +226,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
       snapshot: {
         threadId: "t",
         tabId: "preview-t",
@@ -234,6 +246,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
       url: "https://example.com/",
       title: "",
       code: -105,
@@ -251,6 +265,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
       snapshot: {
         threadId: "t",
         tabId: "preview-t",
@@ -270,6 +286,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
     });
     expect(event.type).toBe("closed");
   });

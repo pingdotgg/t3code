@@ -263,11 +263,11 @@ export const make = (
 ): ${name} => {
   ${helpers.join("\n  ")}
   const decodeSuccess =
-    <Schema extends ${importName}.Top>(schema: Schema) =>
+    <Schema extends ${importName}.Constraint>(schema: Schema) =>
     (response: HttpClientResponse.HttpClientResponse) =>
       HttpClientResponse.schemaBodyJson(schema)(response)
   const decodeError =
-    <const Tag extends string, Schema extends ${importName}.Top>(tag: Tag, schema: Schema) =>
+    <const Tag extends string, Schema extends ${importName}.Constraint>(tag: Tag, schema: Schema) =>
     (response: HttpClientResponse.HttpClientResponse) =>
       Effect.flatMap(
         HttpClientResponse.schemaBodyJson(schema)(response),
@@ -917,7 +917,7 @@ const sseRequestSource = (_importName: string) =>
      Type,
      DecodingServices
     >(
-      schema: Schema.Decoder<Type, DecodingServices>
+      schema: Schema.ConstraintDecoder<Type, DecodingServices>
     ) =>
     (
       request: HttpClientRequest.HttpClientRequest

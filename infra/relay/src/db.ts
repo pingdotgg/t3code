@@ -31,10 +31,10 @@ export const PlanetscaleDatabase = Effect.gen(function* () {
       ? yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
           name: "t3coderelay",
           region: { slug: "us-west" },
-          clusterSize: "PS_5",
+          clusterSize: "PS_20",
           migrationsDir: schema.out,
           migrationsTable: "relay_migrations",
-          replicas: 0, // BUMP BEFORE GOING TO PROD
+          replicas: 2,
         }).pipe(RemovalPolicy.retain())
       : yield* Planetscale.PostgresDatabase.ref("RelayPostgresDatabase", {
           stage: "prod",
@@ -59,7 +59,7 @@ export const PlanetscaleDatabase = Effect.gen(function* () {
 
 export const RelayHyperdrive = Effect.gen(function* () {
   const { runtimeRole } = yield* PlanetscaleDatabase;
-  return yield* Cloudflare.Hyperdrive("RelayHyperdrive", {
+  return yield* Cloudflare.Hyperdrive.Connection("RelayHyperdrive", {
     origin: runtimeRole.origin,
     caching: {
       disabled: true,

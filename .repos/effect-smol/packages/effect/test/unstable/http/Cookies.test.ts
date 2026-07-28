@@ -76,5 +76,6 @@ describe("Cookies", () => {
     assertSome(Cookies.getValue(cookies, "session"), "abc")
     assertNone(Cookies.get(cookies, "missing"))
     assertNone(Cookies.getValue(cookies, "missing"))
+    assertNone(Cookies.get(Cookies.empty, "constructor"))
   })
 })
