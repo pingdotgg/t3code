@@ -148,6 +148,12 @@ class ProductSnapshot:
         )
 
 
+@dataclass(frozen=True)
+class AdoptionSnapshot:
+    state_backup: bytes | None
+    services_installed: bool
+
+
 def _command(
     command: list[str],
     *,
@@ -216,17 +222,7 @@ def _preflight_checkout(
     operation: str,
 ) -> str:
     host.preflight(plugin_name="t3code", plugin_root=config.plugin_root)
-    if not (config.plugin_root / ".git").exists():
-        raise UpdateError("T3 Code plugin is not a git checkout")
-    dirty = _git_output(
-        config,
-        ["status", "--porcelain", "--untracked-files=all"],
-    )
-    if dirty:
-        raise UpdateError(
-            "T3 Code plugin checkout has uncommitted changes; Update made no "
-            "changes. Commit or remove the local work before retrying."
-        )
+    commit = _clean_checkout_commit(config, operation="Update")
     state = service._read_service_state(config)
     if state is not None and state.get("desired_state") == "installed":
         service._validate_recovery_binary(config, state)
@@ -236,10 +232,43 @@ def _preflight_checkout(
                 "Update requires an installed coherent product; use Install and "
                 "start for the first activation"
             )
+    return commit
+
+
+def _clean_checkout_commit(config: PluginConfig, *, operation: str) -> str:
+    if not (config.plugin_root / ".git").exists():
+        raise UpdateError("T3 Code plugin is not a git checkout")
+    dirty = _git_output(
+        config,
+        ["status", "--porcelain", "--untracked-files=all"],
+    )
+    if dirty:
+        raise UpdateError(
+            f"T3 Code plugin checkout has uncommitted changes; {operation} made "
+            "no changes. Commit or remove the local work before retrying."
+        )
     commit = _git_output(config, ["rev-parse", "HEAD"])
-    if len(commit) != 40:
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise UpdateError("could not identify the current plugin source commit")
     return commit
+
+
+def _assert_checkout_unchanged(
+    config: PluginConfig,
+    *,
+    source_commit: str,
+) -> None:
+    if (
+        _git_output(
+            config,
+            ["status", "--porcelain", "--untracked-files=all"],
+        )
+        or _git_output(config, ["rev-parse", "HEAD"]) != source_commit
+    ):
+        raise UpdateError(
+            "T3 Code plugin checkout changed while Install was verifying the "
+            "current release; no activation was performed"
+        )
 
 
 def _resolve_target(config: PluginConfig) -> ProductTarget:
@@ -266,6 +295,126 @@ def _resolve_target(config: PluginConfig) -> ProductTarget:
     except Exception:
         shutil.rmtree(transaction_root, ignore_errors=True)
         raise
+
+
+def _adopt_current_release_without_host(
+    config: PluginConfig,
+) -> dict[str, object]:
+    if (
+        (config.runtime_root / ".product-update-snapshot").exists()
+        or _transaction_path(config).exists()
+    ):
+        raise UpdateError(
+            "Install found incomplete coherent Update recovery artifacts; the "
+            "current release was not adopted"
+        )
+    source_commit = _clean_checkout_commit(config, operation="Install")
+    target: ProductTarget | None = None
+    try:
+        target = _resolve_target(config)
+        if target.source_commit != source_commit:
+            raise UpdateError(
+                "Install without the Hermes managed handoff can only adopt the "
+                "newest compatible coherent release when its source tag already "
+                "matches the current checkout"
+            )
+        _assert_checkout_unchanged(config, source_commit=source_commit)
+        if not config.binary_path.is_file():
+            raise UpdateError(
+                "Install without the Hermes managed handoff cannot find a "
+                "retained runtime matching the current release"
+            )
+        binary_sha256 = service._binary_sha256(config.binary_path)
+        if binary_sha256 != target.binary_sha256:
+            raise UpdateError(
+                "Install without the Hermes managed handoff found a retained "
+                "runtime checksum that does not match the current release"
+            )
+        binary_version = service.binary_version(config.binary_path)
+        if binary_version != target.version:
+            raise UpdateError(
+                "Install without the Hermes managed handoff found a retained "
+                f"runtime version of {binary_version or 'unknown'}; expected "
+                f"{target.version}"
+            )
+        _assert_checkout_unchanged(config, source_commit=source_commit)
+        adoption_snapshot = _snapshot_adoption(config)
+        try:
+            activation = service._activate_staged_product_locked(
+                config,
+                staged_binary=config.binary_path,
+                product_version=target.version,
+                source_commit=source_commit,
+                binary_sha256=target.binary_sha256,
+            )
+            service_pid = activation.get("service_pid")
+            if (
+                activation.get("ok") is not True
+                or type(service_pid) is not int
+                or service_pid <= 0
+                or activation.get("http_healthy") is not True
+            ):
+                raise UpdateError(
+                    "current-release activation did not prove runtime, service, "
+                    "and HTTP health"
+                )
+        except Exception as error:
+            rollback = _rollback_adoption(config, adoption_snapshot)
+            outcome = (
+                "adoption rollback succeeded"
+                if rollback["ok"]
+                else "adoption rollback failed"
+            )
+            details = rollback.get("failures") or []
+            suffix = f": {'; '.join(map(str, details))}" if details else ""
+            raise UpdateError(f"{error}; {outcome}{suffix}") from error
+        return {
+            "ok": True,
+            "action": "installed",
+            "version": target.version,
+            "source_commit": source_commit,
+            "service_pid": service_pid,
+        }
+    finally:
+        if target is not None:
+            shutil.rmtree(target.staged_binary.parent, ignore_errors=True)
+
+
+def _snapshot_adoption(config: PluginConfig) -> AdoptionSnapshot:
+    service_installed = (config.service_dir / "run").is_file()
+    watchdog_installed = (config.watchdog_service_dir / "run").is_file()
+    if service_installed != watchdog_installed:
+        raise UpdateError(
+            "Install found inconsistent T3 and watchdog service slots; the "
+            "current release was not adopted"
+        )
+    return AdoptionSnapshot(
+        state_backup=(
+            config.service_state_path.read_bytes()
+            if config.service_state_path.is_file()
+            else None
+        ),
+        services_installed=service_installed,
+    )
+
+
+def _rollback_adoption(
+    config: PluginConfig,
+    snapshot: AdoptionSnapshot,
+) -> dict[str, object]:
+    failures: list[str] = []
+    try:
+        service._restore_runtime_after_product_rollback(
+            config,
+            installed_intent=snapshot.services_installed,
+        )
+    except Exception as error:
+        failures.append(f"runtime/service: {_redact_error(error)}")
+    try:
+        _restore_state(config, snapshot.state_backup)
+    except Exception as error:
+        failures.append(f"state: {_redact_error(error)}")
+    return {"ok": not failures, "failures": failures}
 
 
 def _snapshot_product(
@@ -515,7 +664,12 @@ def _perform_locked(
     config: PluginConfig,
     operation: str,
 ) -> dict[str, object]:
-    host = _load_host_contract()
+    try:
+        host = _load_host_contract()
+    except UpdateError:
+        if operation != "install":
+            raise
+        return _adopt_current_release_without_host(config)
     source_commit = _preflight_checkout(config, host, operation)
     target: ProductTarget | None = None
     snapshot: ProductSnapshot | None = None

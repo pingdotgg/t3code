@@ -37,6 +37,14 @@ service, and verifies the live process and HTTP endpoint. The current release wo
 companion binary for Linux x64; ARM64 Hermes hosts are rejected until a Linux ARM64 standalone
 artifact is available.
 
+There is one compatibility case when the loaded Hermes host does not yet implement managed backend
+reloads. If the clean checkout's unchanged `HEAD`, the newest compatible release tag, and the
+retained runtime's reported version and SHA-256 digest already identify the exact same product,
+**Install and start** may activate that retained pair and persist its coherent state. It does not move
+source or install a runtime. An older release, missing or mismatched runtime, dirty or moving
+checkout, or incomplete Update recovery still fails before activation. This is not an alternate
+Update path.
+
 The service listens on port `3773` by default. The plugin exposes that address from its Hermes
 dashboard tab and does not proxy T3 Code traffic through the Hermes dashboard API. Hermes plugin
 manifests do not control the container runtime's host-port mappings, so publish the port once in the
@@ -96,9 +104,11 @@ managed-plugin update contract that:
    version actually mounted, and return only after the requested backend is active. A metadata rescan
    or page reload is not sufficient.
 
-Until Hermes supplies that contract, T3's Update and Install actions fail during preflight before
-fetching, pulling, replacing the binary, or touching supervision. T3 does not emulate the missing
-host primitive with a page reload, metadata rescan, or unsafe self-restart.
+Until Hermes supplies that contract, T3's Update operation and any Install that would change source
+or runtime fail before product mutation. Only the exact-current Install adoption described above can
+activate without reloading the already-loaded backend, because its verified source and runtime
+identity do not change. T3 does not emulate the missing host primitive with a page reload, metadata
+rescan, or unsafe self-restart.
 
 The companion watchdog checks for `plugin.yaml` every 15 minutes by default. Two consecutive misses
 remove the T3 Code and watchdog s6 slots. This covers direct plugin-directory removal without making
@@ -151,9 +161,10 @@ to download and verify a replacement.
 
 Plugin versions predating this state file retained only the binary and application data, so a legacy
 install is indistinguishable from one the operator intentionally removed. The plugin therefore never
-infers intent from an old binary or executes it during migration. After Hermes gains the managed
-update contract above, run **Install and start** once to establish a coherent product version and
-explicit durable intent. From then on, boot recovery is automatic and **Remove service** remains
+infers intent from an old binary during boot. Run **Install and start** explicitly once to establish
+a coherent product version and durable intent. Without the managed host contract, this succeeds only
+when release resolution proves the clean current source and retained binary already are the newest
+compatible pair. From then on, boot recovery is automatic and **Remove service** remains
 authoritative.
 
 ## Projects and execution

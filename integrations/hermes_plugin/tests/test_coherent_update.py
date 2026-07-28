@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import tempfile
 import threading
 import time
@@ -306,6 +307,574 @@ class CoherentUpdateTest(unittest.TestCase):
         preflight.assert_not_called()
         resolve_target.assert_not_called()
         advance_source.assert_not_called()
+
+    def test_missing_handoff_install_adopts_exact_current_release(self) -> None:
+        source_commit = "a" * 40
+        runtime = b"retained v43 runtime"
+        binary_sha256 = hashlib.sha256(runtime).hexdigest()
+        self.config.binary_path.parent.mkdir(parents=True)
+        self.config.binary_path.write_bytes(runtime)
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+        self.config.service_state_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "desired_state": "installed",
+                    "binary_sha256": hashlib.sha256(b"stale v42 runtime").hexdigest(),
+                    "binary_version": "0.0.28-f8y.20260727.42",
+                    "product_version": "0.0.28-f8y.20260727.42",
+                    "product_source_commit": "b" * 40,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        target = coherent_update.ProductTarget(
+            version="0.0.28-f8y.20260728.43",
+            tag="v0.0.28-f8y.20260728.43",
+            source_commit=source_commit,
+            staged_binary=self.config.runtime_root / "transaction" / "t3",
+            binary_sha256=binary_sha256,
+        )
+        activation = {
+            "ok": True,
+            "service_pid": 9621,
+            "http_healthy": True,
+        }
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["rev-parse", "HEAD"]:
+                return source_commit
+            raise AssertionError(f"unexpected git call: {args}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError(
+                    "Hermes does not provide managed plugin update handoff v1"
+                ),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                side_effect=git,
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target",
+                return_value=target,
+            ),
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value=target.version,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._validate_recovery_binary"
+            ) as validate_stale_state,
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked",
+                return_value=activation,
+            ) as activate,
+            patch(
+                "integrations.hermes_plugin.coherent_update._snapshot_product"
+            ) as snapshot,
+            patch(
+                "integrations.hermes_plugin.coherent_update._advance_source"
+            ) as advance_source,
+            patch(
+                "integrations.hermes_plugin.coherent_update._run_fresh_activation"
+            ) as fresh_activation,
+        ):
+            result = coherent_update._perform_locked(self.config, "install")
+
+        self.assertEqual(
+            result,
+            {
+                "ok": True,
+                "action": "installed",
+                "version": target.version,
+                "source_commit": source_commit,
+                "service_pid": 9621,
+            },
+        )
+        activate.assert_called_once_with(
+            self.config,
+            staged_binary=self.config.binary_path,
+            product_version=target.version,
+            source_commit=source_commit,
+            binary_sha256=binary_sha256,
+        )
+        validate_stale_state.assert_not_called()
+        snapshot.assert_not_called()
+        advance_source.assert_not_called()
+        fresh_activation.assert_not_called()
+
+    def test_missing_handoff_install_refuses_dirty_checkout(self) -> None:
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                return_value=" M dashboard/plugin_api.py\n",
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target"
+            ) as resolve_target,
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked"
+            ) as activate,
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "uncommitted changes",
+            ),
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        resolve_target.assert_not_called()
+        activate.assert_not_called()
+
+    def test_missing_handoff_install_rolls_back_partial_activation(self) -> None:
+        source_commit = "a" * 40
+        runtime = b"retained runtime"
+        binary_sha256 = hashlib.sha256(runtime).hexdigest()
+        self.config.binary_path.parent.mkdir(parents=True)
+        self.config.binary_path.write_bytes(runtime)
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+        stale_state = (
+            json.dumps(
+                {
+                    "version": 1,
+                    "desired_state": "installed",
+                    "binary_sha256": hashlib.sha256(b"stale runtime").hexdigest(),
+                }
+            )
+            + "\n"
+        ).encode()
+        self.config.service_state_path.write_bytes(stale_state)
+        target = coherent_update.ProductTarget(
+            version="0.0.28-f8y.20260728.43",
+            tag="v0.0.28-f8y.20260728.43",
+            source_commit=source_commit,
+            staged_binary=self.config.runtime_root / "transaction" / "t3",
+            binary_sha256=binary_sha256,
+        )
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["rev-parse", "HEAD"]:
+                return source_commit
+            raise AssertionError(f"unexpected git call: {args}")
+
+        def fail_after_service_mutation(*_args, **_kwargs):
+            for service_dir in (
+                self.config.service_dir,
+                self.config.watchdog_service_dir,
+            ):
+                service_dir.mkdir(parents=True)
+                (service_dir / "run").touch()
+            self.config.service_state_path.write_text(
+                '{"version":1,"desired_state":"installed",'
+                '"product_version":"incorrect-success"}\n',
+                encoding="utf-8",
+            )
+            raise coherent_update.UpdateError("HTTP health failed")
+
+        def remove_service_dir(path):
+            shutil.rmtree(path, ignore_errors=True)
+
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                side_effect=git,
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target",
+                return_value=target,
+            ),
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value=target.version,
+            ),
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked",
+                side_effect=fail_after_service_mutation,
+            ),
+            patch(
+                "integrations.hermes_plugin.service._remove_service_dir",
+                side_effect=remove_service_dir,
+            ),
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "HTTP health failed; adoption rollback succeeded",
+            ),
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        self.assertFalse(self.config.service_dir.exists())
+        self.assertFalse(self.config.watchdog_service_dir.exists())
+        self.assertEqual(
+            json.loads(self.config.service_state_path.read_bytes()),
+            json.loads(stale_state),
+        )
+
+    def test_missing_handoff_install_reports_adoption_rollback_failure(
+        self,
+    ) -> None:
+        source_commit = "a" * 40
+        runtime = b"retained runtime"
+        binary_sha256 = hashlib.sha256(runtime).hexdigest()
+        self.config.binary_path.parent.mkdir(parents=True)
+        self.config.binary_path.write_bytes(runtime)
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+        target = coherent_update.ProductTarget(
+            version="0.0.28-f8y.20260728.43",
+            tag="v0.0.28-f8y.20260728.43",
+            source_commit=source_commit,
+            staged_binary=self.config.runtime_root / "transaction" / "t3",
+            binary_sha256=binary_sha256,
+        )
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["rev-parse", "HEAD"]:
+                return source_commit
+            raise AssertionError(f"unexpected git call: {args}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                side_effect=git,
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target",
+                return_value=target,
+            ),
+            patch(
+                "integrations.hermes_plugin.service.binary_version",
+                return_value=target.version,
+            ),
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked",
+                side_effect=coherent_update.UpdateError("activation failed"),
+            ),
+            patch(
+                "integrations.hermes_plugin.service."
+                "_restore_runtime_after_product_rollback",
+                side_effect=RuntimeError(
+                    "rollback failed with token=SENSITIVE_VALUE"
+                ),
+            ),
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "adoption rollback failed",
+            ) as raised,
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        self.assertNotIn("SENSITIVE_VALUE", str(raised.exception))
+        self.assertIn("token=[REDACTED]", str(raised.exception))
+
+    def test_missing_handoff_install_refuses_incomplete_update_recovery(
+        self,
+    ) -> None:
+        snapshot = self.config.runtime_root / ".product-update-snapshot"
+        snapshot.mkdir(parents=True)
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target"
+            ) as resolve_target,
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked"
+            ) as activate,
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "incomplete coherent Update recovery artifacts",
+            ),
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        resolve_target.assert_not_called()
+        activate.assert_not_called()
+
+    def test_missing_handoff_install_refuses_an_older_coherent_pair(self) -> None:
+        current_commit = "a" * 40
+        current_runtime = b"older retained runtime"
+        self.config.binary_path.parent.mkdir(parents=True)
+        self.config.binary_path.write_bytes(current_runtime)
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+        target = coherent_update.ProductTarget(
+            version="0.0.28-f8y.20260728.43",
+            tag="v0.0.28-f8y.20260728.43",
+            source_commit="b" * 40,
+            staged_binary=self.config.runtime_root / "transaction" / "t3",
+            binary_sha256=hashlib.sha256(b"newest runtime").hexdigest(),
+        )
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["rev-parse", "HEAD"]:
+                return current_commit
+            raise AssertionError(f"unexpected git call: {args}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                side_effect=git,
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target",
+                return_value=target,
+            ),
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked"
+            ) as activate,
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "newest compatible coherent release",
+            ),
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        activate.assert_not_called()
+
+    def test_missing_handoff_install_refuses_runtime_identity_mismatches(
+        self,
+    ) -> None:
+        source_commit = "a" * 40
+        current_runtime = b"retained runtime"
+        current_sha256 = hashlib.sha256(current_runtime).hexdigest()
+        self.config.binary_path.parent.mkdir(parents=True)
+        self.config.binary_path.write_bytes(current_runtime)
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["rev-parse", "HEAD"]:
+                return source_commit
+            raise AssertionError(f"unexpected git call: {args}")
+
+        cases = (
+            (
+                "version",
+                "0.0.28-f8y.20260728.42",
+                current_sha256,
+                "runtime version",
+            ),
+            (
+                "checksum",
+                "0.0.28-f8y.20260728.43",
+                hashlib.sha256(b"different release runtime").hexdigest(),
+                "runtime checksum",
+            ),
+        )
+        for name, reported_version, expected_sha256, error_pattern in cases:
+            with self.subTest(name=name):
+                target = coherent_update.ProductTarget(
+                    version="0.0.28-f8y.20260728.43",
+                    tag="v0.0.28-f8y.20260728.43",
+                    source_commit=source_commit,
+                    staged_binary=self.config.runtime_root / name / "t3",
+                    binary_sha256=expected_sha256,
+                )
+                with (
+                    patch(
+                        "integrations.hermes_plugin.coherent_update."
+                        "_load_host_contract",
+                        side_effect=coherent_update.UpdateError("missing handoff"),
+                    ),
+                    patch(
+                        "integrations.hermes_plugin.coherent_update._git_output",
+                        side_effect=git,
+                    ),
+                    patch(
+                        "integrations.hermes_plugin.coherent_update._resolve_target",
+                        return_value=target,
+                    ),
+                    patch(
+                        "integrations.hermes_plugin.service.binary_version",
+                        return_value=reported_version,
+                    ),
+                    patch(
+                        "integrations.hermes_plugin.service."
+                        "_activate_staged_product_locked"
+                    ) as activate,
+                    self.assertRaisesRegex(
+                        coherent_update.UpdateError,
+                        error_pattern,
+                    ),
+                ):
+                    coherent_update._perform_locked(self.config, "install")
+
+                activate.assert_not_called()
+
+    def test_missing_handoff_install_requires_a_retained_runtime(self) -> None:
+        source_commit = "a" * 40
+        target = coherent_update.ProductTarget(
+            version="0.0.28-f8y.20260728.43",
+            tag="v0.0.28-f8y.20260728.43",
+            source_commit=source_commit,
+            staged_binary=self.config.runtime_root / "transaction" / "t3",
+            binary_sha256=hashlib.sha256(b"release runtime").hexdigest(),
+        )
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["rev-parse", "HEAD"]:
+                return source_commit
+            raise AssertionError(f"unexpected git call: {args}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                side_effect=git,
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target",
+                return_value=target,
+            ),
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked"
+            ) as activate,
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "cannot find a retained runtime",
+            ),
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        activate.assert_not_called()
+
+    def test_missing_handoff_install_refuses_source_movement(self) -> None:
+        initial_commit = "a" * 40
+        target = coherent_update.ProductTarget(
+            version="0.0.28-f8y.20260728.43",
+            tag="v0.0.28-f8y.20260728.43",
+            source_commit=initial_commit,
+            staged_binary=self.config.runtime_root / "transaction" / "t3",
+            binary_sha256=hashlib.sha256(b"retained runtime").hexdigest(),
+        )
+        self.config.binary_path.parent.mkdir(parents=True)
+        self.config.binary_path.write_bytes(b"retained runtime")
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+        commits = iter((initial_commit, "b" * 40))
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["rev-parse", "HEAD"]:
+                return next(commits)
+            raise AssertionError(f"unexpected git call: {args}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                side_effect=git,
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target",
+                return_value=target,
+            ),
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked"
+            ) as activate,
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "changed while Install was verifying",
+            ),
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        activate.assert_not_called()
+
+    def test_missing_handoff_install_refuses_checkout_dirtied_while_verifying(
+        self,
+    ) -> None:
+        source_commit = "a" * 40
+        target = coherent_update.ProductTarget(
+            version="0.0.28-f8y.20260728.43",
+            tag="v0.0.28-f8y.20260728.43",
+            source_commit=source_commit,
+            staged_binary=self.config.runtime_root / "transaction" / "t3",
+            binary_sha256=hashlib.sha256(b"retained runtime").hexdigest(),
+        )
+        self.config.binary_path.parent.mkdir(parents=True)
+        self.config.binary_path.write_bytes(b"retained runtime")
+        (self.config.plugin_root / ".git").mkdir(parents=True)
+        statuses = iter(("", " M dashboard/plugin_api.py\n"))
+
+        def git(_config, args, **_kwargs):
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return next(statuses)
+            if args == ["rev-parse", "HEAD"]:
+                return source_commit
+            raise AssertionError(f"unexpected git call: {args}")
+
+        with (
+            patch(
+                "integrations.hermes_plugin.coherent_update._load_host_contract",
+                side_effect=coherent_update.UpdateError("missing handoff"),
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._git_output",
+                side_effect=git,
+            ),
+            patch(
+                "integrations.hermes_plugin.coherent_update._resolve_target",
+                return_value=target,
+            ),
+            patch(
+                "integrations.hermes_plugin.service."
+                "_activate_staged_product_locked"
+            ) as activate,
+            self.assertRaisesRegex(
+                coherent_update.UpdateError,
+                "changed while Install was verifying",
+            ),
+        ):
+            coherent_update._perform_locked(self.config, "install")
+
+        activate.assert_not_called()
 
     def test_worker_errors_redact_credentials_and_secret_urls(self) -> None:
         error_output = io.StringIO()

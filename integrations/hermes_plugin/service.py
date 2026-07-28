@@ -1213,6 +1213,14 @@ def _activate_staged_product_locked(
     _install_watchdog(config)
     pid = _verify_t3_service_up(config)
     _verify_product_health(config, pid)
+    if (
+        _current_source_commit(config) != source_commit
+        or not _source_checkout_clean(config)
+    ):
+        raise ServiceError(
+            "plugin source changed during coherent activation; durable product "
+            "state was not updated"
+        )
     _set_desired_state(
         config,
         _DESIRED_INSTALLED,
