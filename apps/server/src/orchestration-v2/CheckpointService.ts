@@ -133,6 +133,7 @@ export interface CheckpointServiceV2Shape {
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
   readonly materializeBaselineCheckpoint: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
+    readonly ordinalWithinScope: number;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
   readonly capture: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
@@ -318,14 +319,13 @@ export const layer: Layer.Layer<
         withWorkspaceLock(
           input.scope.cwd,
           Effect.gen(function* () {
-            const ordinalWithinScope = 0;
             const checkpointRef = checkpointRefForScopeOrdinal({
               scopeId: input.scope.id,
-              ordinalWithinScope,
+              ordinalWithinScope: input.ordinalWithinScope,
             });
             const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
               scopeId: input.scope.id,
-              ordinalWithinScope,
+              ordinalWithinScope: input.ordinalWithinScope,
             });
             const checkpointable = yield* isGitCheckpointable(input.scope.cwd);
             const available = checkpointable
@@ -340,7 +340,7 @@ export const layer: Layer.Layer<
               runId: null,
               nodeId: input.scope.nodeId,
               parentCheckpointId: null,
-              ordinalWithinScope,
+              ordinalWithinScope: input.ordinalWithinScope,
               appRunOrdinal: null,
               ref: checkpointRef,
               status: available ? "ready" : "missing",
