@@ -26,10 +26,14 @@ describe("threadCanArchive", () => {
     expect(threadCanArchive(runtime("running", activeRunId))).toBe(false);
   });
 
-  it("allows queued and post-provider waiting work despite a stale active run id", () => {
-    const staleActiveRunId = RunId.make("run-finished");
+  it("only allows queued work when no provider run remains active", () => {
+    const activeRunId = RunId.make("run-live");
     expect(threadCanArchive(runtime("queued", null))).toBe(true);
-    expect(threadCanArchive(runtime("queued", staleActiveRunId))).toBe(true);
+    expect(threadCanArchive(runtime("queued", activeRunId))).toBe(false);
+  });
+
+  it("allows post-provider waiting work despite a retained active run id", () => {
+    const staleActiveRunId = RunId.make("run-finished");
     expect(threadCanArchive(runtime("waiting", null))).toBe(true);
     expect(threadCanArchive(runtime("waiting", staleActiveRunId))).toBe(true);
   });
