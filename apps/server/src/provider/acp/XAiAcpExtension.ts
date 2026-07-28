@@ -665,8 +665,7 @@ function resultTaskIdFromGetOutputTool(
     output,
     new RegExp(`===\\s*Task\\s+(${XAI_UUID_RE})\\s*===`, "i"),
   );
-  if (taskHeader !== undefined) return taskHeader;
-  return firstUuidMatch(output, new RegExp(`subagent_id:\\s*(${XAI_UUID_RE})\\b`, "i"));
+  return taskHeader;
 }
 
 function resultFromGetOutputTool(
@@ -719,7 +718,10 @@ function statusFromGetOutputTool(
       return "running";
     }
   }
-  return toolCall.status === "completed" ? "completed" : "running";
+  // A completed get_output tool call only means the poll RPC returned. Without
+  // a task-level terminal status or exit code, the requested task is still
+  // running and must remain registered for subsequent polling.
+  return "running";
 }
 
 /**

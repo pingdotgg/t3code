@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -67,6 +68,7 @@ import {
   AcpProviderCapabilitiesV2,
   acpCanonicalJson,
   acpClaimNativeTransportRequest,
+  acpPermissionDisposition,
   acpNativeUserInputRequestMatches,
   acpPostSettleContinuationOfferEvidence,
   acpIsAppOwnedWakeTurn,
@@ -87,6 +89,82 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, serverConfigLayer);
 const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+
+function permissionRequest(
+  kind: NonNullable<EffectAcpSchema.RequestPermissionRequest["toolCall"]["kind"]>,
+  locations?: ReadonlyArray<EffectAcpSchema.ToolCallLocation>,
+): EffectAcpSchema.RequestPermissionRequest {
+  return {
+    options: [],
+    sessionId: "permission-session",
+    toolCall: {
+      kind,
+      ...(locations === undefined ? {} : { locations }),
+      toolCallId: "permission-tool-call",
+    },
+  };
+}
+
+describe("acpPermissionDisposition", () => {
+  const cwd = NodePath.resolve(process.cwd(), "acp-permission-workspace");
+  const writableRoot = NodePath.resolve(process.cwd(), "acp-additional-writable-root");
+  const policy = ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd,
+    approvalPolicy: "never",
+    sandboxPolicy: {
+      type: "workspaceWrite",
+      writableRoots: [writableRoot],
+      networkAccess: false,
+    },
+  });
+
+  it("auto-allows mutations only when every location is in cwd or an additional writable root", () => {
+    assert.equal(
+      acpPermissionDisposition(policy, permissionRequest("edit", [{ path: "src/index.ts" }])),
+      "allow",
+    );
+    assert.equal(
+      acpPermissionDisposition(
+        policy,
+        permissionRequest("delete", [{ path: NodePath.join(writableRoot, "generated.ts") }]),
+      ),
+      "allow",
+    );
+    assert.equal(
+      acpPermissionDisposition(
+        policy,
+        permissionRequest("move", [
+          { path: NodePath.join(cwd, "from.ts") },
+          { path: NodePath.join(writableRoot, "to.ts") },
+        ]),
+      ),
+      "allow",
+    );
+  });
+
+  it("denies missing or out-of-root mutation locations", () => {
+    const outside = NodePath.resolve(process.cwd(), "outside-acp-permission-workspace", "file.ts");
+    assert.equal(acpPermissionDisposition(policy, permissionRequest("edit")), "deny");
+    assert.equal(
+      acpPermissionDisposition(policy, permissionRequest("delete", [{ path: "../escape.ts" }])),
+      "deny",
+    );
+    assert.equal(
+      acpPermissionDisposition(
+        policy,
+        permissionRequest("move", [{ path: NodePath.join(cwd, "inside.ts") }, { path: outside }]),
+      ),
+      "deny",
+    );
+  });
+
+  it("keeps non-mutating workspace permissions and denials unchanged", () => {
+    assert.equal(acpPermissionDisposition(policy, permissionRequest("read")), "allow");
+    assert.equal(acpPermissionDisposition(policy, permissionRequest("execute")), "deny");
+  });
+});
 
 describe("acpProjectedCommandExitCode", () => {
   const successOutput = { type: "Bash", exit_code: 0 };
@@ -5965,7 +6043,7 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
-    "pre-settle ext completion arm is cleared when the injected report streams into the held turn",
+    "pre-settle ext completion arm is cleared when the report precedes its end notice",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -6122,7 +6200,15 @@ describe("AcpAdapterV2", () => {
           "settle must hold for deferred background work; midTurn alone must not offer mid-hold",
         );
 
-        // Injected-turn end notice arms pendingInjectedReport on the held turn.
+        // The injected report can race ahead of the end notice. It must be
+        // remembered so the later notice consumes the pre-settle arm.
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Monitor finished. MONITOR_REPORT_TOKEN" },
+          },
+        });
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: {
@@ -6131,15 +6217,6 @@ describe("AcpAdapterV2", () => {
               type: "text",
               text: 'Monitor "task-monitor-1" ended: [monitor ended: exit 0]',
             },
-          },
-        });
-        // Injected report streams into the held turn; must clear the pre-settle
-        // midTurn arm so finalize does not open a duplicate wake.
-        yield* sessionUpdateHandler!({
-          sessionId: "mock-session-1",
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "Monitor finished. MONITOR_REPORT_TOKEN" },
           },
         });
         yield* Effect.yieldNow;
