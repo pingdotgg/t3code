@@ -22,9 +22,17 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
 describe("fitPictureInPictureContentSize", () => {
-  it("fits landscape and portrait viewports without letterboxing the window", () => {
-    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 16 / 9)).toEqual([480, 270]);
-    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 9 / 16)).toEqual([240, 427]);
+  it("preserves the PiP content area across aspect-ratio changes", () => {
+    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 16 / 9)).toEqual([523, 294]);
+    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 9 / 16)).toEqual([294, 523]);
+  });
+
+  it("does not collapse toward the minimum size when orientation changes repeatedly", () => {
+    const portrait = PreviewManager.fitPictureInPictureContentSize([523, 294], 9 / 16);
+    const landscape = PreviewManager.fitPictureInPictureContentSize(portrait, 16 / 9);
+
+    expect(portrait).toEqual([294, 523]);
+    expect(landscape).toEqual([523, 294]);
   });
 });
 
@@ -1065,7 +1073,7 @@ describe("PreviewManager", () => {
           skipTransformProcessType: true,
         });
         expect(pictureInPictureWindow.setAspectRatio.mock.calls).toEqual([[0], [1280 / 720]]);
-        expect(pictureInPictureWindow.setContentSize).toHaveBeenCalledWith(480, 270, false);
+        expect(pictureInPictureWindow.setContentSize).toHaveBeenCalledWith(523, 294, false);
         expect(pictureInPictureWindow.setAspectRatio.mock.invocationCallOrder[0]).toBeLessThan(
           pictureInPictureWindow.setContentSize.mock.invocationCallOrder[0] ?? 0,
         );

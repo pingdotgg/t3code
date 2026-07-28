@@ -51,7 +51,9 @@ export class ManagedEndpointAllocationPersistenceError extends Schema.TaggedErro
       "record-dns",
       "mark-ready",
       "claim-release",
+      "claim-deprovision",
       "remove",
+      "remove-claimed",
     ]),
     stage: Schema.Literals(["database-request", "resolve-reservation"]),
     userId: Schema.String,
@@ -91,6 +93,14 @@ interface ClaimManagedEndpointReleaseInput extends ManagedEndpointAllocationKey 
   readonly updatedAt: string;
 }
 
+interface ClaimManagedEndpointDeprovisionInput extends ManagedEndpointAllocationKey {
+  readonly updatedAt: string;
+}
+
+interface RemoveClaimedManagedEndpointAllocationInput extends ManagedEndpointAllocationKey {
+  readonly updatedAt: string;
+}
+
 export class ManagedEndpointAllocations extends Context.Service<
   ManagedEndpointAllocations,
   {
@@ -119,9 +129,22 @@ export class ManagedEndpointAllocations extends Context.Service<
     readonly claimRelease: (
       input: ClaimManagedEndpointReleaseInput,
     ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
+    /**
+     * Claims the complete allocation for teardown only if its generation still
+     * matches the snapshot captured by the unlink operation.
+     *
+     * Returns the claim generation used by `removeClaimed`, or null when a
+     * concurrent provision has already superseded the snapshot.
+     */
+    readonly claimDeprovision: (
+      input: ClaimManagedEndpointDeprovisionInput,
+    ) => Effect.Effect<string | null, ManagedEndpointAllocationPersistenceError>;
     readonly remove: (
       input: ManagedEndpointAllocationKey,
     ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+    readonly removeClaimed: (
+      input: RemoveClaimedManagedEndpointAllocationInput,
+    ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
   }
 >()("t3code-relay/environments/ManagedEndpointAllocations") {}
 
@@ -321,6 +344,35 @@ export const make = Effect.gen(function* () {
         );
       return claimed;
     }),
+    claimDeprovision: Effect.fn("relay.managed_endpoint_allocations.claim_deprovision")(function* (
+      input: ClaimManagedEndpointDeprovisionInput,
+    ) {
+      const claimedAt = DateTime.formatIso(yield* DateTime.now);
+      const claimed = yield* db
+        .update(relayManagedEndpointAllocations)
+        .set({ updatedAt: claimedAt })
+        .where(
+          and(
+            whereAllocation(input),
+            eq(relayManagedEndpointAllocations.updatedAt, input.updatedAt),
+          ),
+        )
+        .returning({ userId: relayManagedEndpointAllocations.userId })
+        .pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointAllocationPersistenceError({
+                operation: "claim-deprovision",
+                stage: "database-request",
+                userId: input.userId,
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+      return claimed ? claimedAt : null;
+    }),
     remove: Effect.fn("relay.managed_endpoint_allocations.remove")(function* (
       input: ManagedEndpointAllocationKey,
     ) {
@@ -334,6 +386,32 @@ export const make = Effect.gen(function* () {
                 operation: "remove",
                 stage: "database-request",
                 ...input,
+                cause,
+              }),
+          ),
+        );
+    }),
+    removeClaimed: Effect.fn("relay.managed_endpoint_allocations.remove_claimed")(function* (
+      input: RemoveClaimedManagedEndpointAllocationInput,
+    ) {
+      return yield* db
+        .delete(relayManagedEndpointAllocations)
+        .where(
+          and(
+            whereAllocation(input),
+            eq(relayManagedEndpointAllocations.updatedAt, input.updatedAt),
+          ),
+        )
+        .returning({ userId: relayManagedEndpointAllocations.userId })
+        .pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointAllocationPersistenceError({
+                operation: "remove-claimed",
+                stage: "database-request",
+                userId: input.userId,
+                environmentId: input.environmentId,
                 cause,
               }),
           ),
