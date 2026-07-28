@@ -145,6 +145,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   HistoryIcon,
+  RadioTowerIcon,
   TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -238,6 +239,7 @@ import {
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { Switch } from "./ui/switch";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -1287,6 +1289,11 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
+  // Remote Control can only be decided once, at thread creation — it's a
+  // launch flag for the session's underlying `claude` process, not
+  // something that can be toggled after it's already running. Reset
+  // whenever the viewed thread changes so it never leaks between drafts.
+  const [draftRemoteControlEnabled, setDraftRemoteControlEnabled] = useState(false);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
   const [
     pendingServerThreadStartFromOriginByThreadId,
@@ -4130,6 +4137,19 @@ function ChatViewContent(props: ChatViewProps) {
   const pendingResumeSessionIntent = useResumeSessionIntentStore((store) =>
     isLocalDraftThread && activeThread ? (store.intentByThreadId[activeThread.id] ?? null) : null,
   );
+  const cancelResumeSessionIntent = useCallback((draftThreadId: ThreadId) => {
+    // Deliberately NOT wired through ComposerBannerStack's `onDismiss`
+    // (dismissLabel/onDismiss): that callback is deferred ~220ms behind an
+    // exit animation, and this specific banner's host `ComposerBannerStack`
+    // instance can unmount mid-animation when a resume draft docks out of
+    // hero layout on send — which drops the deferred callback entirely, so
+    // a fast cancel-then-send could still resume. Clearing both stores here,
+    // synchronously, from a plain button click closes that race: this
+    // `useMemo` reacts to the store instantly and the banner just disappears
+    // (no animation needed for correctness, only for polish).
+    useResumeSessionIntentStore.getState().clearResumeSessionIntent(draftThreadId);
+    useResumeSessionHistoryStore.getState().clearResumeSessionHistory(draftThreadId);
+  }, []);
   const resumeSessionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!pendingResumeSessionIntent || !isLocalDraftThread || !activeThread) return null;
     const draftThreadId = activeThread.id;
@@ -4139,21 +4159,48 @@ function ChatViewContent(props: ChatViewProps) {
       icon: <HistoryIcon />,
       title: "Resuming a previous Claude session",
       description: pendingResumeSessionIntent.label ?? undefined,
-      dismissLabel: "Cancel resume",
-      onDismiss: () => {
-        useResumeSessionIntentStore.getState().clearResumeSessionIntent(draftThreadId);
-      },
+      actions: (
+        <Button size="xs" variant="ghost" onClick={() => cancelResumeSessionIntent(draftThreadId)}>
+          Cancel
+        </Button>
+      ),
     };
-  }, [pendingResumeSessionIntent, isLocalDraftThread, activeThread]);
+  }, [pendingResumeSessionIntent, isLocalDraftThread, activeThread, cancelResumeSessionIntent]);
+  const canOfferRemoteControlToggle =
+    isLocalDraftThread && selectedProvider === ProviderDriverKind.make("claudeAgent");
+  const remoteControlBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!canOfferRemoteControlToggle) return null;
+    return {
+      id: "draft-remote-control",
+      variant: "info",
+      icon: <RadioTowerIcon />,
+      title: "Remote Control",
+      description: "Attach to this session from claude.ai or the Claude mobile app once it starts.",
+      actions: (
+        <Switch
+          checked={draftRemoteControlEnabled}
+          onCheckedChange={(checked) => setDraftRemoteControlEnabled(Boolean(checked))}
+          aria-label="Enable Remote Control for this session"
+        />
+      ),
+    };
+  }, [canOfferRemoteControlToggle, draftRemoteControlEnabled]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     const resumeSessionItems = resumeSessionBannerItem === null ? [] : [resumeSessionBannerItem];
+    const remoteControlItems = remoteControlBannerItem === null ? [] : [remoteControlBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
-      return [...systemComposerBannerItems, ...resumeSessionItems, ...parkedThreadItems];
+      return [
+        ...systemComposerBannerItems,
+        ...resumeSessionItems,
+        ...remoteControlItems,
+        ...parkedThreadItems,
+      ];
     }
     return [
       ...systemComposerBannerItems,
       ...resumeSessionItems,
+      ...remoteControlItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",
@@ -4198,6 +4245,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     resumeSessionBannerItem,
+    remoteControlBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -4209,6 +4257,10 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    setDraftRemoteControlEnabled(false);
   }, [activeThread?.id]);
 
   useEffect(() => {
@@ -4791,6 +4843,7 @@ function ChatViewContent(props: ChatViewProps) {
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                       ...(resumeExternalSessionId ? { resumeExternalSessionId } : {}),
+                      ...(draftRemoteControlEnabled ? { remoteControl: true } : {}),
                     },
                   }
                 : {}),

@@ -62,6 +62,17 @@ const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 const JSONL_EXTENSION = ".jsonl";
 const MAX_LABEL_LENGTH = 80;
 const MAX_TRANSCRIPT_MESSAGES = 200;
+// Every Claude Code session id observed on disk is a UUID (the filename
+// stem of `<sessionId>.jsonl`). `sessionId` is caller-controlled input that
+// gets interpolated into a filesystem path (`getTranscript`) — validating it
+// against this shape before doing anything with it closes off path
+// traversal (`../../other-project/secret`) rather than merely resolving to
+// a possibly-out-of-bounds path and hoping the caller was honest.
+const CLAUDE_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidClaudeSessionId(sessionId: string): boolean {
+  return CLAUDE_SESSION_ID_PATTERN.test(sessionId);
+}
 
 function encodeCwdForClaudeProjectDir(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
@@ -220,10 +231,13 @@ function parseTranscriptMessages(
   return messages;
 }
 
-export interface ClaudeSessionHistoryBindResumeSessionInput {
+export interface ClaudeSessionHistoryBindSessionLaunchOptionsInput {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly resumeExternalSessionId: string;
+  /** Resume a picked on-disk session's model context via `--resume <uuid>`. */
+  readonly resumeExternalSessionId?: string;
+  /** Start the session with Claude Code's Remote Control (`--remote-control`) enabled. */
+  readonly remoteControl?: boolean;
 }
 
 export class ClaudeSessionHistory extends Context.Service<
@@ -242,12 +256,14 @@ export class ClaudeSessionHistory extends Context.Service<
       input: ServerGetClaudeResumableSessionTranscriptInput,
     ) => Effect.Effect<ServerGetClaudeResumableSessionTranscriptResult>;
     /**
-     * Binds a picked on-disk Claude session to a thread's provider session
-     * directory entry, so the next turn resumes it via `--resume <uuid>`.
-     * Fails if the target provider instance isn't a Claude instance.
+     * Binds thread-creation-time Claude launch choices (resume a picked
+     * on-disk session, and/or start with Remote Control enabled) onto a
+     * thread's provider session directory entry, so they take effect on the
+     * next (first) turn. No-op if neither option is set. Fails if the
+     * target provider instance isn't a Claude instance.
      */
-    readonly bindResumeSession: (
-      input: ClaudeSessionHistoryBindResumeSessionInput,
+    readonly bindSessionLaunchOptions: (
+      input: ClaudeSessionHistoryBindSessionLaunchOptionsInput,
     ) => Effect.Effect<void, ProviderValidationError | ProviderSessionDirectoryWriteError>;
   }
 >()("t3/provider/Layers/ClaudeSessionHistory") {}
@@ -266,12 +282,15 @@ export const make = Effect.gen(function* () {
   // rather than failing the whole listing — best-effort, matching `list`'s
   // other file-not-found handling.
   const resolveConfigDirPathForInstance = Effect.fn("ClaudeSessionHistory.resolveConfigDirPath")(
-    function* (providerInstanceId: ProviderInstanceId | undefined) {
+    function* (input: {
+      readonly providerInstanceId: ProviderInstanceId | undefined;
+      readonly workspaceRoot: string;
+    }) {
       const homePath = yield* Effect.gen(function* () {
-        if (providerInstanceId === undefined) return "";
+        if (input.providerInstanceId === undefined) return "";
         const settings = yield* serverSettings.getSettings;
         const configMap = deriveProviderInstanceConfigMap(settings);
-        const entry = configMap[providerInstanceId];
+        const entry = configMap[input.providerInstanceId];
         const decoded = yield* decodeClaudeSettings(entry?.config ?? {});
         return decoded.homePath;
       }).pipe(Effect.orElseSucceed(() => ""));
@@ -279,7 +298,11 @@ export const make = Effect.gen(function* () {
       // satisfy it from the already-resolved `path` in scope so this stays
       // free of a `Path.Path` requirement of its own (see the `list`/`make`
       // split above — required for `Layer.provideMerge` to fully resolve it).
-      return yield* resolveClaudeConfigDirPath({ homePath }, process.env).pipe(
+      // `workspaceRoot` is passed as `cwd`: when `homePath` is unset and a
+      // *relative* `CLAUDE_CONFIG_DIR` is set in the environment, it must be
+      // resolved the same way the spawned `claude` subprocess itself
+      // resolves it — against the workspace cwd, not the server's own cwd.
+      return yield* resolveClaudeConfigDirPath({ homePath }, process.env, input.workspaceRoot).pipe(
         Effect.provideService(Path.Path, path),
       );
     },
@@ -290,7 +313,10 @@ export const make = Effect.gen(function* () {
       readonly workspaceRoot: string;
       readonly providerInstanceId?: ProviderInstanceId | undefined;
     }) {
-      const configDirPath = yield* resolveConfigDirPathForInstance(input.providerInstanceId);
+      const configDirPath = yield* resolveConfigDirPathForInstance({
+        providerInstanceId: input.providerInstanceId,
+        workspaceRoot: input.workspaceRoot,
+      });
       return path.join(
         configDirPath,
         "projects",
@@ -350,6 +376,16 @@ export const make = Effect.gen(function* () {
   const getTranscript: ClaudeSessionHistory["Service"]["getTranscript"] = Effect.fn(
     "ClaudeSessionHistory.getTranscript",
   )(function* (input) {
+    // Best-effort/display-only endpoint (see class doc), so an invalid
+    // sessionId — most importantly one crafted to escape `projectDirPath`
+    // via `../` traversal segments — degrades to "no history to show"
+    // rather than a hard error, matching this file's other not-found
+    // handling. The validation itself is still load-bearing: it's what
+    // stops `path.join` below from ever being handed a value that resolves
+    // outside `projectDirPath`.
+    if (!isValidClaudeSessionId(input.sessionId)) {
+      return { messages: [] };
+    }
     const projectDirPath = yield* resolveProjectDirPath(input);
     const filePath = path.join(projectDirPath, `${input.sessionId}${JSONL_EXTENSION}`);
     const raw = yield* fileSystem.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
@@ -362,31 +398,47 @@ export const make = Effect.gen(function* () {
     return { messages: trimmedMessages };
   });
 
-  const bindResumeSession: ClaudeSessionHistory["Service"]["bindResumeSession"] = Effect.fn(
-    "ClaudeSessionHistory.bindResumeSession",
-  )(function* (input) {
-    const instance = yield* providerInstanceRegistry.getInstance(input.providerInstanceId);
-    if (!instance) {
-      return yield* new ProviderValidationError({
-        operation: "ClaudeSessionHistory.bindResumeSession",
-        issue: `Provider instance '${input.providerInstanceId}' is not configured.`,
+  const bindSessionLaunchOptions: ClaudeSessionHistory["Service"]["bindSessionLaunchOptions"] =
+    Effect.fn("ClaudeSessionHistory.bindSessionLaunchOptions")(function* (input) {
+      if (input.resumeExternalSessionId === undefined && !input.remoteControl) {
+        return;
+      }
+      if (
+        input.resumeExternalSessionId !== undefined &&
+        !isValidClaudeSessionId(input.resumeExternalSessionId)
+      ) {
+        return yield* new ProviderValidationError({
+          operation: "ClaudeSessionHistory.bindSessionLaunchOptions",
+          issue: `resumeExternalSessionId must be a Claude session UUID; received '${input.resumeExternalSessionId}'.`,
+        });
+      }
+      const instance = yield* providerInstanceRegistry.getInstance(input.providerInstanceId);
+      if (!instance) {
+        return yield* new ProviderValidationError({
+          operation: "ClaudeSessionHistory.bindSessionLaunchOptions",
+          issue: `Provider instance '${input.providerInstanceId}' is not configured.`,
+        });
+      }
+      if (instance.driverKind !== CLAUDE_PROVIDER) {
+        return yield* new ProviderValidationError({
+          operation: "ClaudeSessionHistory.bindSessionLaunchOptions",
+          issue: `Resume/Remote Control are only supported for Claude Code provider instances; '${input.providerInstanceId}' is a '${instance.driverKind}' instance.`,
+        });
+      }
+      yield* providerSessionDirectory.upsert({
+        threadId: input.threadId,
+        provider: instance.driverKind,
+        providerInstanceId: input.providerInstanceId,
+        resumeCursor: {
+          ...(input.resumeExternalSessionId !== undefined
+            ? { resume: input.resumeExternalSessionId }
+            : {}),
+          ...(input.remoteControl ? { remoteControl: true } : {}),
+        },
       });
-    }
-    if (instance.driverKind !== CLAUDE_PROVIDER) {
-      return yield* new ProviderValidationError({
-        operation: "ClaudeSessionHistory.bindResumeSession",
-        issue: `resumeExternalSessionId is only supported for Claude Code provider instances; '${input.providerInstanceId}' is a '${instance.driverKind}' instance.`,
-      });
-    }
-    yield* providerSessionDirectory.upsert({
-      threadId: input.threadId,
-      provider: instance.driverKind,
-      providerInstanceId: input.providerInstanceId,
-      resumeCursor: { resume: input.resumeExternalSessionId },
     });
-  });
 
-  return ClaudeSessionHistory.of({ list, getTranscript, bindResumeSession });
+  return ClaudeSessionHistory.of({ list, getTranscript, bindSessionLaunchOptions });
 });
 
 export const layer = Layer.effect(ClaudeSessionHistory, make);

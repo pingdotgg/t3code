@@ -120,6 +120,12 @@ interface ClaudeResumeState {
   readonly resume?: string;
   readonly resumeSessionAt?: string;
   readonly turnCount?: number;
+  // Per-thread, decided once at thread creation (see
+  // ClaudeSessionHistory.bindSessionLaunchOptions) — not a resume concept,
+  // just piggybacking on the same opaque per-thread `resumeCursor` bag
+  // rather than growing ProviderSessionStartInput's cross-provider schema
+  // for a single-driver launch flag.
+  readonly remoteControl?: boolean;
 }
 
 interface ClaudeTurnState {
@@ -565,6 +571,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     sessionId?: unknown;
     resumeSessionAt?: unknown;
     turnCount?: unknown;
+    remoteControl?: unknown;
   };
 
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
@@ -582,6 +589,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
   const resumeSessionAt =
     typeof cursor.resumeSessionAt === "string" ? cursor.resumeSessionAt : undefined;
   const turnCountValue = typeof cursor.turnCount === "number" ? cursor.turnCount : undefined;
+  const remoteControl = cursor.remoteControl === true ? true : undefined;
 
   return {
     ...(threadId ? { threadId } : {}),
@@ -590,6 +598,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     ...(turnCountValue !== undefined && Number.isInteger(turnCountValue) && turnCountValue >= 0
       ? { turnCount: turnCountValue }
       : {}),
+    ...(remoteControl ? { remoteControl } : {}),
   };
 }
 
@@ -3486,7 +3495,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const claudeBinaryPath = claudeSdkExecutablePath;
       const extraArgs = {
         ...parseCliArgs(claudeSettings.launchArgs).flags,
-        ...(claudeSettings.remoteControl ? { "remote-control": null } : {}),
+        // Either the per-instance persistent setting or a per-thread
+        // choice made when the thread was created (see
+        // ClaudeSessionHistory.bindSessionLaunchOptions) enables it.
+        ...(claudeSettings.remoteControl || resumeState?.remoteControl
+          ? { "remote-control": null }
+          : {}),
       };
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;

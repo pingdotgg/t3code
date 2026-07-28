@@ -998,14 +998,16 @@ const makeWsRpcLayer = (
               });
               createdThread = true;
 
-              const resumeExternalSessionId = bootstrap.createThread.resumeExternalSessionId;
-              if (resumeExternalSessionId) {
-                yield* claudeSessionHistory.bindResumeSession({
-                  threadId: command.threadId,
-                  providerInstanceId: bootstrap.createThread.modelSelection.instanceId,
-                  resumeExternalSessionId,
-                });
-              }
+              yield* claudeSessionHistory.bindSessionLaunchOptions({
+                threadId: command.threadId,
+                providerInstanceId: bootstrap.createThread.modelSelection.instanceId,
+                ...(bootstrap.createThread.resumeExternalSessionId !== undefined
+                  ? { resumeExternalSessionId: bootstrap.createThread.resumeExternalSessionId }
+                  : {}),
+                ...(bootstrap.createThread.remoteControl
+                  ? { remoteControl: bootstrap.createThread.remoteControl }
+                  : {}),
+              });
             }
 
             if (bootstrap?.prepareWorktree) {

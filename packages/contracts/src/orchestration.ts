@@ -656,6 +656,12 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   // because only Claude's on-disk transcript format is verified; other
   // providers' resume cursors are not derived from this field.
   resumeExternalSessionId: Schema.optional(TrimmedNonEmptyString),
+  // Claude-only: start this brand-new thread's session with Claude Code's
+  // Remote Control enabled (`--remote-control`), bound the same way and at
+  // the same point as `resumeExternalSessionId` above (both are decided
+  // once, at thread-creation time, and can't be changed after the session
+  // has started).
+  remoteControl: Schema.optional(Schema.Boolean),
 });
 
 const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({

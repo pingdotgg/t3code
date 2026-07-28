@@ -4,7 +4,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { ChevronLeftIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -57,6 +57,11 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
   );
   const [selectedProject, setSelectedProject] = useState<EnvironmentProject | null>(null);
   const [isResuming, setIsResuming] = useState(false);
+  // `isResuming` state isn't visible synchronously to the same tick a second
+  // click would fire in (React batches the update), so a fast double-click
+  // could pass the state check twice and kick off two competing resumes. A
+  // ref is updated (and read) synchronously, closing that race.
+  const isResumingRef = useRef(false);
 
   const sortedProjects = useMemo(
     () => [...projects].sort((left, right) => left.title.localeCompare(right.title)),
@@ -66,6 +71,7 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedProject?.environmentId ?? null),
   );
+  const isProviderConfigPending = selectedProject !== null && serverConfig === null;
   const claudeProviders = useMemo(
     () => (serverConfig?.providers ?? []).filter((provider) => provider.driver === CLAUDE_DRIVER),
     [serverConfig],
@@ -115,7 +121,8 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
 
   const handleResume = useCallback(
     async (sessionId: string) => {
-      if (!selectedProject || !claudeInstanceId || !claudeModel || isResuming) return;
+      if (!selectedProject || !claudeInstanceId || !claudeModel || isResumingRef.current) return;
+      isResumingRef.current = true;
       setIsResuming(true);
       try {
         const projectRef = scopeProjectRef(selectedProject.environmentId, selectedProject.id);
@@ -123,6 +130,25 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
           selectedProject,
           projectGroupingSettings,
         );
+        const { getComposerDraft, getDraftThreadByProjectRef } = useComposerDraftStore.getState();
+        const existingDraft = getDraftThreadByProjectRef(projectRef);
+        if (existingDraft) {
+          const existingComposerState = getComposerDraft(existingDraft.draftId);
+          const hasUnsentContent =
+            (existingComposerState?.prompt.trim().length ?? 0) > 0 ||
+            (existingComposerState?.images.length ?? 0) > 0 ||
+            (existingComposerState?.persistedAttachments.length ?? 0) > 0;
+          if (hasUnsentContent) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "You have an unsent draft for this project",
+                description: "Send or clear it before resuming a different Claude session.",
+              }),
+            );
+            return;
+          }
+        }
         const draftId = newDraftId();
         const threadId = newThreadId();
         const { setLogicalProjectDraftThreadId, setModelSelection } =
@@ -178,6 +204,7 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
           }),
         );
       } finally {
+        isResumingRef.current = false;
         setIsResuming(false);
       }
     },
@@ -185,7 +212,6 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
       selectedProject,
       claudeInstanceId,
       claudeModel,
-      isResuming,
       projectGroupingSettings,
       router,
       sessions,
@@ -240,7 +266,11 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
                 <ChevronLeftIcon className="size-3.5" />
                 Back to projects
               </button>
-              {!claudeInstanceId || !claudeModel ? (
+              {isProviderConfigPending ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  Loading provider configuration…
+                </p>
+              ) : !claudeInstanceId || !claudeModel ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">
                   No Claude Code provider is configured for this environment.
                 </p>

@@ -279,6 +279,9 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         title: "Remote Control",
         description:
           "Start sessions with Claude Code's Remote Control enabled (--remote-control), so you can attach from claude.ai or the Claude mobile app.",
+        providerSettingsForm: {
+          control: "switch",
+        },
       }),
     ),
   },

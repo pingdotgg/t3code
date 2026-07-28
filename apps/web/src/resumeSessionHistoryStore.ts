@@ -27,6 +27,7 @@ interface ResumeSessionHistoryStoreState {
     threadId: ThreadId,
     messages: ReadonlyArray<ResumeSessionHistoryMessage>,
   ) => void;
+  readonly clearResumeSessionHistory: (threadId: ThreadId) => void;
 }
 
 export const useResumeSessionHistoryStore = create<ResumeSessionHistoryStoreState>((set) => ({
@@ -35,5 +36,13 @@ export const useResumeSessionHistoryStore = create<ResumeSessionHistoryStoreStat
     set((state) => ({
       historyByThreadId: { ...state.historyByThreadId, [threadId]: messages },
     }));
+  },
+  clearResumeSessionHistory: (threadId) => {
+    set((state) => {
+      if (!(threadId in state.historyByThreadId)) return state;
+      const next = { ...state.historyByThreadId };
+      delete next[threadId];
+      return { historyByThreadId: next };
+    });
   },
 }));
