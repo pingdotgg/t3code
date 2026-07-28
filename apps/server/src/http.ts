@@ -30,7 +30,7 @@ import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
+import { HttpResponseCompression } from "./httpCompression/HttpResponseCompression.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import {
   annotateEnvironmentRequest,
@@ -67,11 +67,10 @@ function varyByAcceptEncoding(value: string | undefined): string {
   return values.has("*") || values.has("accept-encoding") ? value : `${value}, Accept-Encoding`;
 }
 
-export function compressHttpResponse(
+export const compressHttpResponse = Effect.fnUntraced(function* (
   response: HttpServerResponse.HttpServerResponse,
   acceptEncoding: string | undefined,
-  compression: HttpResponseCompression.HttpResponseCompression["Service"],
-): HttpServerResponse.HttpServerResponse {
+) {
   const body = response.body;
   if (
     body._tag !== "Uint8Array" ||
@@ -89,6 +88,7 @@ export function compressHttpResponse(
   );
   if (!acceptsGzip(acceptEncoding)) return variedResponse;
 
+  const compression = yield* HttpResponseCompression;
   const headers = Headers.set(
     Headers.remove(variedResponse.headers, "content-length"),
     "content-encoding",
@@ -101,18 +101,13 @@ export function compressHttpResponse(
     cookies: response.cookies,
     contentType: body.contentType,
   });
-}
+});
 
 export const httpCompressionLayer = HttpRouter.middleware(
   (httpEffect) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const compression = yield* HttpResponseCompression.HttpResponseCompression;
-      return compressHttpResponse(
-        yield* httpEffect,
-        request.headers["accept-encoding"],
-        compression,
-      );
+      return yield* compressHttpResponse(yield* httpEffect, request.headers["accept-encoding"]);
     }),
   { global: true },
 );

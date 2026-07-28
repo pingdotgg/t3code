@@ -8,12 +8,6 @@ import { describe } from "vite-plus/test";
 import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import { compressHttpResponse, isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
 
-const compressionUnavailable = HttpResponseCompression.HttpResponseCompression.of({
-  gzip: () => {
-    throw new Error("Unexpected HTTP response compression.");
-  },
-});
-
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
     expect(isLoopbackHostname("127.0.0.1")).toBe(true);
@@ -38,15 +32,13 @@ describe("http dev routing", () => {
   });
 });
 
-describe("http compression", () => {
+it.layer(HttpResponseCompression.layerNode)("http compression", (it) => {
   it.effect("gzips large JSON responses when the client accepts it", () =>
     Effect.gen(function* () {
       const body = `{"value":"${"compressible".repeat(1_000)}"}`;
-      const compression = yield* HttpResponseCompression.HttpResponseCompression;
-      const response = compressHttpResponse(
+      const response = yield* compressHttpResponse(
         HttpServerResponse.text(body, { contentType: "application/json" }),
         "br, gzip, deflate",
-        compression,
       );
 
       expect(response.headers["content-encoding"]).toBe("gzip");
@@ -67,33 +59,37 @@ describe("http compression", () => {
         return chunks;
       });
       expect(NodeZlib.gunzipSync(Buffer.concat(chunks)).toString()).toBe(body);
-    }).pipe(Effect.provide(HttpResponseCompression.layerNode)),
+    }),
   );
 
-  it("keeps the original body when gzip is declined", () => {
-    const response = compressHttpResponse(
-      HttpServerResponse.text("x".repeat(2_000), { contentType: "application/json" }),
-      "gzip;q=0, *;q=1",
-      compressionUnavailable,
-    );
-
-    expect(response.headers["content-encoding"]).toBeUndefined();
-    expect(response.headers["content-length"]).toBe("2000");
-    expect(response.headers.vary).toBe("Accept-Encoding");
-  });
-
-  it("preserves existing Vary semantics", () => {
-    const makeResponse = (vary: string) =>
-      compressHttpResponse(
-        HttpServerResponse.text("x".repeat(2_000), {
-          contentType: "application/json",
-          headers: { vary },
-        }),
-        undefined,
-        compressionUnavailable,
+  it.effect("keeps the original body when gzip is declined", () =>
+    Effect.gen(function* () {
+      const response = yield* compressHttpResponse(
+        HttpServerResponse.text("x".repeat(2_000), { contentType: "application/json" }),
+        "gzip;q=0, *;q=1",
       );
 
-    expect(makeResponse("*").headers.vary).toBe("*");
-    expect(makeResponse("Origin, accept-encoding").headers.vary).toBe("Origin, accept-encoding");
-  });
+      expect(response.headers["content-encoding"]).toBeUndefined();
+      expect(response.headers["content-length"]).toBe("2000");
+      expect(response.headers.vary).toBe("Accept-Encoding");
+    }),
+  );
+
+  it.effect("preserves existing Vary semantics", () =>
+    Effect.gen(function* () {
+      const makeResponse = (vary: string) =>
+        compressHttpResponse(
+          HttpServerResponse.text("x".repeat(2_000), {
+            contentType: "application/json",
+            headers: { vary },
+          }),
+          undefined,
+        );
+
+      expect((yield* makeResponse("*")).headers.vary).toBe("*");
+      expect((yield* makeResponse("Origin, accept-encoding")).headers.vary).toBe(
+        "Origin, accept-encoding",
+      );
+    }),
+  );
 });
