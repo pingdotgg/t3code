@@ -176,6 +176,33 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     });
   });
 
+  it("links relative windows-style paths by normalizing backslashes", () => {
+    expect(resolveInlineCodeFileLinkMeta("src\\main.ts", "/Users/julius/project")).toMatchObject({
+      targetPath: "/Users/julius/project/src/main.ts",
+      basename: "main.ts",
+    });
+    expect(
+      resolveInlineCodeFileLinkMeta(".\\scripts\\deploy", "/Users/julius/project"),
+    ).toMatchObject({
+      basename: "deploy",
+    });
+  });
+
+  it("ignores hosts, ports, and versions", () => {
+    expect(resolveInlineCodeFileLinkMeta("127.0.0.1:3000", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("localhost:3000", "/Users/julius/project")).toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("example.com/index.html", "/Users/julius/project"),
+    ).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("example.com:8080", "/Users/julius/project")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("10.0.0.1:80:1", "/Users/julius/project")).toBeNull();
+  });
+
+  it("still links files whose extension merely resembles a tld", () => {
+    expect(resolveInlineCodeFileLinkMeta("script.ts:10", "/Users/julius/project")).not.toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("src/setup.sh:3", "/Users/julius/project")).not.toBeNull();
+  });
+
   it("ignores commands, flags, and expressions", () => {
     expect(resolveInlineCodeFileLinkMeta("git worktree list --porcelain")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("node.meta", "/Users/julius/project")).toBeNull();

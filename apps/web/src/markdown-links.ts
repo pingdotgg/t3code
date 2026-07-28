@@ -173,6 +173,43 @@ export function resolveMarkdownFileLinkTarget(
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
+const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
+const COMMON_HOSTNAME_TLDS = new Set([
+  "com",
+  "net",
+  "org",
+  "io",
+  "dev",
+  "app",
+  "ai",
+  "co",
+  "edu",
+  "gov",
+  "mil",
+  "info",
+  "biz",
+  "xyz",
+  "me",
+  "tv",
+  "cc",
+  "gg",
+  "chat",
+  "cloud",
+  "site",
+  "online",
+  "tech",
+  "store",
+  "link",
+]);
+
+/** `127.0.0.1`, `example.com`, `1.2.3` — hosts and versions, not files. */
+function looksLikeHostname(segment: string): boolean {
+  if (segment.startsWith(".")) return false;
+  if (NUMERIC_DOTTED_PATTERN.test(segment)) return true;
+  const labels = segment.toLowerCase().split(".");
+  const lastLabel = labels[labels.length - 1];
+  return labels.length >= 2 && lastLabel !== undefined && COMMON_HOSTNAME_TLDS.has(lastLabel);
+}
 
 /**
  * Inline code spans mostly hold identifiers, commands, and refs (`node.meta`,
@@ -184,8 +221,16 @@ export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
 ): MarkdownFileLinkMeta | null {
-  const candidate = codeText.trim();
-  if (candidate.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(candidate)) return null;
+  const trimmed = codeText.trim();
+  if (trimmed.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(trimmed)) return null;
+
+  // Windows drive/UNC paths keep their backslashes; any other backslashes are
+  // relative Windows-style paths, which neither the shape checks nor the
+  // downstream resolver understand — normalize them to forward slashes.
+  const candidate =
+    WINDOWS_DRIVE_PATH_PATTERN.test(trimmed) || WINDOWS_UNC_PATH_PATTERN.test(trimmed)
+      ? trimmed
+      : trimmed.replaceAll("\\", "/");
 
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
@@ -195,12 +240,13 @@ export function resolveInlineCodeFileLinkMeta(
     candidate.startsWith("/") ||
     WINDOWS_DRIVE_PATH_PATTERN.test(candidate) ||
     WINDOWS_UNC_PATH_PATTERN.test(candidate);
-  if (
-    !hasPosition &&
-    !hasExplicitPathShape &&
-    !FILE_EXTENSION_PATTERN.test(basenameOfPath(candidate))
-  ) {
-    return null;
+  if (!hasExplicitPathShape) {
+    const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
+    const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
+    if (looksLikeHostname(firstSegment)) return null;
+    if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basenameOfPath(withoutPosition))) {
+      return null;
+    }
   }
 
   return resolveMarkdownFileLinkMeta(candidate, cwd);

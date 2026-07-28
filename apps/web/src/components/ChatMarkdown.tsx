@@ -260,12 +260,14 @@ function remarkPreserveCodeMeta() {
 /**
  * Fenced code also lands on the `code` component, and inline vs block is no
  * longer distinguishable there once both render `<code>` — so inline spans are
- * tagged on the mdast, where the distinction still exists.
+ * tagged on the mdast, where the distinction still exists. Code inside a link
+ * label stays untagged: linkifying it would nest an anchor inside the link's
+ * anchor and steal its clicks.
  */
 function remarkTagInlineCode() {
   return (tree: MarkdownAstNode) => {
-    const visit = (node: MarkdownAstNode) => {
-      if (node.type === "inlineCode") {
+    const visit = (node: MarkdownAstNode, insideLink: boolean) => {
+      if (node.type === "inlineCode" && !insideLink) {
         node.data = {
           ...node.data,
           hProperties: {
@@ -274,10 +276,11 @@ function remarkTagInlineCode() {
           },
         };
       }
-      node.children?.forEach(visit);
+      const childInsideLink = insideLink || node.type === "link" || node.type === "linkReference";
+      node.children?.forEach((child) => visit(child, childInsideLink));
     };
 
-    visit(tree);
+    visit(tree, false);
   };
 }
 
