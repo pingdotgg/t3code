@@ -68,6 +68,7 @@ import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation
 import {
   normalizeMarkdownLinkDestination,
   resolveMarkdownFileLinkMeta,
+  resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
@@ -127,6 +128,8 @@ const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "d
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
+const FILE_LINK_PARENT_SUFFIX_DATA_ATTRIBUTE = "data-file-link-parent-suffix";
+const FILE_LINK_PARENT_SUFFIX_PROPERTY = "dataFileLinkParentSuffix";
 
 interface MarkdownActionFailureContext {
   readonly operation: string;
@@ -161,7 +164,10 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
-    "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+    "*": [
+      ...(defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+      FILE_LINK_PARENT_SUFFIX_PROPERTY,
+    ],
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta"],
   },
   protocols: {
@@ -227,6 +233,7 @@ function extractPreCodeMeta(node: unknown): string | undefined {
 
 type MarkdownAstNode = {
   type?: string;
+  url?: string;
   meta?: unknown;
   data?: {
     hProperties?: Record<string, unknown>;
@@ -752,7 +759,6 @@ interface MarkdownFileLinkProps {
   className?: string | undefined;
 }
 
-const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link cursor-pointer transition-colors hover:bg-accent/70";
 
@@ -816,19 +822,42 @@ function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<
   return suffixByPath;
 }
 
-function extractMarkdownLinkHrefs(text: string): string[] {
-  const hrefs: string[] = [];
-  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
-    const href = match[1]?.trim();
-    if (!href) continue;
-    hrefs.push(href);
-  }
-  return hrefs;
-}
+function createFileLinkDisambiguationPlugin(cwd: string | undefined) {
+  return () => (tree: MarkdownAstNode) => {
+    const fileLinks: Array<{
+      node: MarkdownAstNode;
+      meta: NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>;
+    }> = [];
 
-function normalizeMarkdownLinkHrefKey(href: string): string {
-  const normalizedHref = normalizeMarkdownLinkDestination(href);
-  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+    const visit = (node: MarkdownAstNode) => {
+      if (node.type === "link" && typeof node.url === "string") {
+        const meta = resolveMarkdownFileLinkMeta(node.url, cwd);
+        if (meta) {
+          fileLinks.push({ node, meta });
+        }
+      }
+      for (const child of node.children ?? []) {
+        visit(child);
+      }
+    };
+
+    visit(tree);
+
+    const suffixByPath = buildFileLinkParentSuffixByPath(
+      fileLinks.map((fileLink) => fileLink.meta.filePath),
+    );
+    for (const { node, meta } of fileLinks) {
+      const parentSuffix = suffixByPath.get(meta.filePath);
+      if (!parentSuffix) continue;
+      node.data = {
+        ...node.data,
+        hProperties: {
+          ...node.data?.hProperties,
+          [FILE_LINK_PARENT_SUFFIX_PROPERTY]: parentSuffix,
+        },
+      };
+    }
+  };
 }
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
@@ -1266,28 +1295,22 @@ function ChatMarkdown({
     serverConfig?.availableEditors ?? [],
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
-  const markdownFileLinkMetaByHref = useMemo(() => {
-    const metaByHref = new Map<
-      string,
-      NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
-    >();
-    for (const href of extractMarkdownLinkHrefs(text)) {
-      const normalizedHref = normalizeMarkdownLinkHrefKey(href);
-      if (metaByHref.has(normalizedHref)) continue;
-      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
-      if (meta) {
-        metaByHref.set(normalizedHref, meta);
-      }
-    }
-    return metaByHref;
-  }, [cwd, text]);
-  const fileLinkParentSuffixByPath = useMemo(() => {
-    const filePaths = [...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath);
-    return buildFileLinkParentSuffixByPath(filePaths);
-  }, [markdownFileLinkMetaByHref]);
-  const markdownUrlTransform = useCallback((href: string) => {
-    return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
-  }, []);
+  const remarkPlugins = useMemo(
+    () => [
+      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      createFileLinkDisambiguationPlugin(cwd),
+    ],
+    [cwd, lineBreaks],
+  );
+  const markdownUrlTransform = useCallback(
+    (href: string) => {
+      return (
+        rewriteMarkdownFileUriHref(href) ??
+        (resolveMarkdownFileLinkTarget(href, cwd) ? href : defaultUrlTransform(href))
+      );
+    },
+    [cwd],
+  );
   // Re-emit highlighted content as markdown so copying out of the rendered
   // view keeps links, emphasis, lists, and code fences intact.
   const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -1384,8 +1407,12 @@ function ChatMarkdown({
         );
       },
       a({ node, href, children, ...props }) {
-        const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const normalizedHref = href
+          ? (rewriteMarkdownFileUriHref(href) ?? normalizeMarkdownLinkDestination(href))
+          : "";
+        const fileLinkMeta = normalizedHref
+          ? resolveMarkdownFileLinkMeta(normalizedHref, cwd)
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1455,9 +1482,13 @@ function ChatMarkdown({
           );
         }
 
-        const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+        const anchorProps = props as typeof props & Record<string, unknown>;
+        const parentSuffix =
+          typeof anchorProps[FILE_LINK_PARENT_SUFFIX_DATA_ATTRIBUTE] === "string"
+            ? anchorProps[FILE_LINK_PARENT_SUFFIX_DATA_ATTRIBUTE]
+            : undefined;
         const labelParts = [fileLinkMeta.basename];
-        if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
+        if (parentSuffix) {
           labelParts.push(parentSuffix);
         }
         if (fileLinkMeta.line) {
@@ -1526,10 +1557,9 @@ function ChatMarkdown({
       },
     }),
     [
+      cwd,
       diffThemeName,
-      fileLinkParentSuffixByPath,
       isStreaming,
-      markdownFileLinkMetaByHref,
       onTaskListChange,
       openInPreferredEditor,
       openExternalLinkInPreview,
@@ -1550,9 +1580,7 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
+        remarkPlugins={remarkPlugins}
         rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
