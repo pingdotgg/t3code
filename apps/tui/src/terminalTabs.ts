@@ -98,8 +98,8 @@ export type TerminalMetadataEvent =
  * Fold a terminal-metadata event into the per-thread map of known terminal ids.
  * A snapshot replaces the whole map; upsert/remove adjust one thread's set. The
  * result feeds {@link tabsWithDiscovered}. Removals are tracked so a closed
- * terminal stops being re-added, but never force-close a tab the user is on —
- * that stays the drawer's decision.
+ * terminal stops being re-added; ChatView also applies explicit remove events
+ * to its open tabs so other clients stay synchronized.
  */
 export function reduceKnownTerminals(
   previous: ReadonlyMap<string, ReadonlyArray<string>>,

@@ -5,7 +5,11 @@ import { testRender } from "@opentui/react/test-utils";
 import { installKittyImageExtension, type RgbaImage } from "@t3tools/opentui-image";
 import * as React from "react";
 
-import { DEFAULT_SERVER_SETTINGS, type VcsStatusResult } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type TerminalMetadataStreamEvent,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 
 import type { OrchestrationShellSnapshot, OrchestrationThread, TuiClient } from "../connection.ts";
 import { ChatView } from "./ChatView.tsx";
@@ -106,6 +110,7 @@ function fakeClient({
   createThread = async () => "t-new" as never,
   terminalClear = async () => {},
   terminalRestart = async () => {},
+  terminalClose = async () => {},
   setInteractionMode = async () => {},
   vcsStatus,
   runGitPull = async () => {},
@@ -146,6 +151,7 @@ function fakeClient({
   readonly createThread?: TuiClient["createThread"];
   readonly terminalClear?: TuiClient["terminalClear"];
   readonly terminalRestart?: TuiClient["terminalRestart"];
+  readonly terminalClose?: TuiClient["terminalClose"];
   readonly setInteractionMode?: TuiClient["setInteractionMode"];
   readonly vcsStatus?: VcsStatusResult;
   readonly runGitPull?: TuiClient["runGitPull"];
@@ -159,8 +165,10 @@ function fakeClient({
   readonly client: TuiClient;
   readonly connect: () => void;
   readonly subscribedThreadIds: string[];
+  readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
 } {
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
+  let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
   const subscribedThreadIds: string[] = [];
   const client = {
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
@@ -178,7 +186,12 @@ function fakeClient({
       if (vcsStatus) onStatus(vcsStatus);
       return () => {};
     },
-    subscribeTerminalMetadata: () => () => {},
+    subscribeTerminalMetadata: (onEvent: (event: TerminalMetadataStreamEvent) => void) => {
+      terminalMetadataSubscriber = onEvent;
+      return () => {
+        terminalMetadataSubscriber = null;
+      };
+    },
     sendReply,
     respondUserInput,
     createThread,
@@ -188,7 +201,7 @@ function fakeClient({
     terminalClear,
     terminalRestart,
     setInteractionMode,
-    terminalClose: async () => {},
+    terminalClose,
     listTerminalIds,
     listModels,
     getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
@@ -199,7 +212,12 @@ function fakeClient({
     runGitStackedAction: async () => {},
     runGitPull,
   } as unknown as TuiClient;
-  return { client, connect: () => shellSubscriber?.(shellSnapshot), subscribedThreadIds };
+  return {
+    client,
+    connect: () => shellSubscriber?.(shellSnapshot),
+    subscribedThreadIds,
+    emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
+  };
 }
 
 async function selectThread(

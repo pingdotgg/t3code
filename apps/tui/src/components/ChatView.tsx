@@ -1415,6 +1415,16 @@ export function ChatView({
   React.useEffect(() => {
     const unsubscribe = client.subscribeTerminalMetadata((event) => {
       setKnownTerminals((prev) => reduceKnownTerminals(prev, event));
+      if (event.type !== "remove") return;
+      setTerminalTabs((previous) => {
+        const tabs = previous.get(event.threadId);
+        if (!tabs?.ids.includes(event.terminalId)) return previous;
+        const remaining = closeTab(tabs, event.terminalId);
+        const next = new Map(previous);
+        if (remaining) next.set(event.threadId, remaining);
+        else next.delete(event.threadId);
+        return next;
+      });
     });
     return unsubscribe;
   }, [client]);
@@ -1461,6 +1471,14 @@ export function ChatView({
     if (discovered.length === 0) return;
     updateThreadTabs(detailIdForTabs, (tabs) => tabsWithDiscovered(tabs, discovered));
   }, [terminalOpen, detailIdForTabs, knownTerminals]);
+
+  // A terminal closed by another client emits an authoritative remove event.
+  // When that was the drawer's final tab, close the local drawer too.
+  React.useEffect(() => {
+    if (!terminalOpen || detailIdForTabs === null || detailTabs !== null) return;
+    setTerminalOpen(false);
+    setTerminalFocused(false);
+  }, [detailIdForTabs, detailTabs, terminalOpen]);
 
   // ^E shows/hides the drawer (opening focuses it); ^P flips focus between the
   // prompt and the terminal. Opening seeds a default terminal tab for the thread.
