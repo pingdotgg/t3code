@@ -73,6 +73,7 @@ export function useBranches(target: VcsRefTarget) {
           input: {
             cwd: target.cwd,
             ...(query.length > 0 ? { query } : {}),
+            ...(query.length === 0 ? { refresh: true } : {}),
             limit: VCS_REF_LIST_LIMIT,
           },
         })
@@ -104,6 +105,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
                 cwd: target.cwd!,
                 ...(query.length > 0 ? { query } : {}),
                 ...(cursor === undefined ? {} : { cursor }),
+                ...(query.length === 0 && cursor === undefined ? { refresh: true } : {}),
                 limit: VCS_REF_LIST_LIMIT,
               },
             }),

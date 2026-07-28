@@ -23,7 +23,7 @@ import { followStreamInEnvironment } from "./runtime.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 
 const OFFLINE_BRANCH_LIST_LIMIT = 100;
-const VCS_REFS_REVALIDATE_INTERVAL = "5 seconds";
+const VCS_REFS_IDLE_TTL_MS = 30_000;
 
 function canUseVcsRefsCache(input: VcsListRefsInput): boolean {
   return (
@@ -104,34 +104,30 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
   ).pipe(
     Stream.map((connection) => (connection.phase === "connected" ? connection.generation : null)),
     Stream.changes,
-    Stream.switchMap((generation) =>
-      generation === null
-        ? Stream.empty
-        : Stream.tick(VCS_REFS_REVALIDATE_INTERVAL).pipe(
-            Stream.mapEffect(
-              () =>
-                refresh().pipe(
-                  Effect.map(Option.some),
-                  Effect.catch((error) =>
-                    Effect.logWarning("Could not refresh Git refs.").pipe(
-                      Effect.annotateLogs({
-                        environmentId,
-                        cwd: input.cwd,
-                        ...safeErrorLogAttributes(error),
-                      }),
-                      Effect.as(Option.none<VcsListRefsResult>()),
-                    ),
-                  ),
+    Stream.mapEffect(
+      (generation) =>
+        generation === null
+          ? Effect.succeed(Option.none<VcsListRefsResult>())
+          : refresh().pipe(
+              Effect.map(Option.some),
+              Effect.catch((error) =>
+                Effect.logWarning("Could not refresh Git refs.").pipe(
+                  Effect.annotateLogs({
+                    environmentId,
+                    cwd: input.cwd,
+                    ...safeErrorLogAttributes(error),
+                  }),
+                  Effect.as(Option.none<VcsListRefsResult>()),
                 ),
-              { concurrency: 1 },
+              ),
             ),
-            Stream.filterMap((refs) =>
-              Option.match(refs, {
-                onNone: () => Result.failVoid,
-                onSome: Result.succeed,
-              }),
-            ),
-          ),
+      { concurrency: 1 },
+    ),
+    Stream.filterMap((refs) =>
+      Option.match(refs, {
+        onNone: () => Result.failVoid,
+        onSome: Result.succeed,
+      }),
     ),
   );
 
@@ -151,7 +147,7 @@ export function createVcsEnvironmentAtoms<R, E>(
       return runtime
         .atom(cachedVcsRefsChanges(environmentId, input))
         .pipe(
-          Atom.setIdleTTL(5 * 60_000),
+          Atom.setIdleTTL(VCS_REFS_IDLE_TTL_MS),
           Atom.withLabel(`environment-data:vcs:list-refs:${environmentId}:${inputKey}`),
         );
     }),
