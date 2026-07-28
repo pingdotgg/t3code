@@ -18,6 +18,7 @@ import {
   AlarmClockOffIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -110,6 +111,7 @@ import {
   hasUnseenCompletion,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  partitionSidebarProjectsByHiddenState,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
@@ -118,6 +120,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
+  updateSidebarHiddenProjectKeys,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -150,7 +153,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Kbd } from "./ui/kbd";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -1004,6 +1007,7 @@ export default function SidebarV2() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+  const sidebarHiddenProjectKeys = useClientSettings((s) => s.sidebarHiddenProjectKeys);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
@@ -1040,6 +1044,7 @@ export default function SidebarV2() {
     null,
   );
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
+  const [hiddenProjectsExpanded, setHiddenProjectsExpanded] = useState(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -1109,9 +1114,29 @@ export default function SidebarV2() {
       sidebarProjectSortOrder,
     ],
   );
-  const projectGroups = useMemo(
+  const sortedProjectGroups = useMemo(
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+  );
+  const { visibleProjects: projectGroups, hiddenProjects } = useMemo(
+    () =>
+      partitionSidebarProjectsByHiddenState({
+        projects: sortedProjectGroups,
+        threads,
+        hiddenProjectKeys: sidebarHiddenProjectKeys,
+      }),
+    [sidebarHiddenProjectKeys, sortedProjectGroups, threads],
+  );
+  const visibleProjectKeys = useMemo(
+    () =>
+      new Set(
+        projectGroups.flatMap((project) =>
+          project.memberProjectRefs.map(
+            (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+          ),
+        ),
+      ),
+    [projectGroups],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providerEntryByInstanceId = useMemo(
@@ -1350,6 +1375,54 @@ export default function SidebarV2() {
     [projectGroupingSettings.sidebarProjectGroupingOverrides, updateSettings],
   );
 
+  const hiddenProjectKeySet = useMemo(
+    () => new Set(sidebarHiddenProjectKeys),
+    [sidebarHiddenProjectKeys],
+  );
+  const isProjectManuallyHidden = useCallback(
+    (project: SidebarProjectSnapshot) =>
+      project.memberProjectRefs.length > 0 &&
+      project.memberProjectRefs.every((projectRef) =>
+        hiddenProjectKeySet.has(`${projectRef.environmentId}:${projectRef.projectId}`),
+      ),
+    [hiddenProjectKeySet],
+  );
+  const handleSetProjectHidden = useCallback(
+    (project: SidebarProjectSnapshot, hidden: boolean) => {
+      updateSettings({
+        sidebarHiddenProjectKeys: updateSidebarHiddenProjectKeys({
+          hiddenProjectKeys: sidebarHiddenProjectKeys,
+          projectRefs: project.memberProjectRefs,
+          hidden,
+        }),
+      });
+    },
+    [sidebarHiddenProjectKeys, updateSettings],
+  );
+  const handleProjectVisibilityContextMenu = useCallback(
+    (
+      event: ReactMouseEvent<HTMLElement>,
+      project: SidebarProjectSnapshot,
+      currentHidden: boolean,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const action = currentHidden ? "show" : "hide";
+        const clicked = await api.contextMenu.show(
+          [{ id: action, label: currentHidden ? "Show" : "Hide" }],
+          { x: event.clientX, y: event.clientY },
+        );
+        if (clicked === action) {
+          handleSetProjectHidden(project, !currentHidden);
+        }
+      })();
+    },
+    [handleSetProjectHidden],
+  );
+
   const handleProjectActions = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
       event.preventDefault();
@@ -1376,6 +1449,7 @@ export default function SidebarV2() {
     const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        visibleProjectKeys.has(`${thread.environmentId}:${thread.projectId}`) &&
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
@@ -1426,6 +1500,7 @@ export default function SidebarV2() {
     serverConfigs,
     snoozeWakeTick,
     threads,
+    visibleProjectKeys,
   ]);
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
@@ -2197,7 +2272,7 @@ export default function SidebarV2() {
   // for multi-project setups.
   const handleNewThreadClick = useCallback(() => {
     // One project: nothing to pick, create immediately.
-    if (projectGroups.length <= 1) {
+    if (unsortedProjectGroups.length <= 1) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
@@ -2209,7 +2284,7 @@ export default function SidebarV2() {
     }
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
-  }, [isMobile, newThreadContext, projectGroups.length, setOpenMobile]);
+  }, [isMobile, newThreadContext, setOpenMobile, unsortedProjectGroups.length]);
 
   const commandPaletteShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   // Same resolution as v1: prefer the local-thread binding, fall back to
@@ -2271,7 +2346,7 @@ export default function SidebarV2() {
             </div>
           </div>
         </SidebarGroup>
-        {projectGroups.length > 0 ? (
+        {unsortedProjectGroups.length > 0 ? (
           <SidebarGroup className="px-2 pb-2 pt-0">
             <div className="flex items-center gap-1">
               <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
@@ -2315,6 +2390,13 @@ export default function SidebarV2() {
                           key={scopeKey}
                           value={scopeKey}
                           closeOnClick
+                          onContextMenu={(event) =>
+                            handleProjectVisibilityContextMenu(
+                              event,
+                              project,
+                              isProjectManuallyHidden(project),
+                            )
+                          }
                           className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                         >
                           <ProjectFavicon
@@ -2339,6 +2421,57 @@ export default function SidebarV2() {
                       );
                     })}
                   </MenuRadioGroup>
+                  {hiddenProjects.length > 0 ? (
+                    <>
+                      <MenuItem
+                        closeOnClick={false}
+                        className="h-7 min-h-7 cursor-pointer gap-2 px-1 text-xs font-medium text-muted-foreground/60"
+                        onClick={() => setHiddenProjectsExpanded((expanded) => !expanded)}
+                      >
+                        <span
+                          aria-hidden
+                          className="flex-1 overflow-hidden whitespace-nowrap opacity-50"
+                        >
+                          — — —
+                        </span>
+                        <span className="shrink-0">hidden ({hiddenProjects.length})</span>
+                        <ChevronRightIcon
+                          aria-hidden
+                          className={cn(
+                            "size-3 transition-transform",
+                            hiddenProjectsExpanded && "rotate-90",
+                          )}
+                        />
+                        <span
+                          aria-hidden
+                          className="flex-1 overflow-hidden whitespace-nowrap opacity-50"
+                        >
+                          — — —
+                        </span>
+                      </MenuItem>
+                      {hiddenProjectsExpanded
+                        ? hiddenProjects.map((project) => (
+                            <MenuItem
+                              key={project.projectKey}
+                              closeOnClick={false}
+                              className="h-8 min-h-8 text-muted-foreground/65"
+                              onContextMenu={(event) =>
+                                handleProjectVisibilityContextMenu(event, project, true)
+                              }
+                            >
+                              <ProjectFavicon
+                                environmentId={project.environmentId}
+                                cwd={project.workspaceRoot}
+                                className="size-4 shrink-0 opacity-70"
+                              />
+                              <span className="min-w-0 flex-1 truncate text-sm">
+                                {project.displayName}
+                              </span>
+                            </MenuItem>
+                          ))
+                        : null}
+                    </>
+                  ) : null}
                 </MenuPopup>
               </Menu>
               <Tooltip>

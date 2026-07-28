@@ -43,6 +43,69 @@ type LogicalSidebarProject = SidebarProject & {
   }[];
 };
 
+const sidebarProjectRefKey = (environmentId: string, projectId: string) =>
+  `${environmentId}:${projectId}`;
+
+type SidebarProjectVisibilityThread = {
+  environmentId: string;
+  projectId: string;
+  archivedAt: string | null;
+  session?: {
+    status: string;
+  } | null;
+};
+
+export function partitionSidebarProjectsByHiddenState<
+  TProject extends LogicalSidebarProject,
+  TThread extends SidebarProjectVisibilityThread,
+>(input: {
+  projects: readonly TProject[];
+  threads: readonly TThread[];
+  hiddenProjectKeys: readonly string[];
+}): { visibleProjects: TProject[]; hiddenProjects: TProject[] } {
+  const hiddenProjectKeys = new Set(input.hiddenProjectKeys);
+  const runningProjectKeys = new Set(
+    input.threads
+      .filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          (thread.session?.status === "running" || thread.session?.status === "starting"),
+      )
+      .map((thread) => sidebarProjectRefKey(thread.environmentId, thread.projectId)),
+  );
+  const visibleProjects: TProject[] = [];
+  const hiddenProjects: TProject[] = [];
+
+  for (const project of input.projects) {
+    const projectKeys = project.memberProjectRefs.map((projectRef) =>
+      sidebarProjectRefKey(projectRef.environmentId, projectRef.projectId),
+    );
+    const isHidden =
+      projectKeys.length > 0 &&
+      projectKeys.every((projectKey) => hiddenProjectKeys.has(projectKey));
+    const hasRunningChat = projectKeys.some((projectKey) => runningProjectKeys.has(projectKey));
+    (isHidden && !hasRunningChat ? hiddenProjects : visibleProjects).push(project);
+  }
+
+  return { hiddenProjects, visibleProjects };
+}
+
+export function updateSidebarHiddenProjectKeys(input: {
+  hiddenProjectKeys: readonly string[];
+  projectRefs: readonly { environmentId: string; projectId: string }[];
+  hidden: boolean;
+}): string[] {
+  const projectKeys = input.projectRefs.map((projectRef) =>
+    sidebarProjectRefKey(projectRef.environmentId, projectRef.projectId),
+  );
+  if (input.hidden) {
+    return [...new Set([...input.hiddenProjectKeys, ...projectKeys])];
+  }
+
+  const keysToShow = new Set(projectKeys);
+  return input.hiddenProjectKeys.filter((projectKey) => !keysToShow.has(projectKey));
+}
+
 export type ThreadTraversalDirection = "previous" | "next";
 
 export async function archiveSelectedThreadEntries<

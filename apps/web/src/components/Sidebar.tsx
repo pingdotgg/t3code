@@ -75,7 +75,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { isElectron } from "../env";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform } from "../lib/utils";
+import { cn, isMacPlatform } from "../lib/utils";
 import {
   readThreadShell,
   useProject,
@@ -182,6 +182,8 @@ import {
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  partitionSidebarProjectsByHiddenState,
+  updateSidebarHiddenProjectKeys,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
@@ -1054,6 +1056,8 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 
 interface SidebarProjectItemProps {
   project: SidebarProjectSnapshot;
+  isManuallyHidden: boolean;
+  onSetProjectHidden: (project: SidebarProjectSnapshot, hidden: boolean) => void;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
@@ -1074,6 +1078,8 @@ interface SidebarProjectItemProps {
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
   const {
     project,
+    isManuallyHidden,
+    onSetProjectHidden,
     isThreadListExpanded,
     activeRouteThreadKey,
     newThreadShortcutLabel,
@@ -1585,6 +1591,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (!api) return;
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
+        actionHandlers.set("visibility", () => {
+          onSetProjectHidden(project, !isManuallyHidden);
+        });
         const makeLeaf = (
           action: "rename" | "grouping" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
@@ -1656,6 +1665,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
+            {
+              id: "visibility",
+              label: isManuallyHidden ? "Show" : "Hide",
+            },
             buildTargetedItem("delete", "Remove", {
               destructive: true,
             }),
@@ -1676,6 +1689,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
+      isManuallyHidden,
+      onSetProjectHidden,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
@@ -2731,6 +2746,7 @@ interface SidebarProjectsContentProps {
   desktopUpdateButtonAction: "download" | "install" | "none";
   desktopUpdateButtonDisabled: boolean;
   handleDesktopUpdateButtonClick: () => void;
+  hiddenProjectKeys: readonly string[];
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
   threadPreviewCount: SidebarThreadPreviewCount;
@@ -2746,6 +2762,7 @@ interface SidebarProjectsContentProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
+  hiddenProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
@@ -2771,6 +2788,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     desktopUpdateButtonAction,
     desktopUpdateButtonDisabled,
     handleDesktopUpdateButtonClick,
+    hiddenProjectKeys,
     projectSortOrder,
     threadSortOrder,
     threadPreviewCount,
@@ -2786,6 +2804,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     archiveThread,
     deleteThread,
     sortedProjects,
+    hiddenProjects,
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
@@ -2807,6 +2826,46 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       updateSettings({ sidebarProjectSortOrder: sortOrder });
     },
     [updateSettings],
+  );
+  const [hiddenProjectsExpanded, setHiddenProjectsExpanded] = useState(false);
+  const hiddenProjectKeySet = useMemo(() => new Set(hiddenProjectKeys), [hiddenProjectKeys]);
+  const isProjectManuallyHidden = useCallback(
+    (project: SidebarProjectSnapshot) =>
+      project.memberProjectRefs.length > 0 &&
+      project.memberProjectRefs.every((projectRef) =>
+        hiddenProjectKeySet.has(scopedProjectKey(projectRef)),
+      ),
+    [hiddenProjectKeySet],
+  );
+  const handleSetProjectHidden = useCallback(
+    (project: SidebarProjectSnapshot, hidden: boolean) => {
+      updateSettings({
+        sidebarHiddenProjectKeys: updateSidebarHiddenProjectKeys({
+          hiddenProjectKeys,
+          projectRefs: project.memberProjectRefs,
+          hidden,
+        }),
+      });
+    },
+    [hiddenProjectKeys, updateSettings],
+  );
+  const handleHiddenProjectContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLElement>, project: SidebarProjectSnapshot) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const clicked = await api.contextMenu.show([{ id: "show", label: "Show" }], {
+          x: event.clientX,
+          y: event.clientY,
+        });
+        if (clicked === "show") {
+          handleSetProjectHidden(project, false);
+        }
+      })();
+    },
+    [handleSetProjectHidden],
   );
   const handleThreadSortOrderChange = useCallback(
     (sortOrder: SidebarThreadSortOrder) => {
@@ -2920,6 +2979,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     {(dragHandleProps) => (
                       <SidebarProjectItem
                         project={project}
+                        isManuallyHidden={isProjectManuallyHidden(project)}
+                        onSetProjectHidden={handleSetProjectHidden}
                         isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -2952,6 +3013,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <SidebarProjectListRow
                 key={project.projectKey}
                 project={project}
+                isManuallyHidden={isProjectManuallyHidden(project)}
+                onSetProjectHidden={handleSetProjectHidden}
                 isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
@@ -2974,6 +3037,49 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </SidebarMenu>
         )}
 
+        {hiddenProjects.length > 0 ? (
+          <div className="mt-3 pt-1">
+            <button
+              type="button"
+              aria-expanded={hiddenProjectsExpanded}
+              className="flex h-7 w-full cursor-pointer items-center gap-2 px-2 text-xs font-medium text-sidebar-muted-foreground/55 hover:text-sidebar-muted-foreground"
+              onClick={() => setHiddenProjectsExpanded((expanded) => !expanded)}
+            >
+              <span aria-hidden className="flex-1 overflow-hidden whitespace-nowrap opacity-50">
+                — — —
+              </span>
+              <span className="shrink-0">hidden ({hiddenProjects.length})</span>
+              <ChevronRightIcon
+                aria-hidden
+                className={cn("size-3 transition-transform", hiddenProjectsExpanded && "rotate-90")}
+              />
+              <span aria-hidden className="flex-1 overflow-hidden whitespace-nowrap opacity-50">
+                — — —
+              </span>
+            </button>
+            {hiddenProjectsExpanded ? (
+              <SidebarMenu className="mt-1">
+                {hiddenProjects.map((project) => (
+                  <SidebarMenuItem key={project.projectKey}>
+                    <button
+                      type="button"
+                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-sidebar-muted-foreground/65 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                      onContextMenu={(event) => handleHiddenProjectContextMenu(event, project)}
+                    >
+                      <ProjectFavicon
+                        environmentId={project.environmentId}
+                        cwd={project.workspaceRoot}
+                        className="size-4 shrink-0 opacity-70"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
+                    </button>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            ) : null}
+          </div>
+        ) : null}
+
         {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
             No projects yet
@@ -2995,6 +3101,7 @@ export default function Sidebar() {
   const isOnSettings = pathname.startsWith("/settings");
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const sidebarHiddenProjectKeys = useClientSettings((s) => s.sidebarHiddenProjectKeys);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
   const updateSettings = useUpdateClientSettings();
@@ -3261,7 +3368,7 @@ export default function Sidebar() {
     () => sidebarThreads.filter((thread) => thread.archivedAt === null),
     [sidebarThreads],
   );
-  const sortedProjects = useMemo(() => {
+  const { visibleProjects: sortedProjects, hiddenProjects } = useMemo(() => {
     const sortableProjects = sidebarProjects.map((project) => ({
       ...project,
       id: project.projectKey,
@@ -3276,7 +3383,7 @@ export default function Sidebar() {
         projectId: (physicalToLogicalKey.get(physicalKey) ?? physicalKey) as ProjectId,
       };
     });
-    return sortProjectsForSidebar(
+    const orderedSidebarProjects = sortProjectsForSidebar(
       sortableProjects,
       sortableThreads,
       sidebarProjectSortOrder,
@@ -3284,8 +3391,15 @@ export default function Sidebar() {
       const resolvedProject = sidebarProjectByKey.get(project.id);
       return resolvedProject ? [resolvedProject] : [];
     });
+    return partitionSidebarProjectsByHiddenState({
+      projects: orderedSidebarProjects,
+      threads: sidebarThreads,
+      hiddenProjectKeys: sidebarHiddenProjectKeys,
+    });
   }, [
+    sidebarHiddenProjectKeys,
     sidebarProjectSortOrder,
+    sidebarThreads,
     physicalToLogicalKey,
     projectPhysicalKeyByScopedRef,
     sidebarProjectByKey,
@@ -3602,6 +3716,7 @@ export default function Sidebar() {
             desktopUpdateButtonAction={desktopUpdateButtonAction}
             desktopUpdateButtonDisabled={desktopUpdateButtonDisabled}
             handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
+            hiddenProjectKeys={sidebarHiddenProjectKeys}
             projectSortOrder={sidebarProjectSortOrder}
             threadSortOrder={sidebarThreadSortOrder}
             threadPreviewCount={sidebarThreadPreviewCount}
@@ -3617,6 +3732,7 @@ export default function Sidebar() {
             archiveThread={archiveThread}
             deleteThread={deleteThread}
             sortedProjects={sortedProjects}
+            hiddenProjects={hiddenProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}
             routeThreadKey={routeThreadKey}
