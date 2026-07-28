@@ -30,7 +30,7 @@ import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { HttpResponseCompression } from "./httpCompression/HttpResponseCompression.ts";
+import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import {
   annotateEnvironmentRequest,
@@ -88,7 +88,7 @@ const compressHttpResponse = Effect.fnUntraced(function* (
   );
   if (!acceptsGzip(acceptEncoding)) return variedResponse;
 
-  const compression = yield* HttpResponseCompression;
+  const compression = yield* HttpResponseCompression.HttpResponseCompression;
   const headers = Headers.set(
     Headers.remove(variedResponse.headers, "content-length"),
     "content-encoding",
