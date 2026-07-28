@@ -769,10 +769,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         })
       : null,
   );
+  const retainTerminalOnBranchMismatch = thread.worktreePath === null;
   const pr = resolveDisplayedThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
     snapshot: changeRequestSnapshot,
+    retainTerminalOnBranchMismatch,
   });
   const prState = pr?.state ?? null;
 
@@ -870,6 +872,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
     snapshot: changeRequestSnapshot,
+    retainTerminalOnBranchMismatch,
   });
   const prStatus = prStatusIndicator(pr, prProvider);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
@@ -877,10 +880,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     const nextSnapshot = nextThreadChangeRequestSnapshot({
       threadBranch: thread.branch,
       gitStatus: gitStatus.data,
+      snapshot: changeRequestSnapshot,
+      retainTerminalOnBranchMismatch,
     });
     if (nextSnapshot === undefined) return;
     onChangeRequestSnapshot(threadKey, nextSnapshot);
-  }, [gitStatus.data, onChangeRequestSnapshot, thread.branch, threadKey]);
+  }, [
+    changeRequestSnapshot,
+    gitStatus.data,
+    onChangeRequestSnapshot,
+    retainTerminalOnBranchMismatch,
+    thread.branch,
+    threadKey,
+  ]);
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
@@ -1983,7 +1995,9 @@ export default function Sidebar() {
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const snapshot = changeRequestSnapshotByKey.get(threadKey);
       const changeRequestState =
-        snapshot != null && snapshot.branch === thread.branch ? snapshot.pr.state : null;
+        snapshot != null && (thread.worktreePath === null || snapshot.branch === thread.branch)
+          ? snapshot.pr.state
+          : null;
       // Snooze outranks everything, including a pin: "hide until Tuesday"
       // temporarily suspends "keep on top". The pin survives underneath —
       // and so does its pinOrderKey, so on wake the thread reappears at

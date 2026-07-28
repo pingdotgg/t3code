@@ -169,19 +169,31 @@ export function threadChangeRequestSnapshotsEqual(
 
 /**
  * Authoritative snapshot update from live VCS status.
- * - `undefined`: branch mismatch or missing status — leave the map alone
- * - `null`: matching branch reports no PR — clear the snapshot
+ * - `undefined`: missing status, or a local checkout retaining a terminal PR — leave the map alone
+ * - `null`: no PR (without a retained terminal snapshot), or a worktree mismatch — clear
  * - snapshot: matching branch reports a PR — store/replace
  */
 export function nextThreadChangeRequestSnapshot(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
+  snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
 }): ThreadChangeRequestSnapshot | null | undefined {
-  const { threadBranch, gitStatus } = input;
-  if (threadBranch === null || gitStatus === null || gitStatus.refName !== threadBranch) {
+  const { threadBranch, gitStatus, snapshot, retainTerminalOnBranchMismatch } = input;
+  if (threadBranch === null || gitStatus === null) {
     return undefined;
   }
+  if (gitStatus.refName !== threadBranch) {
+    return retainTerminalOnBranchMismatch ? undefined : null;
+  }
   if (gitStatus.pr == null) {
+    if (
+      retainTerminalOnBranchMismatch &&
+      snapshot != null &&
+      isTerminalChangeRequestState(snapshot.pr.state)
+    ) {
+      return undefined;
+    }
     return null;
   }
   return {
@@ -192,23 +204,31 @@ export function nextThreadChangeRequestSnapshot(input: {
 }
 
 /**
- * Live PR when the checkout matches the thread branch; otherwise a cached
- * merged/closed PR for that same branch. Open PRs are never retained across
- * a mismatch — their state can still change.
+ * Live PR when the checkout matches the thread branch; otherwise, for local
+ * checkouts only, a cached merged/closed PR for the thread. Local thread
+ * metadata follows the shared checkout, so the cached branch intentionally
+ * survives that metadata changing to the newly checked-out branch. Open PRs
+ * are never retained — their state can still change.
  */
 export function resolveDisplayedThreadPr(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
   snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
 }): ThreadPr | null {
-  const { threadBranch, gitStatus, snapshot } = input;
-  if (threadBranch !== null && gitStatus !== null && gitStatus.refName === threadBranch) {
-    return gitStatus.pr ?? null;
+  const { threadBranch, gitStatus, snapshot, retainTerminalOnBranchMismatch } = input;
+  if (
+    threadBranch !== null &&
+    gitStatus !== null &&
+    gitStatus.refName === threadBranch &&
+    gitStatus.pr != null
+  ) {
+    return gitStatus.pr;
   }
 
   if (
+    retainTerminalOnBranchMismatch &&
     snapshot != null &&
-    snapshot.branch === threadBranch &&
     isTerminalChangeRequestState(snapshot.pr.state)
   ) {
     return snapshot.pr;
@@ -221,15 +241,21 @@ export function resolveDisplayedThreadPrProvider(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
   snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
 }): VcsStatusResult["sourceControlProvider"] | undefined {
-  const { threadBranch, gitStatus, snapshot } = input;
-  if (threadBranch !== null && gitStatus !== null && gitStatus.refName === threadBranch) {
+  const { threadBranch, gitStatus, snapshot, retainTerminalOnBranchMismatch } = input;
+  if (
+    threadBranch !== null &&
+    gitStatus !== null &&
+    gitStatus.refName === threadBranch &&
+    gitStatus.pr != null
+  ) {
     return gitStatus.sourceControlProvider;
   }
 
   if (
+    retainTerminalOnBranchMismatch &&
     snapshot != null &&
-    snapshot.branch === threadBranch &&
     isTerminalChangeRequestState(snapshot.pr.state)
   ) {
     return snapshot.sourceControlProvider;

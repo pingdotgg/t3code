@@ -116,6 +116,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus,
         snapshot: undefined,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toBe(mergedPr);
     expect(
@@ -123,6 +124,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus,
         snapshot: undefined,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toEqual(provider);
   });
@@ -136,6 +138,8 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
     const cached = nextThreadChangeRequestSnapshot({
       threadBranch: featureBranch,
       gitStatus: matchingStatus,
+      snapshot: undefined,
+      retainTerminalOnBranchMismatch: true,
     });
     expect(cached).toEqual(snapshotFor(featureBranch, mergedPr, provider));
 
@@ -158,6 +162,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus: mainStatus,
         snapshot: cached as ThreadChangeRequestSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toEqual(mergedPr);
     expect(
@@ -165,6 +170,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus: mainStatus,
         snapshot: cached as ThreadChangeRequestSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toEqual(provider);
   });
@@ -183,12 +189,15 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus: status({ refName: "main", pr: mainPr }),
         snapshot: undefined,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toBeNull();
     expect(
       nextThreadChangeRequestSnapshot({
         threadBranch: featureBranch,
         gitStatus: status({ refName: "main", pr: mainPr }),
+        snapshot: undefined,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toBeUndefined();
   });
@@ -205,6 +214,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus: status({ refName: "main", pr: null }),
         snapshot: openSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toBeNull();
   });
@@ -218,11 +228,42 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus: status({ refName: "main", pr: null }),
         snapshot: closedSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toEqual(closedPr);
   });
 
-  it("rejects a snapshot stored for another branch", () => {
+  it("does not retain or display a terminal PR when a worktree switches branches", () => {
+    const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
+    const mismatchedStatus = status({ refName: "feature/other", pr: null });
+
+    expect(
+      resolveDisplayedThreadPr({
+        threadBranch: featureBranch,
+        gitStatus: mismatchedStatus,
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveDisplayedThreadPrProvider({
+        threadBranch: featureBranch,
+        gitStatus: mismatchedStatus,
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: false,
+      }),
+    ).toBeUndefined();
+    expect(
+      nextThreadChangeRequestSnapshot({
+        threadBranch: featureBranch,
+        gitStatus: mismatchedStatus,
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("retains a local terminal snapshot when thread metadata follows the new branch", () => {
     const otherBranchSnapshot = snapshotFor("feature/other", mergedPr, provider);
 
     expect(
@@ -230,15 +271,41 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus: status({ refName: "main", pr: null }),
         snapshot: otherBranchSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
-    ).toBeNull();
+    ).toEqual(mergedPr);
   });
 
-  it("clears the snapshot when returning to the matching branch with no PR", () => {
+  it("retains a terminal snapshot when a local thread and status move to a branch with no PR", () => {
+    const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
+
     expect(
       nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: featureBranch, pr: null }),
+        threadBranch: "main",
+        gitStatus: status({ refName: "main", pr: null }),
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: true,
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveDisplayedThreadPr({
+        threadBranch: "main",
+        gitStatus: status({ refName: "main", pr: null }),
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: true,
+      }),
+    ).toEqual(mergedPr);
+  });
+
+  it("clears an open snapshot when a local thread moves to a branch with no PR", () => {
+    const openSnapshot = snapshotFor(featureBranch, { ...mergedPr, state: "open" });
+
+    expect(
+      nextThreadChangeRequestSnapshot({
+        threadBranch: "main",
+        gitStatus: status({ refName: "main", pr: null }),
+        snapshot: openSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toBeNull();
   });
@@ -250,6 +317,8 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
       nextThreadChangeRequestSnapshot({
         threadBranch: featureBranch,
         gitStatus: null,
+        snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toBeUndefined();
     expect(
@@ -257,6 +326,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
         threadBranch: featureBranch,
         gitStatus: null,
         snapshot: terminalSnapshot,
+        retainTerminalOnBranchMismatch: true,
       }),
     ).toEqual(mergedPr);
   });
@@ -270,15 +340,18 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
     const cached = nextThreadChangeRequestSnapshot({
       threadBranch: featureBranch,
       gitStatus: matchingStatus,
+      snapshot: undefined,
+      retainTerminalOnBranchMismatch: true,
     });
     expect(cached).not.toBeNull();
     expect(cached).not.toBeUndefined();
 
     const mainStatus = status({ refName: "main", pr: null, isDefaultRef: true });
     const displayed = resolveDisplayedThreadPr({
-      threadBranch: featureBranch,
+      threadBranch: "main",
       gitStatus: mainStatus,
       snapshot: cached as ThreadChangeRequestSnapshot,
+      retainTerminalOnBranchMismatch: true,
     });
     expect(displayed?.state).toBe("merged");
 
@@ -289,7 +362,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
-      branch: featureBranch,
+      branch: "main",
       worktreePath: null,
       latestTurn: null,
       session: null,
