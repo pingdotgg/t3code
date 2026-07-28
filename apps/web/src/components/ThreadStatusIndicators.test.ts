@@ -1,8 +1,9 @@
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/unstable/reactivity";
-import { describe, expect, it } from "vite-plus/test";
 
 import {
   nextThreadChangeRequestSnapshot,
@@ -390,21 +391,25 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
 });
 
 describe("threadChangeRequestSnapshotsAtom", () => {
-  it("retains snapshots while sidebar and chat consumers are unmounted", () => {
-    const registry = AtomRegistry.make();
-    const threadKey = "environment-1:thread-1";
-    const snapshot = snapshotFor("feature/current", mergedFeaturePr());
+  it.effect("retains snapshots while sidebar and chat consumers are unmounted", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      const threadKey = "environment-1:thread-1";
+      const snapshot = snapshotFor("feature/current", mergedFeaturePr());
 
-    const unmount = registry.mount(threadChangeRequestSnapshotsAtom);
-    registry.set(threadChangeRequestSnapshotsAtom, new Map([[threadKey, snapshot]]));
-    unmount();
+      const unmount = registry.mount(threadChangeRequestSnapshotsAtom);
+      registry.set(threadChangeRequestSnapshotsAtom, new Map([[threadKey, snapshot]]));
+      unmount();
 
-    const remount = registry.mount(threadChangeRequestSnapshotsAtom);
-    expect(registry.get(threadChangeRequestSnapshotsAtom).get(threadKey)).toEqual(snapshot);
+      yield* Effect.yieldNow;
 
-    remount();
-    registry.dispose();
-  });
+      const remount = registry.mount(threadChangeRequestSnapshotsAtom);
+      expect(registry.get(threadChangeRequestSnapshotsAtom).get(threadKey)).toEqual(snapshot);
+
+      remount();
+      registry.dispose();
+    }),
+  );
 });
 
 describe("prStatusIndicator", () => {
