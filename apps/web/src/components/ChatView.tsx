@@ -144,6 +144,7 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
+  HistoryIcon,
   TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -4095,13 +4096,33 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
+  const pendingResumeSessionIntent = useResumeSessionIntentStore((store) =>
+    isLocalDraftThread && activeThread ? (store.intentByThreadId[activeThread.id] ?? null) : null,
+  );
+  const resumeSessionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!pendingResumeSessionIntent || !isLocalDraftThread || !activeThread) return null;
+    const draftThreadId = activeThread.id;
+    return {
+      id: `resume-session:${pendingResumeSessionIntent.resumeExternalSessionId}`,
+      variant: "info",
+      icon: <HistoryIcon />,
+      title: "Resuming a previous Claude session",
+      description: pendingResumeSessionIntent.label ?? undefined,
+      dismissLabel: "Cancel resume",
+      onDismiss: () => {
+        useResumeSessionIntentStore.getState().clearResumeSessionIntent(draftThreadId);
+      },
+    };
+  }, [pendingResumeSessionIntent, isLocalDraftThread, activeThread]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const resumeSessionItems = resumeSessionBannerItem === null ? [] : [resumeSessionBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
-      return [...systemComposerBannerItems, ...parkedThreadItems];
+      return [...systemComposerBannerItems, ...resumeSessionItems, ...parkedThreadItems];
     }
     return [
       ...systemComposerBannerItems,
+      ...resumeSessionItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",
@@ -4145,6 +4166,7 @@ function ChatViewContent(props: ChatViewProps) {
     ];
   }, [
     activeBranchMismatchKey,
+    resumeSessionBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -4720,7 +4742,8 @@ function ChatViewContent(props: ChatViewProps) {
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const resumeExternalSessionId = isLocalDraftThread
-        ? (useResumeSessionIntentStore.getState().intentByThreadId[activeThread.id] ?? undefined)
+        ? useResumeSessionIntentStore.getState().intentByThreadId[activeThread.id]
+            ?.resumeExternalSessionId
         : undefined;
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree

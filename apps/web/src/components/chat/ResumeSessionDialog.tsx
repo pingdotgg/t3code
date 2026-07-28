@@ -139,7 +139,11 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
           { instanceId: claudeInstanceId, model: claudeModel },
           { replaceOptions: true },
         );
-        setResumeSessionIntent(threadId, sessionId);
+        const session = sessions.find((candidate) => candidate.sessionId === sessionId);
+        setResumeSessionIntent(threadId, {
+          resumeExternalSessionId: sessionId,
+          label: session?.label ?? null,
+        });
         await router.navigate({ to: "/draft/$draftId", params: { draftId } });
         handleClose(false);
       } catch (error) {
@@ -161,6 +165,7 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
       isResuming,
       projectGroupingSettings,
       router,
+      sessions,
       setResumeSessionIntent,
       handleClose,
     ],
