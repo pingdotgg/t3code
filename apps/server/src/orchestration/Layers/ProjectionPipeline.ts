@@ -3,7 +3,6 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
-  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -130,6 +129,18 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
+function isStalePendingUserInputFailureDetail(detail: string | null): boolean {
+  if (detail === null) {
+    return false;
+  }
+  return (
+    detail.includes("stale pending user-input request") ||
+    detail.includes("unknown pending user-input request") ||
+    detail.includes("unknown pending user input request") ||
+    detail.includes("unknown pending codex user input request")
+  );
+}
+
 function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
@@ -163,11 +174,7 @@ function derivePendingUserInputCountFromActivities(
 
     if (
       activity.kind === "provider.user-input.respond.failed" &&
-      detail !== null &&
-      (detail.includes("stale pending user-input request") ||
-        detail.includes("unknown pending user-input request") ||
-        detail.includes("unknown pending user input request") ||
-        detail.includes("unknown pending codex user input request"))
+      isStalePendingUserInputFailureDetail(detail)
     ) {
       openRequestIds.delete(requestId);
     }
@@ -544,51 +551,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
-    const refreshThreadShellSummary = Effect.fn("refreshThreadShellSummary")(function* (
-      threadId: ThreadId,
-    ) {
-      const existingRow = yield* projectionThreadRepository.getById({
-        threadId,
-      });
-      if (Option.isNone(existingRow)) {
-        return;
-      }
-
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
-        projectionThreadMessageRepository.listByThreadId({ threadId }),
-        projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listByThreadId({ threadId }),
-        projectionPendingApprovalRepository.listByThreadId({ threadId }),
-      ]);
-
-      let latestUserMessageAt: string | null = null;
-      for (const message of messages) {
-        if (
-          message.role === "user" &&
-          (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
-        ) {
-          latestUserMessageAt = message.createdAt;
-        }
-      }
-
-      const pendingApprovalCount = pendingApprovals.filter(
-        (approval) => approval.status === "pending",
-      ).length;
-      const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
-      const hasActionableProposedPlan = deriveHasActionableProposedPlan({
-        latestTurnId: existingRow.value.latestTurnId,
-        proposedPlans,
-      });
-
-      yield* projectionThreadRepository.upsert({
-        ...existingRow.value,
-        latestUserMessageAt,
-        pendingApprovalCount,
-        pendingUserInputCount,
-        hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
-      });
-    });
-
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
@@ -792,11 +754,93 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          let latestUserMessageAt = existingRow.value.latestUserMessageAt;
+          let pendingApprovalCount = existingRow.value.pendingApprovalCount;
+          let pendingUserInputCount = existingRow.value.pendingUserInputCount;
+          let hasActionableProposedPlan = existingRow.value.hasActionableProposedPlan;
+
+          switch (event.type) {
+            case "thread.message-sent":
+              if (
+                event.payload.role === "user" &&
+                (latestUserMessageAt === null || event.payload.createdAt > latestUserMessageAt)
+              ) {
+                latestUserMessageAt = event.payload.createdAt;
+              }
+              break;
+
+            case "thread.proposed-plan-upserted": {
+              const proposedPlans = yield* projectionThreadProposedPlanRepository.listByThreadId({
+                threadId: event.payload.threadId,
+              });
+              hasActionableProposedPlan = deriveHasActionableProposedPlan({
+                latestTurnId: existingRow.value.latestTurnId,
+                proposedPlans,
+              })
+                ? 1
+                : 0;
+              break;
+            }
+
+            case "thread.activity-appended": {
+              const payload =
+                typeof event.payload.activity.payload === "object" &&
+                event.payload.activity.payload !== null
+                  ? (event.payload.activity.payload as Record<string, unknown>)
+                  : null;
+              const detail =
+                typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
+
+              if (
+                event.payload.activity.kind === "approval.requested" ||
+                event.payload.activity.kind === "approval.resolved" ||
+                (event.payload.activity.kind === "provider.approval.respond.failed" &&
+                  isStalePendingApprovalFailureDetail(detail))
+              ) {
+                const pendingApprovals = yield* projectionPendingApprovalRepository.listByThreadId({
+                  threadId: event.payload.threadId,
+                });
+                pendingApprovalCount = pendingApprovals.filter(
+                  (approval) => approval.status === "pending",
+                ).length;
+              }
+
+              if (
+                event.payload.activity.kind === "user-input.requested" ||
+                event.payload.activity.kind === "user-input.resolved" ||
+                (event.payload.activity.kind === "provider.user-input.respond.failed" &&
+                  isStalePendingUserInputFailureDetail(detail))
+              ) {
+                const activities = yield* projectionThreadActivityRepository.listByThreadId({
+                  threadId: event.payload.threadId,
+                });
+                pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
+              }
+              break;
+            }
+
+            case "thread.approval-response-requested": {
+              const pendingApprovals = yield* projectionPendingApprovalRepository.listByThreadId({
+                threadId: event.payload.threadId,
+              });
+              pendingApprovalCount = pendingApprovals.filter(
+                (approval) => approval.status === "pending",
+              ).length;
+              break;
+            }
+
+            case "thread.user-input-response-requested":
+              break;
+          }
+
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             updatedAt: event.occurredAt,
+            latestUserMessageAt,
+            pendingApprovalCount,
+            pendingUserInputCount,
+            hasActionableProposedPlan,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
           return;
         }
 
@@ -807,12 +851,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const proposedPlans = yield* projectionThreadProposedPlanRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const latestTurnId = event.payload.session.activeTurnId;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.session.activeTurnId,
+            latestTurnId,
             updatedAt: event.occurredAt,
+            hasActionableProposedPlan: deriveHasActionableProposedPlan({
+              latestTurnId,
+              proposedPlans,
+            })
+              ? 1
+              : 0,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
           return;
         }
 
@@ -823,12 +876,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const proposedPlans = yield* projectionThreadProposedPlanRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const latestTurnId = event.payload.turnId;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.turnId,
+            latestTurnId,
             updatedAt: event.occurredAt,
+            hasActionableProposedPlan: deriveHasActionableProposedPlan({
+              latestTurnId,
+              proposedPlans,
+            })
+              ? 1
+              : 0,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
           return;
         }
 
@@ -861,12 +923,50 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             }
           }
 
+          const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all(
+            [
+              projectionThreadMessageRepository.listByThreadId({
+                threadId: event.payload.threadId,
+              }),
+              projectionThreadProposedPlanRepository.listByThreadId({
+                threadId: event.payload.threadId,
+              }),
+              projectionThreadActivityRepository.listByThreadId({
+                threadId: event.payload.threadId,
+              }),
+              projectionPendingApprovalRepository.listByThreadId({
+                threadId: event.payload.threadId,
+              }),
+            ],
+            { concurrency: "unbounded" },
+          );
+
+          let latestUserMessageAt: string | null = null;
+          for (const message of messages) {
+            if (
+              message.role === "user" &&
+              (latestUserMessageAt === null || message.createdAt > latestUserMessageAt)
+            ) {
+              latestUserMessageAt = message.createdAt;
+            }
+          }
+
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             latestTurnId,
             updatedAt: event.occurredAt,
+            latestUserMessageAt,
+            pendingApprovalCount: pendingApprovals.filter(
+              (approval) => approval.status === "pending",
+            ).length,
+            pendingUserInputCount: derivePendingUserInputCountFromActivities(activities),
+            hasActionableProposedPlan: deriveHasActionableProposedPlan({
+              latestTurnId,
+              proposedPlans,
+            })
+              ? 1
+              : 0,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
           return;
         }
 
