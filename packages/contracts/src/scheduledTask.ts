@@ -3,7 +3,6 @@ import * as Schema from "effect/Schema";
 import {
   CommandId,
   IsoDateTime,
-  PositiveInt,
   ProjectId,
   ScheduledTaskId,
   ThreadId,
@@ -22,13 +21,17 @@ const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
 ).annotate({ description: "Local wall-clock time in 24-hour HH:MM form, such as 09:30." });
 
+export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
+
 export const ScheduledTaskSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval").annotate({
       description: "Select interval scheduling.",
     }),
-    everyMs: PositiveInt.annotate({
-      description: "Positive interval in milliseconds; 3600000 means every hour.",
+    everyMs: Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(MIN_SCHEDULED_TASK_INTERVAL_MS),
+    ).annotate({
+      description: "Interval in milliseconds, with a minimum of 60000 (one minute).",
     }),
   }).annotate({
     description: "Run repeatedly after a fixed number of milliseconds.",
