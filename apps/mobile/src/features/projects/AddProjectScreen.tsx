@@ -11,15 +11,13 @@ import {
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
 import {
+  filterFilesystemBrowseEntries,
+  getFilesystemBrowsePath,
+} from "@t3tools/client-runtime/state/filesystem";
+import {
   appendBrowsePathSegment,
-  canNavigateUp,
   ensureBrowseDirectoryPath,
-  getBrowseDirectoryPath,
-  getBrowseLeafPathSegment,
-  getBrowseParentPath,
-  hasTrailingPathSeparator,
   inferProjectTitleFromPath,
-  isFilesystemBrowseQuery,
 } from "@t3tools/client-runtime/state/projects";
 import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
@@ -59,11 +57,6 @@ const environmentOptionOrder = Order.mapInput(
     label: Order.String,
   }),
   (environment: EnvironmentOption) => ({ label: environment.label }),
-);
-
-const browseEntryOrder = Order.mapInput(
-  Order.String,
-  (entry: { readonly name: string }) => entry.name,
 );
 
 function platformFromOs(os: string | null | undefined): string {
@@ -594,20 +587,13 @@ function FolderBrowser(props: {
   readonly setPathInput: (path: string) => void;
 }) {
   const accentColor = useThemeColor("--color-icon-muted");
-  const browseDirectoryPath = useMemo(
-    () =>
-      isFilesystemBrowseQuery(props.pathInput, props.environment.platform)
-        ? getBrowseDirectoryPath(props.pathInput)
-        : "",
+  const browsePath = useMemo(
+    () => getFilesystemBrowsePath(props.pathInput, props.environment.platform),
     [props.environment.platform, props.pathInput],
   );
-  const browseFilterQuery =
-    browseDirectoryPath.length > 0 && !hasTrailingPathSeparator(props.pathInput)
-      ? getBrowseLeafPathSegment(props.pathInput).toLowerCase()
-      : "";
   const browseInput = useMemo(
-    () => (browseDirectoryPath.length > 0 ? { partialPath: browseDirectoryPath } : null),
-    [browseDirectoryPath],
+    () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
+    [browsePath.directoryPath],
   );
   const browseState = useEnvironmentQuery(
     browseInput === null
@@ -617,20 +603,10 @@ function FolderBrowser(props: {
           input: browseInput,
         }),
   );
-  const visibleBrowseEntries = useMemo(
-    () =>
-      Arr.sort(
-        Arr.filter(
-          browseState.data?.entries ?? [],
-          (entry) =>
-            !entry.name.startsWith(".") && entry.name.toLowerCase().startsWith(browseFilterQuery),
-        ),
-        browseEntryOrder,
-      ),
-    [browseFilterQuery, browseState.data?.entries],
+  const { visibleEntries: visibleBrowseEntries } = useMemo(
+    () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browsePath.filterQuery),
+    [browsePath.filterQuery, browseState.data?.entries],
   );
-  const parentBrowsePath = getBrowseParentPath(browseDirectoryPath);
-  const canBrowseUpPath = canNavigateUp(browseDirectoryPath);
 
   return (
     <>
@@ -642,7 +618,7 @@ function FolderBrowser(props: {
             <ActivityIndicator color={accentColor} />
           </View>
         ) : null}
-        {canBrowseUpPath ? (
+        {browsePath.canBrowseUp ? (
           <ListRow
             title=".."
             icon={
@@ -656,7 +632,9 @@ function FolderBrowser(props: {
             isFirst
             right={null}
             onPress={() => {
-              if (parentBrowsePath) props.setPathInput(parentBrowsePath);
+              if (browsePath.parentPath) {
+                props.setPathInput(browsePath.parentPath);
+              }
             }}
           />
         ) : null}
@@ -665,15 +643,15 @@ function FolderBrowser(props: {
             key={entry.fullPath}
             title={entry.name}
             icon={<SymbolView name="folder" size={17} tintColor={accentColor} type="monochrome" />}
-            isFirst={index === 0 && !canBrowseUpPath}
+            isFirst={index === 0 && !browsePath.canBrowseUp}
             right={null}
-            onPress={() =>
-              props.setPathInput(
-                browseDirectoryPath.length > 0
-                  ? appendBrowsePathSegment(browseDirectoryPath, entry.name)
-                  : ensureBrowseDirectoryPath(entry.fullPath),
-              )
-            }
+            onPress={() => {
+              const nextPath =
+                browsePath.directoryPath.length > 0
+                  ? appendBrowsePathSegment(browsePath.directoryPath, entry.name)
+                  : ensureBrowseDirectoryPath(entry.fullPath);
+              props.setPathInput(nextPath);
+            }}
           />
         ))}
       </ListSection>
