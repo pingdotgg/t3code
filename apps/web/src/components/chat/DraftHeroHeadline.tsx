@@ -105,7 +105,7 @@ export function DraftHeroHeadline({
       >
         {activeProjectDisplayName ?? "Choose a project"}
       </MenuTrigger>
-      <MenuPopup align="center" className="max-h-80 w-64 overflow-y-auto">
+      <MenuPopup align="center" className="max-h-80 min-w-40! w-max max-w-64 overflow-y-auto">
         <MenuRadioGroup
           value={activeProjectKey}
           onValueChange={(value) => {
