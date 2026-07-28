@@ -48,10 +48,18 @@ export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly projection: OrchestrationV2ThreadProjection | null;
 }): ThreadRelationshipGraph {
+  const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
+  for (const thread of input.threads) {
+    // Callers order shells from most to least authoritative. In particular,
+    // live shells precede archived snapshots, which may still contain a stale
+    // copy during archive refresh.
+    if (!threadsById.has(thread.id)) {
+      threadsById.set(thread.id, thread);
+    }
+  }
+  const threads = [...threadsById.values()];
   const nodes = new Map<ThreadId, ThreadRelationshipNode>(
-    input.threads.map(
-      (thread) => [thread.id, { threadId: thread.id, thread, missing: false }] as const,
-    ),
+    threads.map((thread) => [thread.id, { threadId: thread.id, thread, missing: false }]),
   );
   const edgesByKey = new Map<string, ThreadRelationshipEdge>();
   const ensureNode = (threadId: ThreadId) => {
@@ -65,7 +73,7 @@ export function deriveThreadRelationshipGraph(input: {
     edgesByKey.set(edgeKey(edge), edge);
   };
 
-  for (const thread of input.threads) {
+  for (const thread of threads) {
     const parentThreadId =
       thread.forkedFrom?.type === "run"
         ? thread.forkedFrom.threadId
