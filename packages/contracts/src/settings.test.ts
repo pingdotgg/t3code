@@ -49,12 +49,21 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
-describe("ClientSettings sidebar stage artwork", () => {
-  it("defaults the artwork on and accepts opt-out patches", () => {
-    expect(decodeClientSettings({}).sidebarStageArtworkEnabled).toBe(true);
-    expect(
-      decodeClientSettingsPatch({ sidebarStageArtworkEnabled: false }).sidebarStageArtworkEnabled,
-    ).toBe(false);
+describe("ClientSettings environment identification", () => {
+  it("defaults to artwork and accepts each presentation mode", () => {
+    expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
+
+    for (const mode of ["artwork", "pill", "none"] as const) {
+      expect(
+        decodeClientSettingsPatch({ environmentIdentificationMode: mode })
+          .environmentIdentificationMode,
+      ).toBe(mode);
+    }
+  });
+
+  it("rejects unsupported presentation modes", () => {
+    expect(() => decodeClientSettings({ environmentIdentificationMode: "badge" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ environmentIdentificationMode: "badge" })).toThrow();
   });
 });
 

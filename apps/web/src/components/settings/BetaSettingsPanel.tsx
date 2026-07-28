@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
-import { useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -52,10 +51,6 @@ function AutoSettleDaysInput({
 }
 
 export function BetaSettingsPanel() {
-  const sidebarStageBackdropVariant = useSidebarStageBackdropVariant();
-  const sidebarStageArtworkEnabled = useClientSettings(
-    (settings) => settings.sidebarStageArtworkEnabled,
-  );
   const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
@@ -65,21 +60,6 @@ export function BetaSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="Beta features">
-        {sidebarStageBackdropVariant ? (
-          <SettingsRow
-            title="Sidebar header artwork"
-            description="Show channel-specific artwork behind the sidebar header in Dev and Nightly builds."
-            control={
-              <Switch
-                checked={sidebarStageArtworkEnabled}
-                onCheckedChange={(checked) =>
-                  updateSettings({ sidebarStageArtworkEnabled: Boolean(checked) })
-                }
-                aria-label="Show sidebar header artwork"
-              />
-            }
-          />
-        ) : null}
         <SettingsRow
           title="Sidebar v2"
           description="One flat thread list in creation order. Active work renders as rich cards; settled threads collapse to compact rows. Settling requires an up-to-date server — on older servers threads simply stay active. Switch back any time."
