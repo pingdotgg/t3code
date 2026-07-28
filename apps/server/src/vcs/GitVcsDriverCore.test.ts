@@ -125,11 +125,13 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     yield* driver.statusDetailsLocal(cwd);
     yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
     yield* driver.listRefs({ cwd });
+    yield* driver.getReviewDiffPreview({ cwd, sourceKind: "working-tree" });
 
     assert.deepStrictEqual(commands, [
-      { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
+      { args: ["--no-optional-locks", "status", "--porcelain=2", "--branch"], lcAll: "C" },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
       { args: ["branch", "--no-color", "--no-column"], lcAll: "C" },
+      { args: ["rev-parse", "--is-inside-work-tree"], lcAll: "C" },
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -303,6 +305,15 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           baseRef: initialBranch,
           ignoreWhitespace: true,
         });
+        const workingTreeOnly = yield* driver.getReviewDiffPreview({
+          cwd,
+          sourceKind: "working-tree",
+        });
+        const branchRangeOnly = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          sourceKind: "branch-range",
+        });
 
         assert.isNotEmpty(included.sources.find((source) => source.kind === "working-tree")?.diff);
         assert.isNotEmpty(included.sources.find((source) => source.kind === "branch-range")?.diff);
@@ -314,6 +325,48 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           ignored.sources.find((source) => source.kind === "branch-range")?.diff,
           "",
         );
+        assert.deepStrictEqual(
+          workingTreeOnly.sources.map((source) => source.kind),
+          ["working-tree"],
+        );
+        assert.deepStrictEqual(
+          branchRangeOnly.sources.map((source) => source.kind),
+          ["branch-range"],
+        );
+      }),
+    );
+
+    it.effect("bounds aggregate untracked diff work", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        for (let index = 0; index < 101; index += 1) {
+          yield* writeTextFile(cwd, `untracked/${index}.txt`, "");
+        }
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          sourceKind: "working-tree",
+        });
+
+        assert.strictEqual(preview.sources[0]?.truncated, true);
+      }),
+    );
+
+    it.effect("previews untracked files before the first commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "untracked.txt", "before first commit\n");
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          sourceKind: "working-tree",
+        });
+
+        assert.include(preview.sources[0]?.diff, "untracked.txt");
       }),
     );
   });

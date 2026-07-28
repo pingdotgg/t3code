@@ -3,15 +3,16 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { GitCommandError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
+export const ReviewDiffPreviewSourceKind = Schema.Literals(["working-tree", "branch-range"]);
+export type ReviewDiffPreviewSourceKind = typeof ReviewDiffPreviewSourceKind.Type;
+
 export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(TrimmedNonEmptyString),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  sourceKind: Schema.optionalKey(ReviewDiffPreviewSourceKind),
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
-
-export const ReviewDiffPreviewSourceKind = Schema.Literals(["working-tree", "branch-range"]);
-export type ReviewDiffPreviewSourceKind = typeof ReviewDiffPreviewSourceKind.Type;
 
 export const ReviewDiffPreviewSource = Schema.Struct({
   id: TrimmedNonEmptyString,

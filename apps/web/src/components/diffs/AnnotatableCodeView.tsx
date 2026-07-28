@@ -149,7 +149,7 @@ export function AnnotatableCodeView({
           annotations,
           collapsed,
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${fileDiff.cacheKey ?? ""}:${collapsed ? "1" : "0"}:${annotations
               .flatMap((annotation) =>
                 annotation.metadata.entries.map(
                   (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,

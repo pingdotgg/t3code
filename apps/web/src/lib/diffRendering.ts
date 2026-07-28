@@ -116,15 +116,20 @@ export function getRenderablePatch(
   if (normalizedPatch.length === 0) return null;
 
   try {
-    const parsedPatches = parsePatchFiles(
-      normalizedPatch,
-      buildPatchCacheKey(normalizedPatch, cacheScope),
-    );
-    const files = parsedPatches.flatMap((parsedPatch) =>
-      options.compactPartialHunkOffsets
-        ? parsedPatch.files.map(compactPartialHunkOffsets)
-        : parsedPatch.files,
-    );
+    const parsedPatches = parsePatchFiles(normalizedPatch, undefined);
+    const files = parsedPatches
+      .flatMap((parsedPatch) =>
+        options.compactPartialHunkOffsets
+          ? parsedPatch.files.map(compactPartialHunkOffsets)
+          : parsedPatch.files,
+      )
+      .map((file) => {
+        const { cacheKey: _cacheKey, ...metadata } = file;
+        return {
+          ...file,
+          cacheKey: buildPatchCacheKey(JSON.stringify(metadata), `${cacheScope}:file`),
+        };
+      });
     if (files.length > 0) {
       return { kind: "files", files };
     }
@@ -152,7 +157,7 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
 }
 
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
-  return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
+  return JSON.stringify([fileDiff.prevName ?? null, fileDiff.name]);
 }
 
 export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {

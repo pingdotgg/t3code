@@ -181,6 +181,7 @@ export const WS_METHODS = {
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
+  reviewSubscribeDiffPreview: "review.subscribeDiffPreview",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -495,6 +496,13 @@ export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPrevie
   error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsReviewSubscribeDiffPreviewRpc = Rpc.make(WS_METHODS.reviewSubscribeDiffPreview, {
+  payload: ReviewDiffPreviewInput,
+  success: ReviewDiffPreviewResult,
+  error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
   payload: TerminalOpenInput,
   success: TerminalSessionSnapshot,
@@ -738,6 +746,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
+  WsReviewSubscribeDiffPreviewRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

@@ -151,7 +151,7 @@ export function createVcsEnvironmentAtoms<R, E>(
       return runtime
         .atom(cachedVcsRefsChanges(environmentId, input))
         .pipe(
-          Atom.setIdleTTL(5 * 60_000),
+          Atom.setIdleTTL(0),
           Atom.withLabel(`environment-data:vcs:list-refs:${environmentId}:${inputKey}`),
         );
     }),

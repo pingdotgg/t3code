@@ -4885,6 +4885,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc git methods", () =>
     Effect.gen(function* () {
+      const makeDiffPreview = (cwd: string) => ({
+        cwd,
+        generatedAt: DateTime.nowUnsafe(),
+        sources: [
+          {
+            id: "working-tree",
+            kind: "working-tree" as const,
+            title: "Dirty worktree",
+            baseRef: "HEAD",
+            headRef: null,
+            diff: "dirty-diff",
+            diffHash: "hash-dirty",
+            truncated: false,
+          },
+          {
+            id: "branch-range",
+            kind: "branch-range" as const,
+            title: "Against main",
+            baseRef: "main",
+            headRef: "feature/demo",
+            diff: "base-diff",
+            diffHash: "hash-base",
+            truncated: false,
+          },
+        ],
+      });
+
       yield* buildAppUnderTest({
         config: {
           cwd: "/tmp/repo",
@@ -5045,33 +5072,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           reviewService: {
-            getDiffPreview: (input) =>
-              Effect.succeed({
-                cwd: input.cwd,
-                generatedAt: DateTime.nowUnsafe(),
-                sources: [
-                  {
-                    id: "working-tree",
-                    kind: "working-tree",
-                    title: "Dirty worktree",
-                    baseRef: "HEAD",
-                    headRef: null,
-                    diff: "dirty-diff",
-                    diffHash: "hash-dirty",
-                    truncated: false,
-                  },
-                  {
-                    id: "branch-range",
-                    kind: "branch-range",
-                    title: "Against main",
-                    baseRef: "main",
-                    headRef: "feature/demo",
-                    diff: "base-diff",
-                    diffHash: "hash-base",
-                    truncated: false,
-                  },
-                ],
-              }),
+            getDiffPreview: (input) => Effect.succeed(makeDiffPreview(input.cwd)),
+            streamDiffPreview: (input) => Stream.make(makeDiffPreview(input.cwd)),
           },
         },
       });
@@ -5186,6 +5188,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(diffPreview.sources[0]?.diff, "dirty-diff");
+
+      const streamedDiffPreview = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.reviewSubscribeDiffPreview]({ cwd: "/tmp/repo" }).pipe(
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          ),
+        ),
+      );
+      assert.equal(streamedDiffPreview.sources[0]?.diff, "dirty-diff");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
