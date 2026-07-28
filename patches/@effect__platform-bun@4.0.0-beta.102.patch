@@ -1,37 +1,43 @@
 diff --git a/dist/BunHttpServer.js b/dist/BunHttpServer.js
-index 5fb0cbacc183b58e31a442badf4aef06bebcd592..c74a79be2657ab5e42f21351aa4c206dec13ec06 100644
+index 5fb0cbacc183b58e31a442badf4aef06bebcd592..2c3d2ea9a727b71e502f9e5c207340dfa0f63879 100644
 --- a/dist/BunHttpServer.js
 +++ b/dist/BunHttpServer.js
-@@ -45,6 +45,14 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+@@ -45,6 +45,17 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
      ...options,
      fetch: handlerStack[0],
      websocket: {
 +      // Negotiate permessage-deflate with clients that offer it; clients that
-+      // don't still get uncompressed frames on their connection. Dedicated
-+      // compressors keep per-connection sliding windows (context takeover) so
-+      // the compression dictionary is shared across frames.
++      // don't still get uncompressed frames on their connection. A dedicated
++      // compressor keeps a per-connection sliding window (context takeover) so
++      // the compression dictionary is shared across server-to-client frames.
++      // Decompression uses the shared decompressor: uWebSockets' dedicated
++      // decompressor path can abort connections (close 1006) on valid DEFLATE
++      // input — see https://github.com/uNetworking/uWebSockets.js/issues/633.
 +      perMessageDeflate: {
 +        compress: "dedicated",
-+        decompress: "dedicated"
++        decompress: "shared"
 +      },
        open(ws) {
          Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws));
        },
 diff --git a/src/BunHttpServer.ts b/src/BunHttpServer.ts
-index 9f2ac3dfc018e2d35c6f44785f1ce05e2e06fc7c..c1e5869fecc5d635ff89cd303feaf1efd6d06ef4 100644
+index 9f2ac3dfc018e2d35c6f44785f1ce05e2e06fc7c..84f3062d880d05f5a680ec89a5f0a1b78a3ba0dc 100644
 --- a/src/BunHttpServer.ts
 +++ b/src/BunHttpServer.ts
-@@ -90,6 +90,14 @@ export const make = Effect.fnUntraced(
+@@ -90,6 +90,17 @@ export const make = Effect.fnUntraced(
        ...options as ServeOptions<R>,
        fetch: handlerStack[0],
        websocket: {
 +        // Negotiate permessage-deflate with clients that offer it; clients that
-+        // don't still get uncompressed frames on their connection. Dedicated
-+        // compressors keep per-connection sliding windows (context takeover) so
-+        // the compression dictionary is shared across frames.
++        // don't still get uncompressed frames on their connection. A dedicated
++        // compressor keeps a per-connection sliding window (context takeover) so
++        // the compression dictionary is shared across server-to-client frames.
++        // Decompression uses the shared decompressor: uWebSockets' dedicated
++        // decompressor path can abort connections (close 1006) on valid DEFLATE
++        // input — see https://github.com/uNetworking/uWebSockets.js/issues/633.
 +        perMessageDeflate: {
 +          compress: "dedicated",
-+          decompress: "dedicated"
++          decompress: "shared"
 +        },
          open(ws) {
            Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws))

@@ -1,5 +1,5 @@
 diff --git a/dist/NodeHttpServer.js b/dist/NodeHttpServer.js
-index ab7c9354853032fefa192ebfa8ab2026bac6ddb7..6ecf13db641a9319c3ce6d0fb5dcf678cf75ba3b 100644
+index ab7c9354853032fefa192ebfa8ab2026bac6ddb7..505d94eb01850a5827e5205b077c86707767b8dc 100644
 --- a/dist/NodeHttpServer.js
 +++ b/dist/NodeHttpServer.js
 @@ -83,7 +83,14 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (evaluate, options)
@@ -11,15 +11,15 @@ index ab7c9354853032fefa192ebfa8ab2026bac6ddb7..6ecf13db641a9319c3ce6d0fb5dcf678
 +    // Negotiate permessage-deflate with clients that offer it; clients that
 +    // don't still get uncompressed frames on their connection. Context
 +    // takeover stays enabled (ws default) so the compression window is shared
-+    // across frames; threshold skips compression for tiny frames.
-+    perMessageDeflate: {
-+      threshold: 512
-+    }
++    // across frames — that also makes small frames cheap to compress, so no
++    // size threshold is set (ws only honors `threshold` when context takeover
++    // is disabled).
++    perMessageDeflate: true
    })), wss => Effect.callback(resume => {
      wss.close(() => resume(Effect.void));
    })).pipe(Scope.provide(scope), Effect.cached);
 diff --git a/src/NodeHttpServer.ts b/src/NodeHttpServer.ts
-index e18cd931f17c26d6ca985a2d1ece9e9d760851d3..758fd795c731200a9f58959e4be93817616b9ea7 100644
+index e18cd931f17c26d6ca985a2d1ece9e9d760851d3..a0868292b6bd2d20b1ba0487c46f21519411275f 100644
 --- a/src/NodeHttpServer.ts
 +++ b/src/NodeHttpServer.ts
 @@ -116,7 +116,18 @@ export const make = Effect.fnUntraced(function*(
@@ -33,10 +33,10 @@ index e18cd931f17c26d6ca985a2d1ece9e9d760851d3..758fd795c731200a9f58959e4be93817
 +        // Negotiate permessage-deflate with clients that offer it; clients that
 +        // don't still get uncompressed frames on their connection. Context
 +        // takeover stays enabled (ws default) so the compression window is
-+        // shared across frames; threshold skips compression for tiny frames.
-+        perMessageDeflate: {
-+          threshold: 512
-+        }
++        // shared across frames — that also makes small frames cheap to
++        // compress, so no size threshold is set (ws only honors `threshold`
++        // when context takeover is disabled).
++        perMessageDeflate: true
 +      })
 +    ),
      (wss) =>
