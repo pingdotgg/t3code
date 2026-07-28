@@ -9,6 +9,8 @@ const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d
 const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+// Standard OS and dev-container roots; deliberately excludes app-route-ish
+// prefixes like /app/ or /chat/ so SPA routes never read as files.
 const POSIX_FILE_ROOT_PREFIXES = [
   "/Users/",
   "/home/",
@@ -20,6 +22,20 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/Volumes/",
   "/private/",
   "/root/",
+  "/usr/",
+  "/bin/",
+  "/sbin/",
+  "/lib/",
+  "/lib64/",
+  "/srv/",
+  "/dev/",
+  "/proc/",
+  "/sys/",
+  "/run/",
+  "/boot/",
+  "/media/",
+  "/workspace/",
+  "/workspaces/",
 ] as const;
 
 export interface MarkdownFileLinkMeta {
@@ -170,6 +186,178 @@ export function resolveMarkdownFileLinkTarget(
   return resolvePathLinkTarget(pathWithPosition, cwd);
 }
 
+const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
+const PATH_SEPARATOR_PATTERN = /[\\/]/;
+const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
+const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
+const BARE_EXTENSIONLESS_POSITION_PATTERN = /^[A-Za-z0-9_-]+(?::\d+){1,2}$/;
+// Any `Name:digits` shape also matches `error:1`, `port:3000`, `TODO:12`, so
+// extensionless linking is limited to conventional filenames.
+const EXTENSIONLESS_FILE_NAMES = new Set([
+  "Makefile",
+  "makefile",
+  "GNUmakefile",
+  "Dockerfile",
+  "Containerfile",
+  "Justfile",
+  "justfile",
+  "Rakefile",
+  "Gemfile",
+  "Procfile",
+  "Brewfile",
+  "Caddyfile",
+  "Vagrantfile",
+  "Jenkinsfile",
+  "Podfile",
+  "Fastfile",
+  "BUILD",
+  "WORKSPACE",
+  "LICENSE",
+  "LICENCE",
+  "COPYING",
+  "NOTICE",
+  "AUTHORS",
+  "CONTRIBUTORS",
+  "CHANGELOG",
+  "README",
+  "CODEOWNERS",
+]);
+const SINGLE_LABEL_HOSTNAMES = new Set(["localhost"]);
+// Allowlists, not full public-suffix detection: treating every dotted first
+// segment as a host would swallow real paths like `conf.d/x.conf` or
+// `Makefile.in:12`. Extensions that double as filename suffixes (`sh`, `md`,
+// `ts`, `rs`, `in`, ...) are deliberately absent from both sets.
+const GENERIC_HOSTNAME_TLDS = new Set([
+  "com",
+  "net",
+  "org",
+  "io",
+  "dev",
+  "app",
+  "ai",
+  "co",
+  "edu",
+  "gov",
+  "mil",
+  "info",
+  "biz",
+  "xyz",
+  "me",
+  "tv",
+  "cc",
+  "gg",
+  "chat",
+  "cloud",
+  "site",
+  "online",
+  "tech",
+  "store",
+  "link",
+]);
+// Country codes collide with file extensions (`.pl` Perl, `.pt` PyTorch,
+// `.es` ES modules), so they only count as host evidence when the candidate
+// lacks a :line suffix — an explicit line reference marks a file and wins.
+const COUNTRY_HOSTNAME_TLDS = new Set([
+  "uk",
+  "de",
+  "fr",
+  "nl",
+  "se",
+  "no",
+  "fi",
+  "dk",
+  "pl",
+  "ch",
+  "at",
+  "be",
+  "es",
+  "it",
+  "pt",
+  "eu",
+  "us",
+  "ca",
+  "au",
+  "nz",
+  "jp",
+  "kr",
+  "cn",
+  "br",
+  "ru",
+  "mx",
+  "ie",
+  "cz",
+  "tr",
+  "sg",
+  "hk",
+]);
+
+/** `127.0.0.1`, `localhost`, `example.com`, `1.2.3` — hosts and versions, not files. */
+function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
+  if (segment.startsWith(".")) return false;
+  const lowered = segment.toLowerCase();
+  if (SINGLE_LABEL_HOSTNAMES.has(lowered)) return true;
+  if (NUMERIC_DOTTED_PATTERN.test(segment)) return true;
+  const labels = lowered.split(".");
+  const lastLabel = labels[labels.length - 1];
+  if (labels.length < 2 || lastLabel === undefined) return false;
+  if (GENERIC_HOSTNAME_TLDS.has(lastLabel)) return true;
+  return !hasPosition && COUNTRY_HOSTNAME_TLDS.has(lastLabel);
+}
+
+/**
+ * Inline code spans mostly hold identifiers, commands, and refs (`node.meta`,
+ * `origin/main`) rather than deliberate link destinations, so auto-linking
+ * them demands stronger path evidence than an explicit markdown link does:
+ * an unambiguous path prefix, a file extension, or a :line suffix.
+ */
+export function resolveInlineCodeFileLinkMeta(
+  codeText: string,
+  cwd?: string,
+): MarkdownFileLinkMeta | null {
+  const trimmed = codeText.trim();
+  if (trimmed.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(trimmed)) return null;
+
+  // Windows drive/UNC paths keep their backslashes; any other backslashes are
+  // relative Windows-style paths, which neither the shape checks nor the
+  // downstream resolver understand — normalize them to forward slashes.
+  const candidate =
+    WINDOWS_DRIVE_PATH_PATTERN.test(trimmed) || WINDOWS_UNC_PATH_PATTERN.test(trimmed)
+      ? trimmed
+      : trimmed.replaceAll("\\", "/");
+
+  const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
+  if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
+
+  const hasExplicitPathShape =
+    RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
+    candidate.startsWith("/") ||
+    WINDOWS_DRIVE_PATH_PATTERN.test(candidate) ||
+    WINDOWS_UNC_PATH_PATTERN.test(candidate);
+  if (!hasExplicitPathShape) {
+    const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
+    const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
+    if (looksLikeHostname(firstSegment, hasPosition)) return null;
+    if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basenameOfPath(withoutPosition))) {
+      return null;
+    }
+  }
+
+  const resolved = resolveMarkdownFileLinkMeta(candidate, cwd);
+  if (resolved) return resolved;
+
+  // `Makefile:12` — conventional extensionless names fail the generic
+  // markdown-link candidate patterns, but here the :line suffix already
+  // marked the span as a file reference.
+  if (
+    cwd &&
+    BARE_EXTENSIONLESS_POSITION_PATTERN.test(candidate) &&
+    EXTENSIONLESS_FILE_NAMES.has(candidate.replace(POSITION_SUFFIX_PATTERN, ""))
+  ) {
+    return buildFileLinkMetaFromTarget(resolvePathLinkTarget(candidate, cwd), cwd);
+  }
+  return null;
+}
+
 function basenameOfPath(path: string): string {
   const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
@@ -194,7 +382,10 @@ export function resolveMarkdownFileLinkMeta(
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
   if (!targetPath) return null;
+  return buildFileLinkMetaFromTarget(targetPath, cwd);
+}
 
+function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): MarkdownFileLinkMeta {
   const { path, line, column } = splitPathAndPosition(targetPath);
   const parsedLine = line ? Number.parseInt(line, 10) : Number.NaN;
   const parsedColumn = column ? Number.parseInt(column, 10) : Number.NaN;
