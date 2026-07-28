@@ -219,6 +219,30 @@ struct AppModelBugHuntRegressionTests {
         #expect(model.lastError == nil)
     }
 
+    @Test("an approval response stays pending and duplicate submissions are ignored")
+    func approvalResponseState() async {
+        let gate = DecisionResponseGate()
+        let backend = StubBackend(approvalResponseGate: gate)
+        let model = AppModel(backend: backend)
+        let request = ApprovalRequest(
+            id: "approval-1", threadID: "thread-1", kind: .command,
+            title: "Run tests", detail: "pnpm run verify", createdAt: Date())
+
+        let first = Task { await model.respond(to: request, decision: .approve) }
+        for _ in 0..<100 where !model.pendingDecisionResponseIDs.contains(request.id) {
+            await Task.yield()
+        }
+        #expect(model.pendingDecisionResponseIDs.contains(request.id))
+
+        let duplicate = Task { await model.respond(to: request, decision: .deny) }
+        await duplicate.value
+        #expect(await gate.callCount == 1)
+
+        await gate.release()
+        await first.value
+        #expect(!model.pendingDecisionResponseIDs.contains(request.id))
+    }
+
     @Test("settings writes reach the server in invocation order")
     func settingsWritesAreSerialized() async {
         let backend = StubBackend()
@@ -249,6 +273,7 @@ private enum StubBackendError: Error, Sendable {
 /// diff loads on demand, and records the sweep's one-shot VCS refreshes.
 private final class StubBackend: BackendService, @unchecked Sendable {
     private let streamPair = AsyncStream<BackendEvent>.makeStream()
+    private let approvalResponseGate: DecisionResponseGate?
 
     var projectsResult: [Project] = []
     var threadsResult: [ChatThread] = []
@@ -260,6 +285,10 @@ private final class StubBackend: BackendService, @unchecked Sendable {
     private(set) var storedSettings: AppSettings?
     var settleShouldFail = false
     private(set) var vcsRefreshedThreadIDs: [String] = []
+
+    init(approvalResponseGate: DecisionResponseGate? = nil) {
+        self.approvalResponseGate = approvalResponseGate
+    }
 
     func events() async -> AsyncStream<BackendEvent> { streamPair.stream }
 
@@ -299,7 +328,9 @@ private final class StubBackend: BackendService, @unchecked Sendable {
     }
     func cancelTurn(threadID: String) async throws {}
     func stopTask(threadID: String, taskId: String) async throws {}
-    func respondToApproval(id: String, decision: ApprovalDecision) async throws {}
+    func respondToApproval(id: String, decision: ApprovalDecision) async throws {
+        await approvalResponseGate?.wait()
+    }
     func respondToUserInput(id: String, answers: [String: [String]]) async throws {}
     func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws {}
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws {}
@@ -366,4 +397,19 @@ private final class StubBackend: BackendService, @unchecked Sendable {
     func listAutoReviewJobs(projectID: String?, limit: Int?) async throws -> [AppAutoReviewJob] { [] }
     func refreshProviders() async throws {}
     func updateProvider(instanceID: String) async throws {}
+}
+
+private actor DecisionResponseGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var callCount = 0
+
+    func wait() async {
+        callCount += 1
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
 }

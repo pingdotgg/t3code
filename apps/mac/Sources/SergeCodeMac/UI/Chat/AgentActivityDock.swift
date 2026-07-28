@@ -72,17 +72,22 @@ struct AgentActivityDock: View {
                         .lineLimit(1)
                         .contentTransition(Motion.reduceMotion ? .identity : .opacity)
                 }
+                .frame(width: 280, alignment: .leading)
                 Spacer(minLength: 12)
-                if !activity.recentToolKinds.isEmpty {
-                    ToolTape(kinds: activity.recentToolKinds)
+                ToolTape(kinds: activity.recentToolKinds)
+                Group {
+                    if let since = activity.since {
+                        Text(since, style: .timer)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Color.clear
+                    }
                 }
-                if let since = activity.since {
-                    Text(since, style: .timer)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                        .contentTransition(.numericText())
-                }
+                // The clock updates once a second. Reserve its width, but let
+                // the digits update immediately so they do not animate forever.
+                .frame(width: 46, alignment: .trailing)
+                .accessibilityHidden(true)
             }
             ActivityFlowLine(tint: tint, animated: animated)
         }
@@ -384,20 +389,39 @@ private struct ShimmerLabel: View {
 /// the whole silent stretch that follows it.
 private struct ToolTape: View {
     let kinds: [ToolEventKind]
+    private static let slotCount = TimelineActivityScan.recentToolTapeLength
+    private static let chipSize: CGFloat = 14
+    private static let spacing: CGFloat = 3
 
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(Array(kinds.enumerated()), id: \.offset) { index, kind in
-                let strength = Self.strength(index: index, count: kinds.count)
-                Image(systemName: kind.activitySymbolName)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(kind.activityTint.opacity(0.35 + 0.6 * strength))
-                    .frame(width: 14, height: 14)
-                    .background(
-                        kind.activityTint.opacity(0.08 + 0.12 * strength),
-                        in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        let visibleKinds = Array(kinds.suffix(Self.slotCount))
+        let leadingEmptySlots = Self.slotCount - visibleKinds.count
+        HStack(spacing: Self.spacing) {
+            ForEach(0..<Self.slotCount, id: \.self) { slot in
+                if slot < leadingEmptySlots {
+                    Color.clear
+                        .frame(width: Self.chipSize, height: Self.chipSize)
+                } else {
+                    let index = slot - leadingEmptySlots
+                    let kind = visibleKinds[index]
+                    let strength = Self.strength(index: index, count: visibleKinds.count)
+                    Image(systemName: kind.activitySymbolName)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(kind.activityTint.opacity(0.35 + 0.6 * strength))
+                        .frame(width: Self.chipSize, height: Self.chipSize)
+                        .background(
+                            kind.activityTint.opacity(0.08 + 0.12 * strength),
+                            in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .contentTransition(
+                            Motion.reduceMotion ? .identity : .symbolEffect(.replace))
+                        .animation(Motion.ambient, value: kind)
+                }
             }
         }
+        .frame(
+            width: Self.chipSize * CGFloat(Self.slotCount)
+                + Self.spacing * CGFloat(Self.slotCount - 1),
+            alignment: .trailing)
         .accessibilityHidden(true)
     }
 

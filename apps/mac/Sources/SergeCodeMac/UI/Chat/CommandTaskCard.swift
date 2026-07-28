@@ -242,10 +242,16 @@ struct CommandTaskCard: View {
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
                 }
-                Text(CommandTaskPresentation.statusLine(for: task, at: now))
+                let statusLine = CommandTaskPresentation.statusLine(for: task, at: now)
+                Text(statusLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    // The terminal state swap crossfades inside the same line
+                    // box. Key on state, not the one-second quiet-time copy:
+                    // animating a clock tick would be constant visual noise.
+                    .contentTransition(Motion.reduceMotion ? .identity : .opacity)
+                    .animation(Motion.ambient, value: task.state)
             }
         }
         .contentShape(Rectangle())

@@ -186,11 +186,19 @@ struct ChatTimelineRowView: View, Equatable {
                 )
             }
         case .approval(let request):
-            ApprovalCard(request: request, isActive: isActiveDecisionCard(request.id)) { decision in
+            ApprovalCard(
+                request: request,
+                isActive: isActiveDecisionCard(request.id),
+                isResponding: model.pendingDecisionResponseIDs.contains(request.id)
+            ) { decision in
                 Task { await model.respond(to: request, decision: decision) }
             }
         case .userInput(let request):
-            UserInputCard(request: request, isActive: isActiveDecisionCard(request.id)) { answers in
+            UserInputCard(
+                request: request,
+                isActive: isActiveDecisionCard(request.id),
+                isResponding: model.pendingDecisionResponseIDs.contains(request.id)
+            ) { answers in
                 Task { await model.respond(to: request, answers: answers) }
             }
         case .usageLimit(let notice):
@@ -965,10 +973,17 @@ private struct ToolEventRow: View {
                     // from wedged ones. The elapsed clock is the whole
                     // "long-running" signal a foreground command needs — it
                     // does not earn a card of its own.
-                    if showsElapsedTimer, let at {
+                    if kind == .command, let at {
+                        // Keep one fixed trailing slot for command runtime.
+                        // When the tool settles the timer fades away in place
+                        // instead of releasing width and making the preview and
+                        // disclosure chevron jump sideways.
                         Text(at, style: .timer)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .opacity(showsElapsedTimer ? 1 : 0)
+                            .frame(width: 46, alignment: .trailing)
+                            .accessibilityHidden(!showsElapsedTimer)
                     }
                     if hasExpandableContent {
                         Image(systemName: "chevron.right")

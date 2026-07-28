@@ -16,14 +16,19 @@ public struct ApprovalCard: View {
     /// timeline. Only that one card gets the keyboard shortcuts below —
     /// see the scheme rationale on `approveShortcut`/`denyShortcut`.
     let isActive: Bool
+    /// True after a decision was sent and before the provider acknowledges it.
+    /// The action row keeps its exact geometry and crossfades to progress so
+    /// the card cannot jump or accept the same decision twice.
+    let isResponding: Bool
     let onRespond: (ApprovalDecision) -> Void
 
     public init(
-        request: ApprovalRequest, isActive: Bool,
+        request: ApprovalRequest, isActive: Bool, isResponding: Bool = false,
         onRespond: @escaping (ApprovalDecision) -> Void
     ) {
         self.request = request
         self.isActive = isActive
+        self.isResponding = isResponding
         self.onRespond = onRespond
     }
 
@@ -63,6 +68,33 @@ public struct ApprovalCard: View {
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
             }
 
+            actionRow
+        }
+        .padding(14)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+        // The timeline suppresses ambient layout animation while a turn is
+        // live. Re-arm this fixed-geometry opacity swap downstream so a click
+        // still gets immediate visual acknowledgement without remeasuring the
+        // transcript.
+        .animation(Motion.reveal, value: isResponding)
+        // An approval prompt interrupts the user mid-read, so it is the one
+        // surface that most needs to announce itself rather than blink into
+        // the transcript. Arrival is owned by the timeline ForEach's
+        // `.entrance(.row)` — a second `.entrance(.card)` here doubled the
+        // travel and multiplied the opacity/scale.
+    }
+
+    private var icon: String {
+        switch request.kind {
+        case .command: "terminal"
+        case .fileEdit: "pencil"
+        case .fileRead: "doc.text"
+        case .other: "questionmark.circle"
+        }
+    }
+
+    private var actionRow: some View {
+        ZStack(alignment: .trailing) {
             HStack {
                 Spacer()
                 Button("Deny", role: .cancel) {
@@ -92,22 +124,15 @@ public struct ApprovalCard: View {
                 .keyboardShortcut(isActive ? Self.approveShortcut : nil)
                 .help(isActive ? "Approve (⌘⇧⏎)" : "Approve")
             }
-        }
-        .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
-        // An approval prompt interrupts the user mid-read, so it is the one
-        // surface that most needs to announce itself rather than blink into
-        // the transcript. Arrival is owned by the timeline ForEach's
-        // `.entrance(.row)` — a second `.entrance(.card)` here doubled the
-        // travel and multiplied the opacity/scale.
-    }
+            .disabled(isResponding)
+            .opacity(isResponding ? 0 : 1)
+            .accessibilityHidden(isResponding)
 
-    private var icon: String {
-        switch request.kind {
-        case .command: "terminal"
-        case .fileEdit: "pencil"
-        case .fileRead: "doc.text"
-        case .other: "questionmark.circle"
+            Label("Submitting decision…", systemImage: "arrow.up.circle")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .opacity(isResponding ? 1 : 0)
+                .accessibilityHidden(!isResponding)
         }
     }
 }
