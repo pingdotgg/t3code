@@ -90,6 +90,7 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
+  findActiveBrowserRecordingRuntimeTabId: vi.fn(() => null),
   startBrowserRecording: vi.fn(),
   stopBrowserRecording: vi.fn(),
   useActiveBrowserRecordingTabIds: () => new Set(),
@@ -188,6 +189,13 @@ vi.mock("./useLoadingProgress", () => ({ useLoadingProgress: () => 0 }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { PreviewView } from "./PreviewView";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+
+const TEST_THREAD_REF = {
+  environmentId: EnvironmentId.make("environment-1"),
+  threadId: ThreadId.make("thread-1"),
+} as const;
+const TEST_RUNTIME_TAB_ID = previewRuntimeTabId(TEST_THREAD_REF, null, "tab-1");
 
 describe("PreviewView navigation", () => {
   beforeEach(() => {
@@ -230,7 +238,9 @@ describe("PreviewView navigation", () => {
     expect(mocks.submittedUrl).not.toBeNull();
     mocks.submittedUrl?.(submitted);
 
-    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("tab-1", expected));
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, expected),
+    );
     expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
       {
         environmentId: "environment-1",
@@ -258,7 +268,7 @@ describe("PreviewView navigation", () => {
 
     await vi.waitFor(() =>
       expect(mocks.navigate).toHaveBeenCalledWith(
-        "tab-1",
+        TEST_RUNTIME_TAB_ID,
         "http://172.25.85.75:5173/app?mode=test#top",
       ),
     );
@@ -306,11 +316,15 @@ describe("PreviewView navigation", () => {
 
     renderToStaticMarkup(<PreviewView {...props} />);
     mocks.toggleNativePictureInPicture?.();
-    await vi.waitFor(() => expect(mocks.openPictureInPicture).toHaveBeenCalledWith("tab-1"));
+    await vi.waitFor(() =>
+      expect(mocks.openPictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
+    );
 
     mocks.pictureInPicture = true;
     renderToStaticMarkup(<PreviewView {...props} />);
     mocks.toggleNativePictureInPicture?.();
-    await vi.waitFor(() => expect(mocks.closePictureInPicture).toHaveBeenCalledWith("tab-1"));
+    await vi.waitFor(() =>
+      expect(mocks.closePictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
+    );
   });
 });
