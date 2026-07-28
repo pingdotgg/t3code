@@ -196,11 +196,21 @@ describe("resolveInlineCodeFileLinkMeta", () => {
     ).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("example.com:8080", "/Users/julius/project")).toBeNull();
     expect(resolveInlineCodeFileLinkMeta("10.0.0.1:80:1", "/Users/julius/project")).toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("localhost/index.html", "/Users/julius/project"),
+    ).toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("example.uk/index.html", "/Users/julius/project"),
+    ).toBeNull();
   });
 
   it("still links files whose extension merely resembles a tld", () => {
     expect(resolveInlineCodeFileLinkMeta("script.ts:10", "/Users/julius/project")).not.toBeNull();
     expect(resolveInlineCodeFileLinkMeta("src/setup.sh:3", "/Users/julius/project")).not.toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("Makefile.in:12", "/Users/julius/project")).not.toBeNull();
+    expect(
+      resolveInlineCodeFileLinkMeta("conf.d/nginx.conf", "/Users/julius/project"),
+    ).not.toBeNull();
   });
 
   it("ignores commands, flags, and expressions", () => {

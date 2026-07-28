@@ -174,6 +174,11 @@ const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
+const SINGLE_LABEL_HOSTNAMES = new Set(["localhost"]);
+// An allowlist, not full public-suffix detection: treating every dotted first
+// segment as a host would swallow real paths like `conf.d/x.conf` or
+// `Makefile.in:12`. Extensions that double as filename suffixes (`sh`, `md`,
+// `ts`, `rs`, `in`, ...) are deliberately absent.
 const COMMON_HOSTNAME_TLDS = new Set([
   "com",
   "net",
@@ -200,13 +205,46 @@ const COMMON_HOSTNAME_TLDS = new Set([
   "tech",
   "store",
   "link",
+  "uk",
+  "de",
+  "fr",
+  "nl",
+  "se",
+  "no",
+  "fi",
+  "dk",
+  "pl",
+  "ch",
+  "at",
+  "be",
+  "es",
+  "it",
+  "pt",
+  "eu",
+  "us",
+  "ca",
+  "au",
+  "nz",
+  "jp",
+  "kr",
+  "cn",
+  "br",
+  "ru",
+  "mx",
+  "ie",
+  "cz",
+  "tr",
+  "sg",
+  "hk",
 ]);
 
-/** `127.0.0.1`, `example.com`, `1.2.3` — hosts and versions, not files. */
+/** `127.0.0.1`, `localhost`, `example.com`, `1.2.3` — hosts and versions, not files. */
 function looksLikeHostname(segment: string): boolean {
   if (segment.startsWith(".")) return false;
+  const lowered = segment.toLowerCase();
+  if (SINGLE_LABEL_HOSTNAMES.has(lowered)) return true;
   if (NUMERIC_DOTTED_PATTERN.test(segment)) return true;
-  const labels = segment.toLowerCase().split(".");
+  const labels = lowered.split(".");
   const lastLabel = labels[labels.length - 1];
   return labels.length >= 2 && lastLabel !== undefined && COMMON_HOSTNAME_TLDS.has(lastLabel);
 }
