@@ -223,6 +223,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const hostPlatform = yield* HostProcessPlatform;
   const scanLock = yield* Semaphore.make(1);
   const notificationLock = yield* Semaphore.make(1);
+  const reentrantScanRequests = yield* Queue.sliding<void>(1);
   const pollScheduleSignalRef = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined);
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
@@ -393,6 +394,24 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
+  yield* Effect.forkScoped(
+    Effect.gen(function* () {
+      while (true) {
+        yield* Queue.take(reentrantScanRequests);
+        yield* pollTick();
+      }
+    }),
+  );
+
+  const pollAfterTerminalChange = Effect.fn("PortDiscovery.pollAfterTerminalChange")(function* () {
+    const currentListener = yield* CurrentListenerRegistration;
+    if (currentListener === undefined) {
+      yield* pollTick();
+    } else {
+      yield* Queue.offer(reentrantScanRequests, undefined);
+    }
+  });
+
   // Keep broad listener discovery as a fallback, but avoid a system-wide lsof
   // process every three seconds while the app is otherwise idle. Terminal PID
   // changes trigger immediate scans below; the periodic loop is only the
@@ -556,7 +575,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         }
         return [true, { ...state, terminalProcesses }] as const;
       });
-      if (changed) yield* pollTick();
+      if (changed) yield* pollAfterTerminalChange();
     });
 
   const unregisterTerminal: PortDiscovery["Service"]["unregisterTerminal"] = Effect.fn(
@@ -567,7 +586,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const removed = terminalProcesses.delete(terminalOwnerKey(input));
       return [removed, removed ? { ...state, terminalProcesses } : state] as const;
     });
-    if (changed) yield* pollTick();
+    if (changed) yield* pollAfterTerminalChange();
   });
 
   return PortDiscovery.of({

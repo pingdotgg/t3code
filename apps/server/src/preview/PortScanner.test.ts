@@ -372,6 +372,48 @@ effectIt("allows snapshot listeners to trigger scans without deadlocking", () =>
   }).pipe(Effect.provide(layer));
 });
 
+effectIt("allows scan-broadcast listeners to trigger scans without deadlocking", () => {
+  const reentrantDeliveryCompleted = Deferred.makeUnsafe<void>();
+  const deliveries: Array<ReadonlyArray<number>> = [];
+  let probeCount = 0;
+  let scanner: PortScanner.PortDiscovery["Service"];
+  const layer = makeProbeFailureLayer(() =>
+    Effect.sync(() => {
+      probeCount += 1;
+      return {
+        stdout: `p${100 + probeCount}\ncnode\nn*:${2999 + probeCount}\n`,
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    }),
+  );
+
+  return Effect.gen(function* () {
+    scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.subscribe((servers) =>
+      Effect.gen(function* () {
+        deliveries.push(servers.map((server) => server.port));
+        if (deliveries.length === 2) {
+          yield* scanner.registerTerminalProcesses({
+            threadId: "thread-1",
+            terminalId: "terminal-1",
+            processIds: [101],
+          });
+        } else if (deliveries.length === 3) {
+          yield* Deferred.succeed(reentrantDeliveryCompleted, undefined).pipe(Effect.ignore);
+        }
+      }),
+    );
+    yield* scanner.retain;
+    yield* Deferred.await(reentrantDeliveryCompleted);
+
+    expect(deliveries).toEqual([[], [3000], [3001]]);
+  }).pipe(Effect.provide(layer));
+});
+
 effectIt("removes listeners when initial snapshot replay fails", () => {
   const defect = new Error("snapshot replay failed");
   const healthyDeliveries: Array<ReadonlyArray<number>> = [];
