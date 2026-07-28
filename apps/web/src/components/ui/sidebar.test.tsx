@@ -50,11 +50,33 @@ describe("sidebar interactive cursors", () => {
     expect(html).toContain("size-[var(--workspace-titlebar-control-size)]!");
   });
 
-  it("uses a pointer cursor for menu buttons by default", () => {
+  it("uses shared geometry and icon constraints for menu buttons by default", () => {
     const html = renderSidebarButton();
 
     expect(html).toContain('data-slot="sidebar-menu-button"');
+    expect(html).toContain("h-8");
+    expect(html).toContain("rounded-md");
+    expect(html).toContain("px-2");
+    expect(html).toContain("py-1.5");
+    expect(html).toContain("]:size-4");
+    expect(html).toContain("]:shrink-0");
     expect(html).toContain("cursor-pointer");
+  });
+
+  it("applies the shared default treatment to icon-only menu buttons", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider>
+        <SidebarMenuButton size="icon">
+          <span>+</span>
+        </SidebarMenuButton>
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain("size-8");
+    expect(html).toContain("justify-center");
+    expect(html).toContain("p-0");
+    expect(html).toContain("font-medium");
+    expect(html).toContain("text-sidebar-muted-foreground/80");
   });
 
   it("lets project drag handles override the default pointer cursor", () => {
