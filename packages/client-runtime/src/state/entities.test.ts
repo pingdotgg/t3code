@@ -25,6 +25,21 @@ describe("V2 client presentation", () => {
     expect(shell.source).toBe(v2ThreadShell);
   });
 
+  it("presents provider errors carried by failed thread shells", () => {
+    const runId = RunId.make("run-failed");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      status: "failed",
+      lastError: "provider process exited",
+    });
+
+    expect(shell.runtime).toMatchObject({
+      status: "failed",
+      lastError: "provider process exited",
+    });
+  });
+
   it("derives execution summaries without wrapping or copying the projection", () => {
     const runId = RunId.make("run-1");
     const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
