@@ -2774,6 +2774,10 @@ public actor LiveBackend: BackendService {
             newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
             addProjectBaseDirectory: settings.addProjectBaseDirectory,
             autoReview: autoReviewPatch,
+            workflowModelRouting: WorkflowModelRouting(
+                explore: Self.wireWorkflowRoute(settings.workflowModelRouting.explore),
+                implement: Self.wireWorkflowRoute(settings.workflowModelRouting.implement),
+                verify: Self.wireWorkflowRoute(settings.workflowModelRouting.verify)),
             autoArchiveSettledAfterMs: .some(settings.autoArchiveSettledAfterMs))
         return Self.uiSettings(
             try await client.updateSettings(patch: patch),
@@ -2837,6 +2841,10 @@ public actor LiveBackend: BackendService {
             defaultEnvMode: settings.defaultThreadEnvMode == .worktree ? .worktree : .local,
             newWorktreesStartFromOrigin: settings.newWorktreesStartFromOrigin,
             addProjectBaseDirectory: settings.addProjectBaseDirectory,
+            workflowModelRouting: AppWorkflowModelRouting(
+                explore: Self.uiWorkflowRoute(settings.workflowModelRouting.explore),
+                implement: Self.uiWorkflowRoute(settings.workflowModelRouting.implement),
+                verify: Self.uiWorkflowRoute(settings.workflowModelRouting.verify)),
             autoReview: AppAutoReviewSettings(
                 enabled: ar.enabled,
                 mode: ar.mode,
@@ -2853,6 +2861,14 @@ public actor LiveBackend: BackendService {
                 fixConcurrency: ar.fixConcurrency,
                 projectOverrides: overrides),
             autoArchiveSettledAfterMs: settings.autoArchiveSettledAfterMs)
+    }
+
+    private static func wireWorkflowRoute(_ route: AppWorkflowModelRoute?) -> ModelSelection? {
+        route.map { ModelSelection(instanceId: $0.instanceID, model: $0.modelID) }
+    }
+
+    private static func uiWorkflowRoute(_ route: ModelSelection?) -> AppWorkflowModelRoute? {
+        route.map { AppWorkflowModelRoute(instanceID: $0.instanceId, modelID: $0.model) }
     }
 
     private static func projectIDs(from projects: JSONValue) -> Set<String> {
