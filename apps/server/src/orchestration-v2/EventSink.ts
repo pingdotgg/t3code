@@ -240,7 +240,7 @@ const baseLayer: Layer.Layer<
         }),
       );
       if (input.effects.length > 0) {
-        yield* effectOutbox.notifyAvailable;
+        yield* effectOutbox.notifyAvailable(input.effects.length);
       }
       yield* eventStore.publishCommitted(storedEvents);
       yield* PubSub.publishAll(liveEvents, storedEvents);
@@ -367,8 +367,8 @@ const baseLayer: Layer.Layer<
         }),
       );
       yield* effectOutbox.signalCancellations(result.cancelledEffectIds);
-      if (input.effects.length > 0) {
-        yield* effectOutbox.notifyAvailable;
+      if (result.committed && input.effects.length > 0) {
+        yield* effectOutbox.notifyAvailable(input.effects.length);
       }
       if (result.committed) {
         yield* eventStore.publishCommitted(result.storedEvents);
