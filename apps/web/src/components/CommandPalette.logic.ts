@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   type KeybindingCommand,
   type FilesystemBrowseEntry,
@@ -294,6 +295,74 @@ export function filterCommandPaletteGroups(input: {
 
     return [{ value: group.value, label: group.label, items }];
   });
+}
+
+/**
+ * Whether the *selected environment* can be reached right now. Browsing
+ * resolves paths on that environment's filesystem, so an unreachable one must
+ * fail loudly: otherwise the browse query returns nothing and the empty
+ * directory list is indistinguishable from a real empty directory.
+ *
+ * Deliberately keyed on reachability ONLY, never on a browse failure. Browse
+ * legitimately fails on a reachable host when the path does not exist yet --
+ * the server surfaces `read_directory_failed` for a missing parent, which is
+ * exactly the "type a new folder name and press Enter to create it" case. If
+ * that blocked submission, Create & Add could never create anything.
+ */
+export type BrowseAvailability =
+  | { readonly _tag: "Available" }
+  | { readonly _tag: "Unavailable"; readonly message: string };
+
+const AVAILABLE_BROWSE: BrowseAvailability = { _tag: "Available" };
+
+function unavailable(message: string): BrowseAvailability {
+  return { _tag: "Unavailable", message };
+}
+
+export function resolveBrowseAvailability(input: {
+  readonly environmentLabel: string | null;
+  readonly connectionPhase: EnvironmentConnectionPhase | null;
+  readonly connectionError: string | null;
+}): BrowseAvailability {
+  const label = input.environmentLabel ?? "this environment";
+  const withReason = (text: string) =>
+    input.connectionError ? `${text} Reason: ${input.connectionError}` : text;
+
+  if (input.connectionPhase === null) {
+    return unavailable("Select an environment first.");
+  }
+
+  switch (input.connectionPhase) {
+    case "connected":
+      return AVAILABLE_BROWSE;
+    case "connecting":
+      return unavailable(`Connecting to ${label}...`);
+    case "reconnecting":
+      return unavailable(withReason(`Reconnecting to ${label}.`));
+    case "offline":
+      return unavailable(`${label} is offline.`);
+    case "available":
+      return unavailable(`${label} isn't connected.`);
+    case "error":
+      return unavailable(withReason(`Can't reach ${label}.`));
+  }
+}
+
+/**
+ * Opening a project already present in local state does not need a filesystem
+ * round trip. Adding a new path does, so it must use the same fail-closed
+ * reachability verdict as browsing.
+ */
+export function resolveProjectPathActionAvailability(input: {
+  readonly projectAlreadyExists: boolean;
+  readonly environmentLabel: string | null;
+  readonly connectionPhase: EnvironmentConnectionPhase | null;
+  readonly connectionError: string | null;
+}): BrowseAvailability {
+  if (input.projectAlreadyExists) {
+    return AVAILABLE_BROWSE;
+  }
+  return resolveBrowseAvailability(input);
 }
 
 export function buildBrowseGroups(input: {

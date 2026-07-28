@@ -1180,10 +1180,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
-    return composerTriggerKind === "path"
-      ? "No matching files or folders."
-      : "No matching command.";
-  }, [composerTriggerKind]);
+    if (composerTriggerKind === "path") {
+      // Path search runs against the thread's environment. A failed lookup is
+      // not the same as "this workspace has no such file" -- say so instead of
+      // rendering an empty menu that reads like a definitive answer.
+      return workspaceEntries.error ?? "No matching files or folders.";
+    }
+    return "No matching command.";
+  }, [composerTriggerKind, workspaceEntries.error]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
