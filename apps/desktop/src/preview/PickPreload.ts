@@ -1229,19 +1229,15 @@ function startAnnotation(): void {
     });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
-  root.addEventListener(
-    "keydown",
-    (event) => {
-      const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
-      // Isolate annotation controls before the event reaches bubble-phase
-      // listeners installed by the inspected page.
-      event.stopImmediatePropagation();
-      if (!submission) return;
-      event.preventDefault();
-      submitAnnotation(submission);
-    },
-    { capture: true },
-  );
+  root.addEventListener("keydown", (event) => {
+    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    // Keep this in the bubble phase so editor inputs receive the event before
+    // it is isolated from listeners installed by the inspected page.
+    event.stopImmediatePropagation();
+    if (!submission) return;
+    event.preventDefault();
+    submitAnnotation(submission);
+  });
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
