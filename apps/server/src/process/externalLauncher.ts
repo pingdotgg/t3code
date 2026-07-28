@@ -313,6 +313,8 @@ export class ExternalLauncher extends Context.Service<
      * Launches the editor as a detached process so server startup is not blocked.
      */
     readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+    /** Reveal a workspace path in the host platform's file manager. */
+    readonly revealInFileManager: (target: string) => Effect.Effect<void, ExternalLauncherError>;
   }
 >()("t3/process/externalLauncher") {}
 
@@ -332,7 +334,9 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   });
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
-    return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
+    return yield* new ExternalLauncherUnknownEditorError({
+      editor: input.editor,
+    });
   }
 
   if (editorDef.commands) {
@@ -349,7 +353,9 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.id !== "file-manager") {
-    return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+    return yield* new ExternalLauncherUnsupportedEditorError({
+      editor: input.editor,
+    });
   }
 
   return {
@@ -430,6 +436,57 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   );
 });
 
+const resolveFileManagerRevealLaunch = Effect.fn("externalLauncher.resolveFileManagerRevealLaunch")(
+  function* (target: string): Effect.fn.Return<ProcessLaunch, never, Path.Path> {
+    const platform = yield* HostProcessPlatform;
+    const path = yield* Path.Path;
+
+    switch (platform) {
+      case "darwin":
+        return {
+          command: "open",
+          args: ["-R", target],
+          options: DETACHED_IGNORE_STDIO_OPTIONS,
+        };
+      case "win32": {
+        const windowsTarget = target.replaceAll("/", "\\");
+        return {
+          command: "explorer",
+          args: ["/select,", windowsTarget],
+          options: DETACHED_IGNORE_STDIO_OPTIONS,
+        };
+      }
+      default:
+        return {
+          command: "xdg-open",
+          args: [path.dirname(target)],
+          options: DETACHED_IGNORE_STDIO_OPTIONS,
+        };
+    }
+  },
+);
+
+const revealInFileManager = Effect.fn("externalLauncher.revealInFileManager")(function* (
+  target: string,
+): Effect.fn.Return<
+  void,
+  ExternalLauncherError,
+  ChildProcessSpawner.ChildProcessSpawner | Path.Path
+> {
+  const launch = yield* resolveFileManagerRevealLaunch(target);
+  return yield* launchAndUnref(
+    launch,
+    (cause) =>
+      new ExternalLauncherEditorSpawnError({
+        editor: "file-manager",
+        target,
+        command: launch.command,
+        args: launch.args,
+        cause,
+      }),
+  );
+});
+
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -456,6 +513,11 @@ export const make = Effect.gen(function* () {
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),
         ),
+      ),
+    revealInFileManager: (target) =>
+      revealInFileManager(target).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(Path.Path, path),
       ),
   });
 });
