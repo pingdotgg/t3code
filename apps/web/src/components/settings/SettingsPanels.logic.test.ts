@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
@@ -10,7 +11,68 @@ import {
   formatDiagnosticsDescription,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
+  resolveProviderSettingsEnvironmentId,
 } from "./SettingsPanels.logic";
+
+const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("00000000-0000-4000-8000-000000000001");
+const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("00000000-0000-4000-8000-000000000002");
+
+describe("provider settings environment selection", () => {
+  it("preserves an explicit selected environment", () => {
+    expect(
+      resolveProviderSettingsEnvironmentId({
+        availableEnvironmentIds: [LOCAL_ENVIRONMENT_ID, REMOTE_ENVIRONMENT_ID],
+        selectedEnvironmentId: REMOTE_ENVIRONMENT_ID,
+        primaryEnvironmentId: LOCAL_ENVIRONMENT_ID,
+        activeEnvironmentId: LOCAL_ENVIRONMENT_ID,
+      }),
+    ).toBe(REMOTE_ENVIRONMENT_ID);
+  });
+
+  it("defaults to the primary environment in managed mode", () => {
+    expect(
+      resolveProviderSettingsEnvironmentId({
+        availableEnvironmentIds: [REMOTE_ENVIRONMENT_ID, LOCAL_ENVIRONMENT_ID],
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: LOCAL_ENVIRONMENT_ID,
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+      }),
+    ).toBe(LOCAL_ENVIRONMENT_ID);
+  });
+
+  it("defaults to the active remote environment in client-only mode", () => {
+    expect(
+      resolveProviderSettingsEnvironmentId({
+        availableEnvironmentIds: [LOCAL_ENVIRONMENT_ID, REMOTE_ENVIRONMENT_ID],
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: null,
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+      }),
+    ).toBe(REMOTE_ENVIRONMENT_ID);
+  });
+
+  it("falls back when the selected environment is no longer available", () => {
+    expect(
+      resolveProviderSettingsEnvironmentId({
+        availableEnvironmentIds: [LOCAL_ENVIRONMENT_ID],
+        selectedEnvironmentId: REMOTE_ENVIRONMENT_ID,
+        primaryEnvironmentId: LOCAL_ENVIRONMENT_ID,
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+      }),
+    ).toBe(LOCAL_ENVIRONMENT_ID);
+  });
+
+  it("returns null when no environments are available", () => {
+    expect(
+      resolveProviderSettingsEnvironmentId({
+        availableEnvironmentIds: [],
+        selectedEnvironmentId: null,
+        primaryEnvironmentId: null,
+        activeEnvironmentId: null,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("project grouping toggle", () => {
   it("enables repository grouping and disables into separate projects", () => {

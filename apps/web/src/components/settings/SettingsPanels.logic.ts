@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
@@ -7,6 +8,29 @@ import type {
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+
+export function resolveProviderSettingsEnvironmentId(input: {
+  readonly availableEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly activeEnvironmentId: EnvironmentId | null;
+}): EnvironmentId | null {
+  const availableIds = new Set(input.availableEnvironmentIds);
+  const candidates = [
+    input.selectedEnvironmentId,
+    input.primaryEnvironmentId,
+    input.activeEnvironmentId,
+    input.availableEnvironmentIds[0] ?? null,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate !== null && availableIds.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";

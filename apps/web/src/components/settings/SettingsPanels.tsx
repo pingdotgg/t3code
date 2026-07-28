@@ -6,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
+  type EnvironmentId,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -43,7 +44,12 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useEnvironmentSettings,
+  usePrimarySettings,
+  useUpdateEnvironmentSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -61,8 +67,12 @@ import {
   primaryServerProvidersAtom,
   serverEnvironment,
 } from "../../state/server";
-import { usePrimaryEnvironment } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../../state/environments";
+import { useActiveEnvironmentId, useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -80,6 +90,7 @@ import {
   type ProviderUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { ProviderEnvironmentSelector } from "./ProviderEnvironmentSelector";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
   buildProviderInstanceUpdatePatch,
@@ -88,6 +99,7 @@ import {
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
+  resolveProviderSettingsEnvironmentId,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -1097,10 +1109,74 @@ export function GeneralSettingsPanel() {
 }
 
 export function ProviderSettingsPanel() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
+  const { isReady, environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const activeEnvironmentId = useActiveEnvironmentId();
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const environmentId = resolveProviderSettingsEnvironmentId({
+    availableEnvironmentIds: environments.map((environment) => environment.environmentId),
+    selectedEnvironmentId,
+    primaryEnvironmentId,
+    activeEnvironmentId,
+  });
+  const environment =
+    environmentId === null
+      ? null
+      : (environments.find((candidate) => candidate.environmentId === environmentId) ?? null);
+
+  if (environmentId === null || environment === null) {
+    return (
+      <SettingsPageContainer>
+        <SettingsSection title="Providers">
+          <SettingsRow
+            title={isReady ? "No connected environments" : "Loading environments"}
+            description={
+              isReady
+                ? "Connect an environment before configuring its provider accounts."
+                : "Waiting for available environments."
+            }
+            control={
+              isReady ? (
+                <Button render={<Link to="/settings/connections" />} size="xs" variant="outline">
+                  Open connections
+                </Button>
+              ) : null
+            }
+          />
+        </SettingsSection>
+      </SettingsPageContainer>
+    );
+  }
+
+  return (
+    <ProviderSettingsEnvironmentPanel
+      key={environmentId}
+      environmentId={environmentId}
+      environmentLabel={environment.label}
+      environments={environments}
+      primaryEnvironmentId={primaryEnvironmentId}
+      onEnvironmentChange={setSelectedEnvironmentId}
+    />
+  );
+}
+
+function ProviderSettingsEnvironmentPanel({
+  environmentId,
+  environmentLabel,
+  environments,
+  primaryEnvironmentId,
+  onEnvironmentChange,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly environments: ReadonlyArray<EnvironmentPresentation>;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const serverProviders = useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? [];
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -1114,6 +1190,15 @@ export function ProviderSettingsPanel() {
   >(() => new Set());
   const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
   const refreshingRef = useRef(false);
+
+  const environmentSelector = (
+    <ProviderEnvironmentSelector
+      environmentId={environmentId}
+      environments={environments}
+      primaryEnvironmentId={primaryEnvironmentId}
+      onEnvironmentChange={onEnvironmentChange}
+    />
+  );
 
   const providerUpdateCandidates = useMemo(
     () => collectProviderUpdateCandidates(serverProviders),
@@ -1145,14 +1230,9 @@ export function ProviderSettingsPanel() {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setIsRefreshingProviders(true);
-    if (!primaryEnvironment) {
-      refreshingRef.current = false;
-      setIsRefreshingProviders(false);
-      return;
-    }
     void (async () => {
       const result = await refreshServerProviders({
-        environmentId: primaryEnvironment.environmentId,
+        environmentId,
         input: {},
       });
       refreshingRef.current = false;
@@ -1160,16 +1240,15 @@ export function ProviderSettingsPanel() {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         console.warn("Failed to refresh providers", {
           operation: "refresh-providers",
-          environmentId: primaryEnvironment.environmentId,
+          environmentId,
           ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
         });
       }
     })();
-  }, [primaryEnvironment, refreshServerProviders]);
+  }, [environmentId, refreshServerProviders]);
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {
-      if (!primaryEnvironment) return;
       let started = false;
       setUpdatingProviderDrivers((previous) => {
         if (previous.has(candidate.driver)) {
@@ -1185,7 +1264,7 @@ export function ProviderSettingsPanel() {
       }
 
       const result = await updateProvider({
-        environmentId: primaryEnvironment.environmentId,
+        environmentId,
         input: {
           provider: candidate.driver,
           instanceId: candidate.instanceId,
@@ -1213,8 +1292,21 @@ export function ProviderSettingsPanel() {
         return next;
       });
     },
-    [primaryEnvironment, updateProvider],
+    [environmentId, updateProvider],
   );
+
+  if (serverSettings === null) {
+    return (
+      <SettingsPageContainer>
+        <SettingsSection title="Providers" headerAction={environmentSelector}>
+          <SettingsRow
+            title={`Connecting to ${environmentLabel}`}
+            description="Provider settings will be available when this environment connects."
+          />
+        </SettingsSection>
+      </SettingsPageContainer>
+    );
+  }
 
   interface InstanceRow {
     readonly instanceId: ProviderInstanceId;
@@ -1315,8 +1407,6 @@ export function ProviderSettingsPanel() {
   const deleteProviderInstance = (id: ProviderInstanceId) => {
     updateSettings({
       providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
-      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
     });
   };
 
@@ -1379,11 +1469,6 @@ export function ProviderSettingsPanel() {
         [driverKind]: defaultLegacyProvider,
       } as typeof settings.providers,
       providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
-      providerModelPreferences: withoutProviderInstanceKey(
-        settings.providerModelPreferences,
-        defaultInstanceId,
-      ),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
     });
   };
 
@@ -1393,6 +1478,7 @@ export function ProviderSettingsPanel() {
         title="Providers"
         headerAction={
           <div className="flex items-center gap-1.5">
+            {environmentSelector}
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
             <Tooltip>
               <TooltipTrigger
@@ -1535,7 +1621,12 @@ export function ProviderSettingsPanel() {
       </SettingsSection>
 
       {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
+        <AddProviderInstanceDialog
+          open
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          onOpenChange={setIsAddInstanceDialogOpen}
+        />
       ) : null}
     </SettingsPageContainer>
   );
