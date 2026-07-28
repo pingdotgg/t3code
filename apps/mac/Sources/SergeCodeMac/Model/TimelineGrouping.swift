@@ -196,19 +196,28 @@ public enum ToolGroupAbsorption {
 }
 
 extension Array where Element == TimelineItem {
-    /// Collapses each maximal run of consecutive tool-event/reasoning rows
-    /// into a `toolGroup` when either:
+    /// Projects the durable transcript from the raw timeline, then collapses
+    /// each maximal run of consecutive tool-event/reasoning rows.
+    ///
+    /// A running tool is live state, not transcript history: it is represented
+    /// by `AgentActivityDock` at the tail and is deliberately omitted here.
+    /// The lifecycle keeps one stable id, so when the terminal update replaces
+    /// it in the raw timeline this projection admits it at the same
+    /// chronological position and the row's entrance animation reads as the
+    /// action moving from the live surface into completed history.
+    ///
+    /// Finished rows are collapsed into a `toolGroup` when either:
     /// - the run is over: at least two tools, none still running, and a later
     ///   item already follows it (the agent has responded and moved on), or
     /// - the run is long enough mid-turn (`liveAutoCollapseToolThreshold` tools
     ///   or more): the finished prefix collapses immediately so a tool-heavy
     ///   turn does not bloat the transcript until the agent finishes speaking.
-    ///   Any still-running tool (and trailing reasoning) stays as individual
-    ///   rows after the summary so live progress remains visible.
+    ///   while live progress remains in the activity dock.
     ///
-    /// `threadIsSettled`: providers don't always close every tool's
-    /// lifecycle, so once the thread has settled a row still marked running
-    /// counts as finished (mirrors ToolEventRow's settled display state).
+    /// `threadIsSettled` remains in this public projection signature and its
+    /// cache key for caller compatibility. It does not promote a tool whose
+    /// provider never sent a terminal lifecycle event: permanent history is
+    /// terminal-only.
     ///
     /// MainActor: routes file-change parsing through `ToolDetailParseCache`.
     @MainActor
@@ -252,33 +261,11 @@ extension Array where Element == TimelineItem {
             }
         }
 
-        /// Index where a live unfinished tail begins: trailing reasoning and
-        /// still-running tools stay expanded after a mid-turn group.
-        func liveUnfinishedTailStart(
-            in entries: [RunEntry],
-            treatRunningAsFinished: Bool
-        ) -> Int {
-            if treatRunningAsFinished { return entries.count }
-            var split = entries.count
-            while split > 0 {
-                switch entries[split - 1].item {
-                case .reasoning:
-                    split -= 1
-                case .toolEvent(_, _, _, _, let status, _, _, _) where status == .running:
-                    split -= 1
-                default:
-                    return split
-                }
-            }
-            return split
-        }
-
         func flush(somethingFollows: Bool) {
             defer { run.removeAll() }
             guard !run.isEmpty else { return }
             let tools = toolsIn(run)
-            let allFinished = threadIsSettled || tools.allSatisfy { $0.status != .running }
-            let closedCollapse = somethingFollows && allFinished && tools.count >= 2
+            let closedCollapse = somethingFollows && tools.count >= 2
             let liveLongCollapse =
                 tools.count >= TimelineToolGrouping.liveAutoCollapseToolThreshold
 
@@ -286,25 +273,7 @@ extension Array where Element == TimelineItem {
                 appendSingles(run)
                 return
             }
-
-            if closedCollapse || allFinished {
-                appendToolGroup(run, tools: tools)
-                return
-            }
-
-            // Mid-turn long burst with work still in flight: collapse the
-            // finished prefix, keep the running tool (and any trailing
-            // reasoning) visible so the user can still watch progress.
-            let split = liveUnfinishedTailStart(in: run, treatRunningAsFinished: threadIsSettled)
-            let head = run[..<split]
-            let tail = run[split...]
-            let headTools = toolsIn(head)
-            if headTools.count >= 2 {
-                appendToolGroup(head, tools: headTools)
-                appendSingles(tail)
-            } else {
-                appendSingles(run)
-            }
+            appendToolGroup(run, tools: tools)
         }
 
         func separatorForItem(_ item: TimelineItem, previousAt: Date?) -> String? {
@@ -330,6 +299,12 @@ extension Array where Element == TimelineItem {
             }
 
             switch item {
+            case .toolEvent(_, _, _, _, .running, _, _, _):
+                // The active dock owns non-terminal work. Leave a gap in the
+                // source ranges; the cache explicitly validates that every
+                // such gap is a running tool so unrelated omissions cannot
+                // hide transcript content.
+                continue
             case .toolEvent, .reasoning:
                 run.append((index, item))
             default:
@@ -512,10 +487,8 @@ enum TimelineDisplayCache {
             return fullPassAndStore()
         }
 
-        let rangeSpanCount = entry.ranges.reduce(0) { total, range in total + range.count }
         guard entry.items.count == entry.ranges.count,
-            items.count == rangeSpanCount,
-            Self.rangesCoverAllItems(entry.ranges, itemCount: items.count)
+            Self.rangesCoverVisibleItems(entry.ranges, items: items)
         else {
             return fullPassAndStore()
         }
@@ -597,14 +570,28 @@ enum TimelineDisplayCache {
         }
     }
 
-    private static func rangesCoverAllItems(_ ranges: [Range<Int>], itemCount: Int) -> Bool {
+    /// Visible ranges may leave holes only for running tools, which belong to
+    /// the live dock. This keeps content-only refreshes incremental while a
+    /// tool is in flight without weakening the cache's structure assertion.
+    private static func rangesCoverVisibleItems(
+        _ ranges: [Range<Int>], items: [TimelineItem]
+    ) -> Bool {
         var nextIndex = 0
         for range in ranges {
-            guard range.lowerBound == nextIndex, range.upperBound <= itemCount
-            else { return false }
+            guard range.lowerBound >= nextIndex, range.upperBound <= items.count else {
+                return false
+            }
+            for hiddenIndex in nextIndex..<range.lowerBound {
+                guard case .toolEvent(_, _, _, _, .running, _, _, _) = items[hiddenIndex]
+                else { return false }
+            }
             nextIndex = range.upperBound
         }
-        return nextIndex == itemCount
+        for hiddenIndex in nextIndex..<items.count {
+            guard case .toolEvent(_, _, _, _, .running, _, _, _) = items[hiddenIndex]
+            else { return false }
+        }
+        return true
     }
 
     /// Reset the cache and its counters between isolated cache tests.
