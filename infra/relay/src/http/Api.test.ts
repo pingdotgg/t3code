@@ -14,6 +14,7 @@ import * as Tracer from "effect/Tracer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { EnvironmentId } from "@t3tools/contracts";
 import { RelayEnvironmentAuth } from "@t3tools/contracts/relay";
 
 import {
@@ -22,12 +23,17 @@ import {
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
   relayNotFoundRoute,
+  revokeEnvironmentLinkRecord,
   traceRelayHttpRequestWith,
+  unlinkEnvironmentRecord,
   verifyRelayClientBearerToken,
   withoutCapturedParentSpan,
 } from "./Api.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
+import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
+import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -151,6 +157,240 @@ describe("relay environment authentication", () => {
         ),
       ),
       Effect.scoped,
+    );
+  });
+});
+
+function relayUnlinkTestLayer(input?: {
+  readonly withTransaction?: RelayDb.RelayTransactions["Service"]["withTransaction"];
+  readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
+  readonly revokeForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["revokeForUser"];
+  readonly revokeCredential?: EnvironmentCredentials.EnvironmentCredentials["Service"]["revokeForEnvironmentPublicKey"];
+  readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
+  readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
+}) {
+  return Layer.mergeAll(
+    Layer.succeed(
+      RelayDb.RelayTransactions,
+      RelayDb.RelayTransactions.of({
+        withTransaction: input?.withTransaction ?? ((effect) => effect),
+      }),
+    ),
+    Layer.succeed(
+      EnvironmentLinks.EnvironmentLinks,
+      EnvironmentLinks.EnvironmentLinks.of({
+        upsert: () => Effect.die("unused upsert"),
+        listUsersForEnvironment: () => Effect.die("unused listUsersForEnvironment"),
+        listDeliveryUsersForEnvironment: () => Effect.die("unused listDeliveryUsersForEnvironment"),
+        listPublicKeysForEnvironment: () => Effect.die("unused listPublicKeysForEnvironment"),
+        listForUser: () => Effect.die("unused listForUser"),
+        getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
+        revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
+      }),
+    ),
+    Layer.succeed(
+      EnvironmentCredentials.EnvironmentCredentials,
+      EnvironmentCredentials.EnvironmentCredentials.of({
+        create: () => Effect.die("unused create"),
+        authenticate: () => Effect.die("unused authenticate"),
+        revokeForEnvironmentPublicKey: input?.revokeCredential ?? (() => Effect.succeed(false)),
+      }),
+    ),
+    Layer.succeed(
+      ManagedEndpointProvider.ManagedEndpointProvider,
+      ManagedEndpointProvider.ManagedEndpointProvider.of({
+        provision: () => Effect.die("unused provision"),
+        prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
+        deprovision: input?.deprovision ?? (() => Effect.void),
+        release: () => Effect.die("unused release"),
+      }),
+    ),
+  );
+}
+
+const linkedEnvironmentRecord = {
+  environmentId: EnvironmentId.make("environment-1"),
+  label: "Environment 1",
+  endpoint: {
+    httpBaseUrl: "https://environment-1.example.test/",
+    wsBaseUrl: "wss://environment-1.example.test/ws",
+    providerKind: "cloudflare_tunnel",
+  },
+  environmentPublicKey: "public-key",
+  linkedAt: "2026-07-28T00:00:00.000Z",
+} as const;
+
+describe("relay environment unlink", () => {
+  it.effect("revokes the link and its credentials in one database transaction", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      expect(
+        yield* revokeEnvironmentLinkRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+        }),
+      ).toBe(true);
+      expect(calls).toEqual(["transaction", "link", "credential"]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          withTransaction: (effect) => {
+            calls.push("transaction");
+            return effect;
+          },
+          revokeForUser: () =>
+            Effect.sync(() => {
+              calls.push("link");
+              return true;
+            }),
+          revokeCredential: () =>
+            Effect.sync(() => {
+              calls.push("credential");
+              return true;
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("commits database revocation before deprovisioning the managed endpoint", () => {
+    const calls: Array<string> = [];
+    const deprovisionTarget = {
+      userId: "user-1",
+      environmentId: "environment-1",
+      hostname: "environment-1.example.test",
+      tunnelId: "tunnel-1",
+      tunnelName: "environment-1-tunnel",
+      dnsRecordId: "dns-1",
+      readyAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "generation-before-unlink",
+    } satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
+
+    return Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(true);
+      expect(calls).toEqual([
+        "prepare",
+        "lookup",
+        "transaction",
+        "link",
+        "credential",
+        "deprovision",
+      ]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          withTransaction: (effect) => {
+            calls.push("transaction");
+            return effect;
+          },
+          getForUser: () =>
+            Effect.sync(() => {
+              calls.push("lookup");
+              return linkedEnvironmentRecord;
+            }),
+          revokeForUser: () =>
+            Effect.sync(() => {
+              calls.push("link");
+              return true;
+            }),
+          revokeCredential: () =>
+            Effect.sync(() => {
+              calls.push("credential");
+              return true;
+            }),
+          prepareDeprovision: () =>
+            Effect.sync(() => {
+              calls.push("prepare");
+              return deprovisionTarget;
+            }),
+          deprovision: (request) =>
+            Effect.sync(() => {
+              expect(request.target).toBe(deprovisionTarget);
+              calls.push("deprovision");
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not deprovision when database revocation fails", () => {
+    const calls: Array<string> = [];
+    const failure = new EnvironmentCredentials.EnvironmentCredentialRevokePersistenceError({
+      environmentId: "environment-1",
+      cause: "database unavailable",
+    });
+
+    return Effect.gen(function* () {
+      expect(
+        yield* Effect.flip(
+          unlinkEnvironmentRecord({
+            userId: "user-1",
+            environmentId: "environment-1",
+          }),
+        ),
+      ).toBe(failure);
+      expect(calls).toEqual(["prepare", "transaction", "link", "credential"]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          withTransaction: (effect) => {
+            calls.push("transaction");
+            return effect;
+          },
+          getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+          revokeForUser: () =>
+            Effect.sync(() => {
+              calls.push("link");
+              return true;
+            }),
+          revokeCredential: () =>
+            Effect.sync(() => {
+              calls.push("credential");
+            }).pipe(Effect.andThen(Effect.fail(failure))),
+          prepareDeprovision: () =>
+            Effect.sync(() => {
+              calls.push("prepare");
+              return null;
+            }),
+          deprovision: () =>
+            Effect.sync(() => {
+              calls.push("deprovision");
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("retries deprovisioning after the link is already revoked", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(false);
+      expect(calls).toEqual(["prepare", "deprovision"]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          prepareDeprovision: () =>
+            Effect.sync(() => {
+              calls.push("prepare");
+              return null;
+            }),
+          deprovision: () =>
+            Effect.sync(() => {
+              calls.push("deprovision");
+            }),
+        }),
+      ),
     );
   });
 });

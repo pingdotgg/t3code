@@ -10,6 +10,61 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
   ManagedEndpointAllocations.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, db)));
 
 describe("ManagedEndpointAllocations", () => {
+  it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
+    let claimedAt: string | undefined;
+    const fakeDb = {
+      update: (table: unknown) => {
+        expect(table).toBe(relayManagedEndpointAllocations);
+        return {
+          set: (values: { readonly updatedAt: string }) => {
+            claimedAt = values.updatedAt;
+            return {
+              where: () => ({
+                returning: () => Effect.succeed([{ userId: "user-1" }]),
+              }),
+            };
+          },
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const generation = yield* allocations.claimDeprovision({
+        userId: "user-1",
+        environmentId: "environment-1",
+        updatedAt: "captured-generation",
+      });
+
+      expect(generation).toBe(claimedAt);
+      expect(generation).not.toBeNull();
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
+  it.effect("does not remove an allocation superseded after a deprovision claim", () => {
+    const fakeDb = {
+      delete: (table: unknown) => {
+        expect(table).toBe(relayManagedEndpointAllocations);
+        return {
+          where: () => ({
+            returning: () => Effect.succeed([]),
+          }),
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      expect(
+        yield* allocations.removeClaimed({
+          userId: "user-1",
+          environmentId: "environment-1",
+          updatedAt: "outdated-claim-generation",
+        }),
+      ).toBe(false);
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
   it.effect("retains database failures with allocation operation and identity", () => {
     const cause = new Error("database unavailable");
     const fakeDb = {

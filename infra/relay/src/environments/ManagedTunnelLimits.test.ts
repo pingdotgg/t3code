@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 
 import * as RelayDb from "../db.ts";
 import {
+  relayEnvironmentLinks,
   relayManagedEndpointAllocations,
   relayManagedTunnelLimits,
 } from "../persistence/schema.ts";
@@ -28,7 +29,16 @@ function makeFakeDb(input: {
         }
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          where: () => input.countRows ?? Effect.succeed([{ activeTunnels: 0 }]),
+          innerJoin: (table: unknown, condition: unknown) => {
+            expect(table).toBe(relayEnvironmentLinks);
+            expect(condition).toBeDefined();
+            return {
+              where: (where: unknown) => {
+                expect(where).toBeDefined();
+                return input.countRows ?? Effect.succeed([{ activeTunnels: 0 }]);
+              },
+            };
+          },
         };
       },
     }),
