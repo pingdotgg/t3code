@@ -2952,20 +2952,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         primaryScreenshotTimeoutMs,
         Math.max(0, remainingBeforePrimary - fallbackReservationMs),
       );
-      const primaryScreenshotResult =
-        boundedPrimaryScreenshotTimeoutMs > 0
-          ? yield* (
-              background
-                ? captureAutomationTargetScreenshot(tabId, wc, send)
-                : captureAutomationScreenshot(tabId, wc, send)
-            ).pipe(Effect.timeoutOption(boundedPrimaryScreenshotTimeoutMs), Effect.exit)
-          : Exit.succeed(Option.none<NonNullable<PreviewAutomationSnapshot["screenshot"]>>());
+      const primaryScreenshotAttempted = boundedPrimaryScreenshotTimeoutMs > 0;
+      const primaryScreenshotResult = primaryScreenshotAttempted
+        ? yield* (
+            background
+              ? captureAutomationTargetScreenshot(tabId, wc, send)
+              : captureAutomationScreenshot(tabId, wc, send)
+          ).pipe(Effect.timeoutOption(boundedPrimaryScreenshotTimeoutMs), Effect.exit)
+        : Exit.succeed(Option.none<NonNullable<PreviewAutomationSnapshot["screenshot"]>>());
       let screenshot: PreviewAutomationSnapshot["screenshot"] =
         Exit.isSuccess(primaryScreenshotResult) && Option.isSome(primaryScreenshotResult.value)
           ? primaryScreenshotResult.value.value
           : null;
       const detachAfterCapture =
-        Exit.isSuccess(primaryScreenshotResult) && Option.isNone(primaryScreenshotResult.value);
+        primaryScreenshotAttempted &&
+        Exit.isSuccess(primaryScreenshotResult) &&
+        Option.isNone(primaryScreenshotResult.value);
       if (screenshot === null) {
         const primaryFailure = Exit.isFailure(primaryScreenshotResult)
           ? primaryScreenshotResult.cause

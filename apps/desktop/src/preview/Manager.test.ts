@@ -315,6 +315,7 @@ describe("PreviewManager", () => {
           createFromBuffer.mockReturnValue(image);
           let attached = false;
           let captureMode: "available" | "failure" | "timeout" = "available";
+          let accessibilityGate: Promise<void> | null = null;
           const attach = vi.fn(() => {
             attached = true;
           });
@@ -337,6 +338,7 @@ describe("PreviewManager", () => {
               };
             }
             if (method === "Accessibility.getFullAXTree") {
+              if (accessibilityGate !== null) await accessibilityGate;
               return { nodes: [] };
             }
             if (method === "Target.getTargetInfo") {
@@ -501,6 +503,31 @@ describe("PreviewManager", () => {
           });
           expect(capturePage).toHaveBeenCalledOnce();
           expect(detach).toHaveBeenCalledTimes(2);
+
+          capturePage.mockClear();
+          captureMode = "available";
+          let releaseAccessibility!: () => void;
+          accessibilityGate = new Promise<void>((resolve) => {
+            releaseAccessibility = resolve;
+          });
+          const skippedCapture = yield* manager
+            .automationSnapshot("tab_snapshot", false, 1_000)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust(730);
+          releaseAccessibility();
+          accessibilityGate = null;
+
+          expect((yield* Fiber.join(skippedCapture)).screenshot).toBeNull();
+          expect(capturePage).not.toHaveBeenCalled();
+          expect(detach).toHaveBeenCalledTimes(2);
+          expect(attach).toHaveBeenCalledTimes(3);
+
+          expect((yield* manager.automationSnapshot("tab_snapshot")).screenshot).toMatchObject({
+            width: 640,
+            height: 360,
+          });
+          expect(attach).toHaveBeenCalledTimes(3);
         }),
       ),
   );
