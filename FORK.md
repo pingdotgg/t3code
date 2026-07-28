@@ -8,6 +8,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 - Squash commits when merging fork PRs.
 - Exception: upstream actualization PRs may preserve upstream commit structure when that makes future syncs easier to audit.
+- Staged formatting tolerates chunks containing only ignored files so large upstream actualization commits can pass the pre-commit hook.
 
 ### Release And CI
 

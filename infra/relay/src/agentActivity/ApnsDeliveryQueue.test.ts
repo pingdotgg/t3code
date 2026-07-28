@@ -1,5 +1,6 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -28,9 +29,44 @@ const config: RelayConfiguration.RelayConfiguration["Service"] = {
 };
 
 describe("ApnsDeliveryQueue", () => {
+  it.effect("does not require the deployment RuntimeContext when building the Worker layer", () => {
+    const sent: unknown[] = [];
+    const sender: Cloudflare.Queues.WriteQueueClient = {
+      raw: Effect.die("raw queue binding is not used"),
+      send: (body) =>
+        Effect.sync(() => {
+          sent.push(body);
+        }),
+      sendBatch: () => Effect.die("batch queue binding is not used"),
+    };
+    const runtimeContext = {} as Alchemy.BaseRuntimeContext;
+    const layer = ApnsDeliveryQueue.layerCloudflareQueues(sender, runtimeContext).pipe(
+      Layer.provide(NodeCryptoLayer.layer),
+      Layer.provide(RelayConfiguration.layer(config)),
+    );
+
+    return Effect.gen(function* () {
+      const queue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
+      yield* queue.enqueuePushNotification({
+        userId: "user-1",
+        deviceId: "device-1",
+        token: "push-token",
+        notification: {
+          title: "Thread",
+          body: "Input: Project",
+          environmentId: "env-1",
+          threadId: "thread-1",
+          deepLink: "/threads/env-1/thread-1",
+        },
+      });
+
+      expect(sent).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("preserves job identity and the queue sender cause", () => {
     const cause = new Error("queue unavailable");
-    const senderCause = new Cloudflare.QueueSendError({
+    const senderCause = new Cloudflare.Queues.SendError({
       message: cause.message,
       cause,
     });

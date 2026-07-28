@@ -95,7 +95,7 @@ Each constructor reads a single value and decodes it into the appropriate type.
 | `Config.redacted(name?)`       | `Redacted<string>` | Hidden from logs and `toString`                                          |
 | `Config.literal(value, name?)` | literal type       | Accepts only the given literal                                           |
 
-The optional `name` parameter sets the root path segment for lookup. Omit it when the config is part of a larger `Config.schema`.
+The optional `name` parameter sets the local path segment for lookup. If the config is wrapped with `Config.nested`, the nested prefix is prepended to this local path. Omit `name` when the config should decode the provider root.
 
 ## Config Combinators
 
@@ -147,9 +147,9 @@ const host = Config.string("HOST").pipe(
 )
 ```
 
-### `Config.nested` — Scope Under a Prefix
+### `Config.nested` — Scope a Config Under a Prefix
 
-Prepends a path segment to every key the inner config reads:
+Prepends a logical path segment to every key the inner config reads. The prefix is used for both provider lookups and schema error paths:
 
 ```ts
 import { Config, ConfigProvider, Effect } from "effect"
@@ -181,6 +181,27 @@ const provider = ConfigProvider.fromEnv({
 Effect.runSync(host.parse(provider)) // "localhost"
 ```
 
+Multiple `Config.nested` calls compose with the outermost prefix first:
+
+```ts
+import { Config, ConfigProvider, Effect } from "effect"
+
+const config = Config.string("host").pipe(
+  Config.nested("database"),
+  Config.nested("production")
+)
+
+const provider = ConfigProvider.fromUnknown({
+  production: {
+    database: {
+      host: "localhost"
+    }
+  }
+})
+
+Effect.runSync(config.parse(provider)) // "localhost"
+```
+
 ### `Config.all` — Combine Multiple Configs
 
 Accepts a record or a tuple:
@@ -199,6 +220,12 @@ const appConfig = Config.all({
 const pair = Config.all([Config.string("a"), Config.int("b")])
 ```
 
+### Custom Config Logic
+
+There is no public low-level `Config.make` constructor. For custom validation or transformation, start from one of the public constructors or `Config.schema`, then use `Config.map`, `Config.mapOrFail`, `Config.all`, `Config.orElse`, or `Config.withDefault`.
+
+If you need custom lookup behavior for a new backing source, implement a `ConfigProvider` with `ConfigProvider.make` instead.
+
 ## Config Schemas
 
 For reusable codecs you can pass directly to `Config.schema`:
@@ -212,6 +239,8 @@ For reusable codecs you can pass directly to `Config.schema`:
 | `Config.Record(key, value)` | `Record<K, V>` | Also parses flat `"k1=v1,k2=v2"` strings   |
 
 ## ConfigProvider Sources
+
+The concrete built-in source providers `fromEnv`, `fromDotEnvContents`, `fromDotEnv`, `fromUnknown`, and `fromDir` treat literal empty strings as missing values by default when they are loaded as values. Container discovery still reflects the source structure, so a key or file can appear in a `Record` or `Array` node and then load as missing. Pass `{ preserveEmptyStrings: true }` to preserve empty strings as explicit values.
 
 ### `ConfigProvider.fromEnv` — Environment Variables (Default)
 
@@ -331,6 +360,8 @@ const program = Effect.gen(function*() {
 
 Requires `Path` and `FileSystem` in the Effect context.
 
+Missing files and directories return `undefined`, so fallback providers can handle the path. Empty files also return `undefined` by default after trimming their contents, while directory listings still report the file names present on disk; pass `{ preserveEmptyStrings: true }` to preserve them as `Value("")`. Other file-system failures are reported as `SourceError`.
+
 ### `ConfigProvider.make` — Custom Sources
 
 Build a provider from any backing store:
@@ -374,6 +405,22 @@ const defaults = ConfigProvider.fromUnknown({
 const combined = ConfigProvider.orElse(envProvider, defaults)
 ```
 
+Each side keeps its own path transformations. If you combine providers that were already scoped or mapped, those transformations remain local to that side:
+
+```ts
+import { ConfigProvider } from "effect"
+
+const envProvider = ConfigProvider.fromEnv({
+  env: { DATABASE_HOST: "localhost" }
+}).pipe(ConfigProvider.constantCase)
+
+const defaults = ConfigProvider.fromEnv({
+  env: { APP_PORT: "3000" }
+}).pipe(ConfigProvider.nested("APP"))
+
+const combined = envProvider.pipe(ConfigProvider.orElse(defaults))
+```
+
 ### `ConfigProvider.nested` — Prefix All Lookups
 
 Prepends path segments so that all lookups are scoped:
@@ -391,6 +438,23 @@ const scoped = ConfigProvider.nested(provider, "APP")
 
 Accepts a single string or a full `Path` array.
 
+Provider transformations compose in application order. A later `nested` becomes the outer prefix:
+
+```ts
+import { ConfigProvider } from "effect"
+
+const provider = ConfigProvider.fromEnv({
+  env: { B_A_KEY: "value" }
+}).pipe(
+  ConfigProvider.nested("A"),
+  ConfigProvider.nested("B")
+)
+
+// path ["KEY"] resolves to ["B", "A", "KEY"]
+```
+
+When `nested` is applied to a provider built with `ConfigProvider.orElse`, the prefix is applied to both operands.
+
 ### `ConfigProvider.constantCase` — CamelCase to SCREAMING_SNAKE_CASE
 
 Bridges camelCase schema keys to environment variable naming:
@@ -405,9 +469,35 @@ const provider = ConfigProvider.fromEnv({
 // path ["databaseHost"] now resolves to ["DATABASE_HOST"]
 ```
 
+Ordering matters with `nested`. `constantCase` is a path transform, so it only converts the path it receives at that point in the pipeline:
+
+```ts
+import { ConfigProvider } from "effect"
+
+const convertedPrefix = ConfigProvider.fromEnv({
+  env: { APP_HOST: "localhost" }
+}).pipe(
+  ConfigProvider.nested("app"),
+  ConfigProvider.constantCase
+)
+
+// path ["host"] resolves to ["APP", "HOST"]
+
+const literalPrefix = ConfigProvider.fromEnv({
+  env: { app_HOST: "localhost" }
+}).pipe(
+  ConfigProvider.constantCase,
+  ConfigProvider.nested("app")
+)
+
+// path ["host"] resolves to ["app", "HOST"]
+```
+
+Put `constantCase` after `nested` when the prefix should be converted too.
+
 ### `ConfigProvider.mapInput` — Arbitrary Path Transforms
 
-Transform path segments before lookup:
+Transform the whole path before lookup:
 
 ```ts
 import { ConfigProvider } from "effect"
@@ -421,6 +511,25 @@ const upper = ConfigProvider.mapInput(
   (path) => path.map((seg) => typeof seg === "string" ? seg.toUpperCase() : seg)
 )
 ```
+
+`mapInput` runs after earlier provider transformations, so it sees the full path produced so far:
+
+```ts
+import { ConfigProvider } from "effect"
+
+const appendLeaf = ConfigProvider.mapInput((path) => [...path, "leaf"])
+
+const provider = ConfigProvider.fromEnv({
+  env: { APP_KEY_leaf: "value" }
+}).pipe(
+  ConfigProvider.nested("APP"),
+  appendLeaf
+)
+
+// path ["KEY"] resolves to ["APP", "KEY", "leaf"]
+```
+
+When `mapInput` is applied to a provider built with `ConfigProvider.orElse`, the mapping is applied to both operands.
 
 ## Installing a Provider
 

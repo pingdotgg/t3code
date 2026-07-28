@@ -7,11 +7,6 @@ import type { StackFrame } from "../References.ts"
 import type { SpanLink } from "../Tracer.ts"
 
 /** @internal */
-export const CurrentConcurrency = Context.Reference<"unbounded" | number>("effect/References/CurrentConcurrency", {
-  defaultValue: () => "unbounded"
-})
-
-/** @internal */
 export const CurrentErrorReporters = Context.Reference<ReadonlySet<ErrorReporter>>(
   "effect/ErrorReporter/CurrentErrorReporters",
   { defaultValue: () => new Set() }
