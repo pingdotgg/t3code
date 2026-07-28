@@ -505,18 +505,18 @@ export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<CursorAgentSdkRunner, ne
                 }),
               ),
             ),
-            close: Effect.try({
-              try: () => agent.close(),
-              catch: (cause) => runnerError(cause, "agent.close"),
+            close: log({
+              direction: "outgoing",
+              stage: "decoded",
+              payload: {
+                type: "agent.close",
+                agentId: agent.agentId,
+              },
             }).pipe(
-              Effect.tap(() =>
-                log({
-                  direction: "outgoing",
-                  stage: "decoded",
-                  payload: {
-                    type: "agent.close",
-                    agentId: agent.agentId,
-                  },
+              Effect.andThen(
+                Effect.try({
+                  try: () => agent.close(),
+                  catch: (cause) => runnerError(cause, "agent.close"),
                 }),
               ),
             ),
