@@ -116,6 +116,11 @@ class GitRefsSnapshotCacheKey extends Data.Class<{
   epoch: number;
 }> {}
 
+class GitRefsRefreshCacheKey extends Data.Class<{
+  gitCommonDir: string;
+  generation: number;
+}> {}
+
 interface GitRepositoryPaths {
   readonly gitCommonDir: string;
   readonly worktreeRoot: string | null;
@@ -243,14 +248,14 @@ function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
     currentPrunable = false;
   };
 
-  for (const line of stdout.split("\n")) {
-    if (line === "") {
+  for (const field of stdout.split("\0")) {
+    if (field === "") {
       flush();
-    } else if (line.startsWith("worktree ")) {
-      currentPath = line.slice("worktree ".length);
-    } else if (line.startsWith("branch refs/heads/")) {
-      currentBranch = line.slice("branch refs/heads/".length);
-    } else if (line === "prunable" || line.startsWith("prunable ")) {
+    } else if (field.startsWith("worktree ")) {
+      currentPath = field.slice("worktree ".length);
+    } else if (field.startsWith("branch refs/heads/")) {
+      currentBranch = field.slice("branch refs/heads/".length);
+    } else if (field === "prunable" || field.startsWith("prunable ")) {
       currentPrunable = true;
     }
   }
@@ -2182,7 +2187,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGit(
           "GitVcsDriver.listRefs.worktreeList",
           fetchCwd,
-          [...gitDirArgs, "worktree", "list", "--porcelain"],
+          [...gitDirArgs, "worktree", "list", "--porcelain", "-z"],
           {
             timeoutMs: 30_000,
             allowNonZeroExit: true,
@@ -2296,6 +2301,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     return nextEpoch;
   };
+  const listRefsGenerationByCommonDir = new Map<string, number>();
+  let listRefsGenerationSequence = 0;
+  const setListRefsGeneration = (gitCommonDir: string, generation: number): number => {
+    listRefsGenerationByCommonDir.delete(gitCommonDir);
+    listRefsGenerationByCommonDir.set(gitCommonDir, generation);
+    if (listRefsGenerationByCommonDir.size > LIST_REFS_SNAPSHOT_CACHE_CAPACITY) {
+      const oldestKey = listRefsGenerationByCommonDir.keys().next().value;
+      if (oldestKey !== undefined) {
+        listRefsGenerationByCommonDir.delete(oldestKey);
+      }
+    }
+    return generation;
+  };
+  const currentListRefsGeneration = (gitCommonDir: string): number => {
+    const current = listRefsGenerationByCommonDir.get(gitCommonDir);
+    return current === undefined
+      ? setListRefsGeneration(gitCommonDir, ++listRefsGenerationSequence)
+      : setListRefsGeneration(gitCommonDir, current);
+  };
+  const bumpListRefsGeneration = (gitCommonDir: string): number =>
+    setListRefsGeneration(gitCommonDir, ++listRefsGenerationSequence);
   const listRefsSnapshotCache = yield* Cache.makeWith(
     (cacheKey: GitRefsSnapshotCacheKey) => readGitRefsSnapshot(cacheKey.gitCommonDir),
     {
@@ -2304,12 +2330,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
   const listRefsRefreshSnapshotCache = yield* Cache.makeWith(
-    (gitCommonDir: string) =>
+    (cacheKey: GitRefsRefreshCacheKey) =>
       Effect.suspend(() => {
-        const epoch = bumpListRefsEpoch(gitCommonDir);
+        const epoch = bumpListRefsEpoch(cacheKey.gitCommonDir);
         return Cache.get(
           listRefsSnapshotCache,
-          new GitRefsSnapshotCacheKey({ gitCommonDir, epoch }),
+          new GitRefsSnapshotCacheKey({ gitCommonDir: cacheKey.gitCommonDir, epoch }),
         );
       }),
     {
@@ -2318,28 +2344,48 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Exit.isSuccess(exit) ? LIST_REFS_REFRESH_COALESCE_TTL : LIST_REFS_REFRESH_FAILURE_COOLDOWN,
     },
   );
-  const resolveListRefsSnapshot = (gitCommonDir: string, refresh: boolean) => {
-    const currentEpoch = listRefsEpochByCommonDir.get(gitCommonDir);
-    if (refresh || currentEpoch === undefined) {
-      // The refresh cache owns the complete snapshot read, rather than only the
-      // epoch bump. Slow repositories therefore remain singleflight for the
-      // entire Git scan even when more refresh requests arrive after the
-      // coalescing TTL would otherwise have elapsed.
-      return Cache.get(listRefsRefreshSnapshotCache, gitCommonDir);
+  const resolveListRefsSnapshot = Effect.fn("resolveListRefsSnapshot")(function* (
+    gitCommonDir: string,
+    refresh: boolean,
+  ) {
+    while (true) {
+      const generation = currentListRefsGeneration(gitCommonDir);
+      const currentEpoch = listRefsEpochByCommonDir.get(gitCommonDir);
+      const snapshot =
+        refresh || currentEpoch === undefined
+          ? // The refresh cache owns the complete snapshot read, rather than only the
+            // epoch bump. Slow repositories therefore remain singleflight for the
+            // entire Git scan even when more refresh requests arrive after the
+            // coalescing TTL would otherwise have elapsed.
+            yield* Cache.get(
+              listRefsRefreshSnapshotCache,
+              new GitRefsRefreshCacheKey({ gitCommonDir, generation }),
+            )
+          : yield* Cache.get(
+              listRefsSnapshotCache,
+              new GitRefsSnapshotCacheKey({ gitCommonDir, epoch: currentEpoch }),
+            );
+      if (currentListRefsGeneration(gitCommonDir) === generation) {
+        return snapshot;
+      }
     }
-    return Cache.get(
-      listRefsSnapshotCache,
-      new GitRefsSnapshotCacheKey({ gitCommonDir, epoch: currentEpoch }),
-    );
-  };
+  });
   const invalidateListRefsSnapshot = Effect.fn("invalidateListRefsSnapshot")(function* (
     cwd: string,
   ) {
     const repositoryPathsCacheKey = normalizeRepositoryPathsCacheKey(cwd);
     const repositoryPaths = yield* Cache.get(repositoryPathsCache, repositoryPathsCacheKey);
     if (repositoryPaths === null) return;
-    yield* Cache.invalidate(listRefsRefreshSnapshotCache, repositoryPaths.gitCommonDir);
+    const previousGeneration = currentListRefsGeneration(repositoryPaths.gitCommonDir);
+    bumpListRefsGeneration(repositoryPaths.gitCommonDir);
     bumpListRefsEpoch(repositoryPaths.gitCommonDir);
+    yield* Cache.invalidate(
+      listRefsRefreshSnapshotCache,
+      new GitRefsRefreshCacheKey({
+        gitCommonDir: repositoryPaths.gitCommonDir,
+        generation: previousGeneration,
+      }),
+    );
     yield* Cache.invalidate(repositoryPathsRefreshCache, repositoryPathsCacheKey);
     yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
@@ -2698,18 +2744,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<A, E> =>
-    effect.pipe(Effect.tap(() => invalidateListRefsSnapshot(cwd).pipe(Effect.ignore)));
+    effect.pipe(Effect.ensuring(invalidateListRefsSnapshot(cwd).pipe(Effect.ignore)));
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
   ) =>
     initRepo(input).pipe(
-      Effect.tap(() =>
-        Cache.invalidate(repositoryPathsRefreshCache, normalizeRepositoryPathsCacheKey(input.cwd)),
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const cacheKey = normalizeRepositoryPathsCacheKey(input.cwd);
+          yield* Cache.invalidate(repositoryPathsRefreshCache, cacheKey);
+          yield* Cache.invalidate(repositoryPathsCache, cacheKey);
+          yield* invalidateListRefsSnapshot(input.cwd).pipe(Effect.ignore);
+        }),
       ),
-      Effect.tap(() =>
-        Cache.invalidate(repositoryPathsCache, normalizeRepositoryPathsCacheKey(input.cwd)),
-      ),
-      Effect.tap(() => invalidateListRefsSnapshot(input.cwd).pipe(Effect.ignore)),
     );
 
   return GitVcsDriver.GitVcsDriver.of({
