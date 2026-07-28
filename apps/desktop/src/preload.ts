@@ -2,6 +2,13 @@ import type { DesktopBridge } from "@t3tools/contracts";
 import { contextBridge, ipcRenderer } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+import { makeMenuActionInbox } from "./ipc/menuActionInbox.ts";
+
+const menuActionInbox = makeMenuActionInbox();
+ipcRenderer.on(IpcChannels.MENU_ACTION_CHANNEL, (_event, action: unknown) => {
+  if (typeof action !== "string") return;
+  menuActionInbox.deliver(action);
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -96,17 +103,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
-  onMenuAction: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
-      if (typeof action !== "string") return;
-      listener(action);
-    };
-
-    ipcRenderer.on(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
-    return () => {
-      ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
-    };
-  },
+  onMenuAction: (listener) => menuActionInbox.subscribe(listener),
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),
