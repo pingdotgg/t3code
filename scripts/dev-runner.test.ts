@@ -318,6 +318,10 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
+        assert.equal(
+          env.T3CODE_DESKTOP_USER_DATA_DIR,
+          path.resolve("/tmp/my-t3/userdata/electron"),
+        );
         assert.equal(env.PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
         assert.equal(env.HOST, "127.0.0.1");

@@ -91,6 +91,10 @@ export const make = Effect.gen(function* () {
   });
 
   const resolveUserDataPath = Effect.gen(function* () {
+    if (Option.isSome(environment.desktopUserDataDir)) {
+      return environment.desktopUserDataDir.value;
+    }
+
     const legacyPath = environment.path.join(
       environment.appDataDirectory,
       environment.legacyUserDataDirName,

@@ -318,6 +318,7 @@ export function createDevRunnerEnv({
   devUrl,
 }: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
   return Effect.gen(function* () {
+    const path = yield* Path.Path;
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     // Precedence (--home-dir > worktree .t3 > ambient T3CODE_HOME) is resolved
@@ -336,6 +337,12 @@ export function createDevRunnerEnv({
       output.T3CODE_HOME = resolvedBaseDir;
     } else {
       delete output.T3CODE_HOME;
+    }
+
+    if (isDesktopMode && configuredBaseDir !== undefined) {
+      output.T3CODE_DESKTOP_USER_DATA_DIR = path.join(resolvedBaseDir, "userdata", "electron");
+    } else {
+      delete output.T3CODE_DESKTOP_USER_DATA_DIR;
     }
 
     if (!isDesktopMode) {

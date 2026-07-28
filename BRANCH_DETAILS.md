@@ -30,9 +30,18 @@ Expected behavior:
 Current limitations:
 
 - Electron screenshot capture can still be unavailable when both the bounded CDP compositor capture and hidden `capturePage` fallback fail. The intended degraded result remains a usable semantic snapshot with `screenshot: null`, not raster evidence.
+- The current dev-host pass exercised pairing plus direct CDP semantic and raster capture without the Electron host interface disappearing, but it did not re-run the product-native hidden, non-selected `preview_snapshot` path in that same host. The spawned agents' preview tools remained attached to the installed T3 Code environment rather than the worktree dev desktop, so that exact end-to-end claim still requires correctly routed preview automation.
+
+Current uncommitted follow-up:
+
+- `dev:desktop` now derives `T3CODE_DESKTOP_USER_DATA_DIR=<resolved base dir>/userdata/electron` whenever the runner has an explicit base directory. Desktop configuration resolves that override to an absolute path, and app identity uses it before legacy migration or the normal Electron user-data default. This keeps an isolated worktree dev desktop from reusing an installed or earlier development profile whose incompatible IndexedDB schema can prevent the renderer from starting. Packaged/default startup remains unchanged when no override is supplied.
+- These seven source and test-file changes are intentionally uncommitted while runtime verification continues.
 
 Primary files:
 
+- `apps/desktop/src/app/DesktopAppIdentity.ts`
+- `apps/desktop/src/app/DesktopConfig.ts`
+- `apps/desktop/src/app/DesktopEnvironment.ts`
 - `apps/desktop/src/preview/Manager.ts`
 - `apps/desktop/src/ipc/methods/preview.ts`
 - `apps/desktop/src/preload.ts`
@@ -53,11 +62,17 @@ Primary files:
 - `packages/contracts/src/ipc.ts`
 - `scripts/dev-runner.ts`
 
-Focused regression coverage lives in `scripts/dev-runner.test.ts`, `apps/desktop/src/preview/Manager.test.ts`, `apps/server/src/mcp/McpHttpServer.test.ts`, `apps/web/src/browser/browserSurfaceStore.test.ts`, `apps/web/src/browser/hostedBrowserWebviewStyle.test.ts`, `apps/web/src/components/auth/PairingRouteSurface.logic.test.ts`, `apps/web/src/components/preview/previewAutomationOpenReadiness.test.ts`, `apps/web/src/components/preview/previewAutomationPresentation.test.ts`, `apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts`, `packages/contracts/src/ipc.test.ts`, and `packages/contracts/src/preview.test.ts`.
+Focused regression coverage lives in `scripts/dev-runner.test.ts`, `apps/desktop/src/app/DesktopAppIdentity.test.ts`, `apps/desktop/src/app/DesktopEnvironment.test.ts`, `apps/desktop/src/preview/Manager.test.ts`, `apps/server/src/mcp/McpHttpServer.test.ts`, `apps/web/src/browser/browserSurfaceStore.test.ts`, `apps/web/src/browser/hostedBrowserWebviewStyle.test.ts`, `apps/web/src/components/auth/PairingRouteSurface.logic.test.ts`, `apps/web/src/components/preview/previewAutomationOpenReadiness.test.ts`, `apps/web/src/components/preview/previewAutomationPresentation.test.ts`, `apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts`, `packages/contracts/src/ipc.test.ts`, and `packages/contracts/src/preview.test.ts`.
 
 ```sh
 vp test run scripts/dev-runner.test.ts apps/desktop/src/preview/Manager.test.ts apps/server/src/mcp/McpHttpServer.test.ts apps/web/src/browser/browserSurfaceStore.test.ts apps/web/src/browser/hostedBrowserWebviewStyle.test.ts apps/web/src/components/auth/PairingRouteSurface.logic.test.ts apps/web/src/components/preview/previewAutomationOpenReadiness.test.ts apps/web/src/components/preview/previewAutomationPresentation.test.ts apps/web/src/components/preview/previewAutomationRequestConsumer.test.ts packages/contracts/src/ipc.test.ts packages/contracts/src/preview.test.ts
 ```
+
+Verification completed for the current uncommitted follow-up:
+
+- `vp test run scripts/dev-runner.test.ts apps/desktop/src/app/DesktopAppIdentity.test.ts apps/desktop/src/app/DesktopEnvironment.test.ts` passed all 77 tests.
+- `vp run --filter @t3tools/desktop typecheck` and `vp run --filter ./scripts typecheck` completed without type errors. The desktop check still printed two Effect suggestions in unchanged files.
+- A worktree `dev:desktop` instance using the isolated user-data override paired successfully and stayed usable through repeated renderer/CDP inspection and raster capture. An archive worktree client loaded its seeded project against that host, and the prior IndexedDB `VersionError` and host-interface disappearance did not recur in those exercised flows.
 
 ## Development Ports
 
