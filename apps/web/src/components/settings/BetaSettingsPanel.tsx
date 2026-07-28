@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  useSidebarV2Enabled,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -51,7 +55,7 @@ function AutoSettleDaysInput({
 }
 
 export function BetaSettingsPanel() {
-  const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
+  const sidebarV2Enabled = useSidebarV2Enabled();
   const sidebarAutoSettleAfterDays = useClientSettings(
     (settings) => settings.sidebarAutoSettleAfterDays,
   );
@@ -66,7 +70,14 @@ export function BetaSettingsPanel() {
           control={
             <Switch
               checked={sidebarV2Enabled}
-              onCheckedChange={(checked) => updateSettings({ sidebarV2Enabled: Boolean(checked) })}
+              // Touching the switch pins the choice, so a nightly build that
+              // defaults v2 on does not flip it back after the user opts out.
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  sidebarV2Enabled: Boolean(checked),
+                  sidebarV2ConfiguredByUser: true,
+                })
+              }
               aria-label="Enable the sidebar v2 beta"
             />
           }
