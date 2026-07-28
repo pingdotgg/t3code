@@ -1,16 +1,38 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { useRouter } from "@tanstack/react-router";
 import { ChevronLeftIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
-import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useClientSettings } from "~/hooks/useSettings";
+import { newDraftId, newThreadId } from "~/lib/utils";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "~/logicalProject";
+import {
+  getDefaultProviderInstanceModel,
+  resolveSelectableProviderInstance,
+} from "~/providerInstances";
 import { useResumeSessionIntentStore } from "~/resumeSessionIntentStore";
 import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
-import { Dialog, DialogDescription, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 interface ResumeSessionDialogProps {
   readonly open: boolean;
@@ -19,7 +41,8 @@ interface ResumeSessionDialogProps {
 
 export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogProps) {
   const projects = useProjects();
-  const handleNewThread = useNewThreadHandler();
+  const router = useRouter();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const setResumeSessionIntent = useResumeSessionIntentStore(
     (store) => store.setResumeSessionIntent,
   );
@@ -31,6 +54,25 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
     [projects],
   );
 
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(selectedProject?.environmentId ?? null),
+  );
+  const claudeProviders = useMemo(
+    () => (serverConfig?.providers ?? []).filter((provider) => provider.driver === CLAUDE_DRIVER),
+    [serverConfig],
+  );
+  const claudeInstanceId = useMemo(
+    () => resolveSelectableProviderInstance(claudeProviders, undefined),
+    [claudeProviders],
+  );
+  const claudeModel = useMemo(
+    () =>
+      claudeInstanceId
+        ? getDefaultProviderInstanceModel(claudeProviders, claudeInstanceId)
+        : undefined,
+    [claudeProviders, claudeInstanceId],
+  );
+
   const {
     data: sessionsResult,
     error: sessionsError,
@@ -40,7 +82,10 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
       ? null
       : serverEnvironment.listClaudeResumableSessions({
           environmentId: selectedProject.environmentId,
-          input: { workspaceRoot: selectedProject.workspaceRoot },
+          input: {
+            workspaceRoot: selectedProject.workspaceRoot,
+            ...(claudeInstanceId ? { providerInstanceId: claudeInstanceId } : {}),
+          },
         }),
   );
   const sessions = useMemo(
@@ -61,23 +106,64 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
 
   const handleResume = useCallback(
     async (sessionId: string) => {
-      if (!selectedProject || isResuming) return;
+      if (!selectedProject || !claudeInstanceId || !claudeModel || isResuming) return;
       setIsResuming(true);
       try {
         const projectRef = scopeProjectRef(selectedProject.environmentId, selectedProject.id);
-        await handleNewThread(projectRef);
-        const draftThread = useComposerDraftStore
-          .getState()
-          .getDraftThreadByProjectRef(projectRef);
-        if (draftThread) {
-          setResumeSessionIntent(draftThread.threadId, sessionId);
-        }
+        const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
+          selectedProject,
+          projectGroupingSettings,
+        );
+        const draftId = newDraftId();
+        const threadId = newThreadId();
+        const { setLogicalProjectDraftThreadId, setModelSelection } =
+          useComposerDraftStore.getState();
+        // Force "local" (no worktree): the on-disk session was recorded under
+        // the project's own workspaceRoot, and Claude's `--resume` is scoped
+        // to the exact cwd it was created in — a worktree would run Claude
+        // from a different directory and the resume would silently miss.
+        setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
+          threadId,
+          createdAt: new Date().toISOString(),
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+          startFromOrigin: false,
+        });
+        // Force the draft onto the same Claude instance the session list came
+        // from — otherwise the draft could inherit a carried-over/sticky
+        // selection for a different provider, and the resume would be
+        // rejected once the first message is sent.
+        setModelSelection(
+          draftId,
+          { instanceId: claudeInstanceId, model: claudeModel },
+          { replaceOptions: true },
+        );
+        setResumeSessionIntent(threadId, sessionId);
+        await router.navigate({ to: "/draft/$draftId", params: { draftId } });
         handleClose(false);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to resume session",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       } finally {
         setIsResuming(false);
       }
     },
-    [selectedProject, isResuming, handleNewThread, setResumeSessionIntent, handleClose],
+    [
+      selectedProject,
+      claudeInstanceId,
+      claudeModel,
+      isResuming,
+      projectGroupingSettings,
+      router,
+      setResumeSessionIntent,
+      handleClose,
+    ],
   );
 
   return (
@@ -124,7 +210,11 @@ export function ResumeSessionDialog({ open, onOpenChange }: ResumeSessionDialogP
                 <ChevronLeftIcon className="size-3.5" />
                 Back to projects
               </button>
-              {sessionsPending ? (
+              {!claudeInstanceId || !claudeModel ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  No Claude Code provider is configured for this environment.
+                </p>
+              ) : sessionsPending ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">
                   Looking for sessions…
                 </p>

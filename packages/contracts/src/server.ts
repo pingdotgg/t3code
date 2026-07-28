@@ -410,6 +410,11 @@ export type ServerClaudeResumableSession = typeof ServerClaudeResumableSession.T
 
 export const ServerListClaudeResumableSessionsInput = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
+  // Which configured Claude instance's on-disk session store to scan.
+  // Instances can be configured with a custom `homePath`, so this must match
+  // the instance the caller intends to resume under — the default instance
+  // location is used only as a fallback when omitted.
+  providerInstanceId: Schema.optional(ProviderInstanceId),
 });
 export type ServerListClaudeResumableSessionsInput =
   typeof ServerListClaudeResumableSessionsInput.Type;

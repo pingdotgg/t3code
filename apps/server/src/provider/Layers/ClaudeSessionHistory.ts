@@ -28,6 +28,7 @@
  * @module provider/Layers/ClaudeSessionHistory
  */
 import {
+  ClaudeSettings,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerClaudeResumableSession,
@@ -42,14 +43,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveClaudeConfigDirPath } from "../Drivers/ClaudeSkills.ts";
 import { ProviderValidationError } from "../Errors.ts";
+import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import type { ProviderSessionDirectoryWriteError } from "../Services/ProviderSessionDirectory.ts";
 
 const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
+const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 
 const JSONL_EXTENSION = ".jsonl";
 const MAX_LABEL_LENGTH = 80;
@@ -163,13 +168,37 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
-  // Resolved once per server process: `CLAUDE_CONFIG_DIR` isn't expected to
-  // change over the server's lifetime, and resolving it here (rather than
-  // per-call) keeps `list`'s effect free of a `Path.Path` requirement.
-  const configDirPath = yield* resolveClaudeConfigDirPath({ homePath: "" }, process.env);
+  const serverSettings = yield* ServerSettingsService;
+
+  // Claude instances can be configured with a custom `homePath` (keeping
+  // config/session storage separate per instance), so the config dir must be
+  // resolved per instance, not once for the whole process. Falls back to the
+  // default `~/.claude` location when the instance is unknown/misconfigured
+  // rather than failing the whole listing — best-effort, matching `list`'s
+  // other file-not-found handling.
+  const resolveConfigDirPathForInstance = Effect.fn("ClaudeSessionHistory.resolveConfigDirPath")(
+    function* (providerInstanceId: ProviderInstanceId | undefined) {
+      const homePath = yield* Effect.gen(function* () {
+        if (providerInstanceId === undefined) return "";
+        const settings = yield* serverSettings.getSettings;
+        const configMap = deriveProviderInstanceConfigMap(settings);
+        const entry = configMap[providerInstanceId];
+        const decoded = yield* decodeClaudeSettings(entry?.config ?? {});
+        return decoded.homePath;
+      }).pipe(Effect.orElseSucceed(() => ""));
+      // `resolveClaudeConfigDirPath` yields its own `Path.Path` requirement;
+      // satisfy it from the already-resolved `path` in scope so this stays
+      // free of a `Path.Path` requirement of its own (see the `list`/`make`
+      // split above — required for `Layer.provideMerge` to fully resolve it).
+      return yield* resolveClaudeConfigDirPath({ homePath }, process.env).pipe(
+        Effect.provideService(Path.Path, path),
+      );
+    },
+  );
 
   const list: ClaudeSessionHistory["Service"]["list"] = Effect.fn("ClaudeSessionHistory.list")(
     function* (input) {
+      const configDirPath = yield* resolveConfigDirPathForInstance(input.providerInstanceId);
       const projectDirPath = path.join(
         configDirPath,
         "projects",
