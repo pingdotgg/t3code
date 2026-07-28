@@ -58,6 +58,9 @@
             print("UIProbe: dir \(dir)")
             armWatchdog()
             switch ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_SCENARIO"] {
+            case "effort-cost":
+                await runEffortCost(model: model, multi: multi, dir: dir)
+                return
             case "stream-perf":
                 await runStreamPerf(model: model, dir: dir)
                 return
@@ -289,7 +292,7 @@
                 // Run profile: the reasoning-effort ramp is a slider whose
                 // arrow-key adjustment lives on the responder chain inside the
                 // popover — the one place a unit test cannot reach. The codex
-                // thread is the seeded one with a full four-level ramp.
+                // thread is the seeded one with the full cost-warning ramp.
                 let effortCount = option?.effortChoices.count ?? 0
                 print("UIProbe: run profile effort choices=\(effortCount)")
                 if effortCount > 1 {
@@ -1056,6 +1059,38 @@
             try? report.write(to: reportURL, atomically: true, encoding: .utf8)
             print(report)
             print("UIProbe: stream-perf done")
+            watchdog?.cancel()
+            NSApp.terminate(nil)
+        }
+
+        /// Captures the full usage-warning ramp using the real composer
+        /// popover. This is a focused visual probe because the default sweep
+        /// only steps the slider once and therefore never reaches Max or Ultra.
+        private static func runEffortCost(
+            model: AppModel,
+            multi: MultiDeviceModel,
+            dir: String
+        ) async {
+            try? await Task.sleep(for: .seconds(2))
+            guard let thread = model.threads.first(where: { $0.id == "thread-2" }) else {
+                print("UIProbe: done FAIL=effort-cost-no-codex-thread")
+                watchdog?.cancel()
+                NSApp.terminate(nil)
+                return
+            }
+
+            multi.select(threadID: thread.id, on: model.deviceID)
+            try? await Task.sleep(for: .seconds(1))
+            toggleSection("run-profile")
+            try? await Task.sleep(for: .seconds(1))
+
+            for effort in ["high", "xhigh", "max", "ultra"] {
+                await model.setReasoningEffort(effort)
+                try? await Task.sleep(for: .milliseconds(500))
+                snapshotAllWindows("effort-\(effort)", dir: dir)
+            }
+
+            print("UIProbe: done")
             watchdog?.cancel()
             NSApp.terminate(nil)
         }

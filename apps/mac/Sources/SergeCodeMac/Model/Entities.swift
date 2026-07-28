@@ -243,8 +243,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Explicit service-tier choice id from the thread's modelSelection
     /// options; nil means the provider default applies.
     public var serviceTier: String?
-    /// Active delegated/background task count. Used for sidebar accessibility
-    /// when `status == .backgroundWork`; zero for ordinary thread states.
+    /// Active provider-native or product-delegated sub-agent count. Commands
+    /// and workflow rows never inflate this sidebar badge.
     public var backgroundAgentCount: Int
     /// Parent thread id when this is a nested sub-agent session; nil for
     /// top-level threads (and for historical rows that predate the field).

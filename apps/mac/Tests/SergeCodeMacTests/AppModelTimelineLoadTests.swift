@@ -115,6 +115,31 @@ struct AppModelTimelineLoadTests {
         #expect(model.threadState("warm")?.isLoadingTimeline == false)
         #expect(model.threadState("warm")?.hasLoadedTimeline == true)
     }
+
+    @Test("overlapping cold loads share one backend request")
+    func overlappingColdLoadsAreCoalesced() async {
+        let backend = BlockingTimelineBackend()
+        let model = AppModel(backend: backend)
+        let items = [
+            TimelineItem.userMessage(id: "shared-user", text: "hello", attachments: [], at: Date())
+        ]
+
+        let first = Task { await model.loadTimelineIfNeeded(threadID: "shared") }
+        for _ in 0..<20 {
+            if backend.timelineCallCount > 0 { break }
+            await Task.yield()
+        }
+        let second = Task { await model.loadTimelineIfNeeded(threadID: "shared") }
+        await Task.yield()
+
+        #expect(backend.timelineCallCount == 1)
+        backend.resolve(items: items)
+        await first.value
+        await second.value
+
+        #expect(backend.timelineCallCount == 1)
+        #expect(model.threadState("shared")?.timeline.map(\.id) == items.map(\.id))
+    }
 }
 
 private enum BlockingTimelineBackendError: Error, Sendable {

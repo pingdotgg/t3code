@@ -71,6 +71,11 @@ public final class SceneryStore {
     @ObservationIgnored
     private var heavyImageCacheOrder: [String] = []
     private var loadingKeys: Set<String> = []
+    /// Derived chat/chrome variants can race while their shared hero is
+    /// loading. Suspend those callers and resume them with the hero load
+    /// instead of polling the main actor every millisecond.
+    @ObservationIgnored
+    private var imageLoadWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     /// Session-scoped in-flight + failed-extraction guard. Prevents unbounded
     /// re-spawns when extract returns nil; cleared only when no sample files
     /// exist yet (so a later image load can try once). Retry next launch is OK.
@@ -493,12 +498,23 @@ public final class SceneryStore {
     }
 
     private func waitForImageLoad(_ key: String) async {
-        while loadingKeys.contains(key), !Task.isCancelled {
-            do {
-                try await Task.sleep(for: .milliseconds(1))
-            } catch {
-                return
+        guard loadingKeys.contains(key), !Task.isCancelled else { return }
+        await withCheckedContinuation { continuation in
+            // Actor reentrancy means the load may have completed between the
+            // guard above and continuation registration.
+            if loadingKeys.contains(key) {
+                imageLoadWaiters[key, default: []].append(continuation)
+            } else {
+                continuation.resume()
             }
+        }
+    }
+
+    private func finishImageLoad(_ key: String) {
+        loadingKeys.remove(key)
+        let waiters = imageLoadWaiters.removeValue(forKey: key) ?? []
+        for waiter in waiters {
+            waiter.resume()
         }
     }
 
@@ -530,7 +546,7 @@ public final class SceneryStore {
         let key = cacheKey(setId, photo.id, variant)
         guard images[key] == nil, !loadingKeys.contains(key) else { return }
         loadingKeys.insert(key)
-        defer { loadingKeys.remove(key) }
+        defer { finishImageLoad(key) }
 
         if variant == .heroBlurChat || variant == .heroBlurChrome {
             // Derived variants are memory-only. Load the decoded hero through

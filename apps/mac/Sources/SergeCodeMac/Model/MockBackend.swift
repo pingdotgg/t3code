@@ -1029,6 +1029,8 @@ private actor MockState {
                     EffortChoice(id: "medium", label: "Medium", isDefault: true),
                     EffortChoice(id: "high", label: "High", isDefault: false),
                     EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                    EffortChoice(id: "max", label: "Max", isDefault: false),
+                    EffortChoice(id: "ultra", label: "Ultra", isDefault: false),
                 ],
                 serviceTierOptionID: "serviceTier",
                 serviceTierChoices: [

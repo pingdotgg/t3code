@@ -31,7 +31,7 @@ public enum T3SubagentTaskEntityKind: String, Sendable, Equatable {
         switch taskType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "local_bash", "bash", "command", "command_execution":
             self = .command
-        case "workflow", "workflow_execution":
+        case "local_workflow", "workflow", "workflow_execution":
             self = .workflow
         default:
             self = .subagent
@@ -162,6 +162,13 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
 
     public var activeTaskCount: Int {
         activeTaskIDsStorage.count
+    }
+
+    /// Currently running provider-native or product-delegated sub-agents.
+    /// Commands and workflow rows stay visible in the timeline but never
+    /// inflate the sidebar's agent count.
+    public var activeSubagentCount: Int {
+        activeTaskIDsStorage.lazy.filter { tasksByID[$0]?.entityKind == .subagent }.count
     }
 
     /// Active tasks that represent background work a user tracks: sub-agents,

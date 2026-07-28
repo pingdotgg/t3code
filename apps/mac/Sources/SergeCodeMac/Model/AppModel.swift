@@ -125,9 +125,11 @@ public final class AppModel {
     /// Drives timeline subscription eviction; ignored by Observation.
     @ObservationIgnored private var recentlySelected: [String] = []
 
-    /// Keep the selected thread plus this many other recently selected ones
-    /// subscribed. Beyond that, `closeTimeline` drops the live subscription.
-    static let timelineSubscriptionKeepCount = 4
+    /// Keep only the selected thread subscribed. Retained timeline/display
+    /// caches make switching back immediate while stale content revalidates,
+    /// so background detail streams only spend decode, memory and Observation
+    /// work on content that is actually visible.
+    static let timelineSubscriptionKeepCount = 1
     /// Retained timeline history is bounded even after its live subscription
     /// is closed. Keep the newest suffix so a later selection has useful
     /// stale content to render immediately.
@@ -1161,7 +1163,11 @@ public final class AppModel {
 
     public func loadTimelineIfNeeded(threadID: String) async {
         let state = self.state(creating: threadID)
-        guard !state.hasLoadedTimeline else { return }
+        // SwiftUI can briefly mount overlapping `.task(id:)` bodies while a
+        // selection/view identity changes. Coalesce those callers onto the
+        // already-running fetch instead of opening a second detail stream and
+        // decoding the same long snapshot twice.
+        guard !state.hasLoadedTimeline, !state.isLoadingTimeline else { return }
         state.isLoadingTimeline = true
         defer { state.isLoadingTimeline = false }
         do {
