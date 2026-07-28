@@ -141,7 +141,10 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         </Text>
         <Text className="text-xs text-foreground-tertiary">Queued</Text>
       </View>
-      <Text className="mt-1 text-base font-t3-medium text-foreground" numberOfLines={2}>
+      {/* One line, unlike the two an active row allows: a queued title is
+          derived from the whole prompt rather than written as a title, so the
+          second line is usually a stray word or emoji rather than meaning. */}
+      <Text className="mt-1 text-base font-t3-medium text-foreground" numberOfLines={1}>
         {pendingTask.title}
       </Text>
       {branch || props.environmentLabel ? (
