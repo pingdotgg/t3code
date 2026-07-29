@@ -1987,13 +1987,16 @@ function OpenCommandPaletteDialog(props: {
       >
         <div className="relative">
           <CommandInput
+            // The submit button is absolutely positioned over the field, so the
+            // input has to reserve room for it or a long path runs underneath.
+            // Padding has to reach the inner input; on the wrapper it does nothing.
             className={
               addProjectCloneFlow?.step === "repository"
-                ? "pe-32"
+                ? "*:data-[slot=autocomplete-input]:pe-32!"
                 : isBrowsing
                   ? willCreateProjectPath
-                    ? "pe-36"
-                    : "pe-16"
+                    ? "*:data-[slot=autocomplete-input]:pe-38!"
+                    : "*:data-[slot=autocomplete-input]:pe-24!"
                   : undefined
             }
             placeholder={inputPlaceholder}
