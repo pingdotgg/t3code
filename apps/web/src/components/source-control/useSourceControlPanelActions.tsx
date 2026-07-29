@@ -109,6 +109,7 @@ export function useSourceControlPanelActions(
     setDivergedSyncBranch,
     setError,
     setExpandedFileDiffs,
+    setMutationError,
     setPublishRemoteTarget,
     setRemoteUrl,
     setRunningActions,
@@ -122,6 +123,7 @@ export function useSourceControlPanelActions(
     async (actionKey: string, action: () => Promise<void>) => {
       setRunningActions((current) => new Set(current).add(actionKey));
       setError(null);
+      setMutationError(null);
       let result: Awaited<ReturnType<typeof runPanelActionAndReconcile>> | null = null;
       try {
         result = await runPanelActionAndReconcile({
@@ -132,12 +134,12 @@ export function useSourceControlPanelActions(
           },
         });
         if (result.status === "failure" && !isSourceControlPanelCommandInterrupted(result.error)) {
-          setError(errorMessage(result.error));
+          setMutationError(errorMessage(result.error));
         }
       } catch (reconcileError) {
         const nextError = panelActionError(result, reconcileError);
         if (isSourceControlPanelCommandInterrupted(nextError)) return;
-        setError(errorMessage(nextError));
+        setMutationError(errorMessage(nextError));
       } finally {
         setRunningActions((current) => {
           const next = new Set(current);
@@ -146,7 +148,7 @@ export function useSourceControlPanelActions(
         });
       }
     },
-    [refresh, vcsStatus.refresh],
+    [refresh, setMutationError, vcsStatus.refresh],
   );
 
   const openFilePanel = useCallback(

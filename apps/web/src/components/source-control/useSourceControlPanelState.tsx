@@ -51,6 +51,7 @@ import {
   mapBranchDetails,
   operationPathsForFile,
   shouldEnrichWorkingTreeFile,
+  sourceControlPanelError,
   splitEnrichmentFileKey,
   uniquePaths,
   worktreeChangeSetId,
@@ -157,6 +158,7 @@ export function useSourceControlPanelState({
   const [loading, setLoading] = useState(true);
   const [runningActions, setRunningActions] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<SectionKey>>(
     () => cachedPanelState?.collapsed ?? new Set(["remotes"]),
   );
@@ -317,11 +319,11 @@ export function useSourceControlPanelState({
       resolveSourceControlPanelPresentationState({
         snapshot,
         loading,
-        error,
+        error: sourceControlPanelError(error, mutationError),
         statusPending: vcsStatus.isPending,
         statusError: vcsStatus.error,
       }),
-    [error, loading, snapshot, vcsStatus.error, vcsStatus.isPending],
+    [error, loading, mutationError, snapshot, vcsStatus.error, vcsStatus.isPending],
   );
   const isActionRunning = useCallback(
     (actionKey: string) => runningActions.has(actionKey),
@@ -776,7 +778,7 @@ export function useSourceControlPanelState({
     enrichedWorkingTreeFilesByPath,
     enrichedWorkingTreeFilesRef,
     environmentId,
-    error,
+    error: sourceControlPanelError(error, mutationError),
     expandedFileDiffs,
     expandedFileDiffsRef,
     expandedTree,
@@ -845,6 +847,7 @@ export function useSourceControlPanelState({
     setLoading,
     setLoadingBranchDetails,
     setLoadingStashDetails,
+    setMutationError,
     setPublishRemoteTarget,
     setRemoteName,
     setRemoteUrl,

@@ -23,7 +23,7 @@ import {
   stashIdentityKey,
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
-import { operationPathsForFile } from "./SourceControlPanelModel";
+import { operationPathsForFile, sourceControlPanelError } from "./SourceControlPanelModel";
 
 const PRIMARY_ENVIRONMENT_ID = EnvironmentId.make("environment-primary");
 const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
@@ -321,6 +321,15 @@ describe("SourceControlPanel refresh stability logic", () => {
       mutationError,
     );
     expect(panelActionError({ status: "success" }, reconcileError)).toBe(reconcileError);
+  });
+
+  it("keeps a mutation error visible when a later refresh clears its own error", () => {
+    expect(sourceControlPanelError(null, "merge produced conflicts")).toBe(
+      "merge produced conflicts",
+    );
+    expect(sourceControlPanelError("snapshot refresh failed", "merge produced conflicts")).toBe(
+      "merge produced conflicts",
+    );
   });
 
   it("rejects late branch-detail responses for the same rendered surface", () => {

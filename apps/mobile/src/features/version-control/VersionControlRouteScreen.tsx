@@ -25,8 +25,10 @@ import { vcsEnvironment } from "../../state/vcs";
 import {
   actionableLocalBranches,
   applyWorkingTreeEnrichments,
+  beginDetailRequest,
   branchOwnsOperationCwd,
   clearResolvedDetailError,
+  detailRequestIsCurrent,
   discardableFiles,
   discardPathGroups,
   operationPaths,
@@ -126,6 +128,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const [publishRequest, setPublishRequest] = useState<PublishRequest | null>(null);
   const initiallyFetchedCwds = useRef(new Set<string>());
   const snapshotRequestId = useRef(0);
+  const detailRequestIds = useRef(new Map<string, number>());
   const selectedThreadCwdRef = useRef(selectedThreadCwd);
   const snapshotRevision = useRef(0);
   const snapshotFingerprint = useRef<string | null>(null);
@@ -479,6 +482,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       if (!snapshot || branchDetails.has(key) || wasExpanded) return;
       const previousDetailError = detailErrors.get(key) ?? null;
       const revision = snapshotRevision.current;
+      const requestId = beginDetailRequest(detailRequestIds.current, key);
       setDetailErrors((current) => {
         if (!current.has(key)) return current;
         const next = new Map(current);
@@ -494,7 +498,12 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         }),
       )
         .then((details) => {
-          if (revision !== snapshotRevision.current) return;
+          if (
+            revision !== snapshotRevision.current ||
+            !detailRequestIsCurrent(detailRequestIds.current, key, requestId)
+          ) {
+            return;
+          }
           setBranchDetails((current) => new Map(current).set(key, details));
           setDetailErrors((current) => {
             if (!current.has(key)) return current;
@@ -507,6 +516,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         .catch((cause) => {
           if (
             revision === snapshotRevision.current &&
+            detailRequestIsCurrent(detailRequestIds.current, key, requestId) &&
             !(cause instanceof VersionControlCommandInterrupted)
           ) {
             const message = errorMessage(cause);
@@ -708,6 +718,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       if (!selectedThreadCwd || stashDetails.has(detailsKey) || wasExpanded) return;
       const previousDetailError = detailErrors.get(key) ?? null;
       const revision = snapshotRevision.current;
+      const requestId = beginDetailRequest(detailRequestIds.current, key);
       setDetailErrors((current) => {
         if (!current.has(key)) return current;
         const next = new Map(current);
@@ -718,7 +729,12 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         api.stashDetails({ cwd: selectedThreadCwd, stashRef: stash.refName }),
       )
         .then((details) => {
-          if (revision !== snapshotRevision.current) return;
+          if (
+            revision !== snapshotRevision.current ||
+            !detailRequestIsCurrent(detailRequestIds.current, key, requestId)
+          ) {
+            return;
+          }
           setStashDetails((current) => new Map(current).set(detailsKey, details));
           setDetailErrors((current) => {
             if (!current.has(key)) return current;
@@ -731,6 +747,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         .catch((cause) => {
           if (
             revision === snapshotRevision.current &&
+            detailRequestIsCurrent(detailRequestIds.current, key, requestId) &&
             !(cause instanceof VersionControlCommandInterrupted)
           ) {
             const message = errorMessage(cause);

@@ -160,6 +160,20 @@ export function snapshotRequestIsCurrent(
   return requestId === latestRequestId && requestedCwd === currentCwd;
 }
 
+export function beginDetailRequest(requestsByKey: Map<string, number>, key: string): number {
+  const requestId = (requestsByKey.get(key) ?? 0) + 1;
+  requestsByKey.set(key, requestId);
+  return requestId;
+}
+
+export function detailRequestIsCurrent(
+  requestsByKey: ReadonlyMap<string, number>,
+  key: string,
+  requestId: number,
+): boolean {
+  return requestsByKey.get(key) === requestId;
+}
+
 export function clearResolvedDetailError(
   currentError: string | null,
   resolvedDetailError: string | null,

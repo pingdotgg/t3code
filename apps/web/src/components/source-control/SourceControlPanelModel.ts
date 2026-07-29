@@ -62,6 +62,13 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Source control action failed.";
 }
 
+export function sourceControlPanelError(
+  refreshError: string | null,
+  mutationError: string | null,
+): string | null {
+  return mutationError ?? refreshError;
+}
+
 export function applyWorkingTreeFileEnrichment(
   groups: readonly VcsPanelChangeGroup[],
   targetCwd: string,

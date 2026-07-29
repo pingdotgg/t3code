@@ -4,8 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   actionableLocalBranches,
   applyWorkingTreeEnrichments,
+  beginDetailRequest,
   branchOwnsOperationCwd,
   clearResolvedDetailError,
+  detailRequestIsCurrent,
   discardableFiles,
   discardPathGroups,
   localBranchForRemoteBranch,
@@ -230,6 +232,15 @@ describe("native Version Control model", () => {
     expect(snapshotRequestIsCurrent(2, 2, "/repo/one", "/repo/one")).toBe(true);
     expect(snapshotRequestIsCurrent(1, 2, "/repo/one", "/repo/one")).toBe(false);
     expect(snapshotRequestIsCurrent(2, 2, "/repo/one", "/repo/two")).toBe(false);
+  });
+
+  it("accepts only the latest detail response for each expanded row", () => {
+    const requests = new Map<string, number>();
+    const first = beginDetailRequest(requests, "branch:feature");
+    const second = beginDetailRequest(requests, "branch:feature");
+
+    expect(detailRequestIsCurrent(requests, "branch:feature", first)).toBe(false);
+    expect(detailRequestIsCurrent(requests, "branch:feature", second)).toBe(true);
   });
 
   it("clears only the shared banner for the resolved detail error", () => {
