@@ -14,7 +14,8 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 - Fork workflows create/update a daily stable release PR while main-branch pushes produce nightly releases.
 - Stable release PRs list every commit since the previous stable tag, including commits brought in by upstream merges.
-- Release PR preparation runs after release publication so tag-based version resolution sees the latest release.
+- Main-branch pushes update the stable release PR immediately when the committed package version is already tagged.
+- Stable-version pushes wait for the matching release to finish so tag-based version resolution advances past the published version.
 - Release build jobs skip relay client tracing config because the relay config job is disabled.
 - Release builds publish updater metadata against the fork repository.
 - Fork stable release versions are committed through release PRs before release artifacts are built and tagged.

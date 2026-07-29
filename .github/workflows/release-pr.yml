@@ -1,6 +1,9 @@
 name: Release PR
 
 on:
+  push:
+    branches:
+      - main
   workflow_run:
     workflows:
       - Release
@@ -18,12 +21,51 @@ permissions:
 
 concurrency:
   group: fork-release-pr
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  trigger:
+    name: Resolve release PR trigger
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      prepare: ${{ steps.release_state.outputs.prepare }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch release tags
+        run: git fetch --force --tags origin
+
+      - id: release_state
+        name: Check release state
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          package_version="$(node -p "require('./apps/server/package.json').version")"
+          package_tag_sha="$(git rev-parse "refs/tags/v${package_version}^{commit}" 2>/dev/null || true)"
+          prepare=false
+
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$package_tag_sha" == "$WORKFLOW_RUN_SHA" ]]; then
+              prepare=true
+            fi
+          elif [[ -n "$package_tag_sha" ]]; then
+            prepare=true
+          fi
+
+          echo "prepare=$prepare" >> "$GITHUB_OUTPUT"
+
   prepare:
     name: Prepare stable release PR
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    needs: trigger
+    if: needs.trigger.outputs.prepare == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
