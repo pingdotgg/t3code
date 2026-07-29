@@ -1555,13 +1555,6 @@ private struct SidebarThreadMenu: View {
 
                 snoozeRow
 
-                AlpineMenuRow(icon: "archivebox", title: "Archive") {
-                    Haptics.play(.commit)
-                    dismiss()
-                    Task { await model.archiveThread(item.thread) }
-                }
-                .disabled(!item.isSelectable)
-
                 AlpineMenuSeparator()
 
                 AlpineMenuRow(icon: "trash", title: "Delete…", isDestructive: true) {
