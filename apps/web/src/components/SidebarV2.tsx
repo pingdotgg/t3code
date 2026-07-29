@@ -1992,7 +1992,7 @@ export default function SidebarV2() {
     async (
       entries: readonly { threadKey: string; threadRef: ScopedThreadRef }[],
       options: {
-        onArchived?: (threadKey: string) => void;
+        onCompleted?: (threadKey: string) => void;
         recheckLiveEligibility?: boolean;
         requireStillSettled?: boolean;
       } = {},
@@ -2021,7 +2021,8 @@ export default function SidebarV2() {
               },
             }
           : {}),
-        onArchived: ({ threadKey }) => options.onArchived?.(threadKey),
+        onArchived: ({ threadKey }) => options.onCompleted?.(threadKey),
+        onSkipped: ({ threadKey }) => options.onCompleted?.(threadKey),
       });
       for (const failure of outcome.followupFailures) {
         if (isAtomCommandInterrupted(failure)) continue;
@@ -2084,7 +2085,7 @@ export default function SidebarV2() {
             ) {
               return [];
             }
-            const outcome = await archiveThreadEntries(entries, { onArchived: onCompleted });
+            const outcome = await archiveThreadEntries(entries, { onCompleted });
             removeFromSelection(outcome.archivedThreadKeys);
             return getCompletedArchiveThreadKeys(outcome);
           },
@@ -2117,7 +2118,7 @@ export default function SidebarV2() {
               return [];
             }
             const outcome = await archiveThreadEntries(entries, {
-              onArchived: onCompleted,
+              onCompleted,
               recheckLiveEligibility: true,
               requireStillSettled: true,
             });
@@ -2243,7 +2244,7 @@ export default function SidebarV2() {
               return [];
             }
             const outcome = await archiveThreadEntries(entries, {
-              onArchived: onCompleted,
+              onCompleted,
               recheckLiveEligibility: true,
             });
             removeFromSelection(outcome.archivedThreadKeys);

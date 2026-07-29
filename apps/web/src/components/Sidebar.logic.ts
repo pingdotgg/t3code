@@ -61,6 +61,7 @@ export async function archiveSelectedThreadEntries<
   archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
   canArchive?: (entry: TEntry) => boolean;
   onArchived?: (entry: TEntry) => void;
+  onSkipped?: (entry: TEntry) => void;
 }): Promise<{
   archivedThreadKeys: readonly string[];
   skippedThreadKeys: readonly string[];
@@ -74,6 +75,7 @@ export async function archiveSelectedThreadEntries<
   for (const entry of input.entries) {
     if (input.canArchive && !input.canArchive(entry)) {
       skippedThreadKeys.push(entry.threadKey);
+      input.onSkipped?.(entry);
       continue;
     }
     let didArchive = false;

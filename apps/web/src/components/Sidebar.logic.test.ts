@@ -369,6 +369,42 @@ describe("withCoordinatedThreadArchiveEntries", () => {
     expect(reservations.size).toBe(0);
   });
 
+  it("publishes intentional skips when a later archive throws", async () => {
+    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
+    let failArchive: (() => void) | undefined;
+    const firstFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: async (ownedEntries, onCompleted) => {
+        const outcome = await archiveSelectedThreadEntries({
+          entries: ownedEntries,
+          canArchive: (entry) => entry.threadKey !== "one",
+          archive: async () =>
+            new Promise<never>((_resolve, reject) => {
+              failArchive = () => reject(new Error("archive failed"));
+            }),
+          onArchived: (entry) => onCompleted(entry.threadKey),
+          onSkipped: (entry) => onCompleted(entry.threadKey),
+        });
+        return getCompletedArchiveThreadKeys(outcome);
+      },
+    });
+    await vi.waitFor(() => expect(reservations.size).toBe(2));
+
+    const secondRun = vi.fn(async () => ["two"]);
+    const secondFlow = withCoordinatedThreadArchiveEntries({
+      entries,
+      reservations,
+      run: secondRun,
+    });
+    failArchive?.();
+
+    await expect(firstFlow).rejects.toThrow("archive failed");
+    await expect(secondFlow).resolves.toEqual(["two"]);
+    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
+    expect(reservations.size).toBe(0);
+  });
+
   it("does not retry entries an owner intentionally skipped", async () => {
     const reservations = new Map<string, Promise<ReadonlySet<string>>>();
     let finishEligibilityCheck: (() => void) | undefined;
