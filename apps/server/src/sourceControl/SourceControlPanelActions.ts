@@ -122,13 +122,18 @@ const COMMIT_HOOK_NATIVE_DEPENDENCY_FAILURE_DETAIL =
   "The Git pre-commit hook could not load a required native dependency. Reinstall the repository dependencies and try again.";
 const COMMIT_HOOK_FAILURE_DETAIL =
   "The Git pre-commit hook failed. Run the repository pre-commit hook in a terminal for details.";
-const REVIEW_DIFF_OUTPUT_ARGS = [
+const REVIEW_DIFF_PATCH_ARGS = [
   "--patch",
   "--no-color",
   "--no-ext-diff",
   "--no-textconv",
-  "--minimal",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+  "--no-relative",
+  "--unified=3",
+  "--inter-hunk-context=0",
 ] as const;
+const REVIEW_DIFF_MINIMAL_PATCH_ARGS = [...REVIEW_DIFF_PATCH_ARGS, "--minimal"] as const;
 type CommitFailureHint = "hook-failed" | "native-dependency";
 
 function commitFailureHintFromOutputLine(line: string): CommitFailureHint | null {
@@ -331,7 +336,7 @@ export function makeSourceControlPanelActions(
       const patch = yield* run("vcs.panel.readCommitFileDiff", input.cwd, [
         "show",
         "--format=",
-        ...REVIEW_DIFF_OUTPUT_ARGS,
+        ...REVIEW_DIFF_MINIMAL_PATCH_ARGS,
         source.sha,
         "--",
         ...diffPaths,
@@ -341,7 +346,7 @@ export function makeSourceControlPanelActions(
     if (source.kind === "compare") {
       const patch = yield* run("vcs.panel.readCompareFileDiff", input.cwd, [
         "diff",
-        ...REVIEW_DIFF_OUTPUT_ARGS,
+        ...REVIEW_DIFF_MINIMAL_PATCH_ARGS,
         `${source.baseRef}...${source.refName}`,
         "--",
         ...diffPaths,
@@ -351,7 +356,7 @@ export function makeSourceControlPanelActions(
     if (source.kind === "stash") {
       let patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
         "diff",
-        ...REVIEW_DIFF_OUTPUT_ARGS,
+        ...REVIEW_DIFF_MINIMAL_PATCH_ARGS,
         "--find-renames=20%",
         `${source.stashRef}^1`,
         source.stashRef,
@@ -365,7 +370,7 @@ export function makeSourceControlPanelActions(
           [
             "show",
             "--format=",
-            ...REVIEW_DIFF_OUTPUT_ARGS,
+            ...REVIEW_DIFF_MINIMAL_PATCH_ARGS,
             `${source.stashRef}^3`,
             "--",
             ...diffPaths,
@@ -377,8 +382,15 @@ export function makeSourceControlPanelActions(
     }
 
     const args = source.staged
-      ? ["diff", "--cached", ...REVIEW_DIFF_OUTPUT_ARGS, "--find-renames=20%", "--", ...diffPaths]
-      : ["diff", ...REVIEW_DIFF_OUTPUT_ARGS, "--find-renames=20%", "--", ...diffPaths];
+      ? [
+          "diff",
+          "--cached",
+          ...REVIEW_DIFF_MINIMAL_PATCH_ARGS,
+          "--find-renames=20%",
+          "--",
+          ...diffPaths,
+        ]
+      : ["diff", ...REVIEW_DIFF_MINIMAL_PATCH_ARGS, "--find-renames=20%", "--", ...diffPaths];
     let patch =
       !source.staged && input.originalPath
         ? yield* withTemporaryIntentToAddIndex(
@@ -398,7 +410,7 @@ export function makeSourceControlPanelActions(
       patch = yield* run(
         "vcs.panel.readUntrackedFileDiff",
         input.cwd,
-        ["diff", "--no-index", ...REVIEW_DIFF_OUTPUT_ARGS, "--", "/dev/null", input.path],
+        ["diff", "--no-index", ...REVIEW_DIFF_PATCH_ARGS, "--", "/dev/null", input.path],
         { allowNonZeroExit: true },
       );
     }
@@ -887,8 +899,8 @@ export function makeSourceControlPanelActions(
       const range = left && right ? `${left}..${right}` : left || right;
       const reverse = input.left.kind === "working-tree" && input.right.kind !== "working-tree";
       const args = range
-        ? ["diff", ...REVIEW_DIFF_OUTPUT_ARGS, ...(reverse ? ["--reverse"] : []), range]
-        : ["diff", ...REVIEW_DIFF_OUTPUT_ARGS];
+        ? ["diff", ...REVIEW_DIFF_MINIMAL_PATCH_ARGS, ...(reverse ? ["--reverse"] : []), range]
+        : ["diff", ...REVIEW_DIFF_PATCH_ARGS];
       return run("vcs.panel.compare", input.cwd, args).pipe(
         Effect.map((patch): VcsPanelCompareResult => ({ patch })),
       );
