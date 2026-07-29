@@ -26,8 +26,8 @@ import {
   OrchestratorProjectionError,
 } from "../orchestration-v2/Orchestrator.ts";
 import {
-  ThreadManagementError,
   ThreadManagementService,
+  ThreadManagementThreadNotSendableError,
   type ThreadManagementSendResult,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -177,9 +177,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
     switch (options.continuation ?? "queued") {
       case "fails":
         return Effect.fail(
-          new ThreadManagementError({
-            code: "thread_not_sendable",
-            message: "simulated send failure",
+          new ThreadManagementThreadNotSendableError({
+            threadId,
+            reason: { _tag: "Archived" },
           }),
         );
       case "dies":
