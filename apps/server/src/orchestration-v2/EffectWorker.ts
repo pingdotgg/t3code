@@ -17,7 +17,11 @@ import {
 } from "../observability/Metrics.ts";
 import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ResourceCleanupService } from "./ResourceCleanupService.ts";
-import { EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
+import {
+  EffectOutboxV2,
+  REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS,
+  type OrchestrationEffectV2,
+} from "./EffectOutbox.ts";
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
@@ -348,10 +352,7 @@ export const layerWithOptions = (
             }),
           ),
         );
-      const requeueAfterUnexpectedFailure = (
-        effect: OrchestrationEffectV2,
-        cause: Cause.Cause<unknown>,
-      ) =>
+      const requeueClaim = (effect: OrchestrationEffectV2, cause: Cause.Cause<unknown>) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void
           : outbox
@@ -381,6 +382,51 @@ export const layerWithOptions = (
                   }),
                 ),
               );
+      const recoverClaimAfterExecutionStarted = (
+        effect: OrchestrationEffectV2,
+        cause: Cause.Cause<unknown>,
+      ) => {
+        if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+        if (
+          REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
+            (effectType) => effectType === effect.request.type,
+          )
+        ) {
+          return requeueClaim(effect, cause);
+        }
+        return outbox
+          .fail({
+            effectId: effect.id,
+            workerId,
+            error: `Worker failed to settle a process-bound effect after execution started: ${Cause.pretty(cause)}`,
+          })
+          .pipe(
+            Effect.flatMap((failed) =>
+              failed
+                ? Effect.logError("Terminalized process-bound effect after settlement failure", {
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                  })
+                : Effect.logWarning(
+                    "Could not terminalize process-bound effect after worker lost its lease",
+                    {
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                    },
+                  ),
+            ),
+            Effect.catchCause((failCause) =>
+              Effect.logError(
+                "Failed to terminalize process-bound effect after settlement failure",
+                {
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  error: Cause.pretty(failCause),
+                },
+              ),
+            ),
+          );
+      };
 
       const runOnce = Effect.gen(function* () {
         const claimExit = yield* Effect.exit(outbox.claimNext({ workerId, leaseDurationMs }));
@@ -397,7 +443,7 @@ export const layerWithOptions = (
           return false;
         }
         const effect = claimed.value;
-        return yield* Effect.gen(function* () {
+        const cancelledBeforeExecution = yield* Effect.gen(function* () {
           const claimedAt = DateTime.toEpochMillis(yield* DateTime.now);
           const eligibleAt = Math.max(
             DateTime.toEpochMillis(DateTime.makeUnsafe(effect.createdAt)),
@@ -418,17 +464,22 @@ export const layerWithOptions = (
             yield* outbox.clearCancellation(effect.id);
             return true;
           }
-          const execution = executor.execute(effect).pipe(Effect.as("executed" as const));
-          const cancellation = outbox
-            .awaitCancellation(effect.id)
-            .pipe(Effect.as("cancelled" as const));
-          const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
-            Effect.ensuring(outbox.clearCancellation(effect.id)),
-          );
-          if (Exit.isSuccess(exit) && exit.value === "cancelled") {
-            return true;
-          }
-          if (Exit.isSuccess(exit)) {
+          return false;
+        }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
+        if (cancelledBeforeExecution) return true;
+
+        const execution = executor.execute(effect).pipe(Effect.as("executed" as const));
+        const cancellation = outbox
+          .awaitCancellation(effect.id)
+          .pipe(Effect.as("cancelled" as const));
+        const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
+          Effect.ensuring(outbox.clearCancellation(effect.id)),
+        );
+        if (Exit.isSuccess(exit) && exit.value === "cancelled") {
+          return true;
+        }
+        if (Exit.isSuccess(exit)) {
+          return yield* Effect.gen(function* () {
             const completed = yield* outbox.succeed({ effectId: effect.id, workerId });
             if (!completed) {
               if (yield* wasCancelled(effect.id)) return true;
@@ -439,8 +490,10 @@ export const layerWithOptions = (
               });
             }
             return true;
-          }
+          }).pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)));
+        }
 
+        return yield* Effect.gen(function* () {
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* Effect.logWarning("Orchestration effect execution failed", {
@@ -471,7 +524,7 @@ export const layerWithOptions = (
             });
           }
           return true;
-        }).pipe(Effect.onError((cause) => requeueAfterUnexpectedFailure(effect, cause)));
+        }).pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)));
       }).pipe(
         Effect.mapError((cause) =>
           isOrchestrationEffectWorkerError(cause)
