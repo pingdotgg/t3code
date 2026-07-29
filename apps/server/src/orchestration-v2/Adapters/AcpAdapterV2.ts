@@ -474,7 +474,6 @@ function negotiatedCapabilities(
   const setup = started.sessionSetupResult;
   const hasModelConfig =
     setup.configOptions?.some((option) => option.category === "model") === true;
-  const hasModeConfig = setup.configOptions?.some((option) => option.category === "mode") === true;
   const supportsMcp = agent.mcpCapabilities?.http === true || agent.mcpCapabilities?.sse === true;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
@@ -483,7 +482,6 @@ function negotiatedCapabilities(
     sessions: {
       ...base.sessions,
       supportsModelSwitchInSession: setup.models != null || hasModelConfig,
-      supportsRuntimeModeSwitchInSession: setup.modes != null || hasModeConfig,
     },
     threads: {
       ...base.threads,
@@ -523,15 +521,20 @@ function acpMcpServers(threadId: ThreadId | null): ReadonlyArray<EffectAcpSchema
   ];
 }
 
-function nativeThreadId(driver: ProviderDriverKind, thread: OrchestrationV2ProviderThread): string {
+function nativeThreadId(
+  driver: ProviderDriverKind,
+  thread: OrchestrationV2ProviderThread,
+): Effect.Effect<string, ProviderAdapterProtocolError> {
   const id = thread.nativeThreadRef?.nativeId;
   if (id === null || id === undefined || id.trim().length === 0) {
-    throw new ProviderAdapterProtocolError({
-      driver,
-      detail: `Provider thread ${thread.id} is missing its ACP session id`,
-    });
+    return Effect.fail(
+      new ProviderAdapterProtocolError({
+        driver,
+        detail: `Provider thread ${thread.id} is missing its ACP session id`,
+      }),
+    );
   }
-  return id;
+  return Effect.succeed(id);
 }
 
 function makeProviderThread(input: {
@@ -960,6 +963,7 @@ interface ActiveTextStream {
 interface ActiveAcpTurn {
   readonly input: ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
@@ -1990,7 +1994,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             existing?.childThreadId ??
             idAllocator.derive.threadFromProviderThread({
               driver,
-              nativeThreadId: `${nativeThreadId(driver, context.input.providerThread)}:task:${nativeTaskId}`,
+              nativeThreadId: `${context.nativeThreadId}:task:${nativeTaskId}`,
             });
           const childRootNodeId =
             existing?.childRootNodeId ??
@@ -2478,7 +2482,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           }
           const status = projectedStatus ?? toolStatus(toolCall.status);
           const now = yield* DateTime.now;
-          const nativeItemId = `${nativeThreadId(driver, context.input.providerThread)}:tool:${toolCall.toolCallId}`;
+          const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId });
           const turnItemId = idAllocator.derive.turnItemFromProviderItem({
@@ -4522,7 +4526,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 detail: `ACP provider turn ${existing.providerTurnId} is still active`,
               });
             }
-            const requestedSessionId = nativeThreadId(driver, turnInput.providerThread);
+            const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired();
             const needsSessionActivation =
               (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
@@ -4603,6 +4607,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             const context: ActiveAcpTurn = {
               input: turnInput,
               providerTurnId,
+              nativeThreadId: requestedSessionId,
               nativeTurnId,
               startedAt,
               completed,
@@ -4922,7 +4927,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired();
-                  const sessionId = nativeThreadId(driver, threadInput.providerThread);
+                  const sessionId = yield* nativeThreadId(driver, threadInput.providerThread);
                   if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
                     yield* Ref.set(snapshot, {
                       order: [],
@@ -5327,7 +5332,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   yield* restartRuntimeAfterTeardownIfRequired();
-                  const sessionId = nativeThreadId(driver, snapshotInput.providerThread);
+                  const sessionId = yield* nativeThreadId(driver, snapshotInput.providerThread);
                   if ((yield* Ref.get(activeSessionId)) !== sessionId) {
                     if (!capabilities.threads.canReadThreadSnapshot) {
                       return yield* new ProviderAdapterProtocolError({
@@ -5405,8 +5410,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                       detail: "ACP session/fork can only fork the current session head",
                     });
                   }
-                  const sourceSessionId = nativeThreadId(driver, forkInput.sourceProviderThread);
-                  const forked = yield* runtime.forkSession(sourceSessionId);
+                  const sourceSessionId = yield* nativeThreadId(
+                    driver,
+                    forkInput.sourceProviderThread,
+                  );
+                  const forked = yield* runtime.forkSession(sourceSessionId, {
+                    mcpServers: acpMcpServers(forkInput.targetThreadId),
+                  });
                   yield* Ref.set(activeSessionId, forked.sessionId);
                   yield* Ref.set(activeSessionSetup, forked);
                   yield* Ref.set(activeSelection, null);
