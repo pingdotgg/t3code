@@ -105,10 +105,15 @@ struct ChatTimelineRowView: View, Equatable {
     let threadID: String
     let context: TimelineRowContext
     let model: AppModel
+    /// True while this row is the one flying out of the activity dock into
+    /// history (see `ToolHandoffTracker`). Only ever true for a single tool
+    /// row's first renders, so the extra comparand cannot churn the memo.
+    var playsHandoffFlight = false
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         ObjectIdentifier(lhs.model) == ObjectIdentifier(rhs.model)
             && lhs.threadID == rhs.threadID
+            && lhs.playsHandoffFlight == rhs.playsHandoffFlight
             && lhs.context == rhs.context
             && lhs.item == rhs.item
     }
@@ -144,7 +149,8 @@ struct ChatTimelineRowView: View, Equatable {
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
                 threadStatus: context.threadStatus, at: at,
-                projectRoot: context.projectRoot)
+                projectRoot: context.projectRoot,
+                playsHandoffFlight: playsHandoffFlight)
         case .subagentTask(let task):
             // Commands are shell work whatever their detach state, so they
             // never take the delegated-agent card. In practice only a
@@ -869,9 +875,19 @@ private struct ToolEventRow: View {
     let threadStatus: ThreadStatus?
     let at: Date?
     let projectRoot: String?
+    /// True while this row is being promoted out of the activity dock; arms
+    /// the handoff flight below. Defaulted so the expanded tool-group path,
+    /// which only ever renders settled history, never mounts an animator.
+    var playsHandoffFlight = false
 
     @UIState private var isExpanded = false
     @UIState private var isHovering = false
+    /// Latched on the first render that arrives with `playsHandoffFlight`
+    /// set, and never cleared: the sticky window that drives the parameter
+    /// expires mid-animation on the next streaming render, and un-arming the
+    /// modifier then would tear the animator down mid-flight.
+    @UIState private var handoffLatched = false
+    @UIState private var handoffToken = 0
 
     /// Memoized: SwiftUI rebuilds every visible row's view value on each
     /// timeline mutation, and re-running JSONSerialization per row per frame
@@ -1020,6 +1036,24 @@ private struct ToolEventRow: View {
         .animation(Motion.ambient, value: displayState)
         .animation(Motion.feedback, value: isHovering)
         .onHover { isHovering = $0 }
+        // The dock → history promotion flight. Armed only for the one row
+        // whose tool just completed; every other row skips the animator
+        // entirely. Applied last so the whole settled card — fill, border,
+        // badge, overlays — travels as one object.
+        .toolHandoffFlight(
+            tint: kind.activityStyle.tint,
+            isArmed: playsHandoffFlight || handoffLatched,
+            trigger: handoffToken)
+        .task {
+            guard playsHandoffFlight, !handoffLatched else { return }
+            // A view-bound task rather than onAppear, for the same macOS 27
+            // teardown race Entrance documents; the yield lets the mount
+            // settle before the state write.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            handoffLatched = true
+            handoffToken += 1
+        }
     }
 
     private var cardFill: AnyShapeStyle {
