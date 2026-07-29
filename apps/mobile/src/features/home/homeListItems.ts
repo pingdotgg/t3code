@@ -7,6 +7,14 @@ import type { HomeThreadGroup } from "./homeThreadList";
 export const HOME_INITIAL_VISIBLE_THREADS = 6;
 /** Additional threads revealed per "Show more" tap. */
 export const HOME_SHOW_MORE_STEP = 10;
+/**
+ * Settled tail paging (upstream Thread List v2 parity): recent settled
+ * history is the common lookup, so it renders immediately once the
+ * disclosure opens; the deep tail stays behind an explicit "Show more".
+ */
+export const HOME_SETTLED_INITIAL_COUNT = 10;
+/** Additional settled threads revealed per "Show more" tap. */
+export const HOME_SETTLED_PAGE_COUNT = 25;
 
 export interface HomeGroupDisplayState {
   readonly collapsed: boolean;
@@ -14,12 +22,15 @@ export interface HomeGroupDisplayState {
   readonly visibleCount: number;
   /** Whether the group's settled-thread disclosure is open (mac parity). */
   readonly settledRevealed: boolean;
+  /** How many settled threads are currently revealed once the disclosure is open. */
+  readonly settledVisibleCount: number;
 }
 
 export const DEFAULT_GROUP_DISPLAY_STATE: HomeGroupDisplayState = {
   collapsed: false,
   visibleCount: HOME_INITIAL_VISIBLE_THREADS,
   settledRevealed: false,
+  settledVisibleCount: HOME_SETTLED_INITIAL_COUNT,
 };
 
 export interface HomeHeaderListItem {
@@ -62,12 +73,21 @@ export interface HomeSettledToggleListItem {
   readonly revealed: boolean;
 }
 
+export interface HomeSettledShowMoreListItem {
+  readonly type: "settled-show-more";
+  readonly key: string;
+  readonly groupKey: string;
+  /** Settled threads still hidden beyond the current page. */
+  readonly hiddenCount: number;
+}
+
 export type HomeListItem =
   | HomeHeaderListItem
   | HomePendingTaskListItem
   | HomeThreadListItem
   | HomeShowMoreListItem
-  | HomeSettledToggleListItem;
+  | HomeSettledToggleListItem
+  | HomeSettledShowMoreListItem;
 
 export interface HomeListLayout {
   readonly items: ReadonlyArray<HomeListItem>;
@@ -78,7 +98,8 @@ export type HomeGroupDisplayAction =
   | "toggle-collapsed"
   | "show-more"
   | "show-less"
-  | "toggle-settled";
+  | "toggle-settled"
+  | "show-more-settled";
 
 export function nextGroupDisplayState(
   current: HomeGroupDisplayState,
@@ -93,7 +114,27 @@ export function nextGroupDisplayState(
       return { ...current, visibleCount: HOME_INITIAL_VISIBLE_THREADS };
     case "toggle-settled":
       return { ...current, settledRevealed: !current.settledRevealed };
+    case "show-more-settled":
+      return {
+        ...current,
+        settledVisibleCount: current.settledVisibleCount + HOME_SETTLED_PAGE_COUNT,
+      };
   }
+}
+
+/**
+ * Resets every group's settled-tail paging back to the initial page. Called
+ * when the project scope (environment filter) or search query changes so a
+ * deep "Show more" page never carries over into an unrelated filter context.
+ */
+export function resetSettledVisibleCounts(
+  states: ReadonlyMap<string, HomeGroupDisplayState>,
+): ReadonlyMap<string, HomeGroupDisplayState> {
+  const next = new Map<string, HomeGroupDisplayState>();
+  for (const [key, state] of states) {
+    next.set(key, { ...state, settledVisibleCount: HOME_SETTLED_INITIAL_COUNT });
+  }
+  return next;
 }
 
 /**
@@ -137,6 +178,12 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
         previous.groupKey === item.groupKey &&
         previous.settledCount === item.settledCount &&
         previous.revealed === item.revealed
+      );
+    case "settled-show-more":
+      return (
+        previous.type === "settled-show-more" &&
+        previous.groupKey === item.groupKey &&
+        previous.hiddenCount === item.hiddenCount
       );
   }
 }
@@ -212,7 +259,9 @@ export function buildHomeListLayout(input: {
     }
 
     // Settled threads leave the inbox but stay reachable behind a per-group
-    // disclosure (mac parity), most recently settled first.
+    // disclosure (mac parity), most recently settled first. The revealed tail
+    // pages in behind its own "Show more" so a project with a long settled
+    // history doesn't build hundreds of hidden rows at once.
     if (group.settledThreads.length > 0) {
       const settledRevealed = display.settledRevealed;
       items.push({
@@ -223,12 +272,30 @@ export function buildHomeListLayout(input: {
         revealed: settledRevealed,
       });
       if (settledRevealed) {
-        for (const [settledIndex, thread] of group.settledThreads.entries()) {
+        const settledTotalCount = group.settledThreads.length;
+        const settledVisibleCount = input.showAllThreads
+          ? settledTotalCount
+          : Math.min(
+              Math.max(display.settledVisibleCount, HOME_SETTLED_INITIAL_COUNT),
+              settledTotalCount,
+            );
+        const visibleSettledThreads = group.settledThreads.slice(0, settledVisibleCount);
+        const settledHiddenCount = settledTotalCount - visibleSettledThreads.length;
+        const hasSettledShowMoreRow = !input.showAllThreads && settledHiddenCount > 0;
+        for (const [settledIndex, thread] of visibleSettledThreads.entries()) {
           items.push({
             type: "thread",
             key: `thread:${thread.environmentId}:${thread.id}`,
             thread,
-            isLast: settledIndex === group.settledThreads.length - 1,
+            isLast: settledIndex === visibleSettledThreads.length - 1 && !hasSettledShowMoreRow,
+          });
+        }
+        if (hasSettledShowMoreRow) {
+          items.push({
+            type: "settled-show-more",
+            key: `settled-show-more:${group.key}`,
+            groupKey: group.key,
+            hiddenCount: settledHiddenCount,
           });
         }
       }

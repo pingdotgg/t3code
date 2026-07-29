@@ -31,6 +31,7 @@ import {
   PendingTaskListRow,
   ThreadListGroupHeader,
   ThreadListRow,
+  ThreadListSettledShowMoreRow,
   ThreadListSettledToggleRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
@@ -40,6 +41,7 @@ import {
   DEFAULT_GROUP_DISPLAY_STATE,
   homeListItemsAreEqual,
   nextGroupDisplayState,
+  resetSettledVisibleCounts,
   type HomeGroupDisplayAction,
   type HomeGroupDisplayState,
   type HomeListItem,
@@ -179,6 +181,16 @@ export function HomeScreen(props: HomeScreenProps) {
       return next;
     });
   }, []);
+
+  // The settled tail pages independently per group; a deep page must not
+  // survive a scope or search change, so it resets whenever the environment
+  // filter or search query changes.
+  const settledResetKey = `${props.selectedEnvironmentId ?? "all"}:${props.searchQuery.trim()}`;
+  const lastSettledResetKeyRef = useRef(settledResetKey);
+  if (lastSettledResetKeyRef.current !== settledResetKey) {
+    lastSettledResetKeyRef.current = settledResetKey;
+    setGroupDisplayStates((previous) => resetSettledVisibleCounts(previous));
+  }
 
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
     if (openSwipeableRef.current !== methods) {
@@ -321,6 +333,15 @@ export function HomeScreen(props: HomeScreenProps) {
               variant="compact"
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
+              groupKey={item.groupKey}
+              onGroupAction={updateGroupDisplay}
+            />
+          );
+        case "settled-show-more":
+          return (
+            <ThreadListSettledShowMoreRow
+              variant="compact"
+              hiddenCount={item.hiddenCount}
               groupKey={item.groupKey}
               onGroupAction={updateGroupDisplay}
             />

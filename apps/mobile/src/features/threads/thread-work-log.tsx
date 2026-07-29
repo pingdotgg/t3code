@@ -115,7 +115,8 @@ export function ThreadWorkLog(props: {
       <View className="gap-px">
         {rows.map((row) => {
           const expanded = props.expandedRows[row.id] ?? false;
-          const canExpand = row.fullDetail !== null;
+          const canExpand = row.canExpand;
+          const fullDetail = expanded ? row.getFullDetail() : null;
           const displayText = row.detail ? `${row.summary} ${row.detail}` : row.summary;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
 
@@ -137,7 +138,7 @@ export function ThreadWorkLog(props: {
                     props.onToggleRow(row.id);
                   }
                 }}
-                onLongPress={() => props.onCopyRow(row.id, row.copyText)}
+                onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
                 style={({ pressed }) => ({
                   backgroundColor: pressed ? pressedBackground : "transparent",
                 })}
@@ -207,7 +208,7 @@ export function ThreadWorkLog(props: {
                 </View>
               </Pressable>
 
-              {expanded && row.fullDetail ? (
+              {fullDetail ? (
                 <View className="ml-7 mb-1 rounded-[10px] bg-scenery-code px-3 py-2">
                   <ScrollView
                     nestedScrollEnabled
@@ -220,7 +221,7 @@ export function ThreadWorkLog(props: {
                       className="text-2xs leading-normal text-scenery-code-foreground"
                       style={{ fontFamily: "ui-monospace" }}
                     >
-                      {row.fullDetail}
+                      {fullDetail}
                     </Text>
                   </ScrollView>
                 </View>

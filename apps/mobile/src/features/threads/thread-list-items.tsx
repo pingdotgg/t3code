@@ -21,7 +21,7 @@ import { useSceneryPhoto, useThreadDisplayNames } from "../scenery/use-scenery";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useThreadHealth } from "../../state/use-thread-health";
-import type { HomeGroupDisplayAction } from "../home/homeListItems";
+import { HOME_SETTLED_PAGE_COUNT, type HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
 
@@ -296,6 +296,76 @@ export const ThreadListSettledToggleRow = memo(function ThreadListSettledToggleR
         />
       </View>
     </Pressable>
+  );
+});
+
+/* ─── Settled tail "Show more" row ───────────────────────────────────── */
+
+/**
+ * Pages the revealed settled tail (upstream Thread List v2 parity): the
+ * disclosure opens onto `HOME_SETTLED_INITIAL_COUNT` rows, and this row reveals
+ * `HOME_SETTLED_PAGE_COUNT` more per tap. Unlike `ThreadListShowMoreRow` there
+ * is no "show less" — the settled tail only grows once opened, matching
+ * upstream's one-directional paging.
+ */
+export const ThreadListSettledShowMoreRow = memo(function ThreadListSettledShowMoreRow(props: {
+  readonly variant: ThreadListVariant;
+  readonly hiddenCount: number;
+  readonly groupKey: string;
+  readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
+}) {
+  const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const compact = props.variant === "compact";
+  const { groupKey, onGroupAction } = props;
+  const handleShowMore = useCallback(
+    () => onGroupAction(groupKey, "show-more-settled"),
+    [groupKey, onGroupAction],
+  );
+
+  return (
+    <View
+      className={
+        compact ? "flex-row items-center gap-2.5 bg-screen" : "flex-row items-center gap-2"
+      }
+      style={{
+        paddingLeft: compact ? THREAD_LIST_COMPACT_INSET : 12,
+        paddingRight: compact ? 18 : 12,
+        paddingVertical: compact ? 12 : 8,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Show ${Math.min(props.hiddenCount, HOME_SETTLED_PAGE_COUNT)} more settled threads`}
+        className="rounded-full bg-subtle"
+        hitSlop={6}
+        onPress={handleShowMore}
+        style={({ pressed }) => ({
+          opacity: pressed ? 0.6 : 1,
+          paddingHorizontal: compact ? 14 : 12,
+          paddingVertical: compact ? 7 : 6,
+          borderCurve: "continuous",
+        })}
+      >
+        <View className="flex-row items-center gap-1.5">
+          <SymbolView
+            name="chevron.down"
+            size={10}
+            tintColor={iconSubtleColor}
+            type="monochrome"
+            weight="semibold"
+          />
+          <Text
+            className={
+              compact
+                ? "text-sm font-t3-medium text-foreground-muted"
+                : "text-xs font-t3-medium text-foreground-muted"
+            }
+          >
+            Show more ({props.hiddenCount} settled hidden)
+          </Text>
+        </View>
+      </Pressable>
+    </View>
   );
 });
 

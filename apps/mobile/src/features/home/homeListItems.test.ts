@@ -9,9 +9,12 @@ import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
   HOME_INITIAL_VISIBLE_THREADS,
+  HOME_SETTLED_INITIAL_COUNT,
+  HOME_SETTLED_PAGE_COUNT,
   HOME_SHOW_MORE_STEP,
   homeListItemsAreEqual,
   nextGroupDisplayState,
+  resetSettledVisibleCounts,
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "./homeListItems";
@@ -305,5 +308,85 @@ describe("buildHomeListLayout", () => {
     expect(nextGroupDisplayState(revealed, "toggle-settled").settledRevealed).toBe(false);
     // Other actions preserve the disclosure state.
     expect(nextGroupDisplayState(revealed, "show-more").settledRevealed).toBe(true);
+  });
+
+  it("pages the revealed settled tail behind its own show-more row", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 15)],
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-settled"),
+      }),
+    });
+
+    const settledThreadItems = layout.items.filter(
+      (item): item is Extract<HomeListItem, { type: "thread" }> =>
+        item.type === "thread" && item.thread.id.includes("settled"),
+    );
+    expect(settledThreadItems).toHaveLength(HOME_SETTLED_INITIAL_COUNT);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "settled-show-more",
+      groupKey: "alpha",
+      hiddenCount: 15 - HOME_SETTLED_INITIAL_COUNT,
+    });
+    // The show-more row takes over the last slot, so no settled thread is last.
+    expect(settledThreadItems.every((item) => !item.isLast)).toBe(true);
+  });
+
+  it("reveals more settled threads per show-more-settled step until exhausted", () => {
+    const group = makeGroup("alpha", 1, 15);
+    const revealed = nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-settled");
+
+    const expandedOnce = buildHomeListLayout({
+      groups: [group],
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(revealed, "show-more-settled"),
+      }),
+    });
+    // HOME_SETTLED_INITIAL_COUNT (10) + HOME_SETTLED_PAGE_COUNT (25) exceeds the
+    // 15 settled threads, so the single page reveals every settled thread and
+    // the show-more row disappears.
+    expect(HOME_SETTLED_INITIAL_COUNT + HOME_SETTLED_PAGE_COUNT).toBeGreaterThan(15);
+    const settledThreadItems = expandedOnce.items.filter(
+      (item): item is Extract<HomeListItem, { type: "thread" }> =>
+        item.type === "thread" && item.thread.id.includes("settled"),
+    );
+    expect(settledThreadItems).toHaveLength(15);
+    expect(expandedOnce.items.some((item) => item.type === "settled-show-more")).toBe(false);
+  });
+
+  it("suspends settled paging while searching", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1, 15)],
+      displayStates: displayStates({
+        alpha: nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-settled"),
+      }),
+      showAllThreads: true,
+    });
+
+    const settledThreadItems = layout.items.filter(
+      (item): item is Extract<HomeListItem, { type: "thread" }> =>
+        item.type === "thread" && item.thread.id.includes("settled"),
+    );
+    expect(settledThreadItems).toHaveLength(15);
+    expect(layout.items.some((item) => item.type === "settled-show-more")).toBe(false);
+  });
+
+  it("resetSettledVisibleCounts resets every group's settled page back to the initial count", () => {
+    const states = displayStates({
+      alpha: nextGroupDisplayState(
+        nextGroupDisplayState(DEFAULT_GROUP_DISPLAY_STATE, "toggle-settled"),
+        "show-more-settled",
+      ),
+      beta: DEFAULT_GROUP_DISPLAY_STATE,
+    });
+    expect(states.get("alpha")?.settledVisibleCount).toBe(
+      HOME_SETTLED_INITIAL_COUNT + HOME_SETTLED_PAGE_COUNT,
+    );
+
+    const reset = resetSettledVisibleCounts(states);
+    expect(reset.get("alpha")?.settledVisibleCount).toBe(HOME_SETTLED_INITIAL_COUNT);
+    expect(reset.get("beta")?.settledVisibleCount).toBe(HOME_SETTLED_INITIAL_COUNT);
+    // Unrelated state (the open disclosure) is preserved by the reset.
+    expect(reset.get("alpha")?.settledRevealed).toBe(true);
   });
 });
