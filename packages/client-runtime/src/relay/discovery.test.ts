@@ -46,12 +46,24 @@ const environments = [
 function status(
   environment: RelayClientEnvironmentRecord,
   value: "online" | "offline",
+  label?: string,
 ): RelayEnvironmentStatusResponse {
   return {
     environmentId: environment.environmentId,
     endpoint: environment.endpoint,
     status: value,
     checkedAt: "2026-06-01T00:00:00.000Z",
+    ...(label
+      ? {
+          descriptor: {
+            environmentId: environment.environmentId,
+            label,
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+        }
+      : {}),
   };
 }
 
@@ -190,7 +202,7 @@ describe("RelayEnvironmentDiscovery", () => {
         const requests = yield* Ref.get(harness.statusRequests);
         yield* Deferred.succeed(
           requests.get(environments[1]!.environmentId)!,
-          status(environments[1]!, "online"),
+          status(environments[1]!, "online", "Renamed Environment"),
         );
 
         const partiallyResolved = yield* SubscriptionRef.changes(discovery.state).pipe(
@@ -204,6 +216,9 @@ describe("RelayEnvironmentDiscovery", () => {
         expect(
           partiallyResolved.environments.get(environments[0]!.environmentId)?.availability,
         ).toBe("checking");
+        expect(
+          partiallyResolved.environments.get(environments[1]!.environmentId)?.environment.label,
+        ).toBe("Renamed Environment");
 
         yield* Deferred.succeed(
           requests.get(environments[0]!.environmentId)!,

@@ -15,6 +15,7 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
@@ -69,6 +70,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
@@ -128,16 +130,16 @@ export const make = Effect.gen(function* () {
 
   const environmentId = EnvironmentId.make(environmentIdRaw);
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const defaultLabel = yield* resolveServerEnvironmentLabel({ cwdBaseName });
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",
     launcherManaged: launcher.managed,
   });
 
-  const descriptor: ExecutionEnvironmentDescriptor = {
+  const defaultDescriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
-    label,
+    label: defaultLabel,
     platform: {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
@@ -162,11 +164,28 @@ export const make = Effect.gen(function* () {
     // The publish opt-in and relay link change at runtime (`t3 connect
     // publish`, the client settings toggle), so the capability is read per
     // descriptor request rather than baked in at startup.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
+    getDescriptor: serverSettings.getSettings.pipe(
+      Effect.map(
+        (settings): ExecutionEnvironmentDescriptor => ({
+          ...defaultDescriptor,
+          label: settings.environmentLabel || defaultLabel,
+        }),
+      ),
+      Effect.catch((error) =>
+        Effect.logWarning("Failed to read the configured environment label.", {
+          settingsPath: error.settingsPath,
+          operation: error.operation,
+          cause: error.cause,
+        }).pipe(Effect.as(defaultDescriptor)),
+      ),
+      Effect.flatMap((descriptor) =>
+        readAgentActivityPublishingActive(secrets).pipe(
+          Effect.map((agentActivityPublishing) => ({
+            ...descriptor,
+            capabilities: { ...descriptor.capabilities, agentActivityPublishing },
+          })),
+        ),
+      ),
     ),
   });
 });

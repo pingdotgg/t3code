@@ -24,7 +24,7 @@ export function projectEnvironmentPresentation(
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
+    label: presentation.serverConfig?.environment.label ?? presentation.entry.target.label,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
     relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
   };

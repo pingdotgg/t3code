@@ -496,6 +496,7 @@ export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderSta
 
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
+  environment: Schema.optionalKey(ExecutionEnvironmentDescriptor),
 });
 export type ServerConfigSettingsUpdatedPayload = typeof ServerConfigSettingsUpdatedPayload.Type;
 
