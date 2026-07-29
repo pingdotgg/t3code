@@ -22,6 +22,9 @@ import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
 import * as NodeURL from "node:url";
 
+import * as Effect from "effect/Effect";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+
 import packageJson from "../../../../package.json" with { type: "json" };
 import {
   agyHookResponse,
@@ -45,18 +48,7 @@ import {
   transcriptRecordUpdates,
 } from "./agyTranscript.ts";
 
-export function resolveAgyCommand(
-  command: string,
-  _env: Record<string, string | undefined> = process.env,
-  platform: NodeJS.Platform = process.platform,
-): { command: string; shell: boolean } {
-  const custom = command.trim();
-  if (platform !== "win32") {
-    return { command: custom, shell: false };
-  }
-  const isCmd = /\.cmd$/i.test(custom) || /\.bat$/i.test(custom);
-  return { command: custom, shell: isCmd };
-}
+
 
 const HOOK_DIR_ENV = "T3_AGY_HOOK_DIR";
 const REQUIRE_APPROVAL_ENV = "T3_AGY_REQUIRE_APPROVAL";
@@ -1019,20 +1011,25 @@ async function runTurn(
     const attachments = stageAttachments(prompt.attachments);
     attachmentDir = attachments.dir;
     const rawCommand = process.env["T3_AGY_COMMAND"]?.trim() || "agy";
-    const { command, shell } = resolveAgyCommand(rawCommand);
+    const spawnCommand = Effect.runSync(
+      resolveSpawnCommand(
+        rawCommand,
+        buildAgyArgs({
+          session,
+          hookWorkspace,
+          attachmentDir,
+          promptText: composePromptText(prompt.baseText, attachments.staged, prompt.remoteUris),
+        }),
+      ),
+    );
     child = NodeChildProcess.spawn(
-      command,
-      buildAgyArgs({
-        session,
-        hookWorkspace,
-        attachmentDir,
-        promptText: composePromptText(prompt.baseText, attachments.staged, prompt.remoteUris),
-      }),
+      spawnCommand.command,
+      spawnCommand.args,
       {
         cwd: session.cwd,
         env: { ...process.env, [HOOK_DIR_ENV]: hookDir },
         stdio: ["ignore", "pipe", "pipe"],
-        shell,
+        shell: spawnCommand.shell,
       },
     );
   } catch (error) {

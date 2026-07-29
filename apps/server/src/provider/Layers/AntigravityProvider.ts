@@ -37,10 +37,10 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { parseAntigravityModelList } from "../acp/AntigravityAcpSupport.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 
 export type AntigravityPlanType =
   | "plus"
@@ -79,97 +79,123 @@ export function antigravityAccountAuthLabel(
   }
 }
 
-function checkAntigravityAccountAuth(settings: AntigravitySettings): {
-  readonly status: "authenticated" | "unauthenticated" | "unknown";
-  readonly label?: string;
-  readonly email?: string;
-} {
-  const targetDir =
-    settings.appDataDir?.trim() || NodePath.join(NodeOS.homedir(), ".gemini", "antigravity-cli");
-  const logDir = NodePath.join(targetDir, "log");
+const checkAntigravityAccountAuth = (
+  settings: AntigravitySettings,
+): Effect.Effect<
+  {
+    readonly status: "authenticated" | "unauthenticated" | "unknown";
+    readonly label?: string;
+    readonly email?: string;
+  },
+  never,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
 
-  let discoveredEmail: string | undefined = undefined;
-  let discoveredPlanType: AntigravityPlanType = "unknown";
+    const targetDir =
+      settings.appDataDir?.trim() || path.join(expandHomePath("~"), ".gemini", "antigravity-cli");
+    const logDir = path.join(targetDir, "log");
 
-  try {
-    if (NodeFS.existsSync(logDir)) {
-      const files = NodeFS.readdirSync(logDir)
-        .filter((f) => f.startsWith("cli-") && f.endsWith(".log"))
-        .map((f) => NodePath.join(logDir, f))
-        .sort((a, b) => NodeFS.statSync(b).mtimeMs - NodeFS.statSync(a).mtimeMs);
+    let discoveredEmail: string | undefined = undefined;
+    let discoveredPlanType: AntigravityPlanType = "unknown";
 
-      for (const logFile of files.slice(0, 5)) {
-        const content = NodeFS.readFileSync(logFile, "utf8");
-        const authMatches = [...content.matchAll(/applyAuthResult:\s*email=([^\s,]+),\s*authMethod=([^\s,]+)/g)];
-        const emailMatches = [...content.matchAll(/authenticated successfully as ([^\s\n,]+)/g)];
-        const authMatch = authMatches.pop();
-        const emailMatch = emailMatches.pop();
+    yield* Effect.catchAll(
+      Effect.gen(function* () {
+        const exists = yield* fs.exists(logDir);
+        if (exists) {
+          const files = yield* fs.readDirectory(logDir);
+          const logFiles = files
+            .filter((f) => f.startsWith("cli-") && f.endsWith(".log"))
+            .map((f) => path.join(logDir, f));
 
-        let latestMatch: { type: "auth"; match: RegExpMatchArray } | { type: "email"; match: RegExpMatchArray } | undefined;
-        if (authMatch && emailMatch) {
-          latestMatch = (authMatch.index ?? 0) > (emailMatch.index ?? 0)
-            ? { type: "auth", match: authMatch }
-            : { type: "email", match: emailMatch };
-        } else if (authMatch) {
-          latestMatch = { type: "auth", match: authMatch };
-        } else if (emailMatch) {
-          latestMatch = { type: "email", match: emailMatch };
-        }
+          const statResults = yield* Effect.all(
+            logFiles.map((file) =>
+              Effect.map(fs.stat(file), (stat) => ({ file, mtimeMs: stat.mtimeMillis }))
+            ),
+            { concurrency: "unbounded" }
+          );
 
-        if (latestMatch?.type === "auth") {
-          discoveredEmail = latestMatch.match[1]!.trim();
-          const rawMethod = latestMatch.match[2]!.trim().toLowerCase();
-          if (rawMethod.includes("plus")) discoveredPlanType = "plus";
-          else if (rawMethod.includes("ultra")) discoveredPlanType = "ultra";
-          else if (rawMethod.includes("enterprise")) discoveredPlanType = "enterprise";
-          else if (rawMethod.includes("business")) discoveredPlanType = "business";
-          else if (rawMethod.includes("api_key") || rawMethod.includes("apikey"))
-            discoveredPlanType = "api_key";
-          else if (rawMethod.includes("consumer") || rawMethod.includes("pro"))
-            discoveredPlanType = "pro";
-          else discoveredPlanType = "consumer";
-          break;
-        } else if (latestMatch?.type === "email") {
-          discoveredEmail = latestMatch.match[1]!.trim();
-          discoveredPlanType = "pro";
-          break;
-        }
-      }
-    }
-  } catch {
-    // Fall through if log inspection fails
-  }
+          const sortedFiles = statResults
+            .sort((a, b) => b.mtimeMs - a.mtimeMs)
+            .map((r) => r.file);
 
-  if (discoveredPlanType === "unknown") {
-    const onboardingPath = NodePath.join(targetDir, "cache", "onboarding.json");
-    try {
-      if (NodeFS.existsSync(onboardingPath)) {
-        const parsed: unknown = JSON.parse(NodeFS.readFileSync(onboardingPath, "utf8"));
-        if (typeof parsed === "object" && parsed !== null) {
-          const obj = parsed as Record<string, unknown>;
-          if (obj["enterpriseOnboardingComplete"] === true) {
-            discoveredPlanType = "enterprise";
-          } else if (
-            obj["consumerOnboardingComplete"] === true ||
-            obj["onboardingComplete"] === true
-          ) {
-            discoveredPlanType = "pro";
+          for (const logFile of sortedFiles.slice(0, 5)) {
+            const content = yield* fs.readFileString(logFile);
+            const authMatches = [...content.matchAll(/applyAuthResult:\s*email=([^\s,]+),\s*authMethod=([^\s,]+)/g)];
+            const emailMatches = [...content.matchAll(/authenticated successfully as ([^\s\n,]+)/g)];
+            const authMatch = authMatches.pop();
+            const emailMatch = emailMatches.pop();
+
+            let latestMatch: { type: "auth"; match: RegExpMatchArray } | { type: "email"; match: RegExpMatchArray } | undefined;
+            if (authMatch && emailMatch) {
+              latestMatch = (authMatch.index ?? 0) > (emailMatch.index ?? 0)
+                ? { type: "auth", match: authMatch }
+                : { type: "email", match: emailMatch };
+            } else if (authMatch) {
+              latestMatch = { type: "auth", match: authMatch };
+            } else if (emailMatch) {
+              latestMatch = { type: "email", match: emailMatch };
+            }
+
+            if (latestMatch?.type === "auth") {
+              discoveredEmail = latestMatch.match[1]!.trim();
+              const rawMethod = latestMatch.match[2]!.trim().toLowerCase();
+              if (rawMethod.includes("plus")) discoveredPlanType = "plus";
+              else if (rawMethod.includes("ultra")) discoveredPlanType = "ultra";
+              else if (rawMethod.includes("enterprise")) discoveredPlanType = "enterprise";
+              else if (rawMethod.includes("business")) discoveredPlanType = "business";
+              else if (rawMethod.includes("api_key") || rawMethod.includes("apikey"))
+                discoveredPlanType = "api_key";
+              else if (rawMethod.includes("consumer") || rawMethod.includes("pro"))
+                discoveredPlanType = "pro";
+              else discoveredPlanType = "consumer";
+              break;
+            } else if (latestMatch?.type === "email") {
+              discoveredEmail = latestMatch.match[1]!.trim();
+              discoveredPlanType = "pro";
+              break;
+            }
           }
         }
-      }
-    } catch {
-      // Fall through
+      }),
+      () => Effect.void
+    );
+
+    if (discoveredPlanType === "unknown") {
+      const onboardingPath = path.join(targetDir, "cache", "onboarding.json");
+      yield* Effect.catchAll(
+        Effect.gen(function* () {
+          const exists = yield* fs.exists(onboardingPath);
+          if (exists) {
+            const content = yield* fs.readFileString(onboardingPath);
+            const parsed: unknown = JSON.parse(content);
+            if (typeof parsed === "object" && parsed !== null) {
+              const obj = parsed as Record<string, unknown>;
+              if (obj["enterpriseOnboardingComplete"] === true) {
+                discoveredPlanType = "enterprise";
+              } else if (
+                obj["consumerOnboardingComplete"] === true ||
+                obj["onboardingComplete"] === true
+              ) {
+                discoveredPlanType = "pro";
+              }
+            }
+          }
+        }),
+        () => Effect.void
+      );
     }
-  }
 
-  const label = antigravityAccountAuthLabel(discoveredPlanType);
+    const label = antigravityAccountAuthLabel(discoveredPlanType);
 
-  return {
-    status: "authenticated",
-    ...(label ? { label } : {}),
-    ...(discoveredEmail ? { email: discoveredEmail } : {}),
-  };
-}
+    return {
+      status: "authenticated",
+      ...(label ? { label } : {}),
+      ...(discoveredEmail ? { email: discoveredEmail } : {}),
+    };
+  });
 
 const ANTIGRAVITY_PRESENTATION = {
   displayName: "Antigravity",
@@ -487,7 +513,7 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
       });
     }
 
-    const auth = checkAntigravityAccountAuth(settings);
+    const auth = yield* checkAntigravityAccountAuth(settings);
 
     return buildServerProvider({
       presentation: ANTIGRAVITY_PRESENTATION,
