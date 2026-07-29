@@ -667,6 +667,48 @@ export function makeOpenCodeAdapter(
       },
     ) => writeNativeEvent(threadId, event).pipe(Effect.catchCause(() => Effect.void));
 
+    const emitSubtaskEvent = Effect.fn("emitSubtaskEvent")(function* (
+      context: OpenCodeSessionContext,
+      part: Extract<Part, { type: "subtask" }>,
+      targetTurnId: TurnId | undefined,
+      type: "item.started" | "item.completed",
+      status: "inProgress" | "completed" | "failed" | "stopped",
+      raw: unknown,
+    ) {
+      const desc = trimText(part.description);
+      const title = desc ?? part.agent;
+      const detail = desc ? part.agent : undefined;
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: targetTurnId,
+          itemId: part.id,
+          raw,
+        })),
+        type,
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status,
+          title,
+          ...(detail ? { detail } : {}),
+        },
+      });
+    });
+
+    const completeOpenSubtasks = Effect.fn("completeOpenSubtasks")(function* (
+      context: OpenCodeSessionContext,
+      targetTurnId: TurnId | undefined,
+      status: "completed" | "failed" | "stopped",
+      raw: unknown,
+    ) {
+      for (const [partId, part] of context.partById.entries()) {
+        if (part.type === "subtask") {
+          context.partById.delete(partId);
+          yield* emitSubtaskEvent(context, part, targetTurnId, "item.completed", status, raw);
+        }
+      }
+    });
+
     const emitUnexpectedExit = Effect.fn("emitUnexpectedExit")(function* (
       context: OpenCodeSessionContext,
       message: string,
@@ -801,46 +843,6 @@ export function makeOpenCodeAdapter(
           payload: event,
         },
       });
-
-      function* emitSubtaskEvent(
-        part: Extract<Part, { type: "subtask" }>,
-        targetTurnId: TurnId | undefined,
-        type: "item.started" | "item.completed",
-        status: "inProgress" | "completed" | "failed" | "stopped",
-        raw: unknown,
-      ) {
-        const desc = trimText(part.description);
-        const title = desc ?? part.agent;
-        const detail = desc ? part.agent : undefined;
-        yield* emit({
-          ...(yield* buildEventBase({
-            threadId: context.session.threadId,
-            turnId: targetTurnId,
-            itemId: part.id,
-            raw,
-          })),
-          type,
-          payload: {
-            itemType: "collab_agent_tool_call",
-            status,
-            title,
-            ...(detail ? { detail } : {}),
-          },
-        });
-      }
-
-      function* completeOpenSubtasks(
-        targetTurnId: TurnId | undefined,
-        status: "completed" | "failed" | "stopped",
-        raw: unknown,
-      ) {
-        for (const [partId, part] of context.partById.entries()) {
-          if (part.type === "subtask") {
-            context.partById.delete(partId);
-            yield* emitSubtaskEvent(part, targetTurnId, "item.completed", status, raw);
-          }
-        }
-      }
 
       switch (event.type) {
         case "session.updated": {
@@ -987,7 +989,7 @@ export function makeOpenCodeAdapter(
 
           if (part.type === "subtask" && !context.emittedSubtaskPartIds.has(part.id)) {
             context.emittedSubtaskPartIds.add(part.id);
-            yield* emitSubtaskEvent(part, turnId, "item.started", "inProgress", event);
+            yield* emitSubtaskEvent(context, part, turnId, "item.started", "inProgress", event);
           }
           break;
         }
@@ -997,7 +999,7 @@ export function makeOpenCodeAdapter(
           if (part) {
             context.partById.delete(event.properties.partID);
             if (part.type === "subtask") {
-              yield* emitSubtaskEvent(part, turnId, "item.completed", "completed", event);
+              yield* emitSubtaskEvent(context, part, turnId, "item.completed", "completed", event);
             }
           }
           break;
