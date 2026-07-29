@@ -42,6 +42,16 @@ describe("serverSettings helpers", () => {
     expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
   });
 
+  it("migrates a legacy thirty-second Git fetch interval", () => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      automaticGitFetchInterval: Duration.seconds(30),
+    });
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

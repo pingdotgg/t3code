@@ -5,6 +5,7 @@ import {
   DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL,
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -221,7 +222,7 @@ export function resolveServerBackgroundActivitySettings(
   const hasLegacyOverrides =
     legacyProfile !== DEFAULT_BACKGROUND_ACTIVITY_PROFILE ||
     Duration.toMillis(settings.automaticGitFetchInterval) !==
-      Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL) ||
+      Duration.toMillis(DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL) ||
     Duration.toMillis(settings.providerHealthRefreshInterval) !==
       Duration.toMillis(DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL);
   if (backgroundActivityIsDefault && hasLegacyOverrides) {
