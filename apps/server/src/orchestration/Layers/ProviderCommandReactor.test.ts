@@ -146,6 +146,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -353,8 +354,34 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    let titleRegenerationCompletionDispatchAttempts = 0;
+    const reactorOrchestrationLayer = Layer.effect(
+      OrchestrationEngineService,
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        return {
+          readEvents: engine.readEvents,
+          dispatch: (command) => {
+            if (command.type === "thread.title.regeneration.complete") {
+              titleRegenerationCompletionDispatchAttempts += 1;
+              if (
+                titleRegenerationCompletionDispatchAttempts <=
+                (input?.titleRegenerationCompletionDispatchFailures ?? 0)
+              ) {
+                return Effect.die(new Error("Injected title regeneration completion failure"));
+              }
+            }
+            return engine.dispatch(command);
+          },
+          get streamDomainEvents() {
+            return engine.streamDomainEvents;
+          },
+          latestSequence: engine.latestSequence,
+        } satisfies OrchestrationEngineService["Service"];
+      }),
+    ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
-      Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
@@ -436,6 +463,9 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       drain,
       runEffect,
+      get titleRegenerationCompletionDispatchAttempts() {
+        return titleRegenerationCompletionDispatchAttempts;
+      },
     };
   }
 
@@ -806,6 +836,67 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Keep title after failure");
+    expect(thread?.titleRegeneration).toBeNull();
+  });
+
+  it("continues regenerating after a completion dispatch fails", async () => {
+    const harness = await createHarness({
+      titleRegenerationCompletionDispatchFailures: 1,
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadTitle
+      .mockReturnValueOnce(Effect.succeed({ title: "Title lost to completion failure" }))
+      .mockReturnValueOnce(Effect.succeed({ title: "Recovered regeneration worker" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-before-completion-failure"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Existing title",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-completion-failure"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-completion-failure"),
+          role: "user",
+          text: "Investigate the reconnect state.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regeneration-completion-failure"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+    await harness.drain();
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regeneration-after-completion-failure"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(2);
+    expect(harness.titleRegenerationCompletionDispatchAttempts).toBe(2);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Recovered regeneration worker");
     expect(thread?.titleRegeneration).toBeNull();
   });
 

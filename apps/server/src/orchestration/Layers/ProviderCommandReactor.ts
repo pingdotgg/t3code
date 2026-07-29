@@ -909,6 +909,21 @@ const make = Effect.gen(function* () {
         ...(generatedTitle !== undefined ? { title: generatedTitle } : {}),
       });
     },
+    (effect, event) =>
+      effect.pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning(
+            "provider command reactor failed to complete title regeneration",
+            {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            },
+          );
+        }),
+      ),
   );
   const threadTitleRegenerationWorker = yield* makeDrainableWorker(
     processThreadTitleRegenerationSafely,
