@@ -308,6 +308,7 @@ export const OrchestrationThreadActivityTone = Schema.Literals([
   "tool",
   "approval",
   "error",
+  "subagent",
 ]);
 export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivityTone.Type;
 

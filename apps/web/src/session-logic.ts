@@ -69,7 +69,7 @@ export interface WorkLogEntry {
   command?: string;
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
-  tone: "thinking" | "tool" | "info" | "error";
+  tone: "thinking" | "tool" | "info" | "error" | "subagent";
   toolTitle?: string;
   toolData?: unknown;
   itemType?: ToolLifecycleItemType;
@@ -140,7 +140,12 @@ export type TimelineEntry =
     };
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
-  if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
+  if (
+    entry.tone === "tool" ||
+    entry.tone === "thinking" ||
+    entry.tone === "error" ||
+    entry.tone === "subagent"
+  ) {
     return true;
   }
   if (entry.command !== undefined && entry.command.trim().length > 0) {
@@ -248,8 +253,32 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   return true;
 }
 
+const GENERIC_SUBAGENT_NAMES = new Set([
+  "",
+  "subagent",
+  "task",
+  "subtask",
+  "collab_agent_tool_call",
+  "agent",
+]);
+
+export function isSubagentLiteralName(entry: WorkLogEntry): boolean {
+  if (entry.tone !== "subagent") {
+    return false;
+  }
+  const title = (entry.toolTitle || "").trim().toLowerCase();
+  const label = (entry.label || "").trim().toLowerCase();
+  return GENERIC_SUBAGENT_NAMES.has(title) && GENERIC_SUBAGENT_NAMES.has(label);
+}
+
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
+  if (isSubagentLiteralName(entry)) {
+    return true;
+  }
+  if (entry.tone === "subagent") {
+    return false;
+  }
   if (!workLogEntryIsToolLike(entry)) {
     return false;
   }
@@ -753,6 +782,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
     toolLifecycleStatus = "completed";
   }
+  if (!toolLifecycleStatus && activity.kind === "subagent.completed") {
+    toolLifecycleStatus = "completed";
+  }
+  if (!toolLifecycleStatus && activity.kind === "subagent.started") {
+    toolLifecycleStatus = "inProgress";
+  }
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
   }
@@ -768,27 +803,55 @@ function collapseDerivedWorkLogEntries(
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
   for (const entry of entries) {
-    const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+    const last = collapsed.at(-1);
+    if (last && shouldCollapseToolLifecycleEntries(last, entry)) {
+      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(last, entry);
       continue;
     }
+
+    if (entry.collapseKey !== undefined || entry.toolCallId !== undefined) {
+      let merged = false;
+      for (let i = collapsed.length - 1; i >= 0; i -= 1) {
+        const prev = collapsed[i];
+        if (prev && shouldCollapseToolLifecycleEntries(prev, entry)) {
+          collapsed[i] = mergeDerivedWorkLogEntries(prev, entry);
+          merged = true;
+          break;
+        }
+      }
+      if (merged) {
+        continue;
+      }
+    }
+
     collapsed.push(entry);
   }
   return collapsed;
 }
 
+const LIFECYCLE_ACTIVITY_KINDS = new Set<string>([
+  "tool.started",
+  "tool.updated",
+  "tool.completed",
+  "subagent.started",
+  "subagent.updated",
+  "subagent.completed",
+]);
+
 function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (
+    !LIFECYCLE_ACTIVITY_KINDS.has(previous.activityKind) ||
+    !LIFECYCLE_ACTIVITY_KINDS.has(next.activityKind)
+  ) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
-    return false;
-  }
-  if (previous.activityKind === "tool.completed") {
+  if (
+    previous.activityKind === "tool.completed" ||
+    previous.activityKind === "subagent.completed"
+  ) {
     return false;
   }
   if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
@@ -821,6 +884,7 @@ function mergeDerivedWorkLogEntries(
   return {
     ...previous,
     ...next,
+    createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
@@ -847,7 +911,7 @@ function mergeChangedFiles(
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (!LIFECYCLE_ACTIVITY_KINDS.has(entry.activityKind)) {
     return undefined;
   }
   if (entry.toolCallId) {

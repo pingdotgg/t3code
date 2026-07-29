@@ -617,13 +617,17 @@ export function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const isCollabAgent = event.payload.itemType === "collab_agent_tool_call";
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.updated",
-          summary: event.payload.title ?? "Tool updated",
+          tone: isCollabAgent ? "subagent" : "tool",
+          kind: isCollabAgent ? "subagent.updated" : "tool.updated",
+          summary: truncateDetail(
+            event.payload.title ?? (isCollabAgent ? "Subagent" : "Tool updated"),
+            120,
+          ),
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
@@ -640,15 +644,20 @@ export function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const isCollabAgentCompleted = event.payload.itemType === "collab_agent_tool_call";
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.completed",
-          summary: event.payload.title ?? "Tool",
+          tone: isCollabAgentCompleted ? "subagent" : "tool",
+          kind: isCollabAgentCompleted ? "subagent.completed" : "tool.completed",
+          summary: truncateDetail(
+            event.payload.title ?? (isCollabAgentCompleted ? "Subagent" : "Tool"),
+            120,
+          ),
           payload: {
             itemType: event.payload.itemType,
+            status: event.payload.status ?? "completed",
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
           },
@@ -662,15 +671,20 @@ export function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const isCollabAgentStarted = event.payload.itemType === "collab_agent_tool_call";
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.started",
-          summary: `${event.payload.title ?? "Tool"} started`,
+          tone: isCollabAgentStarted ? "subagent" : "tool",
+          kind: isCollabAgentStarted ? "subagent.started" : "tool.started",
+          summary: truncateDetail(
+            event.payload.title ?? (isCollabAgentStarted ? "Subagent" : "Tool"),
+            120,
+          ),
           payload: {
             itemType: event.payload.itemType,
+            status: event.payload.status ?? "inProgress",
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,

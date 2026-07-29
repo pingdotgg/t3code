@@ -216,6 +216,7 @@ interface OpenCodeSessionContext {
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
   readonly completedAssistantPartIds: Set<string>;
+  readonly emittedSubtaskPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -804,6 +805,33 @@ export function makeOpenCodeAdapter(
         },
       });
 
+      function* emitSubtaskEvent(
+        part: Extract<Part, { type: "subtask" }>,
+        targetTurnId: TurnId | undefined,
+        type: "item.started" | "item.completed",
+        status: "inProgress" | "completed" | "failed",
+        raw: unknown,
+      ) {
+        const desc = trimText(part.description);
+        const title = status === "failed" ? part.agent : (desc ?? part.agent);
+        const detail = status === "failed" ? desc : desc ? part.agent : undefined;
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId: targetTurnId,
+            itemId: part.id,
+            raw,
+          })),
+          type,
+          payload: {
+            itemType: "collab_agent_tool_call",
+            status,
+            title,
+            ...(detail ? { detail } : {}),
+          },
+        });
+      }
+
       switch (event.type) {
         case "session.updated": {
           const title = openCodeEventSessionTitle(event);
@@ -899,9 +927,18 @@ export function makeOpenCodeAdapter(
 
           if (part.type === "tool") {
             const itemType = toToolLifecycleItemType(part.tool);
+            const isSubagent = itemType === "collab_agent_tool_call";
+            const inputDesc =
+              typeof part.state.input === "object" &&
+              part.state.input &&
+              "description" in part.state.input
+                ? trimText(String(part.state.input.description))
+                : undefined;
             const title =
-              part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
-            const detail = detailFromToolPart(part);
+              part.state.title && part.state.title.toLowerCase() !== "task"
+                ? part.state.title
+                : (inputDesc ?? (isSubagent ? "Subagent" : part.tool));
+            const detail = isSubagent ? inputDesc : detailFromToolPart(part);
             const payload = {
               itemType,
               ...(part.state.status === "error"
@@ -921,7 +958,7 @@ export function makeOpenCodeAdapter(
                 threadId: context.session.threadId,
                 turnId,
                 itemId: part.callID,
-                createdAt: toolStateCreatedAt(part),
+                createdAt: isSubagent ? undefined : toolStateCreatedAt(part),
                 raw: event,
               })),
               type:
@@ -934,6 +971,22 @@ export function makeOpenCodeAdapter(
             };
             appendTurnItem(context, turnId, part);
             yield* emit(runtimeEvent);
+          }
+
+          if (part.type === "subtask" && !context.emittedSubtaskPartIds.has(part.id)) {
+            context.emittedSubtaskPartIds.add(part.id);
+            yield* emitSubtaskEvent(part, turnId, "item.started", "inProgress", event);
+          }
+          break;
+        }
+
+        case "message.part.removed": {
+          const part = context.partById.get(event.properties.partID);
+          if (part) {
+            context.partById.delete(event.properties.partID);
+            if (part.type === "subtask") {
+              yield* emitSubtaskEvent(part, turnId, "item.completed", "completed", event);
+            }
           }
           break;
         }
@@ -1078,6 +1131,14 @@ export function makeOpenCodeAdapter(
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
+
+          for (const [partId, part] of context.partById.entries()) {
+            if (part.type === "subtask") {
+              context.partById.delete(partId);
+              yield* emitSubtaskEvent(part, activeTurnId, "item.completed", "failed", event);
+            }
+          }
+
           yield* updateProviderSession(
             context,
             {
@@ -1380,6 +1441,7 @@ export function makeOpenCodeAdapter(
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
           completedAssistantPartIds: new Set(),
+          emittedSubtaskPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
           activeAgent: undefined,

@@ -58,6 +58,7 @@ import {
   XIcon,
   ZapIcon,
 } from "lucide-react";
+import { Spinner } from "../ui/spinner";
 import { Button } from "../ui/button";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -224,19 +225,40 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
 
-  const onToggleTurnFold = useCallback((turnId: TurnId) => {
-    setExpandedTurnIds((existing) => {
-      const next = new Set(existing);
-      if (next.has(turnId)) {
-        next.delete(turnId);
-      } else {
-        next.add(turnId);
+  const onToggleTurnFold = useCallback(
+    (turnId: TurnId, anchorElement?: HTMLElement) => {
+      onManualNavigation?.();
+      const anchorTopBeforeToggle = anchorElement?.getBoundingClientRect().top ?? null;
+
+      flushSync(() => {
+        setExpandedTurnIds((existing) => {
+          const next = new Set(existing);
+          if (next.has(turnId)) {
+            next.delete(turnId);
+          } else {
+            next.add(turnId);
+          }
+          return next;
+        });
+      });
+
+      if (anchorTopBeforeToggle !== null && anchorElement) {
+        requestAnimationFrame(() => {
+          const newTop = anchorElement.getBoundingClientRect().top;
+          const delta = newTop - anchorTopBeforeToggle;
+          const list = listRef.current;
+          const currentScroll = list?.getState?.().scroll;
+          if (list && typeof currentScroll === "number" && Math.abs(delta) > 0.5) {
+            list.scrollToOffset({ offset: currentScroll + delta, animated: false });
+          }
+        });
       }
-      return next;
-    });
-  }, []);
+    },
+    [listRef, onManualNavigation],
+  );
   const onToggleWorkGroup = useCallback(
     (groupId: string, anchorElement?: HTMLElement) => {
+      onManualNavigation?.();
       const anchorBottomBeforeToggle = anchorElement?.getBoundingClientRect().bottom ?? null;
 
       flushSync(() => {
@@ -1005,7 +1027,12 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         type="button"
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.turnId)}
+        onClick={(event) => {
+          const anchorElement =
+            event.currentTarget.closest<HTMLElement>("[data-timeline-row-id]") ??
+            event.currentTarget;
+          ctx.onToggleTurnFold(row.turnId, anchorElement);
+        }}
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span>{row.label}</span>
@@ -1193,18 +1220,23 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const labelNoun = row.onlyToolEntries
+  const isSubagent = Boolean(row.isSubagentGroup);
+  const labelNoun = isSubagent
     ? row.hiddenCount === 1
-      ? "tool call"
-      : "tool calls"
-    : row.hiddenCount === 1
-      ? "log entry"
-      : "log entries";
+      ? "subagent"
+      : "subagents"
+    : row.onlyToolEntries
+      ? row.hiddenCount === 1
+        ? "tool call"
+        : "tool calls"
+      : row.hiddenCount === 1
+        ? "log entry"
+        : "log entries";
 
   return (
     <button
       type="button"
-      className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1 py-1 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-expanded={row.expanded}
       onClick={(event) => {
         const anchorElement =
@@ -1222,11 +1254,11 @@ function WorkGroupToggleTimelineRow({
       </span>
       {row.expanded ? (
         <span className="font-medium text-foreground/82">
-          Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
+          Show fewer {isSubagent ? "subagents" : row.onlyToolEntries ? "tool calls" : "log entries"}
         </span>
       ) : (
         <span className="font-medium text-foreground/82">
-          +{row.hiddenCount} previous {labelNoun}
+          Show more (+{row.hiddenCount} {labelNoun})
         </span>
       )}
     </button>
@@ -1814,6 +1846,12 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
       className: "text-muted-foreground",
     };
   }
+  if (tone === "subagent") {
+    return {
+      iconName: "hammer",
+      className: "text-foreground/92",
+    };
+  }
   return {
     iconName: "zap",
     className: "text-foreground/92",
@@ -1927,6 +1965,52 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
+  if (workEntry.tone === "subagent") {
+    const isRunning =
+      workEntry.toolLifecycleStatus === "inProgress" || workEntry.toolLifecycleStatus === undefined;
+    const isFailed = workEntry.toolLifecycleStatus === "failed";
+    const rawName = workEntry.toolTitle || workEntry.label || "Subagent";
+    const agentName = capitalizePhrase(
+      normalizeCompactToolLabel(rawName).replace(/^collab_agent_tool_call$/i, "Subagent"),
+    );
+    const statusText = isRunning ? "Working" : isFailed ? "Failed" : "Completed";
+    const spinnerSyncDelay = useMemo(() => `-${Date.now() % 1000}ms`, []);
+
+    return (
+      <div className="chat-composer-glass my-1.5 flex flex-col gap-1.5 rounded-xl border border-border/60 p-3.5 shadow-2xs">
+        <div className="flex items-center gap-2.5">
+          {isRunning ? (
+            <Spinner
+              className="size-4 shrink-0 text-foreground/80"
+              style={{ animationDelay: spinnerSyncDelay }}
+              aria-hidden
+            />
+          ) : (
+            <span
+              className={cn(
+                "flex size-4 shrink-0 items-center justify-center rounded-full",
+                isFailed ? "bg-destructive/15 text-destructive" : "bg-success/15 text-success",
+              )}
+            >
+              {isFailed ? (
+                <XIcon className="size-3" aria-hidden />
+              ) : (
+                <CheckIcon className="size-3" aria-hidden />
+              )}
+            </span>
+          )}
+          <span className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground">
+            {agentName} <span className="font-normal text-muted-foreground">{statusText}</span>
+          </span>
+        </div>
+        {workEntry.detail && (
+          <p className="pl-6.5 text-xs leading-relaxed text-muted-foreground/80 line-clamp-2">
+            {workEntry.detail}
+          </p>
+        )}
+      </div>
+    );
+  }
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";

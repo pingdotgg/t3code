@@ -1,6 +1,7 @@
 import * as Equal from "effect/Equal";
 import {
   formatDuration,
+  isSubagentLiteralName,
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
   type TimelineEntry,
@@ -148,6 +149,7 @@ export type MessagesTimelineRow =
       hiddenCount: number;
       expanded: boolean;
       onlyToolEntries: boolean;
+      isSubagentGroup?: boolean;
     }
   | {
       kind: "turn-fold";
@@ -476,10 +478,13 @@ export function deriveMessagesTimelineRows(input: {
         cursor += 1;
       }
       const visibleGroupedEntries = groupedEntries.filter(
-        (entry) => !workEntryIndicatesToolNeutralStatus(entry),
+        (entry) => !workEntryIndicatesToolNeutralStatus(entry) && !isSubagentLiteralName(entry),
       );
       if (visibleGroupedEntries.length > 0) {
-        if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+        const isSubagentGroup = visibleGroupedEntries.every((entry) => entry.tone === "subagent");
+        const maxVisible = isSubagentGroup ? 4 : MAX_VISIBLE_WORK_LOG_ENTRIES;
+
+        if (visibleGroupedEntries.length <= maxVisible) {
           nextRows.push({
             kind: "work",
             id: timelineEntry.id,
@@ -489,8 +494,8 @@ export function deriveMessagesTimelineRows(input: {
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          const hiddenEntries = visibleGroupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
-          const visibleEntries = visibleGroupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+          const hiddenEntries = visibleGroupedEntries.slice(0, -maxVisible);
+          const visibleEntries = visibleGroupedEntries.slice(-maxVisible);
           const renderedEntries = expanded ? [...hiddenEntries, ...visibleEntries] : visibleEntries;
 
           for (const workEntry of renderedEntries) {
@@ -510,6 +515,7 @@ export function deriveMessagesTimelineRows(input: {
             hiddenCount: hiddenEntries.length,
             expanded,
             onlyToolEntries: visibleGroupedEntries.every((entry) => workLogEntryIsToolLike(entry)),
+            isSubagentGroup,
           });
         }
       }

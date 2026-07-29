@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { deriveWorkLogEntries } from "../../session-logic";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -1010,6 +1011,109 @@ describe("deriveMessagesTimelineRows", () => {
     expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       expanded: true,
     });
+  });
+
+  it("filters out literal 'Subagent' generic names and preserves real subagent names", () => {
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: "work-1",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:01Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:01Z",
+          label: "Create kat/__init__.py",
+          tone: "subagent",
+          toolLifecycleStatus: "inProgress",
+        },
+      },
+      {
+        id: "work-2",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:02Z",
+        entry: {
+          id: "work-2",
+          createdAt: "2026-01-01T00:00:02Z",
+          label: "Subagent",
+          tone: "subagent",
+          toolLifecycleStatus: "inProgress",
+        },
+      },
+      {
+        id: "work-3",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:03Z",
+        entry: {
+          id: "work-3",
+          createdAt: "2026-01-01T00:00:03Z",
+          label: "Create kat/__main__.py",
+          tone: "subagent",
+          toolLifecycleStatus: "inProgress",
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    // Subagent entry with literal label "Subagent" must be filtered out
+    expect(rows.map((row) => row.id)).toEqual(["work-1"]);
+  });
+
+  it("updates in-place without duplicating cards when concurrent subagent events interleave", () => {
+    const activities = [
+      {
+        id: "act-1",
+        createdAt: "2026-01-01T00:00:01Z",
+        tone: "subagent",
+        kind: "subagent.started",
+        summary: "Write a science short story",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          detail: "Write a science short story",
+        },
+        turnId: "turn-1",
+      },
+      {
+        id: "act-2",
+        createdAt: "2026-01-01T00:00:02Z",
+        tone: "subagent",
+        kind: "subagent.started",
+        summary: "Write a farming short story",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          detail: "Write a farming short story",
+        },
+        turnId: "turn-1",
+      },
+      {
+        id: "act-3",
+        createdAt: "2026-01-01T00:00:03Z",
+        tone: "subagent",
+        kind: "subagent.completed",
+        summary: "Write a science short story",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "completed",
+          detail: "Write a science short story",
+        },
+        turnId: "turn-1",
+      },
+    ];
+
+    const entries = deriveWorkLogEntries(activities as never);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+    expect(entries[0]?.label).toBe("Write a science short story");
+    expect(entries[1]?.toolLifecycleStatus).toBe("inProgress");
+    expect(entries[1]?.label).toBe("Write a farming short story");
   });
 });
 
