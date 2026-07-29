@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { deriveWorkLogEntries } from "../../session-logic";
+import { deriveWorkLogEntries, type TimelineEntry } from "../../session-logic";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
