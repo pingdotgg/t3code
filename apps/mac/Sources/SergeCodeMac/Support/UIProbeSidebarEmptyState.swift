@@ -223,6 +223,7 @@
         private static func expectedRows(in multi: MultiDeviceModel) -> Int {
             let groups = SidebarProjection.projectGroups(in: multi, scope: .all)
             let revealed = UIProbeSidebarState.revealedSettledGroups
+            let revealedSnoozed = UIProbeSidebarState.revealedSnoozedGroups
             return groups.reduce(0) { total, group in
                 let split = SidebarProjection.groupThreads(group)
                 let visible = min(split.active.count, SidebarView.visibleThreadCap)
@@ -230,6 +231,8 @@
                 return total + 1
                     + visible
                     + (hidden > 0 ? 1 : 0)
+                    + (split.snoozed.isEmpty ? 0 : 1)
+                    + (revealedSnoozed.contains(group.id) ? split.snoozed.count : 0)
                     + (split.settled.isEmpty ? 0 : 1)
                     + (revealed.contains(group.id) ? split.settled.count : 0)
             }

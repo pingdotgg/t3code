@@ -356,7 +356,29 @@ struct SidebarPresentationTests {
 
         // A passed wake time simply stops classifying as snoozed — no event.
         #expect(split.active.map(\.thread.id) == ["active", "woken"])
-        #expect(split.settled.map(\.thread.id) == ["snoozed"])
+        // Snoozed threads get their own disclosure, not the settled one.
+        #expect(split.settled.isEmpty)
+        #expect(split.snoozed.map(\.thread.id) == ["snoozed"])
+    }
+
+    @Test("snoozed disclosure orders by soonest wake first")
+    func groupThreadsOrderSnoozedByWake() {
+        let projectID = "project-snooze-order"
+        let later = makeThread(
+            id: "later", projectID: projectID, status: .idle, at: 9,
+            snoozedUntil: Date().addingTimeInterval(7200))
+        let sooner = makeThread(
+            id: "sooner", projectID: projectID, status: .idle, at: 8,
+            snoozedUntil: Date().addingTimeInterval(600))
+        let local = makeModel(
+            projects: [Project(id: projectID, name: "Project", path: "/project")],
+            threads: [later, sooner])
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        let split = SidebarProjection.groupThreads(groups[0])
+
+        #expect(split.snoozed.map(\.thread.id) == ["sooner", "later"])
     }
 
     private func makeModel(

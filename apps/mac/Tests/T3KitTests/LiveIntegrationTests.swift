@@ -472,6 +472,34 @@ func liveEndToEndProtocolFlow() async throws {
             #expect(thread.modelSelection.instanceId == modelSelection.instanceId)
         }
 
+        // dispatchCommand: thread.snooze -> the shell upsert must carry the
+        // wake time, and thread.unsnooze must clear it. This is the full wire
+        // path the sidebar's Snooze menu rides.
+        let wakeTime = WireDate.format(Date().addingTimeInterval(3600))
+        _ = try await client.snoozeThread(threadId: threadId, snoozedUntil: wakeTime)
+        let snoozedEvent = try await waitForNext(
+            shellCursor, context: "thread-upserted with snoozedUntil for \(threadId)"
+        ) { item in
+            if case .event(.threadUpserted(_, let thread)) = item, thread.id == threadId {
+                return thread.snoozedUntil != nil
+            }
+            return false
+        }
+        if case .event(.threadUpserted(_, let thread)) = snoozedEvent {
+            #expect(thread.snoozedUntil == wakeTime)
+            #expect(thread.snoozedAt != nil)
+        }
+
+        _ = try await client.unsnoozeThread(threadId: threadId)
+        _ = try await waitForNext(
+            shellCursor, context: "thread-upserted with snoozedUntil cleared for \(threadId)"
+        ) { item in
+            if case .event(.threadUpserted(_, let thread)) = item, thread.id == threadId {
+                return thread.snoozedUntil == nil
+            }
+            return false
+        }
+
         // Clean shutdown: closing the socket tears down all of this
         // connection's server-side subscriptions (wire-protocol.md §2.4), so
         // there is no separate Interrupt needed for the shell subscription.

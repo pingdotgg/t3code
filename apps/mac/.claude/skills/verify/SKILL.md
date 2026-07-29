@@ -42,6 +42,13 @@ another's PNGs (or a crashed run's leftovers). The probe echoes
   as `menu-p<pass>-row<N>.png` plus a `-content` version; judge the
   `-content` one, since the window's theme frame carries the system glass rim
   that `cacheDisplay` turns into a saturated halo.
+  `sidebar-snooze` drives the whole snooze flow: right-click a thread row,
+  open the Snooze submenu page, commit the first preset, and assert the
+  thread leaves the active split for the project's "Snoozed" disclosure —
+  then wakes it and asserts it returns. Popover rows are clicked through
+  their accessibility frames when the headless tree resolves them, and
+  through the `.uiProbeMenuAction` hook otherwise (the log says which path
+  ran).
   `sidebar-outline` captures the project outline itself — the default sweep
   hides the sidebar while it drives the detail column, so every PNG it writes
   shows chat and none of them show the sidebar. This scenario hosts

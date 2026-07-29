@@ -327,6 +327,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && createdAt == other.createdAt
             && settledOverride == other.settledOverride
             && settledAt == other.settledAt
+            && snoozedUntil == other.snoozedUntil
+            && snoozedAt == other.snoozedAt
             && latestUserMessageAt == other.latestUserMessageAt
             && latestTurnRequestedAt == other.latestTurnRequestedAt
             && latestTurnStartedAt == other.latestTurnStartedAt
