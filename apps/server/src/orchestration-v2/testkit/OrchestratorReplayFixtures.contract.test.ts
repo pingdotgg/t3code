@@ -27,6 +27,30 @@ function assertUnique(values: ReadonlyArray<string>, label: string) {
 }
 
 describe("orchestrator replay fixture contract", () => {
+  it.effect("materializes queued fixture messages as queue-after-active dispatches", () =>
+    Effect.gen(function* () {
+      const materialized = yield* materializeFixtureInput({
+        scenario: "queued-message-dispatch-mode",
+        fixtureInput: {
+          steps: [
+            { type: "message", text: "active run" },
+            { type: "queue_message", text: "queued run" },
+          ],
+        },
+        driver: ProviderDriverKind.make("codex"),
+        modelSelection: CODEX_MODEL_SELECTION,
+      });
+      const queuedCommand = materialized.commands.find(
+        (command) => command.type === "message.dispatch" && command.text === "queued run",
+      );
+
+      assert.isDefined(queuedCommand);
+      assert.deepInclude(queuedCommand, {
+        dispatchMode: { type: "queue_after_active" },
+      });
+    }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+  );
+
   it.effect("keeps message ordinals separate from app run ordinals after steering", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocatorV2;
