@@ -207,8 +207,7 @@ struct ChatHeaderView: View {
         }
         .padding(.horizontal, 3)
         .padding(.vertical, 2)
-        .background(.thinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.1), lineWidth: 0.5))
+        .alpineGlassSurface(in: Capsule())
         .accessibilityElement(children: .contain)
     }
 }

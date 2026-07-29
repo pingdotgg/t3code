@@ -22,6 +22,8 @@ struct BootstrapEnvelopeTests {
         #expect(envelope.t3Home == "/Users/test/Library/Application Support/SergeCode")
         #expect(envelope.host == "127.0.0.1")
         #expect(envelope.desktopBootstrapToken == "abc123token")
+        #expect(envelope.hostAppVersion == nil)
+        #expect(envelope.hostAppBuild == nil)
         #expect(envelope.tailscaleServeEnabled == false)
         #expect(envelope.tailscaleServePort == 443)
         #expect(envelope.otlpTracesUrl == nil)
@@ -35,6 +37,8 @@ struct BootstrapEnvelopeTests {
             t3Home: "/tmp/base",
             host: "127.0.0.1",
             desktopBootstrapToken: "token-value",
+            hostAppVersion: "0.7.0",
+            hostAppBuild: "25",
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
             otlpTracesUrl: "http://localhost:4318/traces",
@@ -58,6 +62,8 @@ struct BootstrapEnvelopeTests {
         let object = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
 
         #expect(object?["t3Home"] == nil)
+        #expect(object?["hostAppVersion"] == nil)
+        #expect(object?["hostAppBuild"] == nil)
         #expect(object?["otlpTracesUrl"] == nil)
         #expect(object?["otlpMetricsUrl"] == nil)
         #expect(object?["mode"] as? String == "desktop")

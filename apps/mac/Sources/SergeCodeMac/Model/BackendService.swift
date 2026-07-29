@@ -6,6 +6,9 @@ import T3Kit
 
 public enum BackendEvent: Sendable {
     case connection(ConnectionPhase)
+    /// A paired remote client requested that this host open its signed
+    /// Sparkle update flow. The request never installs code silently.
+    case hostUpdateRequested
     /// Full replacement of the project list — emitted whenever the backend's
     /// project set changes (snapshot, upsert, removal), so consumers never
     /// depend on polling `projects()` at the right moment.
@@ -38,6 +41,11 @@ public enum BackendEvent: Sendable {
     case vcsStatusChanged(threadID: String, status: VcsStatus)
     /// Projected `provider.task.stop.failed` activity keyed for the task row.
     case subagentStopFailed(taskId: String, message: String)
+}
+
+extension Notification.Name {
+    static let sergeCodeHostUpdateRequested = Notification.Name(
+        "SergeCodeHostUpdateRequested")
 }
 
 public protocol BackendService: Sendable {

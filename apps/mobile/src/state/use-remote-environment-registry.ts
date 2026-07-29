@@ -21,6 +21,8 @@ import { appAtomRegistry } from "./atom-registry";
 import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
 import { environmentSession, usePreparedConnection } from "./session";
 import { environmentCatalog } from "../connection/catalog";
+import { serverEnvironment } from "./server";
+import { useAtomCommand } from "./use-atom-command";
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -140,6 +142,8 @@ export function useRemoteConnectionStatus() {
         connectionState: environment.connectionState,
         connectionError: environment.connectionError,
         connectionErrorTraceId: environment.connectionErrorTraceId,
+        hostApplication: null,
+        hostVersionStatus: "unknown" as const,
       })),
     [workspace.environments],
   );
@@ -153,9 +157,35 @@ export function useRemoteConnectionStatus() {
 
 export function useRemoteConnections() {
   const controller = useConnectionController();
+  const requestHostUpdateMutation = useAtomCommand(serverEnvironment.requestHostUpdate, {
+    reportFailure: false,
+  });
   const connectionPairingUrl = useAtomValue(connectionPairingUrlAtom);
   const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
-  const { connectedEnvironments, connectionError, connectionState } = useRemoteConnectionStatus();
+  const {
+    connectedEnvironments: runtimeEnvironments,
+    connectionError,
+    connectionState,
+  } = useRemoteConnectionStatus();
+  const connectedEnvironments = useMemo(
+    () =>
+      runtimeEnvironments.map((environment) => {
+        const relay = controller.relayEnvironments.find(
+          (entry) => entry.environment.environmentId === environment.environmentId,
+        );
+        return {
+          ...environment,
+          hostApplication: relay?.status?.descriptor?.hostApplication ?? null,
+          hostVersionStatus:
+            relay?.status?.descriptor === undefined
+              ? ("unknown" as const)
+              : relay.status.descriptor.hostApplication === undefined
+                ? ("legacy" as const)
+                : ("known" as const),
+        };
+      }),
+    [controller.relayEnvironments, runtimeEnvironments],
+  );
 
   const onChangeConnectionPairingUrl = useCallback((pairingUrl: string) => {
     appAtomRegistry.set(connectionPairingUrlAtom, pairingUrl);
@@ -189,6 +219,10 @@ export function useRemoteConnections() {
       updates: { readonly label: string; readonly displayUrl: string },
     ) => controller.updateEnvironment(environmentId, updates),
     [controller],
+  );
+  const onRequestHostUpdate = useCallback(
+    (environmentId: EnvironmentId) => requestHostUpdateMutation({ environmentId, input: {} }),
+    [requestHostUpdateMutation],
   );
 
   const onRemoveEnvironmentPress = useCallback(
@@ -228,6 +262,7 @@ export function useRemoteConnections() {
     onConnectPress,
     onReconnectEnvironment,
     onUpdateEnvironment,
+    onRequestHostUpdate,
     onRemoveEnvironmentPress,
   };
 }
