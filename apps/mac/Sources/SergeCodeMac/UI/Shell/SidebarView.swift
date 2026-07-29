@@ -181,6 +181,7 @@ struct SidebarView: View {
         // notification below, but it also has to know what the disclosure was
         // doing before it asked — the reveal unions rather than toggles.
         .uiProbeRevealedSettled(revealedSettled)
+        .uiProbeRevealedSnoozed(revealedSnoozed)
         .onAppear {
             loadCollapsedProjects()
             validateMachineScope()

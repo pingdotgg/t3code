@@ -88,13 +88,19 @@ enum UIProbeSnoozedKey {
 @MainActor
 enum UIProbeSidebarState {
     private(set) static var revealedSettledGroups: Set<String> = []
+    private(set) static var revealedSnoozedGroups: Set<String> = []
 
     static func recordRevealedSettled(_ groups: Set<String>) {
         revealedSettledGroups = groups
     }
 
+    static func recordRevealedSnoozed(_ groups: Set<String>) {
+        revealedSnoozedGroups = groups
+    }
+
     static func reset() {
         revealedSettledGroups = []
+        revealedSnoozedGroups = []
     }
 }
 
@@ -107,6 +113,14 @@ extension View {
         onAppear { UIProbeSidebarState.recordRevealedSettled(groups) }
             .onChange(of: groups) { _, value in
                 UIProbeSidebarState.recordRevealedSettled(value)
+            }
+    }
+
+    /// Publishes which project sections have their snoozed disclosure open.
+    func uiProbeRevealedSnoozed(_ groups: Set<String>) -> some View {
+        onAppear { UIProbeSidebarState.recordRevealedSnoozed(groups) }
+            .onChange(of: groups) { _, value in
+                UIProbeSidebarState.recordRevealedSnoozed(value)
             }
     }
 }
