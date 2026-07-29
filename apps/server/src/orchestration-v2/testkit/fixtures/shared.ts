@@ -487,6 +487,7 @@ export function materializeFixtureInput(input: {
               }),
               text: step.text,
               ...(step.attachments === undefined ? {} : { attachments: step.attachments }),
+              dispatchMode: { type: "queue_after_active" },
             }),
           );
           steps.push({ type: "await", key: `run:${runIndex - 1}` });
