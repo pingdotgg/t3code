@@ -12,8 +12,10 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
@@ -201,6 +203,29 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         ),
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("buffers changes after a subscription is acquired but before it is consumed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* serverSettings.subscribeChanges;
+
+        yield* serverSettings.updateSettings({
+          providers: {
+            codex: {
+              binaryPath: "/usr/local/bin/codex-next",
+            },
+          },
+        });
+
+        const firstChange = yield* changes.pipe(Stream.runHead, Effect.timeout("1 second"));
+        assert.equal(
+          Option.getOrUndefined(firstChange)?.providers.codex.binaryPath,
+          "/usr/local/bin/codex-next",
+        );
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
   it.effect("preserves model when switching providers via textGenerationModelSelection", () =>
@@ -588,6 +613,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           opencode: {
             serverUrl: "http://127.0.0.1:4096",
             serverPassword: "secret-password",
+          },
+        },
+        backgroundActivity: {
+          schemaVersion: 1,
+          profile: "custom",
+          baseProfile: "balanced",
+          overrides: {
+            automaticGitFetchInterval: 10_000,
           },
         },
         automaticGitFetchInterval: 10_000,
