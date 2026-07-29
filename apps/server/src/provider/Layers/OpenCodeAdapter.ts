@@ -722,6 +722,10 @@ export function makeOpenCodeAdapter(
       }
       const turnId = context.activeTurnId;
       sessions.delete(context.session.threadId);
+      // Emit lifecycle events BEFORE tearing down the scope. Both call sites
+      // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
+      // closing that scope triggers the fiber-interrupt finalizer, so any
+      // subsequent yield point would unwind and silently drop these emits.
       yield* completeOpenSubtasks(context, turnId, "failed", null);
       yield* emit({
         ...(yield* buildEventBase({
