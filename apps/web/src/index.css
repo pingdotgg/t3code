@@ -638,7 +638,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background: color-mix(in srgb, var(--background) 64%, transparent);
   }
 
-  .glass-opacity-slider {
+  .glass-opacity-slider,
+  .chat-font-scale-slider {
     --glass-slider-progress: 0%;
     --glass-slider-fill-offset: 0.5rem;
     --glass-slider-fill-position: calc(
@@ -650,7 +651,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     cursor: pointer;
   }
 
-  .glass-opacity-slider::-webkit-slider-runnable-track {
+  .glass-opacity-slider::-webkit-slider-runnable-track,
+  .chat-font-scale-slider::-webkit-slider-runnable-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: linear-gradient(
@@ -662,20 +664,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
   }
 
-  .glass-opacity-slider::-moz-range-track {
+  .glass-opacity-slider::-moz-range-track,
+  .chat-font-scale-slider::-moz-range-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
   }
 
-  .glass-opacity-slider::-moz-range-progress {
+  .glass-opacity-slider::-moz-range-progress,
+  .chat-font-scale-slider::-moz-range-progress {
     height: 0.375rem;
     border-radius: 9999px;
     background: var(--primary);
   }
 
-  .glass-opacity-slider::-webkit-slider-thumb {
+  .glass-opacity-slider::-webkit-slider-thumb,
+  .chat-font-scale-slider::-webkit-slider-thumb {
     appearance: none;
     width: 1rem;
     height: 1rem;
@@ -689,7 +694,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       box-shadow 120ms ease;
   }
 
-  .glass-opacity-slider::-moz-range-thumb {
+  .glass-opacity-slider::-moz-range-thumb,
+  .chat-font-scale-slider::-moz-range-thumb {
     width: 1rem;
     height: 1rem;
     border: 2px solid var(--primary);
@@ -701,54 +707,67 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       box-shadow 120ms ease;
   }
 
-  .glass-opacity-slider:hover::-webkit-slider-thumb {
+  .glass-opacity-slider:hover::-webkit-slider-thumb,
+  .chat-font-scale-slider:hover::-webkit-slider-thumb {
     transform: scale(1.08);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
   }
 
-  .glass-opacity-slider:hover::-moz-range-thumb {
+  .glass-opacity-slider:hover::-moz-range-thumb,
+  .chat-font-scale-slider:hover::-moz-range-thumb {
     transform: scale(1.08);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
   }
 
-  .glass-opacity-slider:active::-webkit-slider-thumb {
+  .glass-opacity-slider:active::-webkit-slider-thumb,
+  .chat-font-scale-slider:active::-webkit-slider-thumb {
     transform: scale(0.94);
   }
 
-  .glass-opacity-slider:active::-moz-range-thumb {
+  .glass-opacity-slider:active::-moz-range-thumb,
+  .chat-font-scale-slider:active::-moz-range-thumb {
     transform: scale(0.94);
   }
 
-  .glass-opacity-slider:focus-visible {
+  .glass-opacity-slider:focus-visible,
+  .chat-font-scale-slider:focus-visible {
     outline: none;
   }
 
-  .glass-opacity-slider:focus-visible::-webkit-slider-thumb {
+  .glass-opacity-slider:focus-visible::-webkit-slider-thumb,
+  .chat-font-scale-slider:focus-visible::-webkit-slider-thumb {
     box-shadow:
       0 0 0 3px var(--background),
       0 0 0 5px var(--ring);
   }
 
-  .glass-opacity-slider:focus-visible::-moz-range-thumb {
+  .glass-opacity-slider:focus-visible::-moz-range-thumb,
+  .chat-font-scale-slider:focus-visible::-moz-range-thumb {
     box-shadow:
       0 0 0 3px var(--background),
       0 0 0 5px var(--ring);
   }
 
   @media (forced-colors: active) {
-    .glass-opacity-slider {
+    .glass-opacity-slider,
+    .chat-font-scale-slider {
       appearance: auto;
       accent-color: Highlight;
     }
 
     .glass-opacity-slider::-webkit-slider-runnable-track,
-    .glass-opacity-slider::-webkit-slider-thumb {
+    .chat-font-scale-slider::-webkit-slider-runnable-track,
+    .glass-opacity-slider::-webkit-slider-thumb,
+    .chat-font-scale-slider::-webkit-slider-thumb {
       all: revert;
     }
 
     .glass-opacity-slider::-moz-range-track,
+    .chat-font-scale-slider::-moz-range-track,
     .glass-opacity-slider::-moz-range-progress,
-    .glass-opacity-slider::-moz-range-thumb {
+    .chat-font-scale-slider::-moz-range-progress,
+    .glass-opacity-slider::-moz-range-thumb,
+    .chat-font-scale-slider::-moz-range-thumb {
       all: revert;
     }
   }
@@ -1128,6 +1147,10 @@ label:has(> select#reasoning-effort) select {
   height: 100%;
 }
 
+.chat-text-sm {
+  font-size: calc(0.875rem * var(--chat-font-scale, 1));
+}
+
 /* Chat markdown rendering */
 .chat-markdown {
   min-width: 0;
@@ -1165,21 +1188,21 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: calc(1.25rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: calc(1.125rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: calc(1rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: calc(0.875rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown h6 {
@@ -1262,7 +1285,7 @@ label:has(> select#reasoning-effort) select {
   border-top: 1px solid var(--border);
   padding-top: 0.75rem;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -1282,7 +1305,7 @@ label:has(> select#reasoning-effort) select {
   justify-content: center;
   border-radius: 0.25rem;
   text-decoration: none;
-  font-size: 0.6875rem;
+  font-size: calc(0.6875rem * var(--chat-font-scale, 1));
   font-weight: 600;
 }
 
@@ -1292,7 +1315,7 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown a.chat-markdown-file-link {
@@ -1323,7 +1346,7 @@ label:has(> select#reasoning-effort) select {
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown pre {
@@ -1387,7 +1410,7 @@ label:has(> select#reasoning-effort) select {
   align-items: center;
   gap: 0.4rem;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  font-size: 0.6875rem;
+  font-size: calc(0.6875rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown .chat-markdown-chrome-action {
@@ -1430,7 +1453,7 @@ label:has(> select#reasoning-effort) select {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--chat-font-scale, 1));
 }
 
 .chat-markdown th,

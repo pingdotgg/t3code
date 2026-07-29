@@ -24,7 +24,9 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
+  MAX_CHAT_FONT_SCALE,
   MAX_GLASS_OPACITY,
+  MIN_CHAT_FONT_SCALE,
   MIN_GLASS_OPACITY,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -413,6 +415,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.chatFontScale !== DEFAULT_UNIFIED_SETTINGS.chatFontScale
+        ? ["Chat font size"]
+        : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
@@ -474,6 +479,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
       settings.glassOpacity,
+      settings.chatFontScale,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
@@ -502,6 +508,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      chatFontScale: DEFAULT_UNIFIED_SETTINGS.chatFontScale,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
@@ -536,6 +543,12 @@ export function AppearanceSettingsPanel() {
   const glassOpacitySliderStyle = {
     "--glass-slider-progress": `${glassOpacityRatio * 100}%`,
     "--glass-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
+  } as CSSProperties;
+  const chatFontScaleRatio =
+    (settings.chatFontScale - MIN_CHAT_FONT_SCALE) / (MAX_CHAT_FONT_SCALE - MIN_CHAT_FONT_SCALE);
+  const chatFontScaleSliderStyle = {
+    "--glass-slider-progress": `${chatFontScaleRatio * 100}%`,
+    "--glass-slider-fill-offset": `${0.5 - chatFontScaleRatio}rem`,
   } as CSSProperties;
 
   return (
@@ -615,6 +628,52 @@ export function AppearanceSettingsPanel() {
                 style={glassOpacitySliderStyle}
                 type="range"
                 value={settings.glassOpacity}
+              />
+            </div>
+          }
+        />
+
+        <SettingsRow
+          title="Chat font size"
+          description="Control the size of message text in the chat. Sidebar and other UI stay the same size."
+          resetAction={
+            settings.chatFontScale !== DEFAULT_UNIFIED_SETTINGS.chatFontScale ? (
+              <SettingResetButton
+                label="chat font size"
+                onClick={() =>
+                  updateSettings({ chatFontScale: DEFAULT_UNIFIED_SETTINGS.chatFontScale })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full items-center gap-3 sm:w-52">
+              <output
+                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                htmlFor="chat-font-scale"
+              >
+                {settings.chatFontScale}%
+              </output>
+              <input
+                aria-label="Chat font size"
+                className="chat-font-scale-slider min-w-0 flex-1"
+                id="chat-font-scale"
+                max={MAX_CHAT_FONT_SCALE}
+                min={MIN_CHAT_FONT_SCALE}
+                onChange={(event) => {
+                  const chatFontScale = Number(event.currentTarget.value);
+                  if (
+                    Number.isInteger(chatFontScale) &&
+                    chatFontScale >= MIN_CHAT_FONT_SCALE &&
+                    chatFontScale <= MAX_CHAT_FONT_SCALE
+                  ) {
+                    updateSettings({ chatFontScale });
+                  }
+                }}
+                step={10}
+                style={chatFontScaleSliderStyle}
+                type="range"
+                value={settings.chatFontScale}
               />
             </div>
           }

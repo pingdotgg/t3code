@@ -62,6 +62,17 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+export const MIN_CHAT_FONT_SCALE = 90;
+export const MAX_CHAT_FONT_SCALE = 150;
+export const ChatFontScale = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_CHAT_FONT_SCALE,
+    maximum: MAX_CHAT_FONT_SCALE,
+  }),
+);
+export type ChatFontScale = typeof ChatFontScale.Type;
+export const DEFAULT_CHAT_FONT_SCALE: ChatFontScale = 100;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -75,6 +86,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
+  ),
+  chatFontScale: ChatFontScale.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_FONT_SCALE)),
   ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
@@ -619,6 +633,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
+  chatFontScale: Schema.optionalKey(ChatFontScale),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
