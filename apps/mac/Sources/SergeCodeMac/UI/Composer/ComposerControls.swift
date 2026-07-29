@@ -11,7 +11,7 @@ struct ComposerControlsRow: View {
         HStack(spacing: 10) {
             ModelRunProfileGroup(thread: thread, model: model)
             RuntimePlanModeGroup(thread: thread, model: model)
-            if !thread.hasStarted {
+            if !thread.hasStarted, model.supportsRepositoryWorkflow(for: thread) {
                 AutoPRToggle()
             }
             Spacer()
