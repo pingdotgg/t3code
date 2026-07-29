@@ -1486,8 +1486,9 @@ function SavedBackendListRow({
                         size="xs"
                         variant="destructive-outline"
                         disabled={
+                          isConnecting ||
                           deregisteringEnvironmentId !== null ||
-                          removingEnvironmentId === environmentId
+                          removingEnvironmentId !== null
                         }
                       >
                         {deregisteringEnvironmentId === environmentId
@@ -1527,7 +1528,9 @@ function SavedBackendListRow({
                 <Button
                   size="xs"
                   variant="outline"
-                  disabled={removingEnvironmentId === environmentId}
+                  disabled={
+                    deregisteringEnvironmentId !== null || removingEnvironmentId === environmentId
+                  }
                   onClick={() => void onRemove(environmentId)}
                 >
                   {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
@@ -1536,7 +1539,11 @@ function SavedBackendListRow({
               <Button
                 size="xs"
                 variant="outline"
-                disabled={isConnecting || removingEnvironmentId === environmentId}
+                disabled={
+                  isConnecting ||
+                  deregisteringEnvironmentId !== null ||
+                  removingEnvironmentId === environmentId
+                }
                 onClick={() =>
                   void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
                 }
