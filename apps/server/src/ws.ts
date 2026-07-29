@@ -56,6 +56,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { worktreeResourceThreadId } from "@t3tools/shared/worktreeResource";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -1060,11 +1061,8 @@ const makeWsRpcLayer = (
                 const terminalOwnerToClose = yield* Option.match(threadShellBeforeArchive, {
                   onNone: () => Effect.succeed(Option.none<ThreadId>()),
                   onSome: (archivedThread) =>
-                    Effect.all([
-                      projectionSnapshotQuery.getShellSnapshot(),
-                      projectionSnapshotQuery.getArchivedShellSnapshot(),
-                    ]).pipe(
-                      Effect.map(([activeSnapshot, archivedSnapshot]) => {
+                    projectionSnapshotQuery.getShellSnapshot().pipe(
+                      Effect.map((activeSnapshot) => {
                         const sameWorktree = (thread: OrchestrationThreadShell) =>
                           thread.projectId === archivedThread.projectId &&
                           normalizeWorktreePathForArchive(thread.worktreePath) ===
@@ -1073,19 +1071,14 @@ const makeWsRpcLayer = (
                           (thread) => thread.id !== archivedThread.id && sameWorktree(thread),
                         );
                         if (worktreeStillInUse) return Option.none<ThreadId>();
-                        const canonicalOwner = [
-                          archivedThread,
-                          ...archivedSnapshot.threads.filter(
-                            (thread) => thread.id !== archivedThread.id && sameWorktree(thread),
+                        return Option.some(
+                          worktreeResourceThreadId(
+                            archivedThread.projectId,
+                            archivedThread.worktreePath,
                           ),
-                        ].toSorted(
-                          (left, right) =>
-                            left.createdAt.localeCompare(right.createdAt) ||
-                            left.id.localeCompare(right.id),
-                        )[0]!;
-                        return Option.some(canonicalOwner.id);
+                        );
                       }),
-                      // If either projection read fails, retain the sessions;
+                      // If the projection read fails, retain the sessions;
                       // closing the wrong checkout owner is more disruptive
                       // than a cleanup retry on a later lifecycle action.
                       Effect.orElseSucceed(() => Option.none<ThreadId>()),

@@ -38,6 +38,7 @@ import {
 } from "@t3tools/shared/dpop";
 import { RELAY_HEALTH_REQUEST_TYP, RELAY_MINT_REQUEST_TYP } from "@t3tools/shared/relayJwt";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { worktreeResourceThreadId } from "@t3tools/shared/worktreeResource";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
@@ -125,6 +126,7 @@ import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
+const defaultWorktreeResourceThreadId = worktreeResourceThreadId(defaultProjectId, null);
 const defaultDesktopBootstrapToken = "test-desktop-bootstrap-token";
 const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -6503,7 +6505,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(effects, [
         "dispatch:thread.archive",
         "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
+        `terminal.close:${defaultWorktreeResourceThreadId}`,
       ]);
       const sessionStopCommand = dispatchedCommands[1];
       assert.equal(sessionStopCommand?.type, "thread.session.stop");
@@ -6582,7 +6584,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "query:thread-shell:active",
         "dispatch:thread.archive",
         "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
+        `terminal.close:${defaultWorktreeResourceThreadId}`,
       ]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
@@ -6634,7 +6636,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(dispatchResult.sequence, 1);
-      assert.deepEqual(effects, ["dispatch:thread.archive", `terminal.close:${threadId}`]);
+      assert.deepEqual(effects, [
+        "dispatch:thread.archive",
+        `terminal.close:${defaultWorktreeResourceThreadId}`,
+      ]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         ["thread.archive"],
@@ -6702,7 +6707,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
 
         assert.equal(dispatchResult.sequence, 1);
-        assert.deepEqual(effects, ["dispatch:thread.archive", `terminal.close:${threadId}`]);
+        assert.deepEqual(effects, [
+          "dispatch:thread.archive",
+          `terminal.close:${defaultWorktreeResourceThreadId}`,
+        ]);
         assert.deepEqual(
           dispatchedCommands.map((command) => command.type),
           ["thread.archive"],
@@ -6778,7 +6786,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(effects, [
         "dispatch:thread.archive",
         "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
+        `terminal.close:${defaultWorktreeResourceThreadId}`,
       ]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
@@ -6850,7 +6858,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(effects, [
         "dispatch:thread.archive",
         "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
+        `terminal.close:${defaultWorktreeResourceThreadId}`,
       ]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
@@ -6928,81 +6936,61 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect(
-    "closes the archived canonical terminal owner after the last live sibling archives",
-    () =>
-      Effect.gen(function* () {
-        const canonicalThreadId = ThreadId.make("thread-archive-canonical");
-        const finalSiblingId = ThreadId.make("thread-archive-final-sibling");
-        const worktreePath = "/tmp/worktrees/shared";
-        const effects: string[] = [];
+  it.effect("closes the stable worktree terminal owner after the last live sibling archives", () =>
+    Effect.gen(function* () {
+      const finalSiblingId = ThreadId.make("thread-archive-final-sibling");
+      const worktreePath = "/tmp/worktrees/shared";
+      const effects: string[] = [];
+      const finalSibling = makeDefaultOrchestrationThreadShell({
+        id: finalSiblingId,
+        createdAt: "2026-01-02T00:00:00.000Z",
+        worktreePath,
+      });
 
-        yield* buildAppUnderTest({
-          layers: {
-            terminalManager: {
-              close: (input) =>
-                Effect.sync(() => {
-                  effects.push(`terminal.close:${input.threadId}`);
-                }),
-            },
-            orchestrationEngine: {
-              dispatch: (command) =>
-                Effect.sync(() => {
-                  effects.push(`dispatch:${command.type}`);
-                  return { sequence: 1 };
-                }),
-            },
-            projectionSnapshotQuery: {
-              getThreadShellById: () =>
-                Effect.succeed(
-                  Option.some(
-                    makeDefaultOrchestrationThreadShell({
-                      id: finalSiblingId,
-                      createdAt: "2026-01-02T00:00:00.000Z",
-                      worktreePath,
-                    }),
-                  ),
-                ),
-              getShellSnapshot: () =>
-                Effect.succeed({
-                  snapshotSequence: 2,
-                  projects: [],
-                  threads: [],
-                  updatedAt: "2026-01-03T00:00:00.000Z",
-                }),
-              getArchivedShellSnapshot: () =>
-                Effect.succeed({
-                  snapshotSequence: 2,
-                  projects: [],
-                  threads: [
-                    makeDefaultOrchestrationThreadShell({
-                      id: canonicalThreadId,
-                      createdAt: "2026-01-01T00:00:00.000Z",
-                      worktreePath,
-                    }),
-                  ],
-                  updatedAt: "2026-01-03T00:00:00.000Z",
-                }),
-            },
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            close: (input) =>
+              Effect.sync(() => {
+                effects.push(`terminal.close:${input.threadId}`);
+              }),
           },
-        });
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                effects.push(`dispatch:${command.type}`);
+                return { sequence: 1 };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getThreadShellById: () => Effect.succeed(Option.some(finalSibling)),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 2,
+                projects: [],
+                threads: [],
+                updatedAt: "2026-01-03T00:00:00.000Z",
+              }),
+          },
+        },
+      });
 
-        const wsUrl = yield* getWsServerUrl("/ws");
-        yield* Effect.scoped(
-          withWsRpcClient(wsUrl, (client) =>
-            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-              type: "thread.archive",
-              commandId: CommandId.make("cmd-thread-archive-final-sibling"),
-              threadId: finalSiblingId,
-            }),
-          ),
-        );
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.archive",
+            commandId: CommandId.make("cmd-thread-archive-final-sibling"),
+            threadId: finalSiblingId,
+          }),
+        ),
+      );
 
-        assert.deepEqual(effects, [
-          "dispatch:thread.archive",
-          `terminal.close:${canonicalThreadId}`,
-        ]);
-      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+      assert.deepEqual(effects, [
+        "dispatch:thread.archive",
+        `terminal.close:${worktreeResourceThreadId(finalSibling.projectId, worktreePath)}`,
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect(

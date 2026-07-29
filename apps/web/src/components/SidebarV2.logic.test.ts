@@ -67,10 +67,7 @@ describe("buildSidebarWorktreeGroups", () => {
     const { activeGroups } = buildSidebarWorktreeGroups(classifyAll([newer, older]));
     expect(activeGroups).toHaveLength(1);
     expect(activeGroups[0]!.threads.map((thread) => thread.id)).toEqual([older.id, newer.id]);
-    expect(activeGroups[0]!.memberKeys).toEqual([
-      sidebarThreadKey(older),
-      sidebarThreadKey(newer),
-    ]);
+    expect(activeGroups[0]!.memberKeys).toEqual([sidebarThreadKey(older), sidebarThreadKey(newer)]);
   });
 
   it("groups local-checkout threads (null worktreePath) per project, not per thread", () => {

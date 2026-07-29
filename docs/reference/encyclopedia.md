@@ -26,6 +26,15 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live in [GitCore.ts][3].
 
+#### Checkout scope
+
+The project checkout shared by one or more threads. It is either a Git worktree
+or the project's main workspace root. Checkout-owned resources such as
+terminals, previews, open files, and Git diff state remain available while the
+user switches between sibling conversations. Messages, turns, approvals, and
+plans remain thread-owned. See
+[Threads in the same checkout](../user/worktree-scoped-threads.md).
+
 ### Thread timeline
 
 #### Thread

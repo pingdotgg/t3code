@@ -116,7 +116,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
                       kind: "branch",
                       baseRef: migratedBaseRefs.record[threadKey] ?? null,
                     }
-                  : { ...previous, turnId: latestTurnId },
+                  : { ...previous, turnId: latestTurnId, filePath: null },
             },
             branchBaseRefByThreadKey: migratedBaseRefs.record,
           };

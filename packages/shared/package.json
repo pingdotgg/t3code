@@ -206,6 +206,10 @@
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
+    },
+    "./worktreeResource": {
+      "types": "./src/worktreeResource.ts",
+      "import": "./src/worktreeResource.ts"
     }
   },
   "scripts": {

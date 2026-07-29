@@ -5,6 +5,26 @@ import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
 
 const EMPTY_PORTS: ReadonlyArray<DiscoveredLocalServer> = Object.freeze([]);
+const portIndexCache = new WeakMap<
+  ReadonlyArray<DiscoveredLocalServer>,
+  ReadonlyMap<string, ReadonlyArray<DiscoveredLocalServer>>
+>();
+
+function indexDiscoveredPorts(
+  ports: ReadonlyArray<DiscoveredLocalServer>,
+): ReadonlyMap<string, ReadonlyArray<DiscoveredLocalServer>> {
+  const cached = portIndexCache.get(ports);
+  if (cached) return cached;
+  const byThreadId = new Map<string, DiscoveredLocalServer[]>();
+  for (const port of ports) {
+    if (port.terminal === null) continue;
+    const existing = byThreadId.get(port.terminal.threadId);
+    if (existing) existing.push(port);
+    else byThreadId.set(port.terminal.threadId, [port]);
+  }
+  portIndexCache.set(ports, byThreadId);
+  return byThreadId;
+}
 
 export function useDiscoveredPorts(
   environmentId: EnvironmentId | null,
@@ -25,7 +45,7 @@ export function useThreadDiscoveredPorts(input: {
   return useMemo(
     () =>
       input.threadId
-        ? ports.filter((port) => port.terminal?.threadId === input.threadId)
+        ? (indexDiscoveredPorts(ports).get(input.threadId) ?? EMPTY_PORTS)
         : EMPTY_PORTS,
     [input.threadId, ports],
   );

@@ -24,6 +24,7 @@ import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useWorktreeCanonicalThreadRef } from "~/worktreeScope";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
@@ -82,6 +83,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environment = useEnvironment(threadRef.environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
+  const canonicalThreadRef = useWorktreeCanonicalThreadRef(threadRef) ?? threadRef;
   const open = useAtomCommand(previewEnvironment.open);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
@@ -96,13 +98,13 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
 
   const tabId = requestedTabId ?? previewState.activeTabId;
   const runtimeTabId = tabId
-    ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
+    ? previewRuntimeTabId(canonicalThreadRef, previewState.serverEpoch, tabId)
     : null;
   const recordingRuntimeTabId =
     tabId && runtimeTabId
       ? activeRecordingTabIds.has(runtimeTabId)
         ? runtimeTabId
-        : findActiveBrowserRecordingRuntimeTabId(threadRef, tabId)
+        : findActiveBrowserRecordingRuntimeTabId(canonicalThreadRef, tabId)
       : null;
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;

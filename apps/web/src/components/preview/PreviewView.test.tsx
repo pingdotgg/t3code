@@ -29,8 +29,7 @@ vi.mock("~/state/session", () => ({
 // graph; identity stubs keep this suite's narrow mocks sufficient.
 vi.mock("~/worktreeScope", () => ({
   useWorktreeCanonicalThreadRef: (ref: unknown) => ref,
-  useWorktreeScopeKeyForThreadRef: (ref: unknown) =>
-    ref === null ? null : JSON.stringify(ref),
+  useWorktreeScopeKeyForThreadRef: (ref: unknown) => (ref === null ? null : JSON.stringify(ref)),
   resolveWorktreeCanonicalThreadRef: (ref: unknown) => ref,
   resolveWorktreeScopeKeyForThreadRef: (ref: unknown) => JSON.stringify(ref),
 }));

@@ -1,8 +1,9 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  filterRightPanelStateForThread,
   migratePersistedRightPanelState,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -12,6 +13,7 @@ import {
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
+const refAPlanId = `plan:${scopedThreadKey(refA)}`;
 
 beforeEach(() => {
   useRightPanelStore.setState({ byThreadKey: {} });
@@ -127,7 +129,7 @@ describe("rightPanelStore", () => {
       activeSurfaceId: "diff",
       surfaces: [
         { id: "diff", kind: "diff" },
-        { id: "plan", kind: "plan" },
+        { id: refAPlanId, kind: "plan", threadKey: scopedThreadKey(refA) },
       ],
     });
   });
@@ -214,8 +216,8 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "plan",
-      surfaces: [{ id: "plan", kind: "plan" }],
+      activeSurfaceId: refAPlanId,
+      surfaces: [{ id: refAPlanId, kind: "plan", threadKey: scopedThreadKey(refA) }],
     });
 
     useRightPanelStore.getState().openFile(refB, "conductor.json");
@@ -228,13 +230,13 @@ describe("rightPanelStore", () => {
   });
 
   it("close hides the panel without clearing its selected surface", () => {
-    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().open(refA, "diff");
     useRightPanelStore.getState().close(refA);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: false,
-      activeSurfaceId: "plan",
-      surfaces: [{ id: "plan", kind: "plan" }],
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
     });
   });
 
@@ -266,6 +268,28 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().toggle(refA, "preview");
     useRightPanelStore.getState().toggle(refA, "plan");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("plan");
+  });
+
+  it("hides another conversation's plan while retaining shared checkout surfaces", () => {
+    const state = {
+      isOpen: true,
+      activeSurfaceId: refAPlanId,
+      surfaces: [
+        { id: "diff" as const, kind: "diff" as const },
+        {
+          id: refAPlanId as `plan:${string}`,
+          kind: "plan" as const,
+          threadKey: scopedThreadKey(refA),
+        },
+      ],
+    };
+
+    expect(filterRightPanelStateForThread(state, scopedThreadKey(refB))).toEqual({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
+    });
+    expect(filterRightPanelStateForThread(state, scopedThreadKey(refA))).toBe(state);
   });
 
   it("removeThread clears persisted state", () => {
@@ -314,6 +338,19 @@ describe("rightPanelStore", () => {
       },
     ]);
     expect(state.activeSurfaceId).toBe("terminal:term-2");
+  });
+
+  it("removes terminal surfaces without discarding other checkout panels", () => {
+    useRightPanelStore.getState().open(refA, "diff");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    useRightPanelStore.getState().removeTerminalSurfacesForKey(scopedThreadKey(refA));
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
+    });
   });
 
   it("tracks split panes and the active pane within a terminal surface", () => {

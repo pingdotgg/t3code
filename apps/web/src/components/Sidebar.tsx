@@ -1837,7 +1837,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (!confirmed) return;
       }
 
-      const deletedThreadKeys = new Set(threadKeys);
+      const deletedThreadKeys = new Set<string>();
       for (const { threadRef } of selectedThreadEntries) {
         const result = await deleteThread(threadRef, {
           deletedThreadKeys,
@@ -1855,6 +1855,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           }
           return;
         }
+        deletedThreadKeys.add(scopedThreadKey(threadRef));
       }
       removeFromSelection(threadKeys);
     },

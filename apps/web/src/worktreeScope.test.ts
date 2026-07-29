@@ -1,13 +1,25 @@
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { worktreeResourceThreadId } from "@t3tools/shared/worktreeResource";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import {
   migrateWorktreeScopedRecordKeys,
-  selectStableCanonicalThreadId,
+  resolveWorktreeCanonicalThreadRef,
+  resolveWorktreeScopeKeyForThreadRef,
   worktreeScopeKey,
 } from "./worktreeScope";
 
 describe("worktreeScope", () => {
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+    });
+  });
+
   it("preserves whitespace that is part of a filesystem path", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const projectId = ProjectId.make("project-1");
@@ -34,15 +46,45 @@ describe("worktreeScope", () => {
     });
   });
 
-  it("retains a remembered canonical owner after it leaves the candidate set", () => {
-    const rememberedThreadId = ThreadId.make("thread-oldest");
-    const remainingThreadId = ThreadId.make("thread-sibling");
+  it("keeps established worktree state when stale draft state also exists", () => {
+    const fallbackKey = "environment-1:thread-1";
+    const primaryKey = "environment-1:project-1:/repo/worktree";
+    const worktreeState = { isOpen: true };
 
     expect(
-      selectStableCanonicalThreadId(
-        [{ id: remainingThreadId, createdAt: "2026-01-02T00:00:00.000Z" }],
-        rememberedThreadId,
+      migrateWorktreeScopedRecordKeys(
+        {
+          [primaryKey]: worktreeState,
+          [fallbackKey]: { isOpen: false },
+        },
+        primaryKey,
+        fallbackKey,
       ),
-    ).toBe(rememberedThreadId);
+    ).toEqual({
+      key: primaryKey,
+      record: { [primaryKey]: worktreeState },
+    });
+  });
+
+  it("uses the final checkout scope and resource owner before a draft is sent", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const projectId = ProjectId.make("project-1");
+    const threadId = ThreadId.make("thread-1");
+    const threadRef = scopeThreadRef(environmentId, threadId);
+    const worktreePath = "/repo/worktree";
+
+    useComposerDraftStore
+      .getState()
+      .setProjectDraftThreadId(scopeProjectRef(environmentId, projectId), DraftId.make("draft-1"), {
+        threadId,
+        worktreePath,
+      });
+
+    expect(resolveWorktreeScopeKeyForThreadRef(threadRef)).toBe(
+      worktreeScopeKey(environmentId, projectId, worktreePath),
+    );
+    expect(resolveWorktreeCanonicalThreadRef(threadRef).threadId).toBe(
+      worktreeResourceThreadId(projectId, worktreePath),
+    );
   });
 });

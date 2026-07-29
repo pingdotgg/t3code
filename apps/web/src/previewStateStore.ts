@@ -133,10 +133,13 @@ function migratePreviewState(ref: ScopedThreadRef): string {
   const fallbackAtom = previewStateAtom(fallbackKey);
   const fallbackState = appAtomRegistry.get(fallbackAtom);
   if (fallbackState === EMPTY_THREAD_PREVIEW_STATE) return primaryKey;
-  appAtomRegistry.set(previewStateAtom(primaryKey), fallbackState);
+  const primaryAtom = previewStateAtom(primaryKey);
+  const primaryState = appAtomRegistry.get(primaryAtom);
+  const migratedState = primaryState === EMPTY_THREAD_PREVIEW_STATE ? fallbackState : primaryState;
+  appAtomRegistry.set(primaryAtom, migratedState);
   appAtomRegistry.set(fallbackAtom, EMPTY_THREAD_PREVIEW_STATE);
   syncActivePreviewThread(fallbackKey, ref, EMPTY_THREAD_PREVIEW_STATE);
-  syncActivePreviewThread(primaryKey, ref, fallbackState);
+  syncActivePreviewThread(primaryKey, ref, migratedState);
   changedPreviewThreadKeys.delete(fallbackKey);
   changedPreviewThreadKeys.add(primaryKey);
   return primaryKey;
