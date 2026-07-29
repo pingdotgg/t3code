@@ -239,6 +239,20 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("keeps self-update guidance manual when the provider version is not semver", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("selfUpdatingTool"),
+        currentVersion: "unknown",
+        latestVersion: "2.1.0",
+        maintenanceCapabilities: selfUpdatingTool.resolve(),
+      }),
+    ).toMatchObject({
+      updateCommand: null,
+      canUpdate: false,
+    });
+  });
+
   it.effect(
     "switches package-managed providers to vite-plus updates when the resolved binary lives in vite-plus global bin",
     () =>

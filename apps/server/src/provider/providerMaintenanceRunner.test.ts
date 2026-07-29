@@ -129,6 +129,10 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
+    options: {
+      readonly env?: Record<string, string | undefined>;
+      readonly extendEnv?: boolean;
+    },
   ) => {
     readonly stdout?: string;
     readonly stderr?: string;
@@ -142,8 +146,14 @@ function mockSpawnerLayer(
       const childProcess = command as unknown as {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
+        readonly options: {
+          readonly env?: Record<string, string | undefined>;
+          readonly extendEnv?: boolean;
+        };
       };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      return Effect.succeed(
+        mockHandle(handler(childProcess.command, childProcess.args, childProcess.options)),
+      );
     }),
   );
 }
@@ -334,6 +344,66 @@ describe("providerMaintenanceRunner", () => {
           latestVersionHttpClient("0.126.0"),
           mockSpawnerLayer((command, args) => {
             calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("preserves the provider environment when running a self-update", () => {
+    const calls: Array<{
+      command: string;
+      args: ReadonlyArray<string>;
+      env: Record<string, string | undefined> | undefined;
+      extendEnv: boolean | undefined;
+    }> = [];
+    const updateEnv = {
+      PATH: "/custom/codex/bin",
+      CODEX_HOME: "/custom/codex/home",
+    };
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        version: "0.126.0",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@openai/codex",
+              updateExecutable: "codex",
+              updateArgs: ["update"],
+              updateEnv,
+              updateLockKey: "codex-self-update",
+              updateMinimumVersion: "0.126.0",
+            }),
+          ),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [
+        {
+          command: "codex",
+          args: ["update"],
+          env: updateEnv,
+          extendEnv: true,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.126.0"),
+          mockSpawnerLayer((command, args, options) => {
+            calls.push({
+              command,
+              args,
+              env: options.env,
+              extendEnv: options.extendEnv,
+            });
             return { stdout: "updated" };
           }),
         ),

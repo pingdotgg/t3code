@@ -3,7 +3,7 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -47,6 +47,7 @@ export interface ProviderMaintenanceCommandAction {
   readonly command: string;
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
   readonly lockKey: string;
   readonly minimumVersion?: string;
 }
@@ -100,6 +101,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly packageName: string | null;
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
+  readonly updateEnv?: NodeJS.ProcessEnv;
   readonly updateLockKey: string | null;
   readonly updateMinimumVersion?: string;
 }): ProviderMaintenanceCapabilities {
@@ -110,6 +112,7 @@ export function makeProviderMaintenanceCapabilities(input: {
           command: [input.updateExecutable, ...input.updateArgs].join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
+          ...(input.updateEnv ? { env: input.updateEnv } : {}),
           lockKey: input.updateLockKey,
           ...(input.updateMinimumVersion ? { minimumVersion: input.updateMinimumVersion } : {}),
         };
@@ -438,11 +441,10 @@ export function canRunProviderMaintenanceUpdate(
   if (!update.minimumVersion) {
     return true;
   }
-  return (
-    currentVersion !== null &&
-    currentVersion !== undefined &&
-    compareSemverVersions(currentVersion, update.minimumVersion) >= 0
-  );
+  if (!currentVersion || !parseSemver(currentVersion) || !parseSemver(update.minimumVersion)) {
+    return false;
+  }
+  return compareSemverVersions(currentVersion, update.minimumVersion) >= 0;
 }
 
 const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {

@@ -68,6 +68,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       packageName: "@openai/codex",
       updateExecutable: options?.binaryPath?.trim() || "codex",
       updateArgs: ["update"],
+      ...(options?.env ? { updateEnv: options.env } : {}),
       updateLockKey: "codex-self-update",
       updateMinimumVersion: "0.126.0",
     }),
