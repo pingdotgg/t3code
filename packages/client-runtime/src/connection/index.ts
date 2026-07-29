@@ -29,5 +29,6 @@ export {
   PlatformEnvironmentRemovalError,
 } from "./registry.ts";
 export { ConnectionResolver } from "./resolver.ts";
+export * as ResyncRequests from "./resyncRequests.ts";
 export { EnvironmentSupervisor, type EnvironmentSupervisorOptions } from "./supervisor.ts";
 export * as Wakeups from "./wakeups.ts";

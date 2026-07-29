@@ -13,6 +13,8 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
+import { requestResync } from "../lib/resyncRequests";
+import { confirmSettleConverged as confirmSettleConvergedWith } from "../lib/settleConvergence";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -412,6 +414,17 @@ export function useThreadActions() {
     ],
   );
 
+  const confirmSettleConverged = useCallback(async (target: ScopedThreadRef) => {
+    await confirmSettleConvergedWith({
+      readSettled: () => {
+        const shell = readThreadShell(target);
+        return shell === null ? null : shell.settledOverride === "settled";
+      },
+      requestResync: () => requestResync(),
+      delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
+  }, []);
+
   const settleThread = useCallback(
     async (target: ScopedThreadRef) => {
       // Version skew: never send the command to a server that predates it —
@@ -430,7 +443,13 @@ export function useThreadActions() {
       // Settle may only target what effectiveSettled could classify as
       // settled: not starting/running sessions, not threads waiting on
       // approvals or user input. Anything else would hide live work.
+      //
+      // This reads the LOCAL view, so a stale one refuses a settle the server
+      // would have accepted. Ask for a reconcile on the way out: if the block
+      // was real the resync changes nothing, and if the view was stale the
+      // next attempt sees the truth instead of failing forever.
       if (resolved && !canSettle(resolved.thread, { now: new Date().toISOString() })) {
+        requestResync();
         return AsyncResult.failure(
           Cause.fail(
             new ThreadSettleBlockedError({
@@ -442,12 +461,22 @@ export function useThreadActions() {
       }
       // Settle is a high-frequency lifecycle action and stays silent — no
       // toast.
-      return settleThreadMutation({
+      const result = await settleThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
+      // A settle the server accepts always publishes an authoritative
+      // thread-upserted, so the local view should show it settled shortly
+      // after. When it does not, the client is working from a view the server
+      // no longer agrees with: every further click succeeds as an idempotent
+      // no-op and silently changes nothing, which reads as a dead control.
+      // Reconcile instead of stranding the user until they restart.
+      if (result._tag === "Success") {
+        void confirmSettleConverged(target);
+      }
+      return result;
     },
-    [resolveThreadTarget, settleThreadMutation],
+    [confirmSettleConverged, resolveThreadTarget, settleThreadMutation],
   );
 
   const unsettleThread = useCallback(

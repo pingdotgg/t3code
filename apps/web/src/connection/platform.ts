@@ -19,6 +19,7 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
+  ResyncRequests,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
@@ -110,7 +111,7 @@ const wakeupsLayer = Wakeups.layer({
     managedRelayAccountChanges(appAtomRegistry).pipe(
       Stream.map(() => "credentials-changed" as const),
     ),
-  ),
+  ).pipe(Stream.merge(ResyncRequests.resyncRequestStream)),
 });
 
 function clientMetadata() {
