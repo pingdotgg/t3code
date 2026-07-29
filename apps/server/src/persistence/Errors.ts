@@ -73,13 +73,30 @@ const isPersistenceSqlError = Schema.is(PersistenceSqlError);
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 // Kept for orchestration/projection call sites, which are being revamped separately.
+/**
+ * A rejected payload must never reach diagnostics, so a schema failure
+ * contributes only its issue tags. A driver error names the SQLite condition
+ * and at most the constraint it violated, never a bound value, so its own
+ * message is safe to carry and is the part that makes an occurrence
+ * diagnosable at all.
+ */
+function describeSqlCause(cause: unknown): string | undefined {
+  if (Schema.isSchemaError(cause)) return summarizeSchemaIssue(cause.issue);
+  if (cause instanceof Error && cause.message.length > 0) return cause.message;
+  return undefined;
+}
+
 export function toPersistenceSqlError(operation: string) {
-  return (cause: unknown): PersistenceSqlError =>
-    new PersistenceSqlError({
+  return (cause: unknown): PersistenceSqlError => {
+    // Restating the operation as the detail only doubled it in the message and
+    // buried the cause; `message` already reads well without a detail.
+    const detail = describeSqlCause(cause);
+    return new PersistenceSqlError({
       operation,
-      detail: `Failed to execute ${operation}`,
+      ...(detail === undefined ? {} : { detail }),
       cause,
     });
+  };
 }
 
 // Kept for orchestration/projection call sites, which are being revamped separately.
