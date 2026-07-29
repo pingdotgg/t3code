@@ -47,7 +47,6 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
-import { SettingsWaitlistRouteScreen } from "./features/settings/SettingsWaitlistRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -190,10 +189,11 @@ const SettingsSheetStack = createNativeStackNavigator({
       },
     }),
     SettingsWaitlist: createNativeStackScreen({
-      screen: SettingsWaitlistRouteScreen,
+      // Keep the old deep link working after the Connect GA launch.
+      screen: SettingsAuthRouteScreen,
       linking: "waitlist",
       options: {
-        title: "Join the waitlist",
+        title: "Sign in",
       },
     }),
   },
