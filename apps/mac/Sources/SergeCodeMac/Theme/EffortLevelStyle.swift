@@ -95,7 +95,7 @@ struct EffortLevelStyle: Equatable, Sendable {
     }
 
     /// Resolve a choice to a ramp slot. Well-known wire ids ("low", "high",
-    /// "max", "ultrathink", …) pin the rank semantically; anything else falls
+    /// "max", "ultracode", …) pin the rank semantically; anything else falls
     /// back to the choice's ordinal position within the model's option list,
     /// which providers order from least to most intense.
     static func resolve(choiceID: String, index: Int, count: Int) -> EffortLevelStyle {
@@ -116,12 +116,10 @@ struct EffortLevelStyle: Equatable, Sendable {
         let step = 1.0 / Double(slotCount - 1)
 
         // Order matters: "xhigh" contains "high", "minimal" contains "min".
-        // Ultrathink is a prompt mode, not the unlimited-subagent Ultracode
-        // mode, so it gets Max's warning rather than the most severe tier.
         if compactID == "ultra" || compactID.contains("ultracode") {
             return (1, .unlimited)
         }
-        if compactID.contains("ultrathink") || id.contains("max") {
+        if id.contains("max") {
             return (step * 5, .maximum)
         }
         if id.contains("xhigh") { return (step * 4, .extraHigh) }

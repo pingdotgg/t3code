@@ -76,10 +76,9 @@ const claudeCaps: ModelCapabilities = createModelCapabilities({
       options: [
         { id: "medium", label: "Medium" },
         { id: "high", label: "High", isDefault: true },
-        { id: "ultrathink", label: "Ultrathink" },
+        { id: "max", label: "Max" },
       ],
       currentValue: "high",
-      promptInjectedValues: ["ultrathink"],
     },
     {
       id: "contextWindow",
@@ -112,10 +111,9 @@ describe("descriptor helpers", () => {
         options: [
           { id: "medium", label: "Medium" },
           { id: "high", label: "High", isDefault: true },
-          { id: "ultrathink", label: "Ultrathink" },
+          { id: "max", label: "Max" },
         ],
         currentValue: "medium",
-        promptInjectedValues: ["ultrathink"],
       },
       {
         id: "contextWindow",

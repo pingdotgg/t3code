@@ -112,10 +112,9 @@ public struct SelectProviderOptionDescriptor: Codable, Sendable {
     public var description: String?
     public var options: [ProviderOptionChoice]
     public var currentValue: String?
-    public var promptInjectedValues: [String]?
 
     private enum CodingKeys: String, CodingKey {
-        case type, id, label, description, options, currentValue, promptInjectedValues
+        case type, id, label, description, options, currentValue
     }
 
     public init(from decoder: Decoder) throws {
@@ -125,7 +124,6 @@ public struct SelectProviderOptionDescriptor: Codable, Sendable {
         description = try c.decodeIfPresent(String.self, forKey: .description)
         options = try c.decode([ProviderOptionChoice].self, forKey: .options)
         currentValue = try c.decodeIfPresent(String.self, forKey: .currentValue)
-        promptInjectedValues = try c.decodeIfPresent([String].self, forKey: .promptInjectedValues)
     }
 }
 
