@@ -93,6 +93,24 @@ struct ModelPickerCatalogTests {
             Set(claudeCodeItems.map(\.option.instanceID)) == Set(["claudeAgent", "claudex"]))
     }
 
+    @Test("maps the ChatGPT browser driver instead of dropping its threads")
+    func chatgptDriverMapsToProviderKind() {
+        // An unmapped driver returns nil and the provider is silently dropped
+        // from the picker, so this mapping is what makes ChatGPT selectable
+        // at all.
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "chatgpt", driver: "chatgpt") == .chatgpt)
+        // `chatgpt` is checked before `codex`, so a combined slug stays on the
+        // browser provider.
+        #expect(
+            LiveBackend.providerKindForServerProvider(
+                instanceID: "chatgpt-codex", driver: "chatgpt-codex") == .chatgpt)
+        #expect(
+            LiveBackend.providerKindForServerProvider(instanceID: "codex", driver: "codex")
+                == .codex)
+    }
+
     @Test("preserves Claude Work instance override before general Claude mapping")
     func claudeWorkInstanceOverrideWins() {
         #expect(

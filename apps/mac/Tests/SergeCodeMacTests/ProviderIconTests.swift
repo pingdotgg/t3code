@@ -21,6 +21,16 @@ struct ProviderIconTests {
         #expect(ProviderBrand.resolve(provider: .codex) == .codex)
         #expect(ProviderBrand.resolve(provider: .grok) == .grok)
         #expect(ProviderBrand.resolve(provider: .kimi) == .kimi)
+        #expect(ProviderBrand.resolve(provider: .chatgpt) == .openAI)
+    }
+
+    @Test("Every selectable provider resolves to a brand with a drawable mark")
+    func everySelectableProviderHasAMark() {
+        for provider in ProviderKind.allCases {
+            let brand = ProviderBrand.resolve(provider: provider)
+            // Kimi intentionally has no asset and falls back to initials.
+            #expect(brand.assetName != nil || brand == .kimi)
+        }
     }
 
     @Test("OpenAI reasoning model slugs use the OpenAI mark")
