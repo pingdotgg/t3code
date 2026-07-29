@@ -145,6 +145,10 @@ export function makeAcpReplayCompletenessAssertion(
   );
 }
 
+export function acpReplayAgentArgs(scriptPath: string): ReadonlyArray<string> {
+  return ["--experimental-strip-types", scriptPath];
+}
+
 export function makeAcpReplayRuntime(input: {
   readonly transcript: AcpReplayTranscript;
   readonly statusPath: string;
@@ -167,7 +171,7 @@ export function makeAcpReplayRuntime(input: {
           ...runtimeInput,
           spawn: {
             command: process.execPath,
-            args: [input.scriptPath],
+            args: acpReplayAgentArgs(input.scriptPath),
             cwd: runtimeInput.cwd,
             env: {
               ...process.env,
