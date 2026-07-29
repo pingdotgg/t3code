@@ -5,7 +5,8 @@ export type InteractionSoundCue = "bloom" | "success";
 interface ThreadSoundState {
   readonly completedTurn: string | null;
   readonly userInitiatedTurn: string | null;
-  readonly hasPendingUserAction: boolean;
+  readonly hasPendingUserInput: boolean;
+  readonly hasPendingApprovals: boolean;
 }
 
 export type ThreadSoundStateByKey = ReadonlyMap<string, ThreadSoundState>;
@@ -83,10 +84,28 @@ export function captureThreadSoundState(
       {
         completedTurn: completedTurn(thread),
         userInitiatedTurn: userInitiatedTurn(thread),
-        hasPendingUserAction: thread.hasPendingUserInput || thread.hasPendingApprovals,
+        hasPendingUserInput: thread.hasPendingUserInput,
+        hasPendingApprovals: thread.hasPendingApprovals,
       },
     ]),
   );
+}
+
+/**
+ * Update state for currently live threads while retaining the last trustworthy
+ * baseline for threads that still exist but are temporarily synchronizing.
+ */
+export function captureThreadSoundStatePreservingUnobserved(
+  previous: ThreadSoundStateByKey,
+  liveThreads: ReadonlyArray<EnvironmentThreadShell>,
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ThreadSoundStateByKey {
+  const existingThreadKeys = new Set(threads.map(threadKey));
+  const next = new Map([...previous].filter(([key]) => existingThreadKeys.has(key)));
+  for (const [key, state] of captureThreadSoundState(liveThreads)) {
+    next.set(key, state);
+  }
+  return next;
 }
 
 /**
@@ -131,8 +150,11 @@ export function deriveInteractionSoundCues(
     ) {
       cues.push("success");
     }
-    const hasPendingUserAction = thread.hasPendingUserInput || thread.hasPendingApprovals;
-    if (prior && hasPendingUserAction && !prior.hasPendingUserAction) {
+    if (
+      prior &&
+      ((thread.hasPendingUserInput && !prior.hasPendingUserInput) ||
+        (thread.hasPendingApprovals && !prior.hasPendingApprovals))
+    ) {
       cues.push("bloom");
     }
   }

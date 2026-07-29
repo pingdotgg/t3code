@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   captureThreadSoundState,
+  captureThreadSoundStatePreservingUnobserved,
   captureThreadSoundStateWhileSettingsHydrating,
   deriveInteractionSoundCues,
   selectLiveThreadShells,
@@ -61,8 +62,11 @@ export function InteractionSoundCoordinator() {
         });
       }
     }
-    previousStateRef.current = captureThreadSoundState(liveThreads);
-  }, [liveThreads, players, preferences]);
+    previousStateRef.current =
+      previous === null
+        ? captureThreadSoundState(liveThreads)
+        : captureThreadSoundStatePreservingUnobserved(previous, liveThreads, threads);
+  }, [liveThreads, players, preferences, threads]);
 
   return null;
 }

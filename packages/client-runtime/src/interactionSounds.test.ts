@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "./state/shell.ts";
 import {
   captureThreadSoundState,
+  captureThreadSoundStatePreservingUnobserved,
   captureThreadSoundStateWhileSettingsHydrating,
   deriveInteractionSoundCues,
   selectLiveThreadShells,
@@ -157,6 +158,24 @@ describe("interaction sounds", () => {
     ).toEqual(["bloom"]);
   });
 
+  it("plays bloom when pending input changes directly to pending approval", () => {
+    const pendingInput = makeThread({ hasPendingUserInput: true });
+    const pendingApproval = makeThread({ hasPendingApprovals: true });
+
+    expect(
+      deriveInteractionSoundCues(captureThreadSoundState([pendingInput]), [pendingApproval]),
+    ).toEqual(["bloom"]);
+  });
+
+  it("plays bloom when pending approval changes directly to pending input", () => {
+    const pendingApproval = makeThread({ hasPendingApprovals: true });
+    const pendingInput = makeThread({ hasPendingUserInput: true });
+
+    expect(
+      deriveInteractionSoundCues(captureThreadSoundState([pendingApproval]), [pendingInput]),
+    ).toEqual(["bloom"]);
+  });
+
   it("does not replay cues for unchanged state", () => {
     const thread = makeThread({
       latestUserMessageAt: "2026-07-11T12:00:00.000Z",
@@ -241,6 +260,60 @@ describe("interaction sounds", () => {
     const frozen = captureThreadSoundStateWhileSettingsHydrating(seeded, [completed]);
 
     expect(deriveInteractionSoundCues(frozen, [completed])).toEqual(["success"]);
+  });
+
+  it("preserves a thread baseline while its environment is synchronizing", () => {
+    const running = makeThread({
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        initiatingUserMessageId: MessageId.make("message-1"),
+        state: "running",
+        requestedAt: "2026-07-11T12:00:01.000Z",
+        startedAt: "2026-07-11T12:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const completedDuringSync = makeThread({
+      latestTurn: {
+        ...running.latestTurn!,
+        state: "completed",
+        completedAt: "2026-07-11T12:00:05.000Z",
+      },
+    });
+    const beforeSync = captureThreadSoundState([running]);
+    const whileSynchronizing = captureThreadSoundStatePreservingUnobserved(
+      beforeSync,
+      [],
+      [completedDuringSync],
+    );
+
+    expect(deriveInteractionSoundCues(whileSynchronizing, [completedDuringSync])).toEqual([
+      "success",
+    ]);
+  });
+
+  it("detects a user-input request received while its environment is synchronizing", () => {
+    const idle = makeThread();
+    const pendingInputDuringSync = makeThread({ hasPendingUserInput: true });
+    const beforeSync = captureThreadSoundState([idle]);
+    const whileSynchronizing = captureThreadSoundStatePreservingUnobserved(
+      beforeSync,
+      [],
+      [pendingInputDuringSync],
+    );
+
+    expect(deriveInteractionSoundCues(whileSynchronizing, [pendingInputDuringSync])).toEqual([
+      "bloom",
+    ]);
+  });
+
+  it("drops retained baselines for threads that no longer exist", () => {
+    const thread = makeThread({ hasPendingUserInput: true });
+    const beforeRemoval = captureThreadSoundState([thread]);
+    const afterRemoval = captureThreadSoundStatePreservingUnobserved(beforeRemoval, [], []);
+
+    expect(afterRemoval.size).toBe(0);
   });
 
   it("admits newly seen threads while settings are hydrating", () => {
