@@ -1496,6 +1496,49 @@ label:has(> select#reasoning-effort) select {
   }
 }
 
+/* Calm mode. `data-reduce-motion` is set from the Reduce motion setting; the
+   media query covers users who asked the OS instead. Continuously repainting
+   indicators are the target: they are the only motion on screen while an agent
+   works, and on a high-refresh display they never stop. Static styling is left
+   alone so nothing disappears — only the looping repaints stop. Spinners keep
+   spinning: a frozen spinner reads as a hung app, which is worse than the
+   motion it would remove. */
+@media (prefers-reduced-motion: reduce) {
+  .ultrathink-frame::before,
+  .ultrathink-chroma,
+  .ultrathink-pill,
+  .ultrathink-word,
+  [class*="animate-status-pulse"],
+  [class*="animate-status-ping"],
+  [class*="animate-sidebar-working-text"],
+  [class*="animate-skeleton"],
+  [class*="animate-pulse"],
+  [class*="animation:bounce"] {
+    animation: none !important;
+  }
+}
+
+html[data-reduce-motion="true"] .ultrathink-frame::before,
+html[data-reduce-motion="true"] .ultrathink-chroma,
+html[data-reduce-motion="true"] .ultrathink-pill,
+html[data-reduce-motion="true"] .ultrathink-word,
+html[data-reduce-motion="true"] [class*="animate-status-pulse"],
+html[data-reduce-motion="true"] [class*="animate-status-ping"],
+html[data-reduce-motion="true"] [class*="animate-sidebar-working-text"],
+html[data-reduce-motion="true"] [class*="animate-skeleton"],
+html[data-reduce-motion="true"] [class*="animate-pulse"],
+html[data-reduce-motion="true"] [class*="animation:bounce"] {
+  animation: none !important;
+}
+
+/* The composer morph is driven from JS, which reads the same setting; this only
+   covers the route-level transition the browser owns. */
+html[data-reduce-motion="true"]::view-transition-group(*),
+html[data-reduce-motion="true"]::view-transition-old(*),
+html[data-reduce-motion="true"]::view-transition-new(*) {
+  animation: none;
+}
+
 @keyframes provider-update-pill-countdown {
   from {
     transform: scaleX(1);
