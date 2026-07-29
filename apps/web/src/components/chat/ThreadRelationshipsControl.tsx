@@ -5,7 +5,10 @@ import {
   resolveMergeBackTargetThreadId,
   type ThreadRelationshipEdge,
 } from "@t3tools/client-runtime/state/thread-relationships";
-import { canDetachThreadProviderSession } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  canDetachThreadProviderSession,
+  resolveLatestMergeBackRun,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -102,7 +105,7 @@ export function ThreadRelationshipsPanel(props: {
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
-  const latestCompletedRun = projection?.runs.findLast((run) => run.status === "completed") ?? null;
+  const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = immediateThreadRelationships(graph, props.threadId).toSorted(
     (left, right) =>
@@ -119,7 +122,7 @@ export function ThreadRelationshipsPanel(props: {
         mergeTargetThreadId,
       }),
   );
-  const canMerge = mergeTargetThreadId !== null && latestCompletedRun !== null;
+  const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 
   if (relationshipRows.length === 0) {
@@ -134,14 +137,14 @@ export function ThreadRelationshipsPanel(props: {
   };
 
   const merge = async () => {
-    if (!latestCompletedRun || mergeTargetThreadId === null || busyAction !== null) return;
+    if (!latestMergeBackRun || mergeTargetThreadId === null || busyAction !== null) return;
     setBusyAction("merge");
     const result = await mergeBack({
       environmentId: props.environmentId,
       input: {
         sourceThreadId: props.threadId,
         targetThreadId: mergeTargetThreadId,
-        runId: latestCompletedRun.id,
+        runId: latestMergeBackRun.id,
       },
     });
     setBusyAction(null);
@@ -292,7 +295,7 @@ export function ThreadRelationshipsPanel(props: {
                         }
                       />
                       <TooltipPopup side="left">
-                        {latestCompletedRun === null
+                        {latestMergeBackRun === null
                           ? "Complete a run in this fork before merging it back"
                           : parentTitle
                             ? `Merge this conversation back into ${parentTitle}`
