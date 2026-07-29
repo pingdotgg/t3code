@@ -159,6 +159,23 @@ function failure(code: OrchestratorMcpFailure["code"], message: string): Orchest
   return new OrchestratorMcpFailure({ code, message });
 }
 
+function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpFailure {
+  switch (error._tag) {
+    case "ThreadManagementThreadNotFoundError":
+      return failure("thread_not_found", error.message);
+    case "ThreadManagementRunNotFoundError":
+      return failure("run_not_found", error.message);
+    case "ThreadManagementThreadNotSendableError":
+      return failure("thread_not_sendable", error.message);
+    case "ThreadManagementThreadNotInterruptibleError":
+      return failure("thread_not_interruptible", error.message);
+    case "ThreadManagementProjectionLoadError":
+    case "ThreadManagementProjectThreadsListError":
+    case "ThreadManagementDurableRunProjectionError":
+      return failure("orchestration_error", error.message);
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -639,11 +656,7 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorMcpFailure> =>
     threadManagement
       .getProjectThread({ projectId, threadId })
-      .pipe(
-        Effect.mapError(() =>
-          failure("thread_not_found", `Thread ${threadId} was not found in the calling project.`),
-        ),
-      );
+      .pipe(Effect.mapError(threadManagementFailure));
 
   const loadScopedThread = (scope: McpInvocationScope, threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -1455,10 +1468,12 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.mapError((error) =>
-              failure(
-                "thread_not_sendable",
-                `Unable to send to thread ${input.threadId}: ${errorMessage(error)}`,
-              ),
+              isThreadManagementError(error)
+                ? threadManagementFailure(error)
+                : failure(
+                    "orchestration_error",
+                    `Unable to send to thread ${input.threadId}: ${errorMessage(error)}`,
+                  ),
             ),
           );
         return {
@@ -1482,14 +1497,7 @@ const make = Effect.gen(function* () {
               Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
             ),
           })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                error.code === "run_not_found" ? "run_not_found" : "orchestration_error",
-                error.message,
-              ),
-            ),
-          );
+          .pipe(Effect.mapError(threadManagementFailure));
         return {
           threadId: input.threadId,
           runId: result.run?.id ?? null,
@@ -1515,14 +1523,12 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.mapError((error) =>
-              failure(
-                isThreadManagementError(error) && error.code === "run_not_found"
-                  ? "run_not_found"
-                  : "thread_not_interruptible",
-                isThreadManagementError(error)
-                  ? error.message
-                  : `Unable to interrupt thread ${input.threadId}: ${errorMessage(error)}`,
-              ),
+              isThreadManagementError(error)
+                ? threadManagementFailure(error)
+                : failure(
+                    "orchestration_error",
+                    `Unable to interrupt thread ${input.threadId}: ${errorMessage(error)}`,
+                  ),
             ),
           );
         if (result.type === "no_active_run") {
