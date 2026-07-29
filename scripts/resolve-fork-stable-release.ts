@@ -11,8 +11,6 @@ export interface ForkStableReleaseMetadata {
   readonly name: string;
 }
 
-const forkMarker = "tarik02";
-
 function parseArgs(argv: ReadonlyArray<string>): {
   readonly date: string;
   readonly root: string;
@@ -79,9 +77,8 @@ export function resolveForkStableReleaseMetadata(
   const month = Number(date.slice(4, 6));
   const day = Number(date.slice(6, 8));
   const daySlot = day * 100;
-  const tagPattern = new RegExp(
-    `^v?${year}\\.${month}\\.([0-9]+)\\+${forkMarker}(?:\\.([0-9]+))?$`,
-  );
+  // TODO: Remove +tarik02 matching after the 2026-07-29 release transition.
+  const tagPattern = new RegExp(`^v?${year}\\.${month}\\.([0-9]+)(?:\\+tarik02(?:\\.[0-9]+)?)?$`);
   let maxSequence = 0;
 
   for (const tag of tags) {
@@ -100,7 +97,7 @@ export function resolveForkStableReleaseMetadata(
 
   const nextSequence = maxSequence + 1;
   const patch = daySlot + nextSequence - 1;
-  const version = `${year}.${month}.${patch}+${forkMarker}`;
+  const version = `${year}.${month}.${patch}`;
   return {
     version,
     tag: `v${version}`,
