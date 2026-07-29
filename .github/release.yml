@@ -1,0 +1,37 @@
+changelog:
+  exclude:
+    labels:
+      - no-release-note
+      - documentation
+  categories:
+    - title: Breaking changes
+      labels:
+        - semver:major
+        - breaking-change
+    - title: Features
+      labels:
+        - enhancement
+        - feature
+        - semver:minor
+    - title: Fixes
+      labels:
+        - bug
+        - fix
+        - semver:patch
+    - title: Runtime updates
+      labels:
+        - area:codex
+        - area:claude
+        - area:grok
+        - area:opencode
+    - title: Upstream updates
+      labels:
+        - upstream
+        - upstream-sync
+    - title: Dependencies and maintenance
+      labels:
+        - dependencies
+        - maintenance
+    - title: Other changes
+      labels:
+        - "*"
