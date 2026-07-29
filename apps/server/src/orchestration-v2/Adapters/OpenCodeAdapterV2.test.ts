@@ -119,6 +119,8 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(openCodePermissionRequestKind("external_directory", "edit"), "file-change");
     assert.equal(openCodePermissionRequestKind("edit"), "file-change");
     assert.equal(openCodePermissionRequestKind("apply_patch"), "file-change");
+    assert.equal(openCodePermissionRequestKind("todowrite"), "command");
+    assert.equal(openCodePermissionRequestKind("custom", "todowrite"), "command");
   });
 
   it("maps OpenCode tools to semantic turn-item families", () => {
@@ -128,6 +130,7 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(openCodeToolProjectionKind("lsp"), "file_search");
     assert.equal(openCodeToolProjectionKind("websearch"), "web_search");
     assert.equal(openCodeToolProjectionKind("codesearch"), "web_search");
+    assert.equal(openCodeToolProjectionKind("todowrite"), "dynamic_tool");
     assert.equal(openCodeToolProjectionKind("custom_tool"), "dynamic_tool");
   });
 
