@@ -119,6 +119,7 @@ import {
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
+  backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
   hasChangedBackgroundActivitySettings,
@@ -730,7 +731,9 @@ function BackgroundActivityAdvancedDialog({
                     value === "performance" ||
                     value === "battery-saver"
                   ) {
-                    updateSettings(backgroundActivityProfileSettings(value));
+                    updateSettings({
+                      backgroundActivity: backgroundActivitySharedPolicySettings(settings, value),
+                    });
                   }
                 }}
               >

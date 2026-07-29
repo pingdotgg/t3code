@@ -355,7 +355,8 @@ Steady state uses:
 
 - one native process;
 - power-adaptive native counter sampling with no periodic Node snapshot stream;
-- event-driven Electron power updates plus a 30-second heartbeat;
+- event-driven Electron power updates plus profile-driven heartbeats (30–60
+  seconds while active and 2–10 minutes while idle);
 - no `app.getAppMetrics()` calls while diagnostics is closed;
 - no telemetry database;
 - no recurring shell probes;

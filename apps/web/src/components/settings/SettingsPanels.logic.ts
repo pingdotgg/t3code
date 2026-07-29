@@ -1,5 +1,6 @@
 import type {
   BackgroundActivityProfile,
+  BackgroundActivitySettings,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
@@ -10,6 +11,7 @@ import type {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   normalizeBackgroundActivitySettings,
+  normalizeServerBackgroundActivitySettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Equal from "effect/Equal";
@@ -91,6 +93,19 @@ export function resolveBackgroundActivityProfileOption(
     },
   });
   return normalized.profile === "custom" ? "advanced" : normalized.profile;
+}
+
+export function backgroundActivitySharedPolicySettings(
+  settings: ServerSettings,
+  profile: BackgroundActivityProfile,
+): BackgroundActivitySettings {
+  const normalized = normalizeServerBackgroundActivitySettings(settings);
+  return {
+    schemaVersion: 1,
+    profile: "custom",
+    baseProfile: profile,
+    overrides: normalized.profile === "custom" ? normalized.overrides : {},
+  };
 }
 
 function collapseOtelSignalsUrl(input: {

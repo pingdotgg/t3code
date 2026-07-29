@@ -9,6 +9,7 @@ import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundA
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
   hasChangedBackgroundActivitySettings,
@@ -68,6 +69,55 @@ describe("background activity settings restore", () => {
         providerHealthRefreshInterval: Duration.minutes(7),
       }),
     ).toBe("advanced");
+  });
+
+  it("preserves advanced overrides when the shared policy changes", () => {
+    const automaticGitFetchInterval = Duration.seconds(42);
+    expect(
+      backgroundActivitySharedPolicySettings(
+        {
+          ...DEFAULT_UNIFIED_SETTINGS,
+          backgroundActivity: {
+            schemaVersion: 1,
+            profile: "custom",
+            baseProfile: "balanced",
+            overrides: {
+              automaticGitFetchInterval,
+              pauseWhenOnBattery: true,
+            },
+          },
+        },
+        "performance",
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "performance",
+      overrides: {
+        automaticGitFetchInterval,
+        pauseWhenOnBattery: true,
+      },
+    });
+  });
+
+  it("materializes legacy advanced overrides before changing the shared policy", () => {
+    const automaticGitFetchInterval = Duration.seconds(42);
+    expect(
+      backgroundActivitySharedPolicySettings(
+        {
+          ...DEFAULT_UNIFIED_SETTINGS,
+          automaticGitFetchInterval,
+        },
+        "battery-saver",
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "battery-saver",
+      overrides: {
+        automaticGitFetchInterval,
+      },
+    });
   });
 });
 

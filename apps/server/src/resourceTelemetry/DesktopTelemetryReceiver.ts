@@ -124,6 +124,22 @@ export class DesktopTelemetryControlFailed extends Schema.TaggedErrorClass<Deskt
   }
 }
 
+export class DesktopTelemetryControlStalled extends Schema.TaggedErrorClass<DesktopTelemetryControlStalled>()(
+  "DesktopTelemetryControlStalled",
+  {
+    fd: Schema.Number,
+    remainingBytes: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Desktop telemetry control stalled on fd ${this.fd} with ${this.remainingBytes} bytes remaining.`;
+  }
+}
+
+export type DesktopTelemetryControlError =
+  | DesktopTelemetryControlFailed
+  | DesktopTelemetryControlStalled;
+
 export interface DesktopTelemetryReceiverHealth {
   readonly status: ResourceTelemetrySourceStatus;
   readonly lastSampleAt: Option.Option<DateTime.Utc>;
@@ -154,7 +170,7 @@ export class DesktopTelemetryReceiver extends Context.Service<
     >;
     readonly setDiagnosticsDemand: (
       enabled: boolean,
-    ) => Effect.Effect<void, DesktopTelemetryControlFailed>;
+    ) => Effect.Effect<void, DesktopTelemetryControlError>;
   }
 >()("t3/resourceTelemetry/DesktopTelemetryReceiver") {}
 
@@ -272,16 +288,20 @@ export const writeAllToFileDescriptor = Effect.fn(
         }
       },
     );
-    if (written <= 0) {
-      return yield* new DesktopTelemetryControlFailed({
-        fd,
-        operation: "write",
-        cause: "desktop telemetry control pipe accepted no bytes",
-      });
-    }
+    yield* requireDesktopTelemetryWriteProgress(fd, payload.byteLength - offset, written);
     offset += written;
   }
 });
+
+export function requireDesktopTelemetryWriteProgress(
+  fd: number,
+  remainingBytes: number,
+  written: number,
+): Effect.Effect<void, DesktopTelemetryControlStalled> {
+  return written > 0
+    ? Effect.void
+    : Effect.fail(new DesktopTelemetryControlStalled({ fd, remainingBytes }));
+}
 
 export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")(function* () {
   const config = yield* ServerConfig;
