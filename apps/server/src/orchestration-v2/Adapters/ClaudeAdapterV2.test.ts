@@ -2157,6 +2157,87 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("extracts text from direct content-block subagent results", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SUBAGENT_TASK_ID = "task-direct-content-blocks";
+        const SUBAGENT_TOOL_USE_ID = "toolu-direct-content-blocks";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-direct-content-blocks"),
+            text: "Delegate this task.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: SUBAGENT_TASK_ID,
+            tool_use_id: SUBAGENT_TOOL_USE_ID,
+            description: "Delegated task",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Return the result.",
+            uuid: "00000000-0000-4000-8000-000000000206",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(() => subagentEvents().length === 1, "subagent node created");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: SUBAGENT_TOOL_USE_ID,
+                  content: [
+                    { type: "text", text: "First line." },
+                    { type: "text", text: "Second line." },
+                  ],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000207",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () => subagentEvents().at(-1)?.subagent.status === "completed",
+          "subagent terminal",
+        );
+
+        assert.equal(subagentEvents().at(-1)?.subagent.result, "First line.\nSecond line.");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000208",
+            result: "Delegation completed.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("releases the idle pin when a post-settle subagent stops without completing", () =>
     Effect.scoped(
       Effect.gen(function* () {
