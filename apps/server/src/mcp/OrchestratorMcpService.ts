@@ -773,7 +773,7 @@ const make = Effect.gen(function* () {
         );
       }
       const childProjection = yield* loadProjection(task.childThreadId);
-      const childRun = childProjection.runs[0];
+      const childRun = latestRun(childProjection);
       const status = taskStatusForRun(childRun);
       const derivedResult =
         task.result !== null
