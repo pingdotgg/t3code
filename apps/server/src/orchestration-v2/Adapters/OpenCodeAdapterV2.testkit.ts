@@ -120,7 +120,7 @@ function frameRecord(frame: unknown): Record<string, unknown> | null {
   return typeof frame === "object" && frame !== null ? (frame as Record<string, unknown>) : null;
 }
 
-class OpenCodeReplayController {
+export class OpenCodeReplayController {
   private cursor = 0;
   private readonly waiters = new Set<() => void>();
   private failure: unknown = null;
@@ -243,15 +243,18 @@ class OpenCodeReplayController {
   }
 
   private changed(signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted === true) return Promise.resolve();
     return new Promise((resolve) => {
+      let settled = false;
       const done = () => {
+        if (settled) return;
+        settled = true;
         signal?.removeEventListener("abort", done);
         this.waiters.delete(done);
         resolve();
       };
       this.waiters.add(done);
       signal?.addEventListener("abort", done, { once: true });
+      if (signal?.aborted === true) done();
     });
   }
 }
