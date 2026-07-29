@@ -51,10 +51,10 @@ const continuationOrigin = JSON.stringify({
   worktreePath: "/tmp/handoff",
 });
 
-describe("055_ExcludeHandoffContinuationsFromSearch", () => {
+describe("057_ExcludeHandoffContinuationsFromSearch", () => {
   it.effect("stops indexing handoff continuations inserted after the migration", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 55 });
+      yield* runMigrations({ toMigrationInclusive: 57 });
 
       yield* insertMessage({
         messageId: "message-user",
@@ -77,7 +77,7 @@ describe("055_ExcludeHandoffContinuationsFromSearch", () => {
 
   it.effect("removes continuations indexed before the migration ran", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 54 });
+      yield* runMigrations({ toMigrationInclusive: 56 });
       yield* insertMessage({
         messageId: "message-continuation",
         role: "user",
@@ -86,7 +86,7 @@ describe("055_ExcludeHandoffContinuationsFromSearch", () => {
       });
       assert.deepStrictEqual(yield* searchHits(CONTINUATION_TEXT), ["message-continuation"]);
 
-      yield* runMigrations({ toMigrationInclusive: 55 });
+      yield* runMigrations({ toMigrationInclusive: 57 });
 
       assert.deepStrictEqual(yield* searchHits(CONTINUATION_TEXT), []);
     }).pipe(withDatabase),
@@ -95,7 +95,7 @@ describe("055_ExcludeHandoffContinuationsFromSearch", () => {
   it.effect("keeps ordinary messages indexed and updatable", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 55 });
+      yield* runMigrations({ toMigrationInclusive: 57 });
       yield* insertMessage({
         messageId: "message-user",
         role: "user",

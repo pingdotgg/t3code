@@ -13,14 +13,14 @@ const hasOriginColumn = Effect.fn("hasOriginColumn")(function* (table: string) {
   return columns.some((column) => column.name === "origin_json");
 });
 
-layer("054_ProjectionWorkspaceHandoffOrigin", (it) => {
+layer("056_ProjectionWorkspaceHandoffOrigin", (it) => {
   it.effect("adds the origin column to projected messages and queued turns", () =>
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 48 });
       assert.isFalse(yield* hasOriginColumn("projection_thread_messages"));
       assert.isFalse(yield* hasOriginColumn("projection_queued_turns"));
 
-      yield* runMigrations({ toMigrationInclusive: 54 });
+      yield* runMigrations({ toMigrationInclusive: 56 });
       assert.isTrue(yield* hasOriginColumn("projection_thread_messages"));
       assert.isTrue(yield* hasOriginColumn("projection_queued_turns"));
     }),
@@ -28,9 +28,9 @@ layer("054_ProjectionWorkspaceHandoffOrigin", (it) => {
 
   it.effect("is safe to replay when the column already exists", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 54 });
+      yield* runMigrations({ toMigrationInclusive: 56 });
       const migration = yield* Effect.promise(
-        () => import("./054_ProjectionWorkspaceHandoffOrigin.ts"),
+        () => import("./056_ProjectionWorkspaceHandoffOrigin.ts"),
       );
       yield* migration.default;
 
