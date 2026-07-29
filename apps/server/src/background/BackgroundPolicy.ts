@@ -57,6 +57,7 @@ export class BackgroundPolicy extends Context.Service<
 
 const DEFAULT_LEASE_TTL_MS = 45_000;
 const MAX_LEASE_TTL_MS = 120_000;
+export const MAX_CLIENT_ACTIVITY_LEASES_PER_RPC_CLIENT = 16;
 
 function scopeKey(scope: BackgroundScope): string {
   switch (scope.type) {
@@ -75,6 +76,53 @@ function scopeKey(scope: BackgroundScope): string {
 
 function isLeaseActive(lease: ClientActivityLease, now: DateTime.Utc): boolean {
   return DateTime.isGreaterThan(lease.expiresAt, now);
+}
+
+function leaseKey(lease: Pick<ClientActivityLease, "sessionId" | "rpcClientId" | "clientId">) {
+  return JSON.stringify([lease.sessionId, lease.rpcClientId, lease.clientId]);
+}
+
+export function upsertClientActivityLease(
+  leases: ReadonlyMap<string, ClientActivityLease>,
+  lease: ClientActivityLease,
+  now: DateTime.Utc,
+): Map<string, ClientActivityLease> {
+  const next = new Map(leases);
+  for (const [key, current] of next) {
+    if (!isLeaseActive(current, now)) {
+      next.delete(key);
+    }
+  }
+
+  const key = leaseKey(lease);
+  if (!next.has(key)) {
+    let connectionLeaseCount = 0;
+    let oldestConnectionLease:
+      | {
+          readonly key: string;
+          readonly updatedAtMs: number;
+        }
+      | undefined;
+    for (const [currentKey, current] of next) {
+      if (current.sessionId !== lease.sessionId || current.rpcClientId !== lease.rpcClientId) {
+        continue;
+      }
+      connectionLeaseCount += 1;
+      const updatedAtMs = DateTime.toEpochMillis(current.updatedAt);
+      if (oldestConnectionLease === undefined || updatedAtMs < oldestConnectionLease.updatedAtMs) {
+        oldestConnectionLease = { key: currentKey, updatedAtMs };
+      }
+    }
+    if (
+      connectionLeaseCount >= MAX_CLIENT_ACTIVITY_LEASES_PER_RPC_CLIENT &&
+      oldestConnectionLease !== undefined
+    ) {
+      next.delete(oldestConnectionLease.key);
+    }
+  }
+
+  next.set(key, lease);
+  return next;
 }
 
 function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
@@ -216,11 +264,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
           updatedAt: now,
           expiresAt,
         };
-        yield* Ref.update(leasesRef, (leases) => {
-          const next = new Map(leases);
-          next.set(JSON.stringify([sessionId, rpcClientId, input.clientId]), lease);
-          return next;
-        });
+        yield* Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now));
         yield* publishSnapshotUnlocked;
       }),
     );

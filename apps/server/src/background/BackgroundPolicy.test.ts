@@ -192,6 +192,38 @@ describe("BackgroundPolicy", () => {
     }),
   );
 
+  it.effect("bounds client-id churn for one websocket connection", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      const sessionId = AuthSessionId.make("session-1");
+      const rpcClientId = RpcClientId.make(1);
+      for (
+        let index = 0;
+        index <= BackgroundPolicy.MAX_CLIENT_ACTIVITY_LEASES_PER_RPC_CLIENT;
+        index += 1
+      ) {
+        yield* policy.reportClientActivity(
+          sessionId,
+          rpcClientId,
+          makeReport({ clientId: `client-${index}` }),
+        );
+      }
+
+      const snapshot = yield* policy.snapshot;
+      assert.equal(
+        snapshot.leases.length,
+        BackgroundPolicy.MAX_CLIENT_ACTIVITY_LEASES_PER_RPC_CLIENT,
+      );
+      assert.isTrue(
+        snapshot.leases.some(
+          (lease) =>
+            lease.clientId ===
+            `client-${BackgroundPolicy.MAX_CLIENT_ACTIVITY_LEASES_PER_RPC_CLIENT}`,
+        ),
+      );
+    }).pipe(Effect.provide(makeLayer(nominalHostPower))),
+  );
+
   it.effect("host low power mode disables opportunistic work without dropping scoped demand", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;

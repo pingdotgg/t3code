@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { AuthSessionId, EnvironmentId, RpcClientId, ThreadId } from "./baseSchemas.ts";
+import {
+  AuthSessionId,
+  EnvironmentId,
+  RpcClientId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const BackgroundBooleanState = Schema.Literals(["true", "false", "unknown"]);
@@ -55,9 +61,12 @@ export type BackgroundScope = typeof BackgroundScope.Type;
 export const ClientKind = Schema.Literals(["web", "desktop-renderer", "mobile", "unknown"]);
 export type ClientKind = typeof ClientKind.Type;
 
+export const ClientActivityClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export type ClientActivityClientId = typeof ClientActivityClientId.Type;
+
 export const ClientActivityReportInput = Schema.Struct({
   environmentId: Schema.optionalKey(EnvironmentId),
-  clientId: Schema.String,
+  clientId: ClientActivityClientId,
   clientKind: ClientKind,
   visible: Schema.Boolean,
   focused: Schema.Boolean,
@@ -75,7 +84,7 @@ export type ClientActivityReportInput = typeof ClientActivityReportInput.Type;
 export const ClientActivityLease = Schema.Struct({
   sessionId: AuthSessionId,
   rpcClientId: RpcClientId,
-  clientId: Schema.String,
+  clientId: ClientActivityClientId,
   clientKind: ClientKind,
   visible: Schema.Boolean,
   focused: Schema.Boolean,

@@ -124,7 +124,10 @@ interface MakeInstanceInput {
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
-  readonly configResolve?: Effect.Effect<DesktopBackendManager.DesktopBackendStartConfig>;
+  readonly configResolve?: Effect.Effect<
+    DesktopBackendManager.DesktopBackendStartConfig,
+    PlatformError.PlatformError
+  >;
   readonly desktopTelemetryStream?: Stream.Stream<Uint8Array>;
   readonly desktopTelemetryPublisher?: Partial<
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
@@ -864,6 +867,83 @@ describe("DesktopBackendManager", () => {
         const restarted = yield* instance.snapshot;
         assert.equal(restarted.desiredRunning, true);
         assert.deepEqual(restarted.activePid, Option.some(123));
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("retries config resolution after a start request during stop teardown", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const finishTeardown = yield* Deferred.make<void>();
+        const configAttempts = yield* Ref.make(0);
+        let startCount = 0;
+
+        const configFailure = PlatformError.systemError({
+          _tag: "Unknown",
+          module: "DesktopBackendManager",
+          method: "configResolve",
+          description: "transient configuration failure",
+        });
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              const closed = yield* Deferred.make<void>();
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              if (startCount === 1) {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishTeardown)),
+                    Effect.andThen(Deferred.succeed(closed, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+              } else {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+                );
+              }
+              return makeProcess({
+                exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+        const configResolve = Ref.updateAndGet(configAttempts, (attempt) => attempt + 1).pipe(
+          Effect.flatMap((attempt) =>
+            attempt === 2 ? Effect.fail(configFailure) : Effect.succeed(baseConfig),
+          ),
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          configResolve,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        const stopFiber = yield* instance.stop().pipe(Effect.forkChild);
+        yield* Deferred.await(teardownStarted).pipe(Effect.timeout("1 second"));
+        yield* instance.start;
+        yield* Deferred.succeed(finishTeardown, undefined);
+        yield* Fiber.join(stopFiber).pipe(Effect.timeout("1 second"));
+
+        const pendingRestart = yield* instance.snapshot;
+        assert.equal(pendingRestart.desiredRunning, true);
+        assert.equal(pendingRestart.restartScheduled, true);
+
+        yield* TestClock.adjust(Duration.seconds(2));
+
+        assert.equal(yield* Queue.take(starts).pipe(Effect.timeout("1 second")), 2);
+        assert.equal(yield* Ref.get(configAttempts), 3);
+        assert.equal((yield* instance.snapshot).desiredRunning, true);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

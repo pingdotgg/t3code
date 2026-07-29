@@ -699,6 +699,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           Effect.option,
         );
         if (Option.isNone(config)) {
+          if (current.desiredRunning) {
+            yield* scheduleRestart("failed to generate desktop backend configuration");
+          }
           return;
         }
         const entryExists = yield* fileSystem
