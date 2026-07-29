@@ -2190,34 +2190,54 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       Request: Schema.Struct({ query: Schema.String }),
       Result: TranscriptSearchRowSchema,
       execute: ({ query: matchQuery }) => sql`
-        WITH matched AS (
+        WITH hits AS MATERIALIZED (
           SELECT
+            projection_thread_message_fts.rowid AS "messageRowid",
+            messages.message_id AS "messageId",
             messages.thread_id AS "threadId",
-            threads.title,
-            projects.title AS "projectTitle",
-            threads.branch,
-            messages.role,
-            snippet(projection_thread_message_fts, 0, '', '', '...', 20) AS excerpt,
             messages.updated_at AS "updatedAt",
-            bm25(projection_thread_message_fts) AS score,
-            ROW_NUMBER() OVER (
-              PARTITION BY messages.thread_id
-              ORDER BY bm25(projection_thread_message_fts), messages.updated_at DESC, messages.message_id ASC
-            ) AS thread_rank
+            rank AS score
           FROM projection_thread_message_fts
           JOIN projection_thread_messages AS messages
             ON messages.rowid = projection_thread_message_fts.rowid
           JOIN projection_threads AS threads ON threads.thread_id = messages.thread_id
-          LEFT JOIN projection_projects AS projects ON projects.project_id = threads.project_id
           WHERE projection_thread_message_fts MATCH ${matchQuery}
             AND threads.archived_at IS NULL
             AND threads.deleted_at IS NULL
+        ),
+        ranked AS (
+          SELECT
+            hits.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY "threadId"
+              ORDER BY score, "updatedAt" DESC, "messageId"
+            ) AS "threadRank"
+          FROM hits
+        ),
+        top_hits AS MATERIALIZED (
+          SELECT *
+          FROM ranked
+          WHERE "threadRank" = 1
+          ORDER BY score, "updatedAt" DESC, "threadId"
+          LIMIT 20
         )
-        SELECT "threadId", title, "projectTitle", branch, role, excerpt, "updatedAt"
-        FROM matched
-        WHERE thread_rank = 1
-        ORDER BY score, "updatedAt" DESC, "threadId"
-        LIMIT 20
+        SELECT
+          top_hits."threadId",
+          threads.title,
+          projects.title AS "projectTitle",
+          threads.branch,
+          messages.role,
+          snippet(projection_thread_message_fts, 0, '', '', '...', 20) AS excerpt,
+          top_hits."updatedAt"
+        FROM top_hits
+        JOIN projection_thread_messages AS messages
+          ON messages.rowid = top_hits."messageRowid"
+        JOIN projection_threads AS threads ON threads.thread_id = top_hits."threadId"
+        LEFT JOIN projection_projects AS projects ON projects.project_id = threads.project_id
+        JOIN projection_thread_message_fts
+          ON projection_thread_message_fts.rowid = top_hits."messageRowid"
+        WHERE projection_thread_message_fts MATCH ${matchQuery}
+        ORDER BY top_hits.score, top_hits."updatedAt" DESC, top_hits."threadId"
       `,
     })({ query: literalQuery }).pipe(
       Effect.map((matches) => ({ matches })),

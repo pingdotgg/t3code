@@ -60,6 +60,7 @@ import Migration0054 from "./Migrations/054_ProjectionThreadActivityLegacyCursor
 import Migration0056 from "./Migrations/056_ProjectionWorkspaceHandoffOrigin.ts";
 import Migration0057 from "./Migrations/057_ExcludeHandoffContinuationsFromSearch.ts";
 import Migration0058 from "./Migrations/058_ProjectionSnapshotUpdatedAtIndexes.ts";
+import Migration0059 from "./Migrations/059_RepairSkippedProjectionThreadMessageSearch.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -119,6 +120,7 @@ export const migrationEntries = [
   [56, "ProjectionWorkspaceHandoffOrigin", Migration0056],
   [57, "ExcludeHandoffContinuationsFromSearch", Migration0057],
   [58, "ProjectionSnapshotUpdatedAtIndexes", Migration0058],
+  [59, "RepairSkippedProjectionThreadMessageSearch", Migration0059],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

@@ -494,6 +494,17 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   }),
 );
 
+it.effect("decodes a thread decouple command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.decouple",
+      commandId: "cmd-decouple-1",
+      threadId: "thread-1",
+    });
+    assert.strictEqual(parsed.type, "thread.decouple");
+  }),
+);
+
 it.effect("decodes thread archive and unarchive commands", () =>
   Effect.gen(function* () {
     const archive = yield* decodeOrchestrationCommand({

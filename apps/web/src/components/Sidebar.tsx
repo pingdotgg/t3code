@@ -1347,6 +1347,7 @@ interface SidebarProjectItemProps {
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
+  decoupleThread: ReturnType<typeof useThreadActions>["decoupleThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   handleParentThreadSelected: (threadKey: string, hasChildren: boolean) => void;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
@@ -1368,6 +1369,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     newThreadShortcutLabel,
     handleNewThread,
     archiveThread,
+    decoupleThread,
     deleteThread,
     handleParentThreadSelected,
     threadJumpLabelByKey,
@@ -2471,6 +2473,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const clicked = await api.contextMenu.show(
         [
           { id: "new-subchat", label: "New subchat" },
+          ...(thread.parentThreadId === null ? [] : [{ id: "decouple", label: "Decouple chat" }]),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2485,6 +2488,21 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "new-subchat") {
         createSubchatForThread(threadRef);
+        return;
+      }
+
+      if (clicked === "decouple") {
+        try {
+          await decoupleThread(threadRef);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to decouple chat",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
         return;
       }
 
@@ -2541,6 +2559,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       copyPathToClipboard,
       copyThreadIdToClipboard,
       createSubchatForThread,
+      decoupleThread,
       deleteThread,
       markThreadUnread,
       memberProjectByScopedKey,
@@ -2997,6 +3016,7 @@ interface SidebarProjectsContentProps {
   handleProjectDragCancel: (event: DragCancelEvent) => void;
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
+  decoupleThread: ReturnType<typeof useThreadActions>["decoupleThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   handleParentThreadSelected: (threadKey: string, hasChildren: boolean) => void;
   primaryEnvironmentId: SidebarThreadSummary["environmentId"] | null;
@@ -3038,6 +3058,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleProjectDragCancel,
     handleNewThread,
     archiveThread,
+    decoupleThread,
     deleteThread,
     handleParentThreadSelected,
     primaryEnvironmentId,
@@ -3198,6 +3219,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
+                        decoupleThread={decoupleThread}
                         deleteThread={deleteThread}
                         handleParentThreadSelected={handleParentThreadSelected}
                         threadJumpLabelByKey={threadJumpLabelByKey}
@@ -3231,6 +3253,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 newThreadShortcutLabel={newThreadShortcutLabel}
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
+                decoupleThread={decoupleThread}
                 deleteThread={deleteThread}
                 handleParentThreadSelected={handleParentThreadSelected}
                 threadJumpLabelByKey={threadJumpLabelByKey}
@@ -3277,7 +3300,7 @@ export default function Sidebar() {
   }));
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { archiveThread, decoupleThread, deleteThread } = useThreadActions();
   const { isMobile, setOpenMobile } = useSidebar();
   const routeThreadRef = useParams({
     strict: false,
@@ -3903,6 +3926,7 @@ export default function Sidebar() {
             handleProjectDragCancel={handleProjectDragCancel}
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
+            decoupleThread={decoupleThread}
             deleteThread={deleteThread}
             handleParentThreadSelected={handleParentThreadSelected}
             primaryEnvironmentId={primaryEnvironmentId}

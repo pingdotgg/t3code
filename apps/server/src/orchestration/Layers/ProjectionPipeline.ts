@@ -644,6 +644,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.decoupled": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            parentThreadId: null,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
         case "thread.meta-updated": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,

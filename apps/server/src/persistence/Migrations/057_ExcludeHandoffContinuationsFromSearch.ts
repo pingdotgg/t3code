@@ -79,6 +79,19 @@ export default Effect.gen(function* () {
     END
   `;
 
+  // Ledgers that skipped migration 048 have no index to prune, and preparing
+  // this statement against a missing table would fail the whole migration
+  // before the repair migration could rebuild it.
+  const indexTable = yield* sql<{ readonly count: number }>`
+    SELECT count(*) AS count
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name = 'projection_thread_message_fts'
+  `;
+  if ((indexTable[0]?.count ?? 0) === 0) {
+    return;
+  }
+
   yield* sql`
     INSERT INTO projection_thread_message_fts(projection_thread_message_fts, rowid, text)
     SELECT 'delete', rowid, text

@@ -743,6 +743,22 @@ describe("incremental orchestration updates", () => {
     expect(localEnvironmentStateOf(next).bootstrapComplete).toBe(false);
   });
 
+  it("removes a decoupled thread from its parent", () => {
+    const parentThreadId = ThreadId.make("thread-parent");
+    const state = makeState(makeThread({ parentThreadId }));
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.decoupled", {
+        threadId: ThreadId.make("thread-1"),
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.parentThreadId).toBeNull();
+  });
+
   it("keeps the normalized message index while updating a streamed tail message", () => {
     const threadId = ThreadId.make("thread-1");
     const messages = Array.from({ length: 2_000 }, (_, index) => ({

@@ -107,6 +107,42 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
 }
 
 describe("decider archive cascade", () => {
+  it("decouples a nested thread so later parent archive does not include it", async () => {
+    const readModel = await seedReadModel();
+    const decoupled = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.decouple",
+          commandId: asCommandId("cmd-decouple-child"),
+          threadId: asThreadId("child"),
+        } satisfies OrchestrationCommand,
+        readModel,
+      }),
+    );
+    const decoupledEvent = Array.isArray(decoupled) ? decoupled[0] : decoupled;
+    expect(decoupledEvent?.type).toBe("thread.decoupled");
+
+    const updatedReadModel = await Effect.runPromise(
+      projectEvent(readModel, { ...decoupledEvent!, sequence: 6 }),
+    );
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.archive",
+          commandId: asCommandId("cmd-archive-parent"),
+          threadId: asThreadId("parent"),
+        } satisfies OrchestrationCommand,
+        readModel: updatedReadModel,
+      }),
+    );
+    const events = Array.isArray(decided) ? decided : [decided];
+
+    expect(
+      updatedReadModel.threads.find((thread) => thread.id === asThreadId("child"))?.parentThreadId,
+    ).toBeNull();
+    expect(events.map((event) => event.payload.threadId)).toEqual([asThreadId("parent")]);
+  });
+
   it("archives the target thread and every descendant, parents first", async () => {
     const readModel = await seedReadModel();
 

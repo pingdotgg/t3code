@@ -585,6 +585,12 @@ const ThreadUnarchiveCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
+const ThreadDecoupleCommand = Schema.Struct({
+  type: Schema.Literal("thread.decouple"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
 const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
@@ -867,6 +873,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
+  ThreadDecoupleCommand,
   ThreadMetaUpdateCommand,
   ThreadWorkspaceHandoffCommand,
   ThreadForkCommand,
@@ -895,6 +902,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
+  ThreadDecoupleCommand,
   ThreadMetaUpdateCommand,
   ThreadWorkspaceHandoffCommand,
   ThreadForkCommand,
@@ -1023,6 +1031,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
+  "thread.decoupled",
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.pending-runtime-mode-set",
@@ -1114,6 +1123,11 @@ export const ThreadArchivedPayload = Schema.Struct({
 });
 
 export const ThreadUnarchivedPayload = Schema.Struct({
+  threadId: ThreadId,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadDecoupledPayload = Schema.Struct({
   threadId: ThreadId,
   updatedAt: IsoDateTime,
 });
@@ -1372,6 +1386,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unarchived"),
     payload: ThreadUnarchivedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.decoupled"),
+    payload: ThreadDecoupledPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

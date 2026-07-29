@@ -97,6 +97,24 @@ export function useThreadActions() {
     });
   }, []);
 
+  const decoupleThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      const api = readEnvironmentApi(target.environmentId);
+      if (!api) return;
+      const resolved = resolveThreadTarget(target);
+      if (!resolved) return;
+      if (resolved.thread.parentThreadId === null) {
+        throw new Error("Only nested threads can be decoupled.");
+      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.decouple",
+        commandId: newCommandId(),
+        threadId: target.threadId,
+      });
+    },
+    [resolveThreadTarget],
+  );
+
   const deleteThread = useCallback(
     async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
       const api = readEnvironmentApi(target.environmentId);
@@ -277,6 +295,7 @@ export function useThreadActions() {
   return {
     archiveThread,
     unarchiveThread,
+    decoupleThread,
     deleteThread,
     confirmAndDeleteThread,
   };

@@ -120,6 +120,12 @@ export function applyThreadDetailEvent(
         thread: { ...thread, archivedAt: null, updatedAt: event.payload.updatedAt },
       };
 
+    case "thread.decoupled":
+      return {
+        kind: "updated",
+        thread: { ...thread, parentThreadId: null, updatedAt: event.payload.updatedAt },
+      };
+
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated":
       return {

@@ -4,7 +4,7 @@ import {
   SidebarStateError,
   type SidebarStateSnapshot,
 } from "@t3tools/contracts";
-import { Context, Effect, Layer, PubSub, Ref, Schema, Stream } from "effect";
+import { Context, Deferred, Effect, Exit, Layer, PubSub, Ref, Schema, Stream } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -155,8 +155,37 @@ const makeSidebarState = Effect.gen(function* () {
     } satisfies SidebarStateSnapshot;
   });
 
-  const initial: SidebarStateSnapshot = yield* loadSnapshot;
-  const stateRef = yield* Ref.make(initial);
+  const toPersistError = (cause: unknown) =>
+    new SidebarStateError({
+      message: "Failed to persist sidebar state.",
+      cause,
+    });
+  const toLoadError = (cause: unknown) =>
+    new SidebarStateError({
+      message: "Failed to load sidebar state.",
+      cause,
+    });
+  const stateRef = yield* Ref.make<SidebarStateSnapshot>({
+    revision: 0,
+    pinnedThreadKeysByProjectKey: {},
+  });
+  const initialized = yield* Deferred.make<void, SidebarStateError>();
+  yield* Effect.forkScoped(
+    Effect.gen(function* () {
+      const initializationExit = yield* Effect.exit(
+        loadSnapshot.pipe(
+          Effect.mapError(toLoadError),
+          Effect.tap((snapshot) => Ref.set(stateRef, snapshot)),
+        ),
+      );
+      if (Exit.isFailure(initializationExit)) {
+        yield* Deferred.failCause(initialized, initializationExit.cause).pipe(Effect.orDie);
+        return;
+      }
+      yield* Deferred.succeed(initialized, undefined).pipe(Effect.orDie);
+    }),
+  );
+  const awaitInitialized = Deferred.await(initialized);
 
   const persist = (
     snapshot: SidebarStateSnapshot,
@@ -197,72 +226,74 @@ const makeSidebarState = Effect.gen(function* () {
       VALUES (${mutationId})
     `;
 
-  const toError = (cause: unknown) =>
-    new SidebarStateError({
-      message: "Failed to persist sidebar state.",
-      cause,
-    });
-
   const update: SidebarStateShape["update"] = (mutation) =>
-    mutex
-      .withPermits(1)(
-        Effect.uninterruptible(
-          Effect.gen(function* () {
-            const current = yield* Ref.get(stateRef);
-            const appliedRows = yield* sql<{ readonly applied: number }>`
+    awaitInitialized.pipe(
+      Effect.andThen(
+        mutex
+          .withPermits(1)(
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                const current = yield* Ref.get(stateRef);
+                const appliedRows = yield* sql<{ readonly applied: number }>`
               SELECT 1 AS applied
               FROM sidebar_applied_mutations
               WHERE mutation_id = ${mutation.mutationId}
               LIMIT 1
             `;
-            if (appliedRows.length > 0) {
-              return current;
-            }
-            const nextPins = applySidebarStateMutation(current, mutation);
-            if (nextPins === current.pinnedThreadKeysByProjectKey) {
-              yield* recordAppliedMutation(mutation.mutationId);
-              return current;
-            }
-            const changedProjectKeys = new Set([
-              ...Object.keys(current.pinnedThreadKeysByProjectKey),
-              ...Object.keys(nextPins),
-            ])
-              .values()
-              .filter(
-                (projectKey) =>
-                  !arraysEqual(
-                    current.pinnedThreadKeysByProjectKey[projectKey] ?? [],
-                    nextPins[projectKey] ?? [],
-                  ),
-              )
-              .toArray();
-            yield* persist(current, nextPins, changedProjectKeys, mutation.mutationId);
-            const next = {
-              revision: current.revision + 1,
-              pinnedThreadKeysByProjectKey: nextPins,
-            } satisfies SidebarStateSnapshot;
-            yield* Ref.set(stateRef, next);
-            yield* PubSub.publish(changes, next);
-            return next;
-          }),
-        ),
-      )
-      .pipe(Effect.mapError(toError));
+                if (appliedRows.length > 0) {
+                  return current;
+                }
+                const nextPins = applySidebarStateMutation(current, mutation);
+                if (nextPins === current.pinnedThreadKeysByProjectKey) {
+                  yield* recordAppliedMutation(mutation.mutationId);
+                  return current;
+                }
+                const changedProjectKeys = new Set([
+                  ...Object.keys(current.pinnedThreadKeysByProjectKey),
+                  ...Object.keys(nextPins),
+                ])
+                  .values()
+                  .filter(
+                    (projectKey) =>
+                      !arraysEqual(
+                        current.pinnedThreadKeysByProjectKey[projectKey] ?? [],
+                        nextPins[projectKey] ?? [],
+                      ),
+                  )
+                  .toArray();
+                yield* persist(current, nextPins, changedProjectKeys, mutation.mutationId);
+                const next = {
+                  revision: current.revision + 1,
+                  pinnedThreadKeysByProjectKey: nextPins,
+                } satisfies SidebarStateSnapshot;
+                yield* Ref.set(stateRef, next);
+                yield* PubSub.publish(changes, next);
+                return next;
+              }),
+            ),
+          )
+          .pipe(Effect.mapError(toPersistError)),
+      ),
+    );
 
   return {
-    get: Ref.get(stateRef),
+    get: awaitInitialized.pipe(Effect.andThen(Ref.get(stateRef))),
     update,
     changes: Stream.unwrap(
-      Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(changes);
-        const snapshot = yield* Ref.get(stateRef);
-        return Stream.concat(
-          Stream.make(snapshot),
-          Stream.fromSubscription(subscription).pipe(
-            Stream.filter((next) => next.revision > snapshot.revision),
-          ),
-        );
-      }),
+      awaitInitialized.pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(changes);
+            const snapshot = yield* Ref.get(stateRef);
+            return Stream.concat(
+              Stream.make(snapshot),
+              Stream.fromSubscription(subscription).pipe(
+                Stream.filter((next) => next.revision > snapshot.revision),
+              ),
+            );
+          }),
+        ),
+      ),
     ),
   } satisfies SidebarStateShape;
 });

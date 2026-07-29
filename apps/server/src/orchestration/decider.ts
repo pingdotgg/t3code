@@ -608,6 +608,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return metaUpdatedEvent;
     }
 
+    case "thread.decouple": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.parentThreadId === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is not nested under another thread.`,
+        });
+      }
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.decoupled",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.workspace.handoff": {
       const thread = yield* requireThread({
         readModel,

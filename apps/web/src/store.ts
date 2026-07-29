@@ -1790,6 +1790,13 @@ function applyEnvironmentOrchestrationEvent(
         updatedAt: event.payload.updatedAt,
       }));
 
+    case "thread.decoupled":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        parentThreadId: null,
+        updatedAt: event.payload.updatedAt,
+      }));
+
     case "thread.meta-updated":
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
