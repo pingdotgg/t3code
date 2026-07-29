@@ -404,7 +404,11 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
   function* (
     settings: AntigravitySettings,
     environment: NodeJS.ProcessEnv = process.env,
-  ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
+  ): Effect.fn.Return<
+    ServerProviderDraft,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  > {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const fallbackModels = antigravityModelsFromSettings(settings.customModels);
 
