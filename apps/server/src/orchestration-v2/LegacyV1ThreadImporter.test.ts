@@ -91,8 +91,8 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
           '{"instanceId":"codex","model":"gpt-5.4"}',
           'full-access',
           'default',
-          'main',
-          '/tmp/legacy-project',
+          ' main ',
+          ' /tmp/legacy-project ',
           NULL,
           '2026-01-01T00:00:00.000Z',
           '2026-01-04T00:00:00.000Z',
@@ -178,6 +178,8 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       assert.isTrue(rebuilt.valid);
       const shellProjection = yield* projections.getThreadProjection(threadId);
       assert.equal(shellProjection.thread.historyOrigin, "v1_import");
+      assert.equal(shellProjection.thread.branch, "main");
+      assert.equal(shellProjection.thread.worktreePath, "/tmp/legacy-project");
       const shellSnapshot = yield* projections.getShellSnapshot();
       assert.equal(
         shellSnapshot.threads.find((thread) => thread.id === threadId)?.historyOrigin,

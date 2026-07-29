@@ -150,6 +150,8 @@ function nullableDateTime(value: string | null): DateTime.Utc | null {
 function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
   const threadId = ThreadId.make(row.thread_id);
   const modelSelection = modelSelectionFor(row);
+  const branch = row.branch?.trim() || null;
+  const worktreePath = row.worktree_path?.trim() || null;
   return {
     createdBy: "system",
     creationSource: "server",
@@ -160,8 +162,8 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     modelSelection,
     runtimeMode: runtimeModeFor(row.runtime_mode),
     interactionMode: interactionModeFor(row.interaction_mode),
-    branch: row.branch?.trim() ? row.branch : null,
-    worktreePath: row.worktree_path?.trim() ? row.worktree_path : null,
+    branch,
+    worktreePath,
     activeProviderThreadId: null,
     historyOrigin: "v1_import",
     lineage: {

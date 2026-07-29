@@ -78,14 +78,6 @@ export function deriveThreadRuntime(
   };
 }
 
-export function deriveThreadInterruptibleRunId(
-  projection: OrchestrationV2ThreadProjection | null | undefined,
-): ThreadRuntimeSummary["activeRunId"] {
-  return projection === null || projection === undefined
-    ? null
-    : (deriveThreadRuntime(projection)?.activeRunId ?? null);
-}
-
 export function threadRuntimeHasInterruptibleRun(
   runtime: ThreadRuntimeSummary | null | undefined,
 ): boolean {
