@@ -14,6 +14,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
+import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -31,7 +32,7 @@ import { resolveThreadStatus } from "./threadPresentation";
 export type ThreadListVariant = "compact" | "sidebar";
 
 /** Left inset that aligns compact secondary rows with the title column. */
-export const THREAD_LIST_COMPACT_INSET = 20;
+export const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
 const SIDEBAR_ROW_RADIUS = 12;
 
 function pullRequestTintColor(
