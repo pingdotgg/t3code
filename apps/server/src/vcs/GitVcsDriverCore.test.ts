@@ -726,7 +726,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("porcelain worktree parsing", () => {
-    it.effect("parses worktree paths from porcelain output", () =>
+    it.effect("preserves unusual paths from NUL-delimited porcelain output", () =>
       Effect.sync(() => {
         assert.deepStrictEqual(
           parsePorcelainWorktreePaths(
@@ -735,13 +735,13 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
               "HEAD abc",
               "branch refs/heads/main",
               "",
-              "worktree /repo-feature",
+              "worktree /repo with spaces\nand-newline ",
               "HEAD def",
               "branch refs/heads/feature",
               "",
-            ].join("\n"),
+            ].join("\0"),
           ),
-          ["/repo", "/repo-feature"],
+          ["/repo", "/repo with spaces\nand-newline "],
         );
       }),
     );
