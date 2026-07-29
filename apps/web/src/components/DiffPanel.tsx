@@ -14,6 +14,8 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   Columns2Icon,
   MinusIcon,
   PlusIcon,
@@ -38,6 +40,7 @@ import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch"
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
+import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
@@ -48,6 +51,7 @@ import { reviewFindingAnnotation, reviewFindingSelectedLines } from "./reviewDif
 import { formatReviewFinding } from "../lib/reviewFindingFormat";
 import { MessageCopyButton } from "./chat/MessageCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Badge } from "./ui/badge";
 
@@ -607,6 +611,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
+  const diffFileKeys = useMemo(
+    () => renderableFiles.map(buildFileDiffRenderKey),
+    [renderableFiles],
+  );
+  const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffUnsafeCss = useMemo(
     () => buildDiffPanelUnsafeCss(diffZoom, settings.codeFontSize),
     [diffZoom, settings.codeFontSize],
@@ -632,14 +641,19 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         const filePath = resolveFileDiffPath(fileDiff);
         const safety = diffSafetyByPath.get(filePath);
         if (safety?.size === "large") {
-          next.add(buildFileDiffRenderKey(fileDiff));
+          const fileKey = buildFileDiffRenderKey(fileDiff);
+          if (filePath === selectedFilePath) {
+            next.delete(fileKey);
+          } else {
+            next.add(fileKey);
+          }
         }
       }
       const unchanged =
         next.size === current.size && [...next].every((fileKey) => current.has(fileKey));
       return unchanged ? current : next;
     });
-  }, [diffSafetyByPath, renderableFiles]);
+  }, [diffSafetyByPath, renderableFiles, selectedFilePath]);
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -778,6 +792,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       return next;
     });
   }, []);
+  const toggleAllDiffFilesCollapsed = useCallback(() => {
+    setCollapsedDiffFileKeys((current) => toggleAllDiffFiles(diffFileKeys, current));
+  }, [diffFileKeys]);
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -987,6 +1004,22 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1 text-[length:var(--app-code-font-size)] [-webkit-app-region:no-drag]">
+        {diffFileKeys.length > 0 ? (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="outline"
+            aria-label={allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
+            title={allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
+            onClick={toggleAllDiffFilesCollapsed}
+          >
+            {allDiffFilesCollapsed ? (
+              <ChevronsUpDownIcon className="size-[1em]" />
+            ) : (
+              <ChevronsDownUpIcon className="size-[1em]" />
+            )}
+          </Button>
+        ) : null}
         <ToggleGroup
           className="shrink-0"
           variant="outline"
@@ -1115,8 +1148,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
-                  const collapsed =
-                    filePath !== selectedFilePath && collapsedDiffFileKeys.has(fileKey);
+                  const collapsed = collapsedDiffFileKeys.has(fileKey);
                   const safety = diffSafetyByPath.get(filePath);
                   const safetyLabel = diffFileSafetyLabel(safety);
                   const lineAnnotations = showReviewSnapshot
