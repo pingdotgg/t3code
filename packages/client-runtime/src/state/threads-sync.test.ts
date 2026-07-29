@@ -273,6 +273,11 @@ const snapshot = (thread: OrchestrationThread): OrchestrationThreadStreamItem =>
 
 const synchronized = (): OrchestrationThreadStreamItem => ({ kind: "synchronized" });
 
+const synchronizedWithHead = (sequence: number): OrchestrationThreadStreamItem => ({
+  kind: "synchronized",
+  sequence,
+});
+
 const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamItem => ({
   kind: "event",
   event: {
@@ -696,6 +701,64 @@ describe("EnvironmentThreads", () => {
         (value) => value.status === "live" && Option.isSome(value.data),
       );
       expect(Option.getOrThrow(live.data).title).toBe("Latest title");
+    }),
+  );
+
+  it.effect("advances the resume cursor from a synchronized marker head on a quiet thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isSome(value.data),
+      );
+
+      // Quiet thread: catch-up emits no thread events, only the completion
+      // marker carrying the captured server head. The client must advance its
+      // resume cursor to that head so the next foreground resubscribe does not
+      // re-scan the same suffix from the stale cached sequence.
+      yield* Queue.offer(harness.inputs, synchronizedWithHead(20));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      yield* Queue.offer(harness.wakeups, "application-active");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(20);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("accepts a synchronized marker without a sequence without advancing the cursor", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "synchronizing" && Option.isSome(value.data),
+      );
+
+      // Older servers emit the marker without a sequence. The client stays live
+      // and keeps its existing cursor (the cached snapshot sequence) rather than
+      // regressing or failing on the missing field.
+      yield* Queue.offer(harness.inputs, synchronized());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      yield* Queue.offer(harness.wakeups, "application-active");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
     }),
   );
 });

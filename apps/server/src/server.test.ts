@@ -5975,6 +5975,240 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("subscribeThread bounds replay to the captured server head gap", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      let readEventsCalls = 0;
+      let replayAfterSequence: number | undefined;
+      let replayLimit: number | undefined;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(50),
+            readEvents: (afterSequence, limit) => {
+              readEventsCalls += 1;
+              replayAfterSequence = afterSequence;
+              replayLimit = limit;
+              return Stream.empty;
+            },
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 1, thread })),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const first = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 7,
+            requestCompletionMarker: true,
+          }).pipe(Stream.runHead),
+        ),
+      );
+
+      // The replay is bounded to the captured head gap (50 - 7 = 43), never
+      // Number.MAX_SAFE_INTEGER, and the empty-replay marker carries the head.
+      assert.equal(readEventsCalls, 1);
+      assert.equal(replayAfterSequence, 7);
+      assert.equal(replayLimit, 43);
+      assert.deepEqual(Option.getOrThrow(first), { kind: "synchronized", sequence: 50 });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread replays only this thread's events from the bounded global range", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const otherThreadId = ThreadId.make("thread-other");
+      const now = "2026-01-01T00:00:00.000Z";
+      let scanned = 0;
+      let replayLimit: number | undefined;
+
+      const messageEvent = (sequence: number, threadId: ThreadId): OrchestrationEvent =>
+        ({
+          sequence,
+          eventId: EventId.make(`event-${sequence}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "thread.message-sent",
+          payload: {
+            threadId,
+            messageId: MessageId.make(`message-${sequence}`),
+            role: "user",
+            text: `message ${sequence}`,
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }) satisfies OrchestrationEvent;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(10),
+            readEvents: (_afterSequence, limit) => {
+              replayLimit = limit;
+              return Stream.fromIterable([
+                messageEvent(8, otherThreadId),
+                messageEvent(9, defaultThreadId),
+                messageEvent(10, otherThreadId),
+              ]).pipe(Stream.tap(() => Effect.sync(() => (scanned += 1))));
+            },
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 1, thread })),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 7,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+
+      // The global store scans all 3 events in the bounded range, but only the
+      // matching thread's event is emitted before the synchronized marker.
+      assert.equal(scanned, 3);
+      assert.equal(replayLimit, 3);
+      assert.equal(items[0]?.kind, "event");
+      assert.equal(items[0]?.kind === "event" ? items[0].event.sequence : null, 9);
+      assert.deepEqual(items[1], { kind: "synchronized", sequence: 10 });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread marks an empty catch-up replay as synchronized with the head", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(12),
+            readEvents: () => Stream.empty,
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 1, thread })),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const first = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 12,
+            requestCompletionMarker: true,
+          }).pipe(Stream.runHead),
+        ),
+      );
+
+      // Empty replay (cursor already at the head) still emits the marker, and
+      // the marker carries the captured head so a quiet thread can advance.
+      assert.deepEqual(Option.getOrThrow(first), { kind: "synchronized", sequence: 12 });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread sends a fresh snapshot instead of replaying a large gap", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      let readEventsCalls = 0;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            readEvents: () =>
+              Stream.sync(() => {
+                readEventsCalls += 1;
+                return {} as OrchestrationEvent;
+              }),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 100_000, thread })),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 5,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+
+      // Large gap => fresh thread snapshot, and the unbounded replay is never
+      // started. The marker still carries the captured head.
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.deepEqual(items[1], { kind: "synchronized", sequence: 100_000 });
+      assert.equal(readEventsCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread replaces a cursor ahead of the authoritative head", () =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      let readEventsCalls = 0;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(5),
+            readEvents: () =>
+              Stream.sync(() => {
+                readEventsCalls += 1;
+                return {} as OrchestrationEvent;
+              }),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 5, thread })),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 10,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+
+      // Cursor ahead of the head is invalid; reset with a fresh snapshot and
+      // never start the replay.
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.deepEqual(items[1], { kind: "synchronized", sequence: 5 });
+      assert.equal(readEventsCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("subscribeShell sends a fresh snapshot instead of replaying a large gap", () =>
     Effect.gen(function* () {
       let readEventsCalls = 0;

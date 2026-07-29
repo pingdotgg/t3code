@@ -1264,6 +1264,15 @@ export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 export const OrchestrationThreadStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("synchronized"),
+    /**
+     * The authoritative server event-store head captured before this
+     * subscription's catch-up replay. On a quiet thread the catch-up may emit
+     * no thread events, so without this head the client would keep its stale
+     * cursor and re-scan the same suffix on every resubscribe. Clients advance
+     * their resume cursor to this sequence when present; older servers that
+     * omit it are accepted unchanged.
+     */
+    sequence: Schema.optionalKey(NonNegativeInt),
   }),
   Schema.Struct({
     kind: Schema.Literal("snapshot"),

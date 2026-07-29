@@ -294,6 +294,15 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
 
+// Same bound as SHELL_RESUME_MAX_GAP, applied to per-thread resume replay. A
+// resuming mobile client passes its last applied sequence; the global event
+// store pages and decodes every event in the range before the per-thread filter
+// runs, so an unbounded replay (the old Number.MAX_SAFE_INTEGER) re-scans the
+// whole store on every foreground resubscribe. Bounding to the captured head
+// gap keeps quiet threads from re-reading the same suffix forever, and a gap
+// past this bound falls back to a single thread-detail snapshot.
+const THREAD_RESUME_MAX_GAP = 1_000;
+
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
   revision: number,
@@ -1263,33 +1272,88 @@ const makeWsRpcLayer = (
               // catch-up followed by the buffered/ongoing live events. Overlapping
               // events are deduped by sequence on the client.
               //
-              // Read the full range after the cursor (not the store's default
-              // page-bounded limit): the range is normally tiny (a fresh HTTP
-              // snapshot sequence) and the per-thread filter runs after reading,
-              // so a global cap could otherwise omit this thread's events.
+              // Capture the authoritative server head *before* replay and bound
+              // the read to that head gap. The global store pages and decodes
+              // every event in the range before the per-thread filter runs, so an
+              // unbounded replay would re-scan the whole store on every
+              // resubscribe; the bound also keeps a moving event-store head from
+              // growing the live buffer indefinitely while waiting for an empty
+              // page. The captured head travels on the completion marker so a
+              // quiet thread (catch-up emits no thread events) can still advance
+              // its cursor and avoid re-reading the same suffix next time.
               if (input.afterSequence !== undefined) {
                 const afterSequence = input.afterSequence;
-                const catchUpStream = orchestrationEngine
-                  .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
-                  .pipe(
-                    Stream.filter(isThisThreadDetailEvent),
-                    Stream.map((event) => ({
-                      kind: "event" as const,
-                      event: projectActivityEvent(event),
-                    })),
-                    Stream.mapError(
-                      (cause) =>
-                        new OrchestrationGetSnapshotError({
-                          message: `Failed to replay thread ${input.threadId} events`,
-                          cause,
-                        }),
-                    ),
+                const headSequence = yield* orchestrationEngine.latestSequence;
+                const replayGap = headSequence - afterSequence;
+
+                // Cursor ahead of the authoritative head, or gap too large to
+                // replay per-event: send a fresh thread detail snapshot (the
+                // same path as no-afterSequence) followed by the buffered live
+                // tail. The snapshot's snapshotSequence becomes the new cursor;
+                // the marker still carries the captured head for uniformity.
+                if (replayGap < 0 || replayGap > THREAD_RESUME_MAX_GAP) {
+                  const snapshot = yield* projectionSnapshotQuery
+                    .getThreadDetailSnapshot(input.threadId)
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to load thread ${input.threadId}`,
+                            cause,
+                          }),
+                      ),
+                    );
+
+                  if (Option.isNone(snapshot)) {
+                    return yield* new OrchestrationGetSnapshotError({
+                      message: `Thread ${input.threadId} was not found`,
+                      cause: input.threadId,
+                    });
+                  }
+
+                  const afterSnapshot =
+                    input.requestCompletionMarker === true
+                      ? Stream.concat(
+                          Stream.fromEffect(
+                            Queue.offer(liveBuffer, {
+                              kind: "synchronized" as const,
+                              sequence: headSequence,
+                            }),
+                          ).pipe(Stream.drain),
+                          bufferedLiveStream,
+                        )
+                      : bufferedLiveStream;
+                  return Stream.concat(
+                    Stream.make({
+                      kind: "snapshot" as const,
+                      snapshot: projectThreadDetailSnapshot(snapshot.value),
+                    }),
+                    afterSnapshot,
                   );
+                }
+
+                const catchUpStream = orchestrationEngine.readEvents(afterSequence, replayGap).pipe(
+                  Stream.filter(isThisThreadDetailEvent),
+                  Stream.map((event) => ({
+                    kind: "event" as const,
+                    event: projectActivityEvent(event),
+                  })),
+                  Stream.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: `Failed to replay thread ${input.threadId} events`,
+                        cause,
+                      }),
+                  ),
+                );
                 const afterCatchUp =
                   input.requestCompletionMarker === true
                     ? Stream.concat(
                         Stream.fromEffect(
-                          Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                          Queue.offer(liveBuffer, {
+                            kind: "synchronized" as const,
+                            sequence: headSequence,
+                          }),
                         ).pipe(Stream.drain),
                         bufferedLiveStream,
                       )

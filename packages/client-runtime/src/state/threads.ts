@@ -184,6 +184,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
+      // A quiet thread's catch-up may emit no thread events, so the marker is
+      // the only signal of how far the server's authoritative head has moved.
+      // Advance the resume cursor to the captured head when present so the next
+      // foreground resubscribe starts from here instead of re-scanning the same
+      // suffix. Older servers omit the sequence and are left unchanged.
+      if (item.sequence !== undefined) {
+        const currentSequence = yield* SubscriptionRef.get(lastSequence);
+        if (item.sequence > currentSequence) {
+          yield* SubscriptionRef.set(lastSequence, item.sequence);
+        }
+      }
       yield* SubscriptionRef.update(state, (current) =>
         Option.isSome(current.data) && current.status !== "deleted"
           ? { ...current, status: "live" as const, error: Option.none() }
