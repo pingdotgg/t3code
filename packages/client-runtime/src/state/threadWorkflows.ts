@@ -84,6 +84,12 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
+  const hasSteerableProviderTurn =
+    activeRun?.status === "running" &&
+    activeRun.activeAttemptId !== null &&
+    projection.providerTurns.some(
+      (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
+    );
   const queuedRuns = copySorted(
     projection.runs.filter((run) => run.status === "queued"),
     (left, right) =>
@@ -101,7 +107,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     queuedRuns,
     canReorder: capabilities?.supportsQueuedMessages === true,
     canPromoteToSteer:
-      activeRun !== null &&
+      hasSteerableProviderTurn &&
       (capabilities?.supportsActiveSteering === true ||
         capabilities?.supportsSteeringByInterruptRestart === true),
   };
