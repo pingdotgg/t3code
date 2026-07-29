@@ -17,6 +17,7 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
+  resolveSidebarV2StatusSlotClassNames,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   formatWorkingDurationLabel,
@@ -651,6 +652,55 @@ describe("resolveSidebarV2Status", () => {
 
   it("defaults to ready with no session", () => {
     expect(resolveSidebarV2Status({ ...idle, session: null })).toBe("ready");
+  });
+});
+
+describe("resolveSidebarV2StatusSlotClassNames", () => {
+  // The label and the actions share one slot, so the states must be
+  // mutually exclusive: a variant that reveals the actions without fading
+  // the label leaves "Working" stacked on top of "Settle".
+  const revealVariants = (className: string): ReadonlyArray<string> =>
+    className
+      .split(" ")
+      .filter((candidate) => candidate.endsWith(":opacity-100"))
+      .map((candidate) => candidate.slice(0, -":opacity-100".length));
+
+  it("fades the status label out for every variant that reveals the actions", () => {
+    for (const snoozeMenuOpen of [false, true]) {
+      const { statusClassName, actionsClassName } = resolveSidebarV2StatusSlotClassNames({
+        snoozeMenuOpen,
+      });
+      const variants = revealVariants(actionsClassName);
+      expect(variants.length).toBeGreaterThan(0);
+      for (const variant of variants) {
+        expect(statusClassName).toContain(`${variant}:opacity-0`);
+      }
+    }
+  });
+
+  it("never takes the status label out of flow while it is still visible", () => {
+    const { statusClassName } = resolveSidebarV2StatusSlotClassNames({ snoozeMenuOpen: false });
+    const outOfFlowVariants = statusClassName
+      .split(" ")
+      .filter((candidate) => candidate.endsWith(":absolute"))
+      .map((candidate) => candidate.slice(0, -":absolute".length));
+
+    expect(outOfFlowVariants).toContain("group-focus-within/v2-status-slot");
+    expect(outOfFlowVariants).toContain("group-hover/v2-row");
+    for (const variant of outOfFlowVariants) {
+      expect(statusClassName).toContain(`${variant}:opacity-0`);
+    }
+  });
+
+  it("swaps both halves while the snooze popover holds the row open", () => {
+    const { statusClassName, actionsClassName } = resolveSidebarV2StatusSlotClassNames({
+      snoozeMenuOpen: true,
+    });
+
+    expect(statusClassName).toContain("opacity-0");
+    expect(statusClassName).toContain("absolute");
+    expect(actionsClassName).toContain("static");
+    expect(actionsClassName).toContain("opacity-100");
   });
 });
 
