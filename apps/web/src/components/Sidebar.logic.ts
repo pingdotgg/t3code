@@ -18,6 +18,14 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
+
+export function shouldRenderSidebarV2ArchiveAll(input: {
+  archivableCount: number;
+  isArchiving: boolean;
+}): boolean {
+  return input.archivableCount > 0 || input.isArchiving;
+}
+
 type SidebarProject = {
   id: string;
   title: string;

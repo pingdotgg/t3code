@@ -27,6 +27,7 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldRenderSidebarV2ArchiveAll,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
@@ -457,6 +458,26 @@ describe("buildSidebarV2ThreadContextMenuItems", () => {
     });
 
     expect(items.find((item) => item.id === "archive")).toMatchObject({ disabled: true });
+  });
+});
+
+describe("shouldRenderSidebarV2ArchiveAll", () => {
+  it("keeps the archive-all affordance mounted while a batch is in flight", () => {
+    expect(
+      shouldRenderSidebarV2ArchiveAll({
+        archivableCount: 0,
+        isArchiving: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the archive-all affordance when there is no work or active batch", () => {
+    expect(
+      shouldRenderSidebarV2ArchiveAll({
+        archivableCount: 0,
+        isArchiving: false,
+      }),
+    ).toBe(false);
   });
 });
 

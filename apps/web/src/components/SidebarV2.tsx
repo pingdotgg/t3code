@@ -118,6 +118,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
+  shouldRenderSidebarV2ArchiveAll,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
@@ -399,10 +400,14 @@ function SidebarV2SettledDivider({
             )}
           />
         </button>
-        {archivableCount > 0 ? (
+        {shouldRenderSidebarV2ArchiveAll({ archivableCount, isArchiving }) ? (
           <button
             type="button"
-            aria-label={`Archive all ${archivableCount} settled thread${archivableCount === 1 ? "" : "s"}`}
+            aria-label={
+              isArchiving && archivableCount === 0
+                ? "Archiving settled threads"
+                : `Archive all ${archivableCount} settled thread${archivableCount === 1 ? "" : "s"}`
+            }
             disabled={isArchiving}
             onClick={(event) => {
               event.preventDefault();
