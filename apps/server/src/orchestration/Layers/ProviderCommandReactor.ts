@@ -877,27 +877,39 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* orchestrationEngine.dispatch({
-      type: "thread.meta.update",
-      commandId: yield* serverCommandId("thread-title-regenerate"),
-      threadId: event.payload.threadId,
-      title: generated.title,
-    });
+    return generated.title;
   });
-  const processThreadTitleRegenerationSafely = (
-    event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>,
-  ) =>
-    regenerateThreadTitle(event).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        return Effect.logWarning("provider command reactor failed to regenerate thread title", {
-          threadId: event.payload.threadId,
-          cause: Cause.pretty(cause),
-        });
-      }),
-    );
+  const processThreadTitleRegenerationSafely = Effect.fn("processThreadTitleRegenerationSafely")(
+    function* (event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>) {
+      if (event.payload.regenerateTitle !== true) {
+        return;
+      }
+
+      const requestId = event.payload.titleRegeneration?.requestId ?? event.commandId;
+      const generatedTitle = yield* regenerateThreadTitle(event).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning("provider command reactor failed to regenerate thread title", {
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(undefined));
+        }),
+      );
+      if (requestId === null) {
+        return;
+      }
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.title.regeneration.complete",
+        commandId: yield* serverCommandId("thread-title-regeneration-complete"),
+        threadId: event.payload.threadId,
+        requestId,
+        ...(generatedTitle !== undefined ? { title: generatedTitle } : {}),
+      });
+    },
+  );
   const threadTitleRegenerationWorker = yield* makeDrainableWorker(
     processThreadTitleRegenerationSafely,
   );

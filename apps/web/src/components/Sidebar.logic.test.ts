@@ -10,6 +10,7 @@ import {
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  isThreadTitleRegenerationPending,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -28,6 +29,7 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  THREAD_TITLE_REGENERATION_TIMEOUT_MS,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -45,6 +47,40 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("isThreadTitleRegenerationPending", () => {
+  const now = Date.parse("2026-03-09T10:00:30.000Z");
+
+  it("keeps a recent request pending", () => {
+    expect(
+      isThreadTitleRegenerationPending(
+        {
+          titleRegeneration: {
+            startedAt: new Date(now - THREAD_TITLE_REGENERATION_TIMEOUT_MS + 1).toISOString(),
+          },
+        },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("expires stale, missing, and malformed requests", () => {
+    expect(
+      isThreadTitleRegenerationPending(
+        {
+          titleRegeneration: {
+            startedAt: new Date(now - THREAD_TITLE_REGENERATION_TIMEOUT_MS).toISOString(),
+          },
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(isThreadTitleRegenerationPending({ titleRegeneration: null }, now)).toBe(false);
+    expect(
+      isThreadTitleRegenerationPending({ titleRegeneration: { startedAt: "not-a-date" } }, now),
+    ).toBe(false);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

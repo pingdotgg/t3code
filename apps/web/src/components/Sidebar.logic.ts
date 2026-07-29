@@ -15,9 +15,33 @@ import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
+export const THREAD_TITLE_REGENERATION_TIMEOUT_MS = 30_000;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
+
+export function threadTitleRegenerationRemainingMs(
+  thread: {
+    readonly titleRegeneration?: { readonly startedAt: string } | null | undefined;
+  },
+  nowMs: number,
+): number {
+  const startedAt = Date.parse(thread.titleRegeneration?.startedAt ?? "");
+  if (!Number.isFinite(startedAt)) return 0;
+  return Math.min(
+    THREAD_TITLE_REGENERATION_TIMEOUT_MS,
+    Math.max(0, THREAD_TITLE_REGENERATION_TIMEOUT_MS - (nowMs - startedAt)),
+  );
+}
+
+export function isThreadTitleRegenerationPending(
+  thread: {
+    readonly titleRegeneration?: { readonly startedAt: string } | null | undefined;
+  },
+  nowMs: number,
+): boolean {
+  return threadTitleRegenerationRemainingMs(thread, nowMs) > 0;
+}
 type SidebarProject = {
   id: string;
   title: string;

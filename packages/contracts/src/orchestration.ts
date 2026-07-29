@@ -341,6 +341,12 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const ThreadTitleRegeneration = Schema.Struct({
+  requestId: CommandId,
+  startedAt: IsoDateTime,
+});
+export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -366,6 +372,8 @@ export const OrchestrationThread = Schema.Struct({
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Pending-only state. Optional so older servers remain compatible.
+  titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -418,6 +426,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -866,6 +875,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.title.regeneration.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  requestId: CommandId,
+  title: Schema.optional(TrimmedNonEmptyString),
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -874,6 +891,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadTitleRegenerationCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1011,6 +1029,8 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   regenerateTitle: Schema.optional(Schema.Literal(true)),
   /** Title at request time, used to avoid overwriting a later manual rename. */
   previousTitle: Schema.optional(TrimmedNonEmptyString),
+  /** Pending state shared with clients. Null clears a matching request. */
+  titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

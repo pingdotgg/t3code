@@ -715,6 +715,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Resolve stale reconnect state");
+    expect(thread?.titleRegeneration).toBeNull();
   });
 
   it("keeps the current title when regeneration returns the fallback", async () => {
@@ -760,6 +761,52 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Keep meaningful title");
+    expect(thread?.titleRegeneration).toBeNull();
+  });
+
+  it("clears title regeneration state when generation fails", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-before-failed-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Keep title after failure",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-failed-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-failed-regeneration"),
+          role: "user",
+          text: "Investigate the reconnect state.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-failed-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Keep title after failure");
+    expect(thread?.titleRegeneration).toBeNull();
   });
 
   it("keeps the full retained context and excludes attachments outside it", async () => {
@@ -876,6 +923,11 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    const pendingReadModel = await harness.readModel();
+    expect(
+      pendingReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))
+        ?.titleRegeneration?.requestId,
+    ).toBe(CommandId.make("cmd-thread-title-regeneration-race"));
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -893,6 +945,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Keep manual rename");
+    expect(thread?.titleRegeneration).toBeNull();
   });
 
   it("does not overwrite a manual rename while title regeneration is queued", async () => {
