@@ -1885,7 +1885,8 @@ export function ConnectionsSettings() {
   const canManageLocalBackend = currentSessionScopes?.includes(AuthAccessWriteScope) ?? false;
   const canManageRelay = currentSessionScopes?.includes(AuthRelayWriteScope) ?? false;
   const canEditEnvironmentLabel =
-    currentSessionScopes?.includes(AuthOrchestrationOperateScope) ?? false;
+    primaryEnvironmentId !== null &&
+    (currentSessionScopes?.includes(AuthOrchestrationOperateScope) ?? false);
   const authAccessChanges = useEnvironmentQuery(
     canManageLocalBackend && primaryEnvironmentId !== null
       ? authEnvironment.accessChanges({
