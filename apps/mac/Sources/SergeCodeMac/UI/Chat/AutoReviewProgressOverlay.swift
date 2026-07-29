@@ -124,18 +124,10 @@ private struct AutoReviewProgressCard: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.96))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(
-                            phase.tint.opacity(isHovering && canOpenThread ? 0.56 : 0.28),
-                            lineWidth: 1)
-                }
-        }
+        .alpineGlassSurface(
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(
-            color: .black.opacity(isHovering && canOpenThread ? 0.2 : 0.14),
+            color: .black.opacity(isHovering && canOpenThread ? 0.14 : 0.08),
             radius: isHovering && canOpenThread ? 13 : 10,
             y: 4)
         .scaleEffect(isHovering && canOpenThread ? 1.012 : 1)
