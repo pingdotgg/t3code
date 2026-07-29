@@ -18,7 +18,7 @@ export default Effect.gen(function* () {
   yield* sql`
     UPDATE orchestration_v2_events
     SET
-      driver = provider,
+      driver = COALESCE(json_extract(payload_json, '$.driver'), provider),
       provider_instance_id = COALESCE(
         json_extract(payload_json, '$.providerInstanceId'),
         provider
