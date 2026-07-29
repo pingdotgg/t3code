@@ -62,6 +62,13 @@ export const layer: Layer.Layer<
               cause: "The runtime request no longer exists.",
             });
           }
+          if (request.status !== "pending") {
+            return yield* new RuntimeRequestResponseExecutionError({
+              threadId: input.threadId,
+              requestId: input.requestId,
+              cause: "The runtime request is no longer pending.",
+            });
+          }
           if (
             request.responseCapability.type !== "live" ||
             request.responseCapability.providerSessionId !== input.providerSessionId
