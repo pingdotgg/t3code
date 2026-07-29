@@ -8,6 +8,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -18,10 +19,11 @@ import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
-import type { OrchestrationEffectV2 } from "./EffectOutbox.ts";
+import { EffectOutboxError, EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
 import {
   executorLayer,
   isNonRetryableProviderTurnControlFailure,
+  layerWithOptions as effectWorkerLayerWithOptions,
   OrchestrationEffectExecutorV2,
   OrchestrationEffectWorkerError,
   OrchestrationEffectWorkerV2,
@@ -175,6 +177,78 @@ it("does not retry pure interrupt races where the turn is already gone", () => {
     ),
   );
 });
+
+it.effect("requeues a claim when a pre-execution worker check fails", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const effectId = "effect:worker-pre-execution-failure";
+    const workerId = "worker-pre-execution-failure";
+    const claimedEffect: OrchestrationEffectV2 = {
+      id: effectId,
+      commandId: CommandId.make("command:worker-pre-execution-failure"),
+      threadId: ThreadId.make("thread:worker-pre-execution-failure"),
+      request: { type: "terminal.cleanup" },
+      status: "running",
+      attemptCount: 1,
+      availableAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const retries = yield* Ref.make<
+      ReadonlyArray<{
+        readonly effectId: string;
+        readonly workerId: string;
+        readonly error: string;
+        readonly delayMs: number;
+      }>
+    >([]);
+    const executionCount = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () =>
+        Effect.fail(
+          new EffectOutboxError({
+            operation: "get",
+            effectId,
+            cause: "simulated cancellation-state read failure",
+          }),
+        ),
+      retry: (input) =>
+        Ref.update(retries, (existing) => [...existing, input]).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        execute: () => Ref.update(executionCount, (count) => count + 1),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    const exit = yield* OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(workerLayer),
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.include(Cause.pretty(exit.cause), "simulated cancellation-state read failure");
+    }
+    assert.equal(yield* Ref.get(executionCount), 0);
+    const retry = (yield* Ref.get(retries))[0];
+    assert.isDefined(retry);
+    assert.equal(retry.effectId, effectId);
+    assert.equal(retry.workerId, workerId);
+    assert.equal(retry.delayMs, 0);
+    assert.include(retry.error, "simulated cancellation-state read failure");
+  }),
+);
 
 it.effect("uses durable deadlines, notifications, and a slow liveness poll", () =>
   Effect.gen(function* () {
