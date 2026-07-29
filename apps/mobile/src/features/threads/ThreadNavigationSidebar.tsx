@@ -175,6 +175,8 @@ function ThreadNavigationSidebarPane(
     archiveThread,
     settleThread,
     unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     confirmDeleteThread,
     confirmArchiveThreads,
   } = useThreadListActions();
@@ -472,6 +474,8 @@ function ThreadNavigationSidebarPane(
               onArchiveThread={archiveThread}
               onSettleThread={settleThread}
               onUnsettleThread={unsettleThread}
+              onSnoozeThread={snoozeThread}
+              onUnsnoozeThread={unsnoozeThread}
               onDeleteThread={confirmDeleteThread}
               onSelectThread={handleSelectThread}
               onSwipeableClose={handleSwipeableClose}
@@ -527,7 +531,9 @@ function ThreadNavigationSidebarPane(
       savedConnectionsById,
       settleThread,
       sidebarScrollGesture,
+      snoozeThread,
       unsettleThread,
+      unsnoozeThread,
       updateGroupDisplay,
     ],
   );

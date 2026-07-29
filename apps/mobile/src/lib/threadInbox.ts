@@ -5,9 +5,11 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
  * (apps/mac/Sources/SergeCodeMac/UI/Shell/ThreadInboxSemantics.swift, mirrored
  * in packages/client-runtime/src/state/threadSettled.ts, which the app cannot
  * import because client-runtime does not export that module). The server is
- * authoritative for explicit settle/unsettle transitions; these helpers mirror
- * the client-side rules for automatic settlement, settle eligibility, and
- * stable settled ordering.
+ * authoritative for explicit settle/unsettle and snooze/unsnooze transitions;
+ * these helpers mirror the client-side rules for automatic settlement, settle
+ * eligibility, stable settled ordering, and snooze visibility (including the
+ * "raised hand" early-wake rules threadSettled.ts defines for the web/mac
+ * clients).
  */
 
 /** Threads with no activity for this long auto-settle (mac default). */
@@ -33,6 +35,8 @@ type InboxThread = Pick<
   | "hasPendingUserInput"
   | "settledOverride"
   | "settledAt"
+  | "snoozedUntil"
+  | "snoozedAt"
 >;
 
 function nowIso(now?: string): string {
@@ -131,6 +135,82 @@ export function isThreadSettled(thread: InboxThread, now?: string): boolean {
   const nowMs = Date.parse(nowIso(now));
   if (Number.isNaN(activityAt) || Number.isNaN(nowMs)) return false;
   return activityAt < nowMs - THREAD_AUTO_SETTLE_AFTER_DAYS * DAY_MS;
+}
+
+/**
+ * A snoozed thread "raises its hand" when something happens that outranks the
+ * user's snooze: the agent is blocked on them (approval / user input), the
+ * session failed, or a run completed after the snooze was set — the v1 taste
+ * of event-based snooze ("something happened" wakes early). Raising a hand
+ * never clears the server-side snooze fields; it only stops the thread from
+ * classifying as snoozed, exactly like blocked work and `isThreadSettled`.
+ * Mobile port of `threadRaisedHandWhileSnoozed`
+ * (packages/client-runtime/src/state/threadSettled.ts, which the app cannot
+ * import — see the module doc above).
+ */
+export function threadRaisedHandWhileSnoozed(thread: InboxThread): boolean {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return true;
+  // Only a FRESH failure raises the hand: a thread snoozed while already
+  // failed stays snoozed — that snooze was the user saying "I saw it, not
+  // now". session.updatedAt stamps the status edge, so an error newer than
+  // the snooze is new information.
+  if (
+    thread.session?.status === "error" &&
+    (thread.snoozedAt == null ||
+      Date.parse(thread.session.updatedAt) > Date.parse(thread.snoozedAt))
+  ) {
+    return true;
+  }
+  if (
+    thread.snoozedAt != null &&
+    thread.latestTurn?.state === "completed" &&
+    thread.latestTurn.completedAt != null &&
+    Date.parse(thread.latestTurn.completedAt) > Date.parse(thread.snoozedAt)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A thread may be snoozed unless the agent is blocked on the user: hiding a
+ * pending approval or user-input request defeats the request, and a queued
+ * turn start (a message no turn has adopted yet) is invisible pending work
+ * the same way it is for settle. A running session IS snoozable — snooze only
+ * affects visibility, never the agent.
+ */
+export function canSnoozeThread(thread: InboxThread, now?: string): boolean {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  return !hasQueuedTurnStart(thread, now);
+}
+
+/**
+ * Snoozed resolution: hidden from the inbox while the wake time is in the
+ * future and the thread has not raised its hand. Timer wakes are derived — no
+ * server event fires when snoozedUntil passes; the stale fields simply stop
+ * classifying as snoozed. A passed `snoozedUntil` (or a raised hand) is
+ * therefore enough to reclassify the thread as active again, with no event
+ * required.
+ */
+export function isThreadSnoozed(thread: InboxThread, now?: string): boolean {
+  if (thread.snoozedUntil == null) return false;
+  const wakeAtMs = Date.parse(thread.snoozedUntil);
+  // Malformed data never hides a thread.
+  if (Number.isNaN(wakeAtMs)) return false;
+  if (wakeAtMs <= Date.parse(nowIso(now))) return false;
+  return !threadRaisedHandWhileSnoozed(thread);
+}
+
+/**
+ * Everything that keeps a thread out of the active inbox list: an explicit or
+ * auto settle, or a live snooze. Single choke point for "does this thread
+ * belong in the active list right now" so scene occupancy, the thread
+ * navigation groups, and the home/sidebar list partition can't drift from one
+ * another (mirrors the settle-only `isThreadSettled` but adds the snooze
+ * overlay every one of those call sites also needs).
+ */
+export function isThreadOutOfInbox(thread: InboxThread, now?: string): boolean {
+  return isThreadSettled(thread, now) || isThreadSnoozed(thread, now);
 }
 
 /** Sort timestamp for settled threads (mac `settledTimestamp`). */

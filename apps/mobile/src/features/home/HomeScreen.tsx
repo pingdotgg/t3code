@@ -81,6 +81,8 @@ interface HomeScreenProps {
   readonly onArchiveSettledThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
+  readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -309,6 +311,8 @@ export function HomeScreen(props: HomeScreenProps) {
               onArchiveThread={props.onArchiveThread}
               onSettleThread={props.onSettleThread}
               onUnsettleThread={props.onUnsettleThread}
+              onSnoozeThread={props.onSnoozeThread}
+              onUnsnoozeThread={props.onUnsnoozeThread}
               onDeleteThread={props.onDeleteThread}
               onSelectThread={props.onSelectThread}
               onSwipeableClose={handleSwipeableClose}
@@ -360,6 +364,8 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectThread,
       props.onSettleThread,
       props.onUnsettleThread,
+      props.onSnoozeThread,
+      props.onUnsnoozeThread,
       props.savedConnectionsById,
       updateGroupDisplay,
     ],

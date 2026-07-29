@@ -7,7 +7,7 @@ import * as Order from "effect/Order";
 
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { isDelegatedAgentThread } from "../../lib/delegatedAgents";
-import { isThreadSettled } from "../../lib/threadInbox";
+import { isThreadOutOfInbox } from "../../lib/threadInbox";
 
 export interface ThreadNavigationGroup {
   readonly key: string;
@@ -35,14 +35,15 @@ export function buildThreadNavigationGroups(input: {
 }): ReadonlyArray<ThreadNavigationGroup> {
   const query = input.searchQuery?.trim().toLocaleLowerCase() ?? "";
   // Delegated sub-agent threads render as inline task cards inside their
-  // parent thread, never as rows in the thread list. Settled threads leave
-  // the inbox (mac ThreadInboxSemantics) — they stay reachable behind the
-  // home/sidebar per-project "Settled" disclosure.
+  // parent thread, never as rows in the thread list. Settled and snoozed
+  // threads leave the inbox (mac ThreadInboxSemantics; isThreadOutOfInbox) —
+  // they stay reachable behind the home/sidebar per-project "Settled"
+  // disclosure.
   const activeThreads = input.threads.filter(
     (thread) =>
       thread.archivedAt === null &&
       !isDelegatedAgentThread(thread) &&
-      !isThreadSettled(thread, input.now),
+      !isThreadOutOfInbox(thread, input.now),
   );
 
   return groupProjectsByRepository({ ...input, threads: activeThreads }).flatMap((group) => {
