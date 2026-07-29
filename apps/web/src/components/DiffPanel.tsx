@@ -71,12 +71,6 @@ import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
-import {
-  refreshVcsRefsAfterQueryReset,
-  refreshVcsRefsOnMenuOpen,
-  resetVcsRefQueriesOnMenuClose,
-  resetVcsRefQueryOrRefresh,
-} from "./vcsRefMenuRefresh";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -207,10 +201,6 @@ export default function DiffPanel({
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");
-  const [baseRefQueryForRefs, setBaseRefQueryForRefs] = useState("");
-  const [isBaseRefMenuOpen, setIsBaseRefMenuOpen] = useState(false);
-  const [shouldRefreshBaseRefsAfterQueryReset, setShouldRefreshBaseRefsAfterQueryReset] =
-    useState(false);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
@@ -384,7 +374,7 @@ export default function DiffPanel({
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
             refKind: "local",
-            ...(baseRefQueryForRefs.trim().length > 0 ? { query: baseRefQueryForRefs.trim() } : {}),
+            ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
             limit: 100,
           },
         })
@@ -401,28 +391,12 @@ export default function DiffPanel({
             cwd: branchDiffPreview.data.cwd,
             includeMatchingRemoteRefs: true,
             refKind: "remote",
-            ...(baseRefQueryForRefs.trim().length > 0 ? { query: baseRefQueryForRefs.trim() } : {}),
+            ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
             limit: 100,
           },
         })
       : null,
   );
-  useEffect(() => {
-    refreshVcsRefsAfterQueryReset(
-      isBaseRefMenuOpen,
-      shouldRefreshBaseRefsAfterQueryReset,
-      baseRefQueryForRefs,
-      () => setShouldRefreshBaseRefsAfterQueryReset(false),
-      localBranchRefs.refresh,
-      remoteBranchRefs.refresh,
-    );
-  }, [
-    baseRefQueryForRefs,
-    isBaseRefMenuOpen,
-    localBranchRefs.refresh,
-    remoteBranchRefs.refresh,
-    shouldRefreshBaseRefsAfterQueryReset,
-  ]);
   const baseRefChoices = buildBaseRefChoices(
     localBranchRefs.data?.refs.filter((ref) => ref.name !== selectedGitSource?.headRef) ?? [],
     remoteBranchRefs.data?.refs ?? [],
@@ -640,24 +614,7 @@ export default function DiffPanel({
               filteredItems={filteredBaseRefItems}
               value={selectedBaseRef ?? AUTOMATIC_BASE_REF}
               onOpenChange={(open) => {
-                setIsBaseRefMenuOpen(open);
-                resetVcsRefQueriesOnMenuClose(
-                  open,
-                  () => setBaseRefQuery(""),
-                  () => setBaseRefQueryForRefs(""),
-                  () => setShouldRefreshBaseRefsAfterQueryReset(false),
-                );
-                refreshVcsRefsOnMenuOpen(open, () =>
-                  resetVcsRefQueryOrRefresh(
-                    baseRefQueryForRefs,
-                    () => {
-                      setBaseRefQueryForRefs("");
-                      setShouldRefreshBaseRefsAfterQueryReset(true);
-                    },
-                    localBranchRefs.refresh,
-                    remoteBranchRefs.refresh,
-                  ),
-                );
+                if (!open) setBaseRefQuery("");
               }}
               onValueChange={(value) => {
                 if (!value) return;
@@ -689,10 +646,7 @@ export default function DiffPanel({
                       size="sm"
                       unstyled
                       value={baseRefQuery}
-                      onChange={(event) => {
-                        setBaseRefQuery(event.target.value);
-                        setBaseRefQueryForRefs(event.target.value);
-                      }}
+                      onChange={(event) => setBaseRefQuery(event.target.value)}
                     />
                   </div>
                 </div>
