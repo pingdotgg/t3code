@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
@@ -277,6 +278,25 @@ function taskStatusForRun(
     case undefined:
       return "running";
   }
+}
+
+function delegatedTaskRun(
+  childProjection: OrchestrationV2ThreadProjection,
+  task: OrchestrationV2Subagent,
+): OrchestrationV2Run | undefined {
+  const spawnTransfer = childProjection.contextTransfers.find(
+    (transfer) =>
+      transfer.type === "subagent_spawn" &&
+      transfer.sourceThreadId === task.threadId &&
+      transfer.targetThreadId === task.childThreadId,
+  );
+  if (spawnTransfer === undefined) {
+    // Legacy delegated-task projections predate the durable spawn transfer.
+    return latestRun(childProjection);
+  }
+  return spawnTransfer.targetRunId === null
+    ? undefined
+    : childProjection.runs.find((run) => run.id === spawnTransfer.targetRunId);
 }
 
 function isTerminalTaskStatus(
@@ -773,7 +793,7 @@ const make = Effect.gen(function* () {
         );
       }
       const childProjection = yield* loadProjection(task.childThreadId);
-      const childRun = latestRun(childProjection);
+      const childRun = delegatedTaskRun(childProjection, task);
       const status = taskStatusForRun(childRun);
       const derivedResult =
         task.result !== null
@@ -1139,7 +1159,9 @@ const make = Effect.gen(function* () {
           } satisfies OrchestratorMcpTaskCancelResult;
         }
         const child = yield* loadProjection(current.childThreadId);
-        const activeRun = child.runs.find(isActiveRun);
+        const activeRun = child.runs.find(
+          (run) => run.id === current.childRunId && isActiveRun(run),
+        );
         if (activeRun === undefined) {
           return yield* failure(
             "task_not_cancellable",

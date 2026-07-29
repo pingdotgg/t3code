@@ -408,7 +408,7 @@ describe("orchestrator MCP toolkit", () => {
               driver: ProviderDriverKind.make("claudeAgent"),
               capabilities: ClaudeProviderCapabilitiesV2,
               capturedTurns,
-              shouldComplete: () => true,
+              shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
               response: (turn) =>
                 turn.message.text === delegatedPrompt
                   ? delegatedResult
@@ -845,9 +845,59 @@ describe("orchestrator MCP toolkit", () => {
               delegatedStatusAfterFollowupCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(delegatedStatusAfterFollowup).toMatchObject({
-              childRunId: childFollowup.runId,
+              childRunId: delegated.childRunId,
+              status: "completed",
+              summary: delegatedResult,
+            });
+
+            const activeChildFollowupCall = yield* invoke("t3_thread_send", {
+              threadId: delegated.childThreadId,
+              message: cancellationPrompt,
+              clientRequestId: "delegated-child-active-followup-1",
+            });
+            const activeChildFollowup = yield* decodeThreadSendResult(
+              activeChildFollowupCall.structuredContent,
+            ).pipe(Effect.orDie);
+            yield* waitForProjection(orchestrator, delegated.childThreadId, (projection) =>
+              projection.runs.some(
+                (run) => run.id === activeChildFollowup.runId && run.status === "running",
+              ),
+            );
+            const completedTaskCancelCall = yield* invoke("task_cancel", {
+              taskId: delegated.taskId,
+              reason: "Must not interrupt a later unrelated child run.",
+              clientRequestId: "cancel-completed-delegated-task-1",
+            });
+            const completedTaskCancel = yield* decodeTaskCancelResult(
+              completedTaskCancelCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(completedTaskCancel).toEqual({
+              taskId: delegated.taskId,
               status: "completed",
             });
+            expect(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).runs.find(
+                (run) => run.id === activeChildFollowup.runId,
+              )?.status,
+            ).toBe("running");
+            const activeChildCleanupCall = yield* invoke("t3_thread_interrupt", {
+              threadId: delegated.childThreadId,
+              runId: activeChildFollowup.runId,
+              reason: "Clean up the active follow-up after verifying task cancellation isolation.",
+              clientRequestId: "interrupt-delegated-child-followup-1",
+            });
+            const activeChildCleanup = yield* decodeThreadInterruptResult(
+              activeChildCleanupCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(activeChildCleanup).toMatchObject({
+              runId: activeChildFollowup.runId,
+              status: "interrupt_requested",
+            });
+            yield* waitForProjection(orchestrator, delegated.childThreadId, (projection) =>
+              projection.runs.some(
+                (run) => run.id === activeChildFollowup.runId && run.status === "interrupted",
+              ),
+            );
 
             // A wait-mode child (completionWake settled_only) that completes
             // while the parent run is live does not offer a wake: the
