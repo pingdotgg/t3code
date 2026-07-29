@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -248,6 +249,74 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     assert.equal(retry.workerId, workerId);
     assert.equal(retry.delayMs, 0);
     assert.include(retry.error, "simulated cancellation-state read failure");
+  }),
+);
+
+it.effect("arms cancellation before the durable pre-execution check", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const effectId = "effect:worker-cancellation-registration-race";
+    const workerId = "worker-cancellation-registration-race";
+    const claimedEffect: OrchestrationEffectV2 = {
+      id: effectId,
+      commandId: CommandId.make("command:worker-cancellation-registration-race"),
+      threadId: ThreadId.make("thread:worker-cancellation-registration-race"),
+      request: { type: "terminal.cleanup" },
+      status: "running",
+      attemptCount: 1,
+      availableAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const signal = yield* Deferred.make<void>();
+    let cancellationArmed = false;
+    const executionCount = yield* Ref.make(0);
+    const settlementCount = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => {
+        cancellationArmed = true;
+        return Deferred.await(signal);
+      },
+      get: () =>
+        Effect.gen(function* () {
+          // Model a cancellation commit immediately after this durable read
+          // took its snapshot. Its process-local signal is only delivered when
+          // the worker registered the waiter before starting the read.
+          if (cancellationArmed) {
+            yield* Deferred.succeed(signal, undefined);
+          }
+          return Option.some(claimedEffect);
+        }),
+      clearCancellation: () => Effect.void,
+      succeed: () => Ref.update(settlementCount, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        execute: () =>
+          Effect.yieldNow.pipe(Effect.andThen(Ref.update(executionCount, (count) => count + 1))),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    const exit = yield* OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(workerLayer),
+      Effect.exit,
+    );
+
+    if (Exit.isFailure(exit)) {
+      assert.fail(Cause.pretty(exit.cause));
+    }
+    assert.equal(yield* Ref.get(executionCount), 0);
+    assert.equal(yield* Ref.get(settlementCount), 0);
   }),
 );
 
