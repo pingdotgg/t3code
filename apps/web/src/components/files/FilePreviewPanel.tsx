@@ -685,14 +685,20 @@ export default function FilePreviewPanel({
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useState(initialRenderMarkdown);
-  const [revealHandledRequestId, setRevealHandledRequestId] = useState<number | null>(null);
+  // Paired with the path on purpose: each file surface counts its reveals from
+  // one, so a bare id would let a dismissed reveal on one file swallow the first
+  // reveal on the next.
+  const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
+    null,
+  );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   // A reveal still wins over the preference: the line only exists in the source.
   const renderMarkdown =
     isMarkdown &&
     renderMarkdownPreferred &&
-    (revealLine === null || revealHandledRequestId === revealRequestId);
+    (revealLine === null ||
+      (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
   const canOpenInBrowser =
     relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
@@ -800,7 +806,11 @@ export default function FilePreviewPanel({
                     pressed={renderMarkdown}
                     onPressedChange={(pressed) => {
                       setRenderMarkdownPreferred(pressed);
-                      setRevealHandledRequestId(pressed ? revealRequestId : null);
+                      setHandledReveal(
+                        pressed && relativePath !== null
+                          ? { path: relativePath, requestId: revealRequestId }
+                          : null,
+                      );
                       try {
                         setLocalStorageItem(RENDER_MARKDOWN_STORAGE_KEY, pressed, Schema.Boolean);
                       } catch (error) {
