@@ -8,10 +8,23 @@ enum AutoReviewThreadPresentation {
         return thread.title.hasPrefix(fixerTitlePrefix)
     }
 
+    /// A fixer remains the active auto-review destination while it is paused
+    /// for a human decision. The generic `isLiveTurn` predicate is intended
+    /// for rendering and deliberately excludes those waiting states.
+    static func isActiveFixerStatus(_ status: ThreadStatus) -> Bool {
+        switch status {
+        case .running, .waiting, .waitingApproval, .waitingInput, .backgroundWork:
+            true
+        case .idle, .error, .archived, .settled, .done, .reviewing, .fixing, .readyToMerge:
+            false
+        }
+    }
+
     /// Pick the destination for an in-progress review when retries left more
     /// than one dedicated fixer child behind. Prefer a child that is doing
-    /// work now, then the most recently updated child. The ID tie-breaker
-    /// keeps the result stable when timestamps are equal.
+    /// work now or is waiting on a person, then the most recently updated
+    /// child. The ID tie-breaker keeps the result stable when timestamps are
+    /// equal.
     static func activeFixer(
         for parentID: String,
         in threads: [ChatThread]
@@ -23,8 +36,10 @@ enum AutoReviewThreadPresentation {
                     && isDedicatedFixer($0)
             }
             .sorted {
-                if $0.status.isLiveTurn != $1.status.isLiveTurn {
-                    return $0.status.isLiveTurn
+                let firstIsActive = isActiveFixerStatus($0.status)
+                let secondIsActive = isActiveFixerStatus($1.status)
+                if firstIsActive != secondIsActive {
+                    return firstIsActive
                 }
                 if $0.updatedAt != $1.updatedAt {
                     return $0.updatedAt > $1.updatedAt

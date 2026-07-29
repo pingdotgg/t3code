@@ -212,6 +212,28 @@ struct SidebarPresentationTests {
                 for: parentID, in: [newerIdle, oldLive, newestLive])?.id == newestLive.id)
     }
 
+    @Test("active fixer selection keeps a fixer waiting on a person")
+    func activeFixerSelectionIncludesWaitingStates() {
+        let parentID = "parent"
+        let newerIdle = makeThread(
+            id: "new-idle", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .idle, at: 20, parentThreadId: parentID)
+        let waitingApproval = makeThread(
+            id: "waiting-approval", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .waitingApproval, at: 10, parentThreadId: parentID)
+        let waitingInput = makeThread(
+            id: "waiting-input", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .waitingInput, at: 11, parentThreadId: parentID)
+        let waiting = makeThread(
+            id: "waiting", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .waiting, at: 12, parentThreadId: parentID)
+
+        #expect(
+            AutoReviewThreadPresentation.activeFixer(
+                for: parentID, in: [newerIdle, waitingApproval, waitingInput, waiting])?.id
+                == waiting.id)
+    }
+
     @Test("isDelegatedAgentThread matches parent links and Agent: titles")
     func delegatedAgentThreadDetection() {
         #expect(
