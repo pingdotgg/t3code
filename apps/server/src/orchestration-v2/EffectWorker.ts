@@ -442,6 +442,13 @@ export const layerWithOptions = (
           return false;
         }
         const effect = claimed.value;
+        // Arm the process-local cancellation signal before re-reading durable
+        // state. A cancellation that commits after the row read has begun can
+        // then still win the execution race instead of falling into the gap
+        // between the read and signal registration.
+        const cancellation = outbox
+          .awaitCancellation(effect.id)
+          .pipe(Effect.as("cancelled" as const));
         const cancelledBeforeExecution = yield* Effect.gen(function* () {
           const claimedAt = DateTime.toEpochMillis(yield* DateTime.now);
           const eligibleAt = Math.max(
@@ -468,9 +475,6 @@ export const layerWithOptions = (
         if (cancelledBeforeExecution) return true;
 
         const execution = executor.execute(effect).pipe(Effect.as("executed" as const));
-        const cancellation = outbox
-          .awaitCancellation(effect.id)
-          .pipe(Effect.as("cancelled" as const));
         const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
           Effect.ensuring(outbox.clearCancellation(effect.id)),
         );
