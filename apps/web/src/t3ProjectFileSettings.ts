@@ -20,6 +20,12 @@ export interface T3ProjectFileDraft {
   readonly scripts: ReadonlyArray<T3ProjectFileScriptDraft>;
 }
 
+export interface T3ProjectFileDraftState {
+  readonly draft: T3ProjectFileDraft;
+  readonly source: T3ProjectFileDraft;
+  readonly validationError: string | null;
+}
+
 export type BuildT3ProjectFileResult =
   | { readonly ok: true; readonly file: T3ProjectFile; readonly contents: string }
   | { readonly ok: false; readonly error: string };
@@ -35,7 +41,7 @@ export function createT3ProjectFileDraft(file: T3ProjectFile | null): T3ProjectF
       icon: script.icon ?? "play",
       runOnWorktreeCreate: script.runOnWorktreeCreate ?? false,
       previewUrl: script.previewUrl ?? "",
-      autoOpenPreview: script.previewUrl ? (script.autoOpenPreview ?? false) : false,
+      autoOpenPreview: script.autoOpenPreview ?? false,
     })),
   };
 }
@@ -78,12 +84,8 @@ export function buildT3ProjectFile(draft: T3ProjectFileDraft): BuildT3ProjectFil
       command,
       icon: script.icon,
       runOnWorktreeCreate: script.runOnWorktreeCreate,
-      ...(previewUrl
-        ? {
-            previewUrl,
-            autoOpenPreview: script.autoOpenPreview,
-          }
-        : {}),
+      ...(previewUrl ? { previewUrl } : {}),
+      autoOpenPreview: script.autoOpenPreview,
     });
   }
 
@@ -99,6 +101,62 @@ export function buildT3ProjectFile(draft: T3ProjectFileDraft): BuildT3ProjectFil
   };
 }
 
+export function updateT3ProjectFileScriptPreviewUrl(
+  script: T3ProjectFileScriptDraft,
+  previewUrl: string,
+): T3ProjectFileScriptDraft {
+  return {
+    ...script,
+    previewUrl,
+    autoOpenPreview: previewUrl.trim().length > 0 ? script.autoOpenPreview : false,
+  };
+}
+
 export function t3ProjectFileDraftKey(draft: T3ProjectFileDraft): string {
-  return JSON.stringify(draft);
+  return JSON.stringify({
+    schemaUrl: draft.schemaUrl,
+    iconPath: draft.iconPath,
+    scripts: draft.scripts.map((script) => ({
+      name: script.name,
+      command: script.command,
+      icon: script.icon,
+      runOnWorktreeCreate: script.runOnWorktreeCreate,
+      previewUrl: script.previewUrl,
+      autoOpenPreview: script.autoOpenPreview,
+    })),
+  });
+}
+
+export function createT3ProjectFileDraftState(source: T3ProjectFileDraft): T3ProjectFileDraftState {
+  return {
+    draft: source,
+    source,
+    validationError: null,
+  };
+}
+
+export function reconcileT3ProjectFileDraftState(
+  current: T3ProjectFileDraftState,
+  refreshedSource: T3ProjectFileDraft,
+): T3ProjectFileDraftState {
+  const draftKey = t3ProjectFileDraftKey(current.draft);
+  const wasClean = draftKey === t3ProjectFileDraftKey(current.source);
+  const refreshMatchesDraft = draftKey === t3ProjectFileDraftKey(refreshedSource);
+
+  if (wasClean) {
+    return createT3ProjectFileDraftState(refreshedSource);
+  }
+
+  if (refreshMatchesDraft) {
+    return {
+      draft: current.draft,
+      source: refreshedSource,
+      validationError: null,
+    };
+  }
+
+  return {
+    ...current,
+    source: refreshedSource,
+  };
 }

@@ -6,6 +6,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -222,6 +223,245 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
+
+  it.effect("starts every cached sibling refresh before waiting for one to finish", () => {
+    const projectOne = ProjectId.make("project-one");
+    const projectTwo = ProjectId.make("project-two");
+    let refreshing = false;
+    let bareSiblingStarted: Deferred.Deferred<void>;
+    let projectSiblingStarted: Deferred.Deferred<void>;
+    let releaseSiblings: Deferred.Deferred<void>;
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.succeed(baseLocalStatus),
+          remoteStatus: (input) =>
+            Effect.gen(function* () {
+              if (!refreshing || input.projectId === projectOne) {
+                return baseRemoteStatus;
+              }
+              yield* Deferred.succeed(
+                input.projectId === undefined ? bareSiblingStarted : projectSiblingStarted,
+                undefined,
+              );
+              yield* Deferred.await(releaseSiblings);
+              return baseRemoteStatus;
+            }),
+          invalidateStatus: () => Effect.void,
+        } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      bareSiblingStarted = yield* Deferred.make<void>();
+      projectSiblingStarted = yield* Deferred.make<void>();
+      releaseSiblings = yield* Deferred.make<void>();
+
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectOne });
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectTwo });
+
+      refreshing = true;
+      const refreshFiber = yield* broadcaster
+        .refreshStatus({ cwd: "/repo", projectId: projectOne })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(bareSiblingStarted);
+      yield* Deferred.await(projectSiblingStarted);
+      yield* Deferred.succeed(releaseSiblings, undefined);
+      yield* Fiber.join(refreshFiber);
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect(
+    "keeps the primary full refresh authoritative and continues after a typed sibling failure",
+    () => {
+      const projectOne = ProjectId.make("project-one");
+      const projectTwo = ProjectId.make("project-two");
+      const refreshedLocal = { ...baseLocalStatus, refName: "feature/isolated-sibling" };
+      const refreshedRemote = { ...baseRemoteStatus, aheadCount: 7 };
+      const refreshLocalInputs: VcsStatusInput[] = [];
+      const refreshRemoteInputs: VcsStatusInput[] = [];
+      const messages: Array<ReadonlyArray<unknown>> = [];
+      const logger = Logger.make<unknown, void>(({ message }) => {
+        messages.push(message as ReadonlyArray<unknown>);
+      });
+      let refreshing = false;
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: (input) =>
+              Effect.sync(() => {
+                if (refreshing) refreshLocalInputs.push(input);
+                return refreshing ? refreshedLocal : baseLocalStatus;
+              }),
+            remoteStatus: (input) =>
+              Effect.suspend(() => {
+                if (refreshing) refreshRemoteInputs.push(input);
+                if (refreshing && input.projectId === undefined) {
+                  return Effect.fail(
+                    new GitManagerError({
+                      operation: "VcsStatusBroadcaster.test.sibling",
+                      cwd: input.cwd,
+                      detail: "private sibling detail",
+                    }),
+                  );
+                }
+                return Effect.succeed(refreshing ? refreshedRemote : baseRemoteStatus);
+              }),
+            invalidateStatus: () => Effect.void,
+          } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/private/repo" });
+        yield* broadcaster.getStatus({ cwd: "/private/repo", projectId: projectOne });
+        yield* broadcaster.getStatus({ cwd: "/private/repo", projectId: projectTwo });
+
+        refreshing = true;
+        const primary = yield* broadcaster.refreshStatus({
+          cwd: "/private/repo",
+          projectId: projectOne,
+        });
+        const laterSibling = yield* broadcaster.getStatus({
+          cwd: "/private/repo",
+          projectId: projectTwo,
+        });
+
+        assert.deepStrictEqual(primary, { ...refreshedLocal, ...refreshedRemote });
+        assert.deepStrictEqual(laterSibling, primary);
+        assert.deepStrictEqual(refreshLocalInputs, [
+          { cwd: "/private/repo", projectId: projectOne },
+          { cwd: "/private/repo" },
+          { cwd: "/private/repo", projectId: projectTwo },
+        ]);
+        assert.deepStrictEqual(refreshRemoteInputs, refreshLocalInputs);
+        assert.deepStrictEqual(
+          messages.find((message) => message[0] === "VCS sibling status refresh failed"),
+          [
+            "VCS sibling status refresh failed",
+            {
+              refreshKind: "full",
+              cwdLength: "/private/repo".length,
+              primaryProjectId: projectOne,
+              failureTag: "GitManagerError",
+              failureOperation: "VcsStatusBroadcaster.test.sibling",
+            },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            testLayer,
+            Logger.layer([logger], {
+              mergeWithExisting: false,
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("still fails when the primary refresh has a typed service error", () => {
+    const projectOne = ProjectId.make("project-one");
+    const projectTwo = ProjectId.make("project-two");
+    const refreshInputs: VcsStatusInput[] = [];
+    let refreshing = false;
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: (input) =>
+            Effect.sync(() => {
+              if (refreshing) refreshInputs.push(input);
+              return baseLocalStatus;
+            }),
+          remoteStatus: (input) =>
+            Effect.suspend(() => {
+              if (refreshing) refreshInputs.push(input);
+              return refreshing && input.projectId === projectOne
+                ? Effect.fail(
+                    new GitManagerError({
+                      operation: "VcsStatusBroadcaster.test.primary",
+                      cwd: input.cwd,
+                      detail: "primary failed",
+                    }),
+                  )
+                : Effect.succeed(baseRemoteStatus);
+            }),
+          invalidateStatus: () => Effect.void,
+        } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectOne });
+      yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectTwo });
+
+      refreshing = true;
+      const exit = yield* broadcaster
+        .refreshStatus({ cwd: "/repo", projectId: projectOne })
+        .pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(exit));
+      assert.equal(
+        refreshInputs.some((input) => input.projectId === projectTwo),
+        false,
+      );
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("does not turn sibling defects or interruption into best-effort success", () =>
+    Effect.forEach(["defect", "interrupt"] as const, (failureMode) => {
+      const projectOne = ProjectId.make(`project-one-${failureMode}`);
+      const projectTwo = ProjectId.make(`project-two-${failureMode}`);
+      let refreshing = false;
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () => Effect.succeed(baseLocalStatus),
+            remoteStatus: (input) => {
+              if (!refreshing || input.projectId === projectOne) {
+                return Effect.succeed(baseRemoteStatus);
+              }
+              return failureMode === "defect"
+                ? Effect.die(new Error("sibling defect"))
+                : Effect.interrupt;
+            },
+            invalidateStatus: () => Effect.void,
+          } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectOne });
+        yield* broadcaster.getStatus({ cwd: "/repo", projectId: projectTwo });
+
+        refreshing = true;
+        const exit = yield* broadcaster
+          .refreshStatus({ cwd: "/repo", projectId: projectOne })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit)) {
+          assert.equal(
+            failureMode === "defect"
+              ? Cause.hasDies(exit.cause)
+              : Cause.hasInterruptsOnly(exit.cause),
+            true,
+          );
+        }
+      }).pipe(Effect.provide(testLayer));
+    }),
+  );
 
   it.effect("propagates periodic remote refreshes to sibling project cache entries", () => {
     const state = {

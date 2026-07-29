@@ -59,6 +59,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  clearComposerDraftsForProjectGroup,
+  clearComposerDraftsForProjectGroupMember,
   clearComposerDraftsEnvironment,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
@@ -791,6 +793,162 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
     expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
     expect(draftByKey(draftId)).toBeUndefined();
+  });
+
+  it("clears grouped project drafts while preserving unrelated and shared drafts", () => {
+    const store = useComposerDraftStore.getState();
+    const logicalProjectKey = "repository:/deleted";
+    const unrelatedLogicalProjectKey = "repository:/unrelated";
+    const sharedLogicalProjectKey = "repository:/shared";
+    const deletedDraftId = DraftId.make("draft-deleted-group");
+    const unrelatedDraftId = DraftId.make("draft-unrelated-group");
+    const sharedGroupDraftId = DraftId.make("draft-shared-group");
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      store.setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, deletedDraftId, {
+        threadId,
+      });
+      store.setPrompt(deletedDraftId, "delete me");
+      store.addImage(
+        deletedDraftId,
+        makeImage({ id: "img-deleted-group", previewUrl: "blob:deleted-group" }),
+      );
+
+      store.setLogicalProjectDraftThreadId(
+        unrelatedLogicalProjectKey,
+        remoteProjectRef,
+        unrelatedDraftId,
+        { threadId: otherThreadId },
+      );
+      store.setPrompt(unrelatedDraftId, "keep unrelated");
+      store.addImage(
+        unrelatedDraftId,
+        makeImage({ id: "img-unrelated-group", previewUrl: "blob:unrelated-group" }),
+      );
+
+      store.setLogicalProjectDraftThreadId(
+        scopedProjectKey(otherProjectRef),
+        otherProjectRef,
+        sharedGroupDraftId,
+        { threadId: otherThreadId },
+      );
+      store.setLogicalProjectDraftThreadId(
+        sharedLogicalProjectKey,
+        remoteProjectRef,
+        sharedGroupDraftId,
+        { threadId: otherThreadId },
+      );
+      store.setPrompt(sharedGroupDraftId, "keep shared");
+      store.addImage(
+        sharedGroupDraftId,
+        makeImage({ id: "img-shared-group", previewUrl: "blob:shared-group" }),
+      );
+
+      clearComposerDraftsForProjectGroup({
+        logicalProjectKey,
+        projectRefs: [projectRef, otherProjectRef],
+      });
+
+      const next = useComposerDraftStore.getState();
+      expect(
+        next.logicalProjectDraftThreadKeyByLogicalProjectKey[logicalProjectKey],
+      ).toBeUndefined();
+      expect(
+        next.logicalProjectDraftThreadKeyByLogicalProjectKey[scopedProjectKey(otherProjectRef)],
+      ).toBeUndefined();
+      expect(next.getDraftThread(deletedDraftId)).toBeNull();
+      expect(next.getComposerDraft(deletedDraftId)).toBeNull();
+      expect(revokeSpy).toHaveBeenCalledWith("blob:deleted-group");
+
+      expect(next.getComposerDraft(unrelatedDraftId)?.prompt).toBe("keep unrelated");
+      expect(next.getComposerDraft(unrelatedDraftId)?.images).toHaveLength(1);
+      expect(next.logicalProjectDraftThreadKeyByLogicalProjectKey[unrelatedLogicalProjectKey]).toBe(
+        unrelatedDraftId,
+      );
+
+      expect(next.getComposerDraft(sharedGroupDraftId)?.prompt).toBe("keep shared");
+      expect(next.getComposerDraft(sharedGroupDraftId)?.images).toHaveLength(1);
+      expect(next.logicalProjectDraftThreadKeyByLogicalProjectKey[sharedLogicalProjectKey]).toBe(
+        sharedGroupDraftId,
+      );
+      expect(revokeSpy).not.toHaveBeenCalledWith("blob:unrelated-group");
+      expect(revokeSpy).not.toHaveBeenCalledWith("blob:shared-group");
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
+  });
+
+  it("cleans grouped project members stepwise while preserving the reusable group draft", () => {
+    const store = useComposerDraftStore.getState();
+    const logicalProjectKey = "repository:/grouped";
+    const memberDraftId = DraftId.make("draft-deleted-member");
+    const groupDraftId = DraftId.make("draft-reusable-group");
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      store.setLogicalProjectDraftThreadId(logicalProjectKey, remoteProjectRef, groupDraftId, {
+        threadId,
+      });
+      store.setLogicalProjectDraftThreadId(
+        scopedProjectKey(projectRef),
+        projectRef,
+        memberDraftId,
+        { threadId: otherThreadId },
+      );
+      store.setLogicalProjectDraftThreadId(
+        scopedProjectKey(remoteProjectRef),
+        remoteProjectRef,
+        groupDraftId,
+        { threadId },
+      );
+      store.addImage(
+        memberDraftId,
+        makeImage({ id: "img-deleted-member", previewUrl: "blob:deleted-member" }),
+      );
+      store.addImage(
+        groupDraftId,
+        makeImage({ id: "img-reusable-group", previewUrl: "blob:reusable-group" }),
+      );
+
+      clearComposerDraftsForProjectGroupMember(projectRef);
+
+      let next = useComposerDraftStore.getState();
+      expect(
+        next.logicalProjectDraftThreadKeyByLogicalProjectKey[scopedProjectKey(projectRef)],
+      ).toBeUndefined();
+      expect(next.getComposerDraft(memberDraftId)).toBeNull();
+      expect(revokeSpy).toHaveBeenCalledWith("blob:deleted-member");
+      expect(next.logicalProjectDraftThreadKeyByLogicalProjectKey[logicalProjectKey]).toBe(
+        groupDraftId,
+      );
+      expect(
+        next.logicalProjectDraftThreadKeyByLogicalProjectKey[scopedProjectKey(remoteProjectRef)],
+      ).toBe(groupDraftId);
+      expect(next.getComposerDraft(groupDraftId)?.images).toHaveLength(1);
+      expect(revokeSpy).not.toHaveBeenCalledWith("blob:reusable-group");
+
+      clearComposerDraftsForProjectGroup({
+        logicalProjectKey,
+        projectRefs: [projectRef, remoteProjectRef],
+      });
+
+      next = useComposerDraftStore.getState();
+      expect(
+        next.logicalProjectDraftThreadKeyByLogicalProjectKey[logicalProjectKey],
+      ).toBeUndefined();
+      expect(
+        next.logicalProjectDraftThreadKeyByLogicalProjectKey[scopedProjectKey(remoteProjectRef)],
+      ).toBeUndefined();
+      expect(next.getComposerDraft(groupDraftId)).toBeNull();
+      expect(revokeSpy).toHaveBeenCalledWith("blob:reusable-group");
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
   });
 
   it("revokes draft image blob URLs when clearing a project's draft thread", () => {

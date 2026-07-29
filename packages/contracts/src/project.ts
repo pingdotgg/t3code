@@ -336,10 +336,36 @@ export const ProjectDetails = Schema.Struct({
 });
 export type ProjectDetails = typeof ProjectDetails.Type;
 
+export const ProjectDetailsOperation = Schema.Literals(["get-details", "update-settings"]);
+export type ProjectDetailsOperation = typeof ProjectDetailsOperation.Type;
+
+export const ProjectDetailsFailure = Schema.Literals([
+  "project_not_found",
+  "provider_policy_violation",
+  "operation_failed",
+]);
+export type ProjectDetailsFailure = typeof ProjectDetailsFailure.Type;
+
 export class ProjectDetailsError extends Schema.TaggedErrorClass<ProjectDetailsError>()(
   "ProjectDetailsError",
   {
+    projectId: Schema.optional(ProjectId),
+    operation: Schema.optional(ProjectDetailsOperation),
+    failure: Schema.optional(ProjectDetailsFailure),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  // Structured diagnostics remain optional on the wire so new peers can decode legacy
+  // message-only failures. New application code must provide them through this constructor.
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly projectId: ProjectId;
+    readonly operation: ProjectDetailsOperation;
+    readonly failure: ProjectDetailsFailure;
+    readonly message: string;
+    readonly cause?: unknown;
+  }) {
+    super(props as any);
+  }
+}

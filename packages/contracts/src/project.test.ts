@@ -1,9 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ProjectId } from "./baseSchemas.ts";
 import {
   ProjectActionEnvironment,
   ProjectDetails,
+  ProjectDetailsError,
   ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
@@ -33,6 +35,24 @@ const baseProjectDetails = {
 };
 
 describe("project RPC errors", () => {
+  it("retains the ProjectDetailsError message with structured failure context", () => {
+    const cause = new Error("sensitive settings failure");
+    const error = new ProjectDetailsError({
+      projectId: ProjectId.make("project-1"),
+      operation: "update-settings",
+      failure: "operation_failed",
+      message: "Failed to update project settings.",
+      cause,
+    });
+
+    expect(error._tag).toBe("ProjectDetailsError");
+    expect(error.message).toBe("Failed to update project settings.");
+    expect(error.projectId).toBe("project-1");
+    expect(error.operation).toBe("update-settings");
+    expect(error.failure).toBe("operation_failed");
+    expect(error.cause).toBe(cause);
+  });
+
   it("derives stable messages from structured request context while retaining causes", () => {
     const cause = new Error("sensitive platform detail");
     const searchError = new ProjectSearchEntriesError({
@@ -69,6 +89,7 @@ describe("project RPC errors", () => {
   it("decodes legacy message-only errors during rolling upgrades", () => {
     const decodeSearchError = Schema.decodeUnknownSync(ProjectSearchEntriesError);
     const decodeWriteError = Schema.decodeUnknownSync(ProjectWriteFileError);
+    const decodeDetailsError = Schema.decodeUnknownSync(ProjectDetailsError);
 
     const searchError = decodeSearchError({
       _tag: "ProjectSearchEntriesError",
@@ -79,6 +100,10 @@ describe("project RPC errors", () => {
       _tag: "ProjectWriteFileError",
       message: "Legacy project write failure.",
     });
+    const detailsError = decodeDetailsError({
+      _tag: "ProjectDetailsError",
+      message: "Legacy project details failure.",
+    });
 
     expect(searchError.message).toBe("Legacy project search failure.");
     expect(searchError.cwd).toBeUndefined();
@@ -88,6 +113,10 @@ describe("project RPC errors", () => {
     expect(writeError.message).toBe("Legacy project write failure.");
     expect(writeError.relativePath).toBeUndefined();
     expect(writeError.failure).toBeUndefined();
+    expect(detailsError.message).toBe("Legacy project details failure.");
+    expect(detailsError.projectId).toBeUndefined();
+    expect(detailsError.operation).toBeUndefined();
+    expect(detailsError.failure).toBeUndefined();
   });
 });
 

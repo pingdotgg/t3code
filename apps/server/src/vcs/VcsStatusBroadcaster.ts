@@ -57,6 +57,8 @@ interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
 }
 
+type VcsSiblingRefreshKind = "full" | "local" | "remote";
+
 export class VcsStatusBroadcaster extends Context.Service<
   VcsStatusBroadcaster,
   {
@@ -243,6 +245,39 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const refreshCachedSiblings = Effect.fn("VcsStatusBroadcaster.refreshCachedSiblings")(function* <
+    A,
+  >(
+    primaryInput: VcsStatusInput,
+    refreshKind: VcsSiblingRefreshKind,
+    refreshSibling: (siblingInput: VcsStatusInput) => Effect.Effect<A, GitManagerServiceError>,
+  ) {
+    const siblingInputs = yield* cachedSiblingInputsForCwd(primaryInput);
+    yield* Effect.forEach(
+      siblingInputs,
+      (siblingInput) =>
+        refreshSibling(siblingInput).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("VCS sibling status refresh failed", {
+              refreshKind,
+              cwdLength: primaryInput.cwd.length,
+              ...(primaryInput.projectId === undefined
+                ? {}
+                : { primaryProjectId: primaryInput.projectId }),
+              ...(siblingInput.projectId === undefined
+                ? {}
+                : { siblingProjectId: siblingInput.projectId }),
+              failureTag: diagnosticValueTag(error),
+              ...(diagnosticFailureOperation(error) === undefined
+                ? {}
+                : { failureOperation: diagnosticFailureOperation(error) }),
+            }),
+          ),
+        ),
+      { concurrency: "unbounded", discard: true },
+    );
+  });
+
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (key: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
       const nextLocal = {
@@ -405,18 +440,14 @@ export const make = Effect.gen(function* () {
     const result = yield* refreshLocalStatusForInput({ cwd });
     // Also refresh project-scoped cache entries for this repository, or
     // subscribers keyed by projectId keep serving the stale local snapshot.
-    const siblingInputs = yield* cachedSiblingInputsForCwd({ cwd });
-    yield* Effect.forEach(
-      siblingInputs,
-      (siblingInput) =>
-        workflow
-          .localStatus(siblingInput)
-          .pipe(
-            Effect.flatMap((local) =>
-              updateCachedLocalStatus(statusCacheKey(siblingInput), local, { publish: true }),
-            ),
+    yield* refreshCachedSiblings({ cwd }, "local", (siblingInput) =>
+      workflow
+        .localStatus(siblingInput)
+        .pipe(
+          Effect.flatMap((local) =>
+            updateCachedLocalStatus(statusCacheKey(siblingInput), local, { publish: true }),
           ),
-      { concurrency: "unbounded", discard: true },
+        ),
     );
     return result;
   });
@@ -432,18 +463,14 @@ export const make = Effect.gen(function* () {
     const result = yield* updateCachedRemoteStatus(statusCacheKey(input), remote, {
       publish: true,
     });
-    const siblingInputs = yield* cachedSiblingInputsForCwd(input);
-    yield* Effect.forEach(
-      siblingInputs,
-      (siblingInput) =>
-        workflow.remoteStatus(siblingInput, { refreshUpstream: false }).pipe(
-          Effect.flatMap((siblingRemote) =>
-            updateCachedRemoteStatus(statusCacheKey(siblingInput), siblingRemote, {
-              publish: true,
-            }),
-          ),
+    yield* refreshCachedSiblings(input, "remote", (siblingInput) =>
+      workflow.remoteStatus(siblingInput, { refreshUpstream: false }).pipe(
+        Effect.flatMap((siblingRemote) =>
+          updateCachedRemoteStatus(statusCacheKey(siblingInput), siblingRemote, {
+            publish: true,
+          }),
         ),
-      { concurrency: "unbounded", discard: true },
+      ),
     );
     return result;
   });
@@ -471,11 +498,7 @@ export const make = Effect.gen(function* () {
     // A refresh must also update the sibling cache entries (bare-cwd and other
     // project-scoped keys) for the same repository, or subscribers under those
     // keys keep serving stale status.
-    const siblingInputs = yield* cachedSiblingInputsForCwd(normalizedInput);
-    yield* Effect.forEach(siblingInputs, refreshStatusForInput, {
-      concurrency: "unbounded",
-      discard: true,
-    });
+    yield* refreshCachedSiblings(normalizedInput, "full", refreshStatusForInput);
     return result;
   });
 

@@ -22,7 +22,6 @@ describe("resolveT3ProjectFileState", () => {
         }),
       ),
       error: null,
-      isPending: false,
     });
 
     expect(state.status).toBe("ready");
@@ -36,7 +35,6 @@ describe("resolveT3ProjectFileState", () => {
         enabled: true,
         data: projectFile("{not json"),
         error: null,
-        isPending: false,
       }).status,
     ).toBe("invalid");
     expect(
@@ -44,7 +42,6 @@ describe("resolveT3ProjectFileState", () => {
         enabled: true,
         data: projectFile("{}", true),
         error: null,
-        isPending: false,
       }).status,
     ).toBe("invalid");
   });
@@ -55,7 +52,6 @@ describe("resolveT3ProjectFileState", () => {
         enabled: true,
         data: null,
         error: "File not found",
-        isPending: false,
       }).status,
     ).toBe("unavailable");
     expect(
@@ -63,7 +59,6 @@ describe("resolveT3ProjectFileState", () => {
         enabled: true,
         data: null,
         error: null,
-        isPending: true,
       }).status,
     ).toBe("loading");
     expect(
@@ -71,7 +66,6 @@ describe("resolveT3ProjectFileState", () => {
         enabled: false,
         data: null,
         error: null,
-        isPending: false,
       }).status,
     ).toBe("disabled");
   });

@@ -259,19 +259,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     container: sidebar-v2-thread-card / inline-size;
   }
 
-  .sidebar-v2-thread-actions-slot {
-    min-width: 2.5rem;
-  }
-
   .sidebar-v2-settle-label {
     display: none;
   }
 
   @container sidebar-v2-thread-card (min-width: 13.5rem) {
-    .sidebar-v2-thread-actions-slot {
-      min-width: 4.75rem;
-    }
-
     .sidebar-v2-settle-label {
       display: inline;
     }

@@ -21,7 +21,10 @@ import {
   buildT3ProjectFile,
   createEmptyT3ProjectFileScriptDraft,
   createT3ProjectFileDraft,
+  createT3ProjectFileDraftState,
+  reconcileT3ProjectFileDraftState,
   t3ProjectFileDraftKey,
+  updateT3ProjectFileScriptPreviewUrl,
   type T3ProjectFileDraft,
   type T3ProjectFileScriptDraft,
 } from "~/t3ProjectFileSettings";
@@ -63,54 +66,61 @@ export default function T3ProjectFileSettings({
     reportFailure: false,
   });
   const sourceDraft = useMemo(() => createT3ProjectFileDraft(state.file), [state.file]);
-  const [draft, setDraft] = useState<T3ProjectFileDraft>(sourceDraft);
-  const [savedDraftKey, setSavedDraftKey] = useState(() => t3ProjectFileDraftKey(sourceDraft));
+  const [draftState, setDraftState] = useState(() => createT3ProjectFileDraftState(sourceDraft));
   const [isSaving, setIsSaving] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
   const nextScriptId = useRef(0);
 
   useEffect(() => {
-    setDraft(sourceDraft);
-    setSavedDraftKey(t3ProjectFileDraftKey(sourceDraft));
-    setValidationError(null);
+    setDraftState((current) => reconcileT3ProjectFileDraftState(current, sourceDraft));
   }, [sourceDraft]);
 
+  const { draft, source, validationError } = draftState;
   const draftKey = t3ProjectFileDraftKey(draft);
-  const isDirty = draftKey !== savedDraftKey;
+  const isDirty = draftKey !== t3ProjectFileDraftKey(source);
   const editingDisabled =
     isSaving ||
     state.status === "loading" ||
     state.status === "disabled" ||
     state.status === "invalid";
 
+  const updateDraft = useCallback((update: (draft: T3ProjectFileDraft) => T3ProjectFileDraft) => {
+    setDraftState((current) => ({
+      ...current,
+      draft: update(current.draft),
+      validationError: null,
+    }));
+  }, []);
+
   const updateScript = useCallback(
     (index: number, update: (script: T3ProjectFileScriptDraft) => T3ProjectFileScriptDraft) => {
-      setDraft((current) => ({
+      updateDraft((current) => ({
         ...current,
         scripts: current.scripts.map((script, scriptIndex) =>
           scriptIndex === index ? update(script) : script,
         ),
       }));
-      setValidationError(null);
     },
-    [],
+    [updateDraft],
   );
 
   const resetDraft = useCallback(() => {
-    setDraft(sourceDraft);
-    setValidationError(null);
-  }, [sourceDraft]);
+    setDraftState((current) => ({
+      ...current,
+      draft: current.source,
+      validationError: null,
+    }));
+  }, []);
 
   const save = useCallback(async () => {
     if (editingDisabled) return;
     const built = buildT3ProjectFile(draft);
     if (!built.ok) {
-      setValidationError(built.error);
+      setDraftState((current) => ({ ...current, validationError: built.error }));
       return;
     }
 
     setIsSaving(true);
-    setValidationError(null);
+    setDraftState((current) => ({ ...current, validationError: null }));
     try {
       const result = await writeProjectFile({
         environmentId,
@@ -125,7 +135,7 @@ export default function T3ProjectFileSettings({
           const error = squashAtomCommandFailure(result);
           const message =
             error instanceof Error ? error.message : `Failed to save ${T3_PROJECT_FILE_NAME}.`;
-          setValidationError(message);
+          setDraftState((current) => ({ ...current, validationError: message }));
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -140,8 +150,7 @@ export default function T3ProjectFileSettings({
       setProjectFileQueryData(environmentId, cwd, T3_PROJECT_FILE_NAME, built.contents);
       confirmProjectFileQueryData(environmentId, cwd, T3_PROJECT_FILE_NAME, built.contents);
       const nextDraft = createT3ProjectFileDraft(built.file);
-      setDraft(nextDraft);
-      setSavedDraftKey(t3ProjectFileDraftKey(nextDraft));
+      setDraftState(createT3ProjectFileDraftState(nextDraft));
       toastManager.add({
         type: "success",
         title: `${T3_PROJECT_FILE_NAME} saved`,
@@ -219,8 +228,7 @@ export default function T3ProjectFileSettings({
                 disabled={editingDisabled}
                 placeholder="assets/icon.svg"
                 onChange={(event) => {
-                  setDraft((current) => ({ ...current, iconPath: event.target.value }));
-                  setValidationError(null);
+                  updateDraft((current) => ({ ...current, iconPath: event.target.value }));
                 }}
               />
             }
@@ -240,14 +248,13 @@ export default function T3ProjectFileSettings({
                 size="sm"
                 disabled={editingDisabled || draft.scripts.length >= 50}
                 onClick={() => {
-                  setDraft((current) => ({
+                  updateDraft((current) => ({
                     ...current,
                     scripts: [
                       ...current.scripts,
                       createEmptyT3ProjectFileScriptDraft(`new-${nextScriptId.current++}`),
                     ],
                   }));
-                  setValidationError(null);
                 }}
               >
                 <PlusIcon className="size-3.5" />
@@ -280,13 +287,12 @@ export default function T3ProjectFileSettings({
                         aria-label={`Delete shared action ${index + 1}`}
                         disabled={editingDisabled}
                         onClick={() => {
-                          setDraft((current) => ({
+                          updateDraft((current) => ({
                             ...current,
                             scripts: current.scripts.filter(
                               (_entry, scriptIndex) => scriptIndex !== index,
                             ),
                           }));
-                          setValidationError(null);
                         }}
                       >
                         <Trash2Icon className="size-3.5 text-destructive" />
@@ -364,14 +370,9 @@ export default function T3ProjectFileSettings({
                         disabled={editingDisabled}
                         placeholder="http://localhost:5173"
                         onChange={(event) =>
-                          updateScript(index, (current) => ({
-                            ...current,
-                            previewUrl: event.target.value,
-                            autoOpenPreview:
-                              event.target.value.trim().length > 0
-                                ? current.autoOpenPreview
-                                : false,
-                          }))
+                          updateScript(index, (current) =>
+                            updateT3ProjectFileScriptPreviewUrl(current, event.target.value),
+                          )
                         }
                       />
                     </div>

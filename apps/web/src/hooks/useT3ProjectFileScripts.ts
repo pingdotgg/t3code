@@ -29,7 +29,6 @@ export function resolveT3ProjectFileState(input: {
   readonly enabled: boolean;
   readonly data: ProjectReadFileResult | null;
   readonly error: string | null;
-  readonly isPending: boolean;
 }): T3ProjectFileState {
   if (!input.enabled) {
     return { status: "disabled", file: null, scripts: NO_SCRIPTS, error: null };
@@ -83,9 +82,8 @@ export function useT3ProjectFile(
         enabled,
         data: query.data,
         error: query.error,
-        isPending: query.isPending,
       }),
-    [enabled, query.data, query.error, query.isPending],
+    [enabled, query.data, query.error],
   );
 }
 

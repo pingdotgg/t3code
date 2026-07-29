@@ -390,6 +390,7 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  clearLogicalProjectDraftThreadId: (logicalProjectKey: string) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadById: (
     projectRef: ScopedProjectRef,
@@ -1447,6 +1448,42 @@ function removeDraftThreadReferences(
   };
 }
 
+function removeLogicalProjectDraftReference(
+  state: Pick<
+    ComposerDraftStoreState,
+    | "draftThreadsByThreadKey"
+    | "draftsByThreadKey"
+    | "logicalProjectDraftThreadKeyByLogicalProjectKey"
+  >,
+  logicalProjectKey: string,
+): Pick<
+  ComposerDraftStoreState,
+  | "draftThreadsByThreadKey"
+  | "draftsByThreadKey"
+  | "logicalProjectDraftThreadKeyByLogicalProjectKey"
+> {
+  const threadKey = state.logicalProjectDraftThreadKeyByLogicalProjectKey[logicalProjectKey];
+  if (!threadKey) {
+    return state;
+  }
+  const { [logicalProjectKey]: _removedMapping, ...nextLogicalMappings } =
+    state.logicalProjectDraftThreadKeyByLogicalProjectKey;
+  if (isComposerThreadKeyInUse(nextLogicalMappings, threadKey)) {
+    return {
+      draftsByThreadKey: state.draftsByThreadKey,
+      draftThreadsByThreadKey: state.draftThreadsByThreadKey,
+      logicalProjectDraftThreadKeyByLogicalProjectKey: nextLogicalMappings,
+    };
+  }
+  return removeDraftThreadReferences(
+    {
+      ...state,
+      logicalProjectDraftThreadKeyByLogicalProjectKey: nextLogicalMappings,
+    },
+    threadKey,
+  );
+}
+
 function normalizePersistedDraftThreads(
   rawDraftThreadsByThreadId: unknown,
   rawProjectDraftThreadIdByProjectKey: unknown,
@@ -2409,6 +2446,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               },
             };
           });
+        },
+        clearLogicalProjectDraftThreadId: (logicalProjectKey) => {
+          const normalizedLogicalProjectKey = logicalProjectDraftKey(logicalProjectKey);
+          if (normalizedLogicalProjectKey.length === 0) {
+            return;
+          }
+          set((state) => removeLogicalProjectDraftReference(state, normalizedLogicalProjectKey));
         },
         clearProjectDraftThreadId: (projectRef) => {
           set((state) => {
@@ -3420,6 +3464,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 );
 
 export const useComposerDraftStore = composerDraftStore;
+
+export function clearComposerDraftsForProjectGroupMember(projectRef: ScopedProjectRef): void {
+  useComposerDraftStore.getState().clearLogicalProjectDraftThreadId(scopedProjectKey(projectRef));
+}
+
+export function clearComposerDraftsForProjectGroup(input: {
+  logicalProjectKey: string;
+  projectRefs: ReadonlyArray<ScopedProjectRef>;
+}): void {
+  const store = useComposerDraftStore.getState();
+  store.clearLogicalProjectDraftThreadId(input.logicalProjectKey);
+  for (const projectRef of input.projectRefs) {
+    clearComposerDraftsForProjectGroupMember(projectRef);
+  }
+}
 
 export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): void {
   useComposerDraftStore.setState((state) => {

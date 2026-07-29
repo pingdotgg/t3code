@@ -4,6 +4,7 @@ import type { AuthGateBeforeLoadArgs } from "./-authGateRouteContext";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { createDefaultModelSelection, createModelSelection } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   mapAtomCommandResult,
   settlePromise,
@@ -100,6 +101,11 @@ import { deriveProjectGroupingOverrideKey, selectProjectGroupingSettings } from 
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { useT3ProjectFile } from "../hooks/useT3ProjectFileScripts";
 import T3ProjectFileSettings from "../components/T3ProjectFileSettings";
+import {
+  clearComposerDraftsForProjectGroup,
+  clearComposerDraftsForProjectGroupMember,
+} from "../composerDraftStore";
+import { removeProjectGroupMembersSequentially } from "../projectGroupRemoval";
 
 const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   github: "GitHub",
@@ -935,7 +941,7 @@ function ProjectRouteView() {
   }, [deleteProject, navigate, project, projectThreadCount, removeProjectPending]);
 
   const removeProjectEverywhere = useCallback(async () => {
-    if (projectLocations.length < 2 || removeProjectEverywherePending) return;
+    if (!projectGroup || projectLocations.length < 2 || removeProjectEverywherePending) return;
     setRemoveProjectEverywherePending(true);
     try {
       const confirmed = await ensureLocalApi().dialogs.confirm(
@@ -951,22 +957,32 @@ function ProjectRouteView() {
       );
       if (!confirmed) return;
 
-      const results = await Promise.all(
-        projectLocations.map((location) =>
-          deleteProject({
+      await removeProjectGroupMembersSequentially(
+        projectLocations,
+        async (location) => {
+          const result = await deleteProject({
             environmentId: location.environmentId,
             input: {
               projectId: location.id,
               force: true,
             },
-          }),
-        ),
+          });
+          if (result._tag === "Failure") {
+            throw squashAtomCommandFailure(result);
+          }
+        },
+        (location) => {
+          clearComposerDraftsForProjectGroupMember(
+            scopeProjectRef(location.environmentId, location.id),
+          );
+        },
       );
-      for (const result of results) {
-        if (result._tag === "Failure") {
-          throw squashAtomCommandFailure(result);
-        }
-      }
+      clearComposerDraftsForProjectGroup({
+        logicalProjectKey: projectGroup.projectKey,
+        projectRefs: projectLocations.map((location) =>
+          scopeProjectRef(location.environmentId, location.id),
+        ),
+      });
       toastManager.add({
         type: "success",
         title: "Project removed from all environments",
@@ -986,6 +1002,7 @@ function ProjectRouteView() {
   }, [
     deleteProject,
     navigate,
+    projectGroup,
     projectGroupThreadCount,
     projectLocations,
     removeProjectEverywherePending,
