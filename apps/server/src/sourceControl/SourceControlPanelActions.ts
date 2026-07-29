@@ -164,16 +164,11 @@ function gitError(
 
 const isGitCommandError = Schema.is(GitCommandError);
 
-function detailFromUnknown(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  return typeof cause === "string" ? cause : "Git command failed.";
-}
-
 function asGitCommandError(operation: string, cwd: string, args: readonly string[]) {
   return (cause: unknown) =>
     isGitCommandError(cause)
       ? cause
-      : gitError(operation, cwd, args, detailFromUnknown(cause), sanitizeErrorCause(cause));
+      : gitError(operation, cwd, args, "Git command failed.", sanitizeErrorCause(cause));
 }
 
 function validateGitPositionalName(input: {

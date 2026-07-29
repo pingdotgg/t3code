@@ -144,9 +144,8 @@ export function sourceControlProviderError(input: {
 }): SourceControlProviderError {
   const command = readStringField(input.error, "command");
   const detail =
-    readStringField(input.error, "detail") ??
     input.detail ??
-    readStringField(input.error, "message") ??
+    readStringField(input.error, "detail") ??
     "Source control provider operation failed.";
 
   return new SourceControlProviderError({

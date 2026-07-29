@@ -526,7 +526,7 @@ describe("SourceControlPanelService", () => {
     );
   });
 
-  it.effect("preserves sanitized causes when wrapping git execution failures", () => {
+  it.effect("keeps wrapper messages structural while preserving sanitized causes", () => {
     const cause = new Error("transport closed");
     return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
@@ -543,7 +543,8 @@ describe("SourceControlPanelService", () => {
         .pipe(Effect.flip);
 
       assert.strictEqual(isGitCommandError(error), true);
-      assert.strictEqual(error.detail, "transport closed");
+      assert.strictEqual(error.detail, "Source control operation failed.");
+      assert.strictEqual(error.message.includes("transport closed"), false);
       assert.deepStrictEqual(error.cause, {
         name: "Error",
         message: "transport closed",
@@ -553,6 +554,37 @@ describe("SourceControlPanelService", () => {
         makeTestLayer(
           () => Effect.fail(cause) as unknown as Effect.Effect<ExecuteGitResult, never>,
         ),
+      ),
+    );
+  });
+
+  it.effect("keeps action wrapper messages structural while preserving sanitized causes", () => {
+    const cause = new Error("credential-bearing workflow failure");
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .commitStaged({
+          cwd: "/repo",
+          message: "Test commit",
+          push: true,
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(isGitCommandError(error), true);
+      assert.strictEqual(error.operation, "vcs.panel.commitStaged.status");
+      assert.strictEqual(error.detail, "Git command failed.");
+      assert.strictEqual(error.message.includes(cause.message), false);
+      assert.deepStrictEqual(error.cause, {
+        name: "Error",
+        message: cause.message,
+      });
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(() => Effect.succeed(success()), {
+          status: () =>
+            Effect.fail(cause) as unknown as ReturnType<GitWorkflowService["Service"]["status"]>,
+        }),
       ),
     );
   });

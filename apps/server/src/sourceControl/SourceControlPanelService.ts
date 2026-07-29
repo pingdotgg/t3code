@@ -238,20 +238,11 @@ function gitError(
   });
 }
 
-function detailFromUnknown(cause: unknown): string {
-  if (cause instanceof Error && cause.message.length > 0) return cause.message;
-  if (typeof cause === "object" && cause !== null && "detail" in cause) {
-    const detail = cause.detail;
-    if (typeof detail === "string" && detail.length > 0) return detail;
-  }
-  return "Source control operation failed.";
-}
-
 function asGitCommandError(operation: string, cwd: string, args: readonly string[]) {
   return (cause: unknown) =>
     isGitCommandError(cause)
       ? cause
-      : gitError(operation, cwd, args, detailFromUnknown(cause), cause);
+      : gitError(operation, cwd, args, "Source control operation failed.", cause);
 }
 
 function isUnsupportedWorktreePathFormat(detail: string) {
