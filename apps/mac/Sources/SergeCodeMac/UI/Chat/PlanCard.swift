@@ -42,11 +42,11 @@ public struct PlanCard: View {
             }
         }
         .padding(14)
-        // Long-form markdown lives here, so the surface stays opaque — glass
-        // is reserved for chrome, never behind reading content.
-        .background(
-            Color(nsColor: .textBackgroundColor),
-            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous))
+        // The scenery layer already carries the transcript legibility wash;
+        // keep Plan on the same lightweight glass requested for chat chrome.
+        .alpineGlassSurface(
+            in: RoundedRectangle(
+                cornerRadius: AlpineTheme.Corners.card, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
                 .stroke(borderTint, lineWidth: 1)

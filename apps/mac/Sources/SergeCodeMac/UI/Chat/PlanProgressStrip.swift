@@ -289,16 +289,10 @@ struct PlanProgressStrip: View {
                 .frame(height: 200)
             }
         }
-        // Reading surface stays opaque over the scenery, matching PlanCard's
-        // markdown body. The list unfolds upward from the rail, so the rail
-        // and the credit pill keep their shared baseline.
-        .background(
-            Color(nsColor: .textBackgroundColor),
+        // The list unfolds upward from the rail, so both plan states share the
+        // same translucent surface and the credit pill keeps its baseline.
+        .alpineGlassSurface(
             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
-        .overlay {
-            RoundedRectangle(cornerRadius: AlpineTheme.Corners.card)
-                .strokeBorder(.secondary.opacity(0.18), lineWidth: 1)
-        }
         .frame(maxWidth: 520, alignment: .leading)
     }
 
