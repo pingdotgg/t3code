@@ -374,6 +374,28 @@ describe("tailscale", () => {
         extractTailscaleServeConfigureUrl("https://evil.example/f/serve?node=abc123"),
         null,
       );
+
+      // The matched text runs to the end of the URL token, so a plausible
+      // origin and path are not enough: everything after `?` would otherwise be
+      // stderr riding into a logged error message. Only a node ID survives.
+      assert.equal(
+        extractTailscaleServeConfigureUrl(
+          "https://login.tailscale.com/f/serve?node=abc123&authkey=tskey-secret-value",
+        ),
+        configureUrl,
+      );
+      assert.equal(
+        extractTailscaleServeConfigureUrl("https://login.tailscale.com/f/serve?authkey=tskey-x"),
+        "https://login.tailscale.com/f/serve",
+      );
+      // A "node" that is not shaped like a stable ID is not one; drop it rather
+      // than pass it through.
+      assert.equal(
+        extractTailscaleServeConfigureUrl(
+          "https://login.tailscale.com/f/serve?node=tskey-secret%20leaked",
+        ),
+        "https://login.tailscale.com/f/serve",
+      );
       // Serve-specific failures get their own labels, so the desktop toast can
       // name the reason without any text being lifted out of stderr.
       assert.equal(

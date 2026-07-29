@@ -660,11 +660,12 @@ export const make = Effect.gen(function* () {
             // toggle on and warn about an exposure that does not exist — and it
             // would bite hardest in the very case this eager teardown exists
             // for, where settings say enabled but no child ever bound Serve.
-            Effect.catchTag("TailscaleCommandExitError", (cause) =>
-              cause.stderrDiagnostic === "no-existing-handler"
-                ? Effect.succeed(false)
-                : Effect.fail(cause),
-            ),
+            Effect.catchTags({
+              TailscaleCommandExitError: (cause) =>
+                cause.stderrDiagnostic === "no-existing-handler"
+                  ? Effect.succeed(false)
+                  : Effect.fail(cause),
+            }),
             Effect.mapError((cause) => {
               const exitDetail =
                 cause._tag === "TailscaleCommandExitError"

@@ -98,11 +98,12 @@ export class TailscaleCommandExitError extends Schema.TaggedErrorClass<Tailscale
     /**
      * Admin URL the CLI prints when the tailnet blocks Serve/HTTPS.
      *
-     * Exempt from the label-only rule above because it is not lifted text: it
-     * is matched against a fixed pattern and then validated to be
-     * `https://login.tailscale.com/f/serve...`, so it cannot carry stderr
-     * contents. Without it there is no way to point the user at the one page
-     * that fixes the failure.
+     * Exempt from the label-only rule above because it is not lifted text.
+     * {@link extractTailscaleServeConfigureUrl} does not return what it matched
+     * — it rebuilds the URL from a literal origin and path, keeping only an
+     * allowlisted `node` parameter of known shape — so no part of it can carry
+     * stderr contents. Without it there is no way to point the user at the one
+     * page that fixes the failure.
      */
     configureUrl: Schema.optionalKey(Schema.String),
   },
@@ -121,9 +122,30 @@ export class TailscaleCommandExitError extends Schema.TaggedErrorClass<Tailscale
 const TAILSCALE_SERVE_CONFIGURE_URL_PATTERN =
   /https:\/\/login\.tailscale\.com\/f\/serve\?[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/i;
 
+/** Canonical origin and path this helper is willing to emit. */
+const TAILSCALE_SERVE_CONFIGURE_URL_BASE = "https://login.tailscale.com/f/serve";
+
+/**
+ * Stable node ID shape, used to vet the one query parameter we keep.
+ *
+ * Tailscale's stable IDs are short and alphanumeric (`nExampleNodeId`); a value
+ * that does not look like one is not a node ID, so dropping it costs nothing.
+ */
+const TAILSCALE_NODE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
 /**
  * Extract a Tailscale Serve enablement URL from CLI text.
  * Only accepts `https://login.tailscale.com/f/serve...` URLs.
+ *
+ * Returns a URL *rebuilt* from constants rather than the matched text. Checking
+ * the parsed origin and path is not enough on its own: the match runs to the
+ * end of the URL token, so the query would arrive verbatim from stderr — and
+ * this value reaches `TailscaleCommandExitError.message`, which is logged. That
+ * is exactly the leak `stderrDiagnostic` exists to prevent, so the query is
+ * rebuilt from an allowlist instead of being trusted. The CLI emits `?node=` to
+ * preselect the node in the admin console; anything else is dropped, at worst
+ * costing that preselection while still landing on the page that fixes the
+ * failure.
  */
 export function extractTailscaleServeConfigureUrl(text: string): string | null {
   const match = text.match(TAILSCALE_SERVE_CONFIGURE_URL_PATTERN);
@@ -136,7 +158,13 @@ export function extractTailscaleServeConfigureUrl(text: string): string | null {
     if (parsed.protocol !== "https:") return null;
     if (parsed.hostname !== "login.tailscale.com") return null;
     if (!parsed.pathname.startsWith("/f/serve")) return null;
-    return parsed.toString();
+
+    const sanitized = new URL(TAILSCALE_SERVE_CONFIGURE_URL_BASE);
+    const node = parsed.searchParams.get("node");
+    if (node !== null && TAILSCALE_NODE_ID_PATTERN.test(node)) {
+      sanitized.searchParams.set("node", node);
+    }
+    return sanitized.toString();
   } catch {
     return null;
   }

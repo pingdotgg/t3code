@@ -143,6 +143,17 @@ const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const TAILSCALE_SERVE_CONFIGURE_URL_PATTERN =
   /https:\/\/login\.tailscale\.com\/f\/serve\?[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/i;
 
+const TAILSCALE_SERVE_CONFIGURE_URL_BASE = "https://login.tailscale.com/f/serve";
+const TAILSCALE_NODE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Mirrors `extractTailscaleServeConfigureUrl` in `@t3tools/tailscale`, which
+ * cannot be imported here — it is a Node-only package.
+ *
+ * Rebuilds the URL from constants instead of returning the match: this one is
+ * parsed out of a message rendered in the UI and handed to `openExternal`, so
+ * the query has to be an allowlist rather than whatever the text carried.
+ */
 function extractTailscaleServeConfigureUrl(text: string): string | null {
   const match = text.match(TAILSCALE_SERVE_CONFIGURE_URL_PATTERN);
   if (!match?.[0] || match[0].length > 500) {
@@ -153,7 +164,13 @@ function extractTailscaleServeConfigureUrl(text: string): string | null {
     if (parsed.protocol !== "https:") return null;
     if (parsed.hostname !== "login.tailscale.com") return null;
     if (!parsed.pathname.startsWith("/f/serve")) return null;
-    return parsed.toString();
+
+    const sanitized = new URL(TAILSCALE_SERVE_CONFIGURE_URL_BASE);
+    const node = parsed.searchParams.get("node");
+    if (node !== null && TAILSCALE_NODE_ID_PATTERN.test(node)) {
+      sanitized.searchParams.set("node", node);
+    }
+    return sanitized.toString();
   } catch {
     return null;
   }
@@ -3094,7 +3111,12 @@ export function ConnectionsSettings() {
             // `tailscale serve` is live — and turning it off would be
             // unreachable, since that path is behind the on state.
             checked={desktopServerExposureState?.tailscaleServeEnabled ?? false}
-            disabled={isUpdatingTailscaleServe}
+            // Hold the switch until the state it reflects has loaded, matching
+            // the network access toggle above. Unresolved state renders as off,
+            // so an already-enabled Serve would look disabled — and clicking
+            // would enable against `DEFAULT_TAILSCALE_SERVE_PORT` rather than
+            // the persisted port, instead of opening the disable dialog.
+            disabled={!desktopServerExposureState || isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
               if (checked) {
                 void handleEnableTailscaleHttps();
