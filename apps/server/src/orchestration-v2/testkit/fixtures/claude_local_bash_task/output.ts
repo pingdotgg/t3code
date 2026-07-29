@@ -17,8 +17,8 @@ export function assertClaudeLocalBashTaskOutput(
 ) {
   assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["completed"] });
 
-  assert.lengthOf(
-    result.projections,
+  assert.equal(
+    result.projections.size,
     1,
     "Claude local_bash task lifecycle events must not create child app threads",
   );
