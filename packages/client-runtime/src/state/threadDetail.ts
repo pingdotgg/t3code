@@ -60,6 +60,8 @@ export function mergeEnvironmentThread(
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,
     archivedAt: shell.archivedAt,
+    snoozedUntil: shell.snoozedUntil,
+    snoozedAt: shell.snoozedAt,
     session: shell.session,
   };
 }
