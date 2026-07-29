@@ -34,7 +34,10 @@ export const HostApplicationDescriptor = Schema.Struct({
   name: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   buildNumber: TrimmedNonEmptyString,
-  updateCapability: Schema.Literal("sparkle"),
+  // "none" covers hosts that cannot self-update (dev builds, non-Sparkle
+  // installs); clients only prompt for an update when the host says
+  // "sparkle" — see hostNeedsMacAppUpdate.
+  updateCapability: Schema.Literals(["sparkle", "none"]),
 });
 export type HostApplicationDescriptor = typeof HostApplicationDescriptor.Type;
 
