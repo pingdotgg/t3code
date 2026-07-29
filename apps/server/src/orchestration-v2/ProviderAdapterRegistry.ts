@@ -227,7 +227,7 @@ const createAdapterEntryFromConfigEntry = Effect.fn(
     })
     .pipe(
       Effect.provideService(Scope.Scope, childScope),
-      Effect.tapError(() => Scope.close(childScope, Exit.void).pipe(Effect.ignore)),
+      Effect.onError((cause) => Scope.close(childScope, Exit.failCause(cause))),
     );
 
   return {
