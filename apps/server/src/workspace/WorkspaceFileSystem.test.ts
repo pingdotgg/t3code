@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it, describe, expect } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -70,6 +70,24 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           byteLength: 26,
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("bounds previews while reporting the complete file size", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const contents = "a".repeat(1024 * 1024 + 5);
+        yield* writeTextFile(cwd, "large.txt", contents);
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "large.txt",
+        });
+
+        assert.strictEqual(result.contents.length, 1024 * 1024);
+        assert.strictEqual(result.byteLength, contents.length);
+        assert.isTrue(result.truncated);
       }),
     );
 
@@ -185,8 +203,13 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           operationPath: resolvedPath,
           operation: "realpath-target",
         });
-        expect(error.cause).toBeInstanceOf(Error);
-        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
+        expect(error.cause).toMatchObject({
+          _tag: "PlatformError",
+          reason: {
+            _tag: "NotFound",
+            pathOrDescriptor: resolvedPath,
+          },
+        });
       }),
     );
   });

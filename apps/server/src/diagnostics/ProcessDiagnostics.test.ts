@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -66,6 +66,48 @@ describe("ProcessDiagnostics", () => {
       ]);
     }),
   );
+
+  it("schema-decodes Windows process arrays and skips invalid records", () => {
+    const rows = ProcessDiagnostics.parseWindowsProcessRows(
+      `[{"ProcessId":10,"ParentProcessId":1,"Name":"node.exe","CommandLine":"node server.js","Status":"Running","WorkingSetSize":4096,"PercentProcessorTime":12.5},{"ProcessId":"invalid","ParentProcessId":10,"Name":"ignored.exe"}]`,
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        pid: 10,
+        ppid: 1,
+        pgid: null,
+        status: "Running",
+        cpuPercent: 12.5,
+        rssBytes: 4096,
+        elapsed: "",
+        command: "node server.js",
+      },
+    ]);
+  });
+
+  it("accepts a single Windows process and defaults optional metrics", () => {
+    const rows = ProcessDiagnostics.parseWindowsProcessRows(
+      `{"ProcessId":11,"ParentProcessId":10,"Name":"agent.exe","CommandLine":null}`,
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        pid: 11,
+        ppid: 10,
+        pgid: null,
+        status: "Live",
+        cpuPercent: 0,
+        rssBytes: 0,
+        elapsed: "",
+        command: "agent.exe",
+      },
+    ]);
+  });
+
+  it("returns no Windows processes for malformed JSON", () => {
+    assert.deepStrictEqual(ProcessDiagnostics.parseWindowsProcessRows("{invalid"), []);
+  });
 
   it.effect("aggregates only descendants of the server process", () =>
     Effect.sync(() => {
