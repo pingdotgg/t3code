@@ -160,6 +160,8 @@ public actor ServerProcess {
             t3Home: config.baseDir,
             host: config.host,
             desktopBootstrapToken: bootstrapToken,
+            hostAppVersion: config.hostAppVersion,
+            hostAppBuild: config.hostAppBuild,
             tailscaleServeEnabled: config.tailscaleServeEnabled,
             tailscaleServePort: config.tailscaleServePort
         )

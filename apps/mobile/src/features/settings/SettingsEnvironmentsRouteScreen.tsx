@@ -41,6 +41,7 @@ export function SettingsEnvironmentsRouteScreen() {
     onReconnectEnvironment,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
+    onRequestHostUpdate,
   } = useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -95,6 +96,7 @@ export function SettingsEnvironmentsRouteScreen() {
                   onReconnect={onReconnectEnvironment}
                   onRemove={onRemoveEnvironmentPress}
                   onUpdate={onUpdateEnvironment}
+                  onRequestHostUpdate={onRequestHostUpdate}
                 />
               </View>
             ))}

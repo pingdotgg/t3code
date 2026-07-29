@@ -93,12 +93,10 @@ struct SergeCodeApp: App {
         if shouldUseMock {
             return MockBackend()
         }
-        // The LAN-access and Tailscale preferences are applied at spawn (the
-        // bind host and bootstrap envelope are fixed per sidecar process);
-        // toggling them in Settings ▸ Devices takes effect on the next launch.
-        return LiveBackend(
-            allowLanAccess: MobileAccessPreference.isEnabled,
-            tailscaleServeEnabled: TailscaleAccessPreference.isEnabled)
+        // The LAN-access preference is applied at spawn because the bind host
+        // is fixed for the sidecar process. Cross-network access uses the
+        // managed SurgeCode Cloud tunnel and never requires a device VPN.
+        return LiveBackend(allowLanAccess: MobileAccessPreference.isEnabled)
     }
 
     var body: some Scene {
@@ -141,6 +139,12 @@ struct SergeCodeApp: App {
                     NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
                 ) { _ in
                     scenery.reevaluateRotation()
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(for: .sergeCodeHostUpdateRequested)
+                ) { _ in
+                    guard !Self.shouldUseMock else { return }
+                    updaterController.checkForUpdates(nil)
                 }
         }
         .defaultSize(width: 1100, height: 720)

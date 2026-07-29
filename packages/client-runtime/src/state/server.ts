@@ -71,7 +71,7 @@ export function projectServerConfig(
 export function projectServerWelcome(
   current: Option.Option<ServerLifecycleWelcomePayload>,
   event: {
-    readonly type: "welcome" | "ready";
+    readonly type: "welcome" | "ready" | "hostUpdateRequested";
     readonly payload: unknown;
   },
 ): readonly [
@@ -157,6 +157,14 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    requestHostUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:request-host-update",
+      tag: WS_METHODS.serverRequestHostUpdate,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId }) => environmentId,
