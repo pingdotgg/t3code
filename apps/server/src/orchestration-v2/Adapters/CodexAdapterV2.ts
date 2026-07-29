@@ -1005,7 +1005,7 @@ export const makeCodexAgentMessageDeltaCoalescer = Effect.fn(
         Effect.gen(function* () {
           const key = codexAgentMessageBufferKey(turnId, itemId);
           const existing = (yield* Ref.get(buffered)).get(key);
-          const text = finalText && finalText.length > 0 ? finalText : (existing?.text ?? "");
+          const text = finalText !== undefined ? finalText : (existing?.text ?? "");
           if (emitEmpty || text.length > 0) {
             yield* input.emit({ turnId, itemId, text, completed: true });
           }

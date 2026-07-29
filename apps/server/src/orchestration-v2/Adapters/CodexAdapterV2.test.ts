@@ -229,6 +229,37 @@ describe("CodexAdapterV2 assistant message streaming", () => {
       ]);
     }),
   );
+
+  it.effect("treats explicit empty final text as authoritative over buffered deltas", () =>
+    Effect.gen(function* () {
+      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
+      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) => Ref.update(updates, (current) => [...current, update]),
+      });
+
+      yield* coalescer.append({
+        turnId: "turn-1",
+        itemId: "message-1",
+        delta: "stale buffered text",
+      });
+      const completedText = yield* coalescer.complete({
+        turnId: "turn-1",
+        itemId: "message-1",
+        finalText: "",
+      });
+
+      assert.equal(completedText, "");
+      assert.deepEqual(yield* Ref.get(updates), [
+        {
+          turnId: "turn-1",
+          itemId: "message-1",
+          text: "",
+          completed: true,
+        },
+      ]);
+    }),
+  );
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
