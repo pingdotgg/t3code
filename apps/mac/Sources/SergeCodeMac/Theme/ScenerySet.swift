@@ -222,7 +222,7 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
 
     public static let worldID = "world"
 
-    /// Builtin World set — 24 curated locations; every new thread draws one
+    /// Builtin World set — hundreds of curated locations; every new thread draws one
     /// random photo from this pool. Names are stored verbatim as
     /// `"Location, Country"`; queries are the Unsplash search text.
     public static func makeBuiltinWorldSet() -> ScenerySet {
@@ -234,37 +234,7 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
             createdAt: Date(timeIntervalSince1970: 0),
             queries: [],
             sceneNames: [],
-            locations: [
-                SceneryLocation(name: "Santorini, Greece", query: "santorini greece caldera"),
-                SceneryLocation(name: "Kyoto, Japan", query: "kyoto japan temple"),
-                SceneryLocation(name: "Moraine Lake, Canada", query: "moraine lake banff canada"),
-                SceneryLocation(name: "Tre Cime, Italy", query: "tre cime dolomites italy"),
-                SceneryLocation(name: "Lofoten, Norway", query: "lofoten islands norway"),
-                SceneryLocation(
-                    name: "Milford Sound, New Zealand", query: "milford sound new zealand"),
-                SceneryLocation(name: "Zermatt, Switzerland", query: "matterhorn zermatt switzerland"),
-                SceneryLocation(
-                    name: "Torres del Paine, Chile", query: "torres del paine patagonia chile"),
-                SceneryLocation(name: "Skógafoss, Iceland", query: "skogafoss waterfall iceland"),
-                SceneryLocation(name: "Cappadocia, Türkiye", query: "cappadocia turkey balloons"),
-                SceneryLocation(name: "Petra, Jordan", query: "petra jordan treasury"),
-                SceneryLocation(name: "Sossusvlei, Namibia", query: "sossusvlei namibia dunes"),
-                SceneryLocation(name: "Zhangjiajie, China", query: "zhangjiajie china mountains"),
-                SceneryLocation(name: "Ha Long Bay, Vietnam", query: "ha long bay vietnam"),
-                SceneryLocation(
-                    name: "El Nido, Philippines", query: "el nido palawan philippines"),
-                SceneryLocation(
-                    name: "Ubud, Indonesia", query: "tegalalang rice terrace bali indonesia"),
-                SceneryLocation(name: "Machu Picchu, Peru", query: "machu picchu peru"),
-                SceneryLocation(name: "Iguazu Falls, Argentina", query: "iguazu falls argentina"),
-                SceneryLocation(name: "Merzouga, Morocco", query: "merzouga sahara morocco dunes"),
-                SceneryLocation(name: "Plitvice Lakes, Croatia", query: "plitvice lakes croatia"),
-                SceneryLocation(name: "Isle of Skye, United Kingdom", query: "isle of skye scotland"),
-                SceneryLocation(name: "Lake Bled, Slovenia", query: "lake bled slovenia"),
-                SceneryLocation(
-                    name: "Sete Cidades, Portugal", query: "sete cidades azores portugal"),
-                SceneryLocation(name: "Arenal, Costa Rica", query: "arenal volcano costa rica"),
-            ],
+            locations: WorldSceneryCatalog.locations,
             palette: nil)
     }
 }

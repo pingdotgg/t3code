@@ -83,6 +83,21 @@ private final class SceneryStubProtocol: URLProtocol, @unchecked Sendable {
             query.lowercased().contains("shared")
             ? "photo-shared"
             : "photo-\(query.replacingOccurrences(of: " ", with: "-"))"
+        let second =
+            query.lowercased().contains("pair")
+            ? """
+                ,{
+                  "id":"\(id)-alternate",
+                  "color":"#654321",
+                  "urls":{
+                    "raw":"https://example.invalid/\(id)-alternate/raw",
+                    "regular":"https://example.invalid/\(id)-alternate/regular",
+                    "thumb":"https://example.invalid/\(id)-alternate/thumb"
+                  },
+                  "user":{"name":"Second Stub Photographer"}
+                }
+                """
+            : ""
         let json = """
             {"results":[{
               "id":"\(id)",
@@ -93,7 +108,7 @@ private final class SceneryStubProtocol: URLProtocol, @unchecked Sendable {
                 "thumb":"https://example.invalid/\(id)/thumb"
               },
               "user":{"name":"Stub Photographer"}
-            }]}
+            }\(second)]}
             """
         return Data(json.utf8)
     }
@@ -153,6 +168,31 @@ struct SceneryPoolBuilderTests {
 
         // Completion order is nondeterministic; the surviving name is not.
         #expect(result.photos.map(\.name) == ["First", "Distinct"])
+    }
+
+    @Test("one location can contribute two distinct photos")
+    func keepsTwoPhotosPerLocation() async throws {
+        SceneryStubProtocol.reset()
+        let input = [SceneryLocation(name: "Two Views", query: "pair views")]
+
+        let result = try await SceneryPoolBuilder.buildFromLocations(
+            client: makeStubClient(), locations: input)
+
+        #expect(result.photos.map(\.name) == ["Two Views", "Two Views"])
+        #expect(result.photos.map(\.id) == ["photo-pair-views", "photo-pair-views-alternate"])
+    }
+
+    @Test("previous pool ids are excluded while an alternate result is retained")
+    func excludesExistingPhotoIDs() async throws {
+        SceneryStubProtocol.reset()
+        let input = [SceneryLocation(name: "Two Views", query: "pair views")]
+
+        let result = try await SceneryPoolBuilder.buildFromLocations(
+            client: makeStubClient(),
+            locations: input,
+            excludingPhotoIDs: ["photo-pair-views"])
+
+        #expect(result.photos.map(\.id) == ["photo-pair-views-alternate"])
     }
 
     @Test("an empty query costs no request and skips its location")

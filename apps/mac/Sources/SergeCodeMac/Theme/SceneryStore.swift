@@ -4,8 +4,8 @@ import ImageIO
 import Observation
 import SwiftUI
 
-/// Owns the app's scenery identity photos: the builtin World set (24 curated
-/// locations; every new thread draws one random photo from it), a stable
+/// Owns the app's scenery identity photos: the builtin World set (hundreds of
+/// curated locations; every new thread draws one random photo from it), a stable
 /// thread → photo assignment (each thread keeps "its" scene and the name
 /// derived from it), and an in-memory NSImage cache for the views. Legacy
 /// set directories still on disk are loaded too, so threads assigned to a
@@ -107,6 +107,9 @@ public final class SceneryStore {
     private let heroBackingScale: CGFloat
 
     private static let poolCap = 24
+    /// Unsplash demo applications receive 50 API requests per hour. Leave two
+    /// requests of headroom while progressively filling the much larger catalog.
+    private static let worldRefreshBatchSize = 48
     /// Cap on cached hero + blur entries. Each is a full-screen bitmap
     /// (~30-40MB decoded; a visited thread holds hero + 2 blurs ≈ 100MB), so
     /// an unbounded cache grows memory monotonically across threads. 8 keeps
@@ -114,6 +117,9 @@ public final class SceneryStore {
     /// thumbs are ~200px and stay unbounded.
     private static let heavyImageCacheCap = 8
     private static let poolMaxAge: TimeInterval = 14 * 24 * 3600
+    /// Incomplete catalogs grow daily; complete catalogs retain the slower
+    /// metadata refresh cadence above.
+    private static let incompletePoolMaxAge: TimeInterval = 24 * 3600
     /// Tuned by eye to match the previous SwiftUI `.blur(radius: 4/9,
     /// opaque: true)` plus saturation; these may be adjusted by eye.
     private static let heroBlurChatRadiusPoints: CGFloat = 4
@@ -181,8 +187,12 @@ public final class SceneryStore {
                 }
                 for set in availableSets {
                     let fetchedAt = poolFetchedAt[set.id]
-                    let stale =
-                        fetchedAt.map { Date().timeIntervalSince($0) > Self.poolMaxAge } ?? true
+                    let currentNames = Set((pools[set.id] ?? []).map(\.name))
+                    let expectedNames = Set((set.locations ?? []).map(\.name))
+                    let isIncomplete =
+                        !expectedNames.isEmpty && !expectedNames.isSubset(of: currentNames)
+                    let maxAge = isIncomplete ? Self.incompletePoolMaxAge : Self.poolMaxAge
+                    let stale = fetchedAt.map { Date().timeIntervalSince($0) > maxAge } ?? true
                     let empty = (pools[set.id] ?? []).isEmpty
                     if empty || stale {
                         await refreshPool(for: set.id)
@@ -792,23 +802,72 @@ public final class SceneryStore {
 
     // MARK: - Pool refresh
 
+    /// Retains unassigned photos for locations that did not produce a new
+    /// result. Unsplash can return only IDs already in the pool, all of which
+    /// the builder filters out; treating that as a successful replacement
+    /// would shrink the pool on every rolling refresh.
+    static func preservedPhotosDuringRefresh(
+        previous: [SceneryPhoto],
+        batchNames: Set<String>,
+        replacementNames: Set<String>,
+        assignedIDs: Set<String>,
+        isGrowing: Bool
+    ) -> [SceneryPhoto] {
+        guard !isGrowing else { return previous }
+        let replacedNames = batchNames.intersection(replacementNames)
+        return previous.filter {
+            !replacedNames.contains($0.name) || assignedIDs.contains($0.id)
+        }
+    }
+
     private func refreshPool(for setId: String) async {
         guard let client else { return }
         guard let set = set(id: setId) else { return }
 
-        let refreshed: [SceneryPhoto]
+        var refreshed: [SceneryPhoto]
         var refreshedTags: [String: SceneryPhotoTags] = [:]
+        let previous = pools[setId] ?? []
+        let previousTags = photoTagsBySet[setId] ?? [:]
 
         if let locations = set.locations, !locations.isEmpty {
-            // Per-location path (the builtin World set): one photo per curated
-            // location, named verbatim after it.
+            // Per-location path (the builtin World set): progressively fetch
+            // missing locations in rate-safe batches. Once complete, refresh
+            // one rolling batch while keeping every other location in place.
+            let existingNames = Set(previous.map(\.name))
+            let missing = locations.filter { !existingNames.contains($0.name) }
+            let batch: [SceneryLocation]
+            let isGrowing = !missing.isEmpty
+            if isGrowing {
+                batch = Array(missing.prefix(Self.worldRefreshBatchSize))
+            } else {
+                let count = min(Self.worldRefreshBatchSize, locations.count)
+                let period = max(Int(Self.poolMaxAge), 1)
+                let cycle = Int(Date().timeIntervalSince1970) / period
+                let start = (cycle * count) % locations.count
+                batch = (0..<count).map { locations[(start + $0) % locations.count] }
+            }
             guard
                 let built = try? await SceneryPoolBuilder.buildFromLocations(
                     client: client,
-                    locations: locations)
+                    locations: batch,
+                    excludingPhotoIDs: Set(previous.map(\.id)))
             else { return }
-            refreshed = built.photos
-            refreshedTags = built.photoTags
+            let assignedIDs = Set(
+                assignments.values
+                    .filter { $0.resolvedSetId == setId }
+                    .map(\.photoID))
+            let preserved = Self.preservedPhotosDuringRefresh(
+                previous: previous,
+                batchNames: Set(batch.map(\.name)),
+                replacementNames: Set(built.photos.map(\.name)),
+                assignedIDs: assignedIDs,
+                isGrowing: isGrowing)
+            var seen = Set<String>()
+            refreshed = (preserved + built.photos).filter { seen.insert($0.id).inserted }
+            refreshedTags = previousTags
+            for (photoID, tags) in built.photoTags {
+                refreshedTags[photoID] = tags
+            }
         } else {
             // Legacy path (set directories left over from the customizable
             // scenery era): query-pool fetch + sceneNames round-robin so those
@@ -847,9 +906,7 @@ public final class SceneryStore {
             assignments.values
                 .filter { $0.resolvedSetId == setId }
                 .map(\.photoID))
-        let previous = pools[setId] ?? []
         let kept = previous.filter { assignedIDs.contains($0.id) && !refreshedIDs.contains($0.id) }
-        let previousTags = photoTagsBySet[setId] ?? [:]
         for photo in kept {
             if let tags = previousTags[photo.id] {
                 refreshedTags[photo.id] = tags
@@ -943,17 +1000,35 @@ public final class SceneryStore {
         loadProjectPrefs()
         loadAssignments()
         loadSetRegistry()
+        let worldCatalogChanged = upsertBuiltinWorldSet()
         for set in availableSets {
             loadSetData(set.id)
         }
-        // Ensure the builtin World set is always present even on empty disk.
-        if !availableSets.contains(where: { $0.id == ScenerySet.worldID }) {
-            let builtin = ScenerySet.makeBuiltinWorldSet()
-            availableSets.append(builtin)
-            saveManifest(builtin)
-            loadSetData(builtin.id)
+        if worldCatalogChanged {
+            // Force one immediate growth batch after an app update. The newly
+            // saved manifest prevents this from repeating on every launch.
+            poolFetchedAt[ScenerySet.worldID] = .distantPast
         }
         syncDefaultPool()
+    }
+
+    /// Installs new built-in catalog revisions over the persisted manifest
+    /// while preserving its extracted palette and all separately stored pool
+    /// and assignment data.
+    @discardableResult
+    private func upsertBuiltinWorldSet() -> Bool {
+        var builtin = ScenerySet.makeBuiltinWorldSet()
+        if let index = availableSets.firstIndex(where: { $0.id == ScenerySet.worldID }) {
+            let persisted = availableSets[index]
+            guard persisted.locations != builtin.locations || persisted.queries != builtin.queries
+            else { return false }
+            builtin.palette = persisted.palette
+            availableSets[index] = builtin
+        } else {
+            availableSets.insert(builtin, at: 0)
+        }
+        saveManifest(builtin)
+        return true
     }
 
     private func loadSetRegistry() {

@@ -59,7 +59,7 @@ enum SceneryProjectSymbols {
 
 /// Settings ▸ Scenery: the window-glass translucency slider and per-project
 /// accent / symbol badge preferences. The photo pool itself is the built-in
-/// 24-location World set — there is nothing to configure per set.
+/// expansive built-in World set — there is nothing to configure per set.
 struct ScenerySettingsTab: View {
     let model: AppModel
     let scenery: SceneryStore

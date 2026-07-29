@@ -7,7 +7,9 @@ import T3Kit
 /// is intentionally nonisolated so callers can `await` it without isolation
 /// friction.
 enum SceneryPoolBuilder {
-    static let maxPhotos = 24
+    /// Two landscape results for each of the 48 location searches in one
+    /// rate-safe catalog batch.
+    static let maxPhotos = 96
 
     struct BuildResult: Sendable {
         var photos: [SceneryPhoto]
@@ -24,24 +26,24 @@ enum SceneryPoolBuilder {
     /// simultaneous requests is the shape most likely to trip it.
     static let searchConcurrency = 6
 
-    /// One deduped photo per curated location (search count 2), named
+    /// Up to two deduped photos per curated location (search count 2), named
     /// verbatim with the location's curated name — never captions, never
     /// pool-index numbering, never AI-generated names. A location whose
     /// search yields nothing is skipped rather than failing the whole build.
     ///
     /// The searches run concurrently because this build sits on the new-thread
     /// path — `SceneryStore.start()` awaits it and `createSceneThread` awaits
-    /// that — so two dozen serial round trips showed up to the user as a new
-    /// session taking tens of seconds to open. Results are collected by
+    /// that — so serial round trips showed up to the user as a new session
+    /// taking tens of seconds to open. Results are collected by
     /// location index and deduped in location order afterwards, so the pool is
     /// identical to the serial build's regardless of completion order. The one
     /// behavioural difference: the serial version stopped searching once
-    /// `maxPhotos` was reached, which cannot be known in advance here. That is
-    /// moot while the curated set has exactly `maxPhotos` locations, and costs
-    /// only surplus searches (never surplus photos) if it ever grows past it.
+    /// `maxPhotos` was reached, which cannot be known in advance here. Callers
+    /// therefore pass at most one bounded catalog batch.
     nonisolated static func buildFromLocations(
         client: UnsplashClient,
         locations: [SceneryLocation],
+        excludingPhotoIDs: Set<String> = [],
         onProgress: (@Sendable (Int, Int) async -> Void)? = nil
     ) async throws -> BuildResult {
         let totalSteps = max(locations.count, 1)
@@ -75,15 +77,15 @@ enum SceneryPoolBuilder {
 
         var photos: [SceneryPhoto] = []
         var photoTags: [String: SceneryPhotoTags] = [:]
-        var seen = Set<String>()
+        var seen = excludingPhotoIDs
         for (index, loc) in locations.enumerated() {
-            guard photos.count < maxPhotos else { break }
-            guard let apiPhoto = resultsByIndex[index]?.first(where: { !seen.contains($0.id) })
-            else { continue }
-            seen.insert(apiPhoto.id)
-            photos.append(sceneryPhoto(from: apiPhoto, name: loc.name))
-            if let tags = tags(from: loc) {
-                photoTags[apiPhoto.id] = tags
+            for apiPhoto in resultsByIndex[index] ?? [] {
+                guard photos.count < maxPhotos else { break }
+                guard seen.insert(apiPhoto.id).inserted else { continue }
+                photos.append(sceneryPhoto(from: apiPhoto, name: loc.name))
+                if let tags = tags(from: loc) {
+                    photoTags[apiPhoto.id] = tags
+                }
             }
         }
 
