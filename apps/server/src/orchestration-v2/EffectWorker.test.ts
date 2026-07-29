@@ -453,6 +453,78 @@ it.effect("keeps a process-bound executor failure retryable when retry settlemen
   }),
 );
 
+it.effect("keeps a max-attempt replay-safe failure terminal when fail settlement fails", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const effectId = "effect:worker-replay-safe-terminal-settlement-failure";
+    const workerId = "worker-replay-safe-terminal-settlement-failure";
+    const claimedEffect: OrchestrationEffectV2 = {
+      id: effectId,
+      commandId: CommandId.make("command:worker-replay-safe-terminal-settlement-failure"),
+      threadId: ThreadId.make("thread:worker-replay-safe-terminal-settlement-failure"),
+      request: { type: "terminal.cleanup" },
+      status: "running",
+      attemptCount: 5,
+      availableAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const failAttempts = yield* Ref.make(0);
+    const retries = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      fail: () =>
+        Ref.updateAndGet(failAttempts, (count) => count + 1).pipe(
+          Effect.flatMap((attempt) =>
+            attempt === 1
+              ? Effect.fail(
+                  new EffectOutboxError({
+                    operation: "fail",
+                    effectId,
+                    cause: "simulated terminal settlement failure",
+                  }),
+                )
+              : Effect.succeed(true),
+          ),
+        ),
+      retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        execute: () =>
+          Effect.fail(
+            new OrchestrationEffectExecutionError({
+              effectId,
+              effectType: claimedEffect.request.type,
+              cause: "simulated terminal cleanup failure",
+            }),
+          ),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId, maxAttempts: 5 }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    const exit = yield* OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(workerLayer),
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.equal(yield* Ref.get(failAttempts), 2);
+    assert.equal(yield* Ref.get(retries), 0);
+  }),
+);
+
 it.effect("uses durable deadlines, notifications, and a slow liveness poll", () =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
