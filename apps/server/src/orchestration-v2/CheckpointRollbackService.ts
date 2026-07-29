@@ -81,7 +81,8 @@ export const layer: Layer.Layer<
         providerThread.providerSessionId === null ||
         checkpoint === undefined ||
         scope === undefined ||
-        checkpoint.scopeId !== scope.id
+        checkpoint.scopeId !== scope.id ||
+        checkpoint.status !== "ready"
       ) {
         return yield* new CheckpointRollbackExecutionError({
           threadId: input.threadId,
