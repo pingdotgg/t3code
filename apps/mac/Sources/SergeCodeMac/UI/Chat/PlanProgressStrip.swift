@@ -190,6 +190,9 @@ struct PlanProgressStrip: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             ZStack(alignment: .leading) {
+                // Keep an explicit dark base behind empty and partial progress
+                // so the rail remains legible over every scenery image.
+                Capsule().fill(Color.black.opacity(0.32))
                 fill(width: max(0, width * fraction), height: proxy.size.height, done: done)
                 ticks(total: total, width: width, fraction: fraction)
             }
@@ -289,16 +292,11 @@ struct PlanProgressStrip: View {
                 .frame(height: 200)
             }
         }
-        // Reading surface stays opaque over the scenery, matching PlanCard's
-        // markdown body. The list unfolds upward from the rail, so the rail
-        // and the credit pill keep their shared baseline.
-        .background(
-            Color(nsColor: .textBackgroundColor),
+        // System glass keeps the expanded reading surface vibrant and legible
+        // over scenery without bringing back the opaque gray plate.
+        .glassEffect(
+            .regular,
             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
-        .overlay {
-            RoundedRectangle(cornerRadius: AlpineTheme.Corners.card)
-                .strokeBorder(.secondary.opacity(0.18), lineWidth: 1)
-        }
         .frame(maxWidth: 520, alignment: .leading)
     }
 
