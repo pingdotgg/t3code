@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.net.Uri
 import android.text.Editable
 import android.text.InputType
 import android.text.Spanned
@@ -14,11 +15,18 @@ import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import androidx.core.view.ContentInfoCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.inputmethod.InputConnectionCompat
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import java.io.File
+import java.util.UUID
 import org.json.JSONObject
 import kotlin.math.max
 
@@ -451,9 +459,26 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
 
+  init {
+    ViewCompat.setOnReceiveContentListener(this, SUPPORTED_IMAGE_MIME_TYPES) { _, payload ->
+      val cachedImageUris = cacheReceivedImages(payload)
+      if (cachedImageUris.isEmpty()) {
+        payload
+      } else {
+        pasteImagesListener?.invoke(cachedImageUris)
+        null
+      }
+    }
+  }
+
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
+  }
+
+  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+    val inputConnection = super.onCreateInputConnection(outAttrs) ?: return null
+    return InputConnectionCompat.createWrapper(this, inputConnection, outAttrs)
   }
 
   override fun onTextContextMenuItem(id: Int): Boolean {
@@ -476,5 +501,57 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
       }
     }
     return super.onTextContextMenuItem(id)
+  }
+
+  private fun cacheReceivedImages(payload: ContentInfoCompat): List<String> = buildList {
+    for (index in 0 until payload.clip.itemCount) {
+      val uri = payload.clip.getItemAt(index).uri ?: continue
+      val mimeType = context.contentResolver.getType(uri)?.lowercase() ?: continue
+      val extension = fileExtensionForImageMimeType(mimeType) ?: continue
+      cacheReceivedImage(uri, extension)?.let(::add)
+    }
+  }
+
+  private fun cacheReceivedImage(uri: Uri, extension: String): String? {
+    val pasteDirectory = File(context.cacheDir, OWNED_PASTED_IMAGE_DIRECTORY)
+    if (!pasteDirectory.exists() && !pasteDirectory.mkdirs()) {
+      return null
+    }
+
+    val destination = File(pasteDirectory, "${UUID.randomUUID()}.$extension")
+    return try {
+      val input = context.contentResolver.openInputStream(uri) ?: return null
+      input.use { source ->
+        destination.outputStream().use { output ->
+          source.copyTo(output)
+        }
+      }
+      Uri.fromFile(destination).toString()
+    } catch (_: Exception) {
+      destination.delete()
+      null
+    }
+  }
+
+  private companion object {
+    const val OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste"
+
+    val SUPPORTED_IMAGE_MIME_TYPES = arrayOf(
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "image/webp",
+      "image/heic",
+      "image/heif",
+    )
+
+    fun fileExtensionForImageMimeType(mimeType: String): String? = when (mimeType) {
+      "image/png" -> "png"
+      "image/jpeg", "image/jpg" -> "jpg"
+      "image/gif" -> "gif"
+      "image/webp" -> "webp"
+      "image/heic", "image/heif" -> "heic"
+      else -> null
+    }
   }
 }
