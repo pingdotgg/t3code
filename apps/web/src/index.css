@@ -670,6 +670,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   }
 
+  .panel-glass-opaque::before {
+    background: var(--popover);
+  }
+
   .dialog-glass {
     border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
     box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
