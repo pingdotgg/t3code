@@ -236,6 +236,11 @@ interface BackendManagerState {
   // Consecutive bounded/fatal preflight failures, reset on a clean or
   // unbounded-transient preflight. restartAttempt counts all restarts.
   readonly preflightFailureAttempt: number;
+  // Consecutive post-spawn exits before HTTP readiness, for stdin-delivery
+  // (WSL) backends only. Reset to 0 when a run reaches readiness. Used to
+  // cap the restart loop and invoke onPreflightFailed after
+  // MAX_PREFLIGHT_FAILURE_ATTEMPTS never-ready exits.
+  readonly neverReadyAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -247,6 +252,7 @@ const initialState: BackendManagerState = {
   active: Option.none(),
   restartAttempt: 0,
   preflightFailureAttempt: 0,
+  neverReadyAttempt: 0,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -335,7 +341,10 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
-  const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  const bootstrapStream = Stream.make(`${bootstrapJson}\n`).pipe(
+    options.bootstrapDelivery === "stdin" ? Stream.concat(Stream.never) : (s) => s,
+    Stream.encodeText,
+  );
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,
     env: options.env,
@@ -477,6 +486,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          neverReadyAttempt: !current.desiredRunning ? 0 : latest.neverReadyAttempt,
         }));
 
         const preflightFailure = config.value.preflightFailure;
@@ -569,9 +579,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const finalizeRun = Effect.fn("desktop.backendInstance.finalizeRun")(function* (
           reason: string,
         ) {
+          yield* Effect.yieldNow();
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
-              const { isCurrentRun, nextState, pid } = yield* Ref.modify(
+              const { isCurrentRun, nextState, pid, wasReady } = yield* Ref.modify(
                 state,
                 (
                   latest,
@@ -580,6 +591,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                     readonly isCurrentRun: boolean;
                     readonly nextState: BackendManagerState;
                     readonly pid: Option.Option<number>;
+                    // Whether this specific run had reached readiness before
+                    // exiting. Captured inside the Ref.modify so we see the
+                    // pre-transition value of latest.ready.
+                    readonly wasReady: boolean;
                   },
                   BackendManagerState,
                 ] => {
@@ -590,6 +605,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                         isCurrentRun: false,
                         nextState: latest,
                         pid: Option.none<number>(),
+                        wasReady: false,
                       },
                       latest,
                     ] as const;
@@ -605,6 +621,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                       isCurrentRun: true,
                       nextState: next,
                       pid: currentRun.pid,
+                      wasReady: latest.ready,
                     },
                     next,
                   ] as const;
@@ -622,6 +639,42 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
+                // For stdin-delivery (WSL) backends, track exits that happen
+                // before HTTP readiness. A run that reached readiness resets
+                // the counter (in onReady), so this correctly counts only
+                // *consecutive* never-ready exits. When the cap fires, invoke
+                // onPreflightFailed so the UI falls back to Windows instead of
+                // looping forever. fd3 (Windows-native) keeps uncapped restarts.
+                if (!wasReady && config.value.bootstrapDelivery === "stdin" && Option.isSome(pid)) {
+                  const attempt = yield* Ref.modify(state, (s) => {
+                    const next = s.neverReadyAttempt + 1;
+                    return [next, { ...s, neverReadyAttempt: next }] as const;
+                  });
+                  if (attempt >= MAX_PREFLIGHT_FAILURE_ATTEMPTS) {
+                    yield* logInstanceError(
+                      "WSL backend exited before readiness too many times; surfacing and falling back",
+                      { reason, attempt },
+                    );
+                    // Reset so a future re-enable gets a fresh allowance.
+                    yield* Ref.update(state, (s) => ({ ...s, neverReadyAttempt: 0 }));
+                    const shouldRestart = yield* (
+                      spec.onPreflightFailed?.({
+                        reason: `WSL backend exited before becoming ready ${attempt} times in a row. ${reason}`,
+                        fatal: false,
+                      }) ?? Effect.succeed(false)
+                    );
+                    if (!shouldRestart) {
+                      yield* Ref.update(state, (s) => ({
+                        ...s,
+                        desiredRunning: false,
+                        ready: false,
+                      }));
+                    } else {
+                      yield* scheduleRestart(reason);
+                    }
+                    return;
+                  }
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -652,6 +705,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 {
                   ...latest,
                   restartAttempt: 0,
+                  // This run reached readiness — reset the never-ready counter
+                  // so it only tracks *consecutive* failures from this point on.
+                  neverReadyAttempt: 0,
                   ready: true,
                 },
               ] as const;
@@ -763,6 +819,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             ready: false,
             active: Option.none<ActiveBackendRun>(),
             restartFiber: Option.none<Fiber.Fiber<void, never>>(),
+            neverReadyAttempt: 0,
           },
         ]);
         // Ignore failures from spec.onShutdown so a downstream throw

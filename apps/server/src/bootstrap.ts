@@ -95,7 +95,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     });
 
     const cleanup = () => {
-      stream.removeListener("error", handleError);
+      input.removeListener("error", handleError);
       input.removeListener("line", handleLine);
       input.removeListener("close", handleClose);
       input.close();
@@ -103,6 +103,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     };
 
     const handleError = (error: Error) => {
+      cleanup();
       if (isUnavailableBootstrapFdError(error)) {
         resume(Effect.succeedNone);
         return;
@@ -118,6 +119,7 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     };
 
     const handleLine = (line: string) => {
+      cleanup();
       const parsed = decodeJsonResult(schema)(line);
       if (Result.isSuccess(parsed)) {
         resume(Effect.succeedSome(parsed.success));
@@ -134,10 +136,17 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     };
 
     const handleClose = () => {
+      cleanup();
       resume(Effect.succeedNone);
     };
 
-    stream.once("error", handleError);
+    // Register the error listener on the readline interface, not the raw
+    // stream. Node's readline.Interface re-emits stream errors onto itself;
+    // if a stream error arrives before the first line event, listening only
+    // on the stream leaves the readline interface with an unhandled error —
+    // registering on `input` ensures every error path is handled regardless
+    // of when the error occurs in the reader lifecycle.
+    input.once("error", handleError);
     input.once("line", handleLine);
     input.once("close", handleClose);
 
