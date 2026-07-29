@@ -350,6 +350,16 @@ const inMemoryCacheStoreLayer = Layer.sync(EnvironmentCacheStore, () => {
       Effect.sync(() => {
         vcsRefs.set(`${environmentId}\u0000${cwd}`, refs);
       }),
+    removeVcsRefs: (environmentId, cwd) =>
+      Effect.sync(() => {
+        vcsRefs.delete(`${environmentId}\u0000${cwd}`);
+      }),
+    clearVcsRefs: (environmentId) =>
+      Effect.sync(() => {
+        for (const key of vcsRefs.keys()) {
+          if (key.startsWith(`${environmentId}\u0000`)) vcsRefs.delete(key);
+        }
+      }),
     clear: (environmentId) =>
       Effect.sync(() => {
         shells.delete(environmentId);
