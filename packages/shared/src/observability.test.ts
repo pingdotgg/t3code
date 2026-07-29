@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Order from "effect/Order";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
@@ -19,6 +20,7 @@ import {
   makeLocalFileTracer,
   makeTraceSink,
   type TraceRecord,
+  type TraceSinkFlushStats,
 } from "./observability.ts";
 
 describe("errorTag", () => {
@@ -176,6 +178,34 @@ describe("observability", () => {
       ),
     );
 
+    it.effect("reports successful logical trace writes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const reported = yield* Ref.make<ReadonlyArray<TraceSinkFlushStats>>([]);
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            onFlush: (stats) => Ref.update(reported, (current) => [...current, stats]),
+          });
+
+          sink.push(makeRecord("attributed"));
+          yield* sink.flush;
+
+          const stats = yield* Ref.get(reported);
+          assert.equal(stats.length, 1);
+          assert.equal(stats[0]?.count, 1);
+          assert.isAbove(stats[0]?.logicalWriteBytes ?? 0, 0);
+        }),
+      ),
+    );
+
     it.effect("rotates the trace file when the configured max size is exceeded", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -186,7 +216,7 @@ describe("observability", () => {
 
           const sink = yield* makeTraceSink({
             filePath: tracePath,
-            maxBytes: 180,
+            maxBytes: 500,
             maxFiles: 2,
             batchWindowMs: 10_000,
           });
@@ -213,6 +243,70 @@ describe("observability", () => {
             matchingFiles.some((entry) => entry === "shared.trace.ndjson.3"),
             false,
           );
+        }),
+      ),
+    );
+
+    it.effect("keeps every trace file within the configured limit for threshold flushes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const maxBytes = 1_024;
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+
+          for (let index = 0; index < 256; index += 1) {
+            sink.push(makeRecord("threshold", `${index}-${"x".repeat(48)}`));
+          }
+          yield* sink.close();
+
+          const matchingFiles = (yield* fileSystem.readDirectory(tempDir)).filter(
+            (entry) => entry === "shared.trace.ndjson" || entry.startsWith("shared.trace.ndjson."),
+          );
+          assert.include(matchingFiles, "shared.trace.ndjson.1");
+          for (const entry of matchingFiles) {
+            const stat = yield* fileSystem.stat(path.join(tempDir, entry));
+            assert.isAtMost(Number(stat.size), maxBytes, entry);
+          }
+        }),
+      ),
+    );
+
+    it.effect("drops a single trace record that cannot fit within the configured limit", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const maxBytes = 1_024;
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+
+          sink.push(makeRecord("oversized", "x".repeat(maxBytes * 2)));
+          sink.push(makeRecord("retained"));
+          yield* sink.close();
+
+          const records = yield* readTraceRecords(tracePath);
+          const stat = yield* fileSystem.stat(tracePath);
+          assert.deepEqual(
+            records.map((record) => record.name),
+            ["retained"],
+          );
+          assert.isAtMost(Number(stat.size), maxBytes);
         }),
       ),
     );

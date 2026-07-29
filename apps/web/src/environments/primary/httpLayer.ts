@@ -10,7 +10,6 @@ function isSameOriginBrowserPrimary(): boolean {
   if (
     typeof window === "undefined" ||
     window.desktopBridge !== undefined ||
-    window.nativeApi !== undefined ||
     !window.location.origin.startsWith("http")
   ) {
     return false;

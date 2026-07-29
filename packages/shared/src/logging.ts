@@ -93,10 +93,6 @@ export class RotatingFileSink {
 
       NodeFS.appendFileSync(this.filePath, buffer);
       this.currentSize += buffer.length;
-
-      if (this.currentSize > this.maxBytes) {
-        this.rotate();
-      }
     } catch (cause) {
       if (isRotatingFileSinkError(cause)) {
         throw cause;

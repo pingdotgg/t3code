@@ -15,9 +15,11 @@ import {
   createBuildConfig,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
+  DESKTOP_EXTRA_RESOURCES,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
+  UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
   LinuxIconResizeError,
   MacPasskeySigningConfigurationResolutionError,
@@ -32,6 +34,8 @@ import {
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
+  resolveResourceMonitorRustTargets,
+  resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
@@ -543,6 +547,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it("stages the resource monitor as an external executable resource", () => {
+    assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
+      {
+        from: "apps/desktop/prod-resources/resource-monitor",
+        to: "resource-monitor",
+      },
+    ]);
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+    ]);
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("linux", "x64"), [
+      "x86_64-unknown-linux-gnu",
+    ]);
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("win", "arm64"), [
+      "aarch64-pc-windows-msvc",
+    ]);
+    assert.equal(resourceMonitorExecutableName("mac"), "t3-resource-monitor");
+    assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
+  });
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
@@ -670,6 +694,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.platform, "win");
       assert.equal(resolved.target, "nsis");
       assert.equal(resolved.arch, "arm64");
+    }),
+  );
+
+  it.effect("rejects universal builds on Linux and Windows before staging binaries", () =>
+    Effect.gen(function* () {
+      for (const platform of ["linux", "win"] as const) {
+        const error = yield* Effect.flip(
+          resolveBuildOptions({
+            platform: Option.some(platform),
+            target: Option.none(),
+            arch: Option.some("universal"),
+            buildVersion: Option.none(),
+            outputDir: Option.none(),
+            skipBuild: Option.none(),
+            keepStage: Option.none(),
+            signed: Option.none(),
+            verbose: Option.none(),
+            mockUpdates: Option.none(),
+            mockUpdateServerPort: Option.none(),
+            wslPrebuild: Option.none(),
+          }),
+        );
+
+        assert.instanceOf(error, UnsupportedDesktopBuildArchitectureError);
+        assert.deepStrictEqual(error.supportedArchitectures, ["x64", "arm64"]);
+      }
     }),
   );
 

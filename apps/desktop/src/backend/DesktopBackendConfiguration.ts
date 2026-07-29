@@ -141,6 +141,44 @@ const logBackendObservabilitySettingsReadFailure = (
   );
 };
 
+function resourceMonitorBinaryName(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+}
+
+const resolveResourceMonitorPath = Effect.fn(
+  "desktop.backendConfiguration.resolveResourceMonitorPath",
+)(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const binaryName = resourceMonitorBinaryName(environment.platform);
+  const candidates = environment.isDevelopment
+    ? [
+        environment.path.join(
+          environment.rootDir,
+          "native/resource-monitor/target/release",
+          binaryName,
+        ),
+        environment.path.join(
+          environment.rootDir,
+          "native/resource-monitor/target/debug",
+          binaryName,
+        ),
+      ]
+    : environment.isPackaged
+      ? [environment.path.join(environment.resourcesPath, "resource-monitor", binaryName)]
+      : environment.resolveResourcePathCandidates(
+          environment.path.join("resource-monitor", binaryName),
+        );
+
+  for (const candidate of candidates) {
+    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+      return Option.some(candidate);
+    }
+  }
+
+  return Option.none<string>();
+});
+
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -326,7 +364,9 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
 
 const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolvePrimary")(
   function* (
-    input: SharedBootstrapInput,
+    input: SharedBootstrapInput & {
+      readonly resourceMonitorPath: Option.Option<string>;
+    },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
     never,
@@ -345,6 +385,12 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
+      desktopTelemetryFd: 4,
+      desktopTelemetryControlFd: 5,
+      ...Option.match(input.resourceMonitorPath, {
+        onNone: () => ({}),
+        onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
+      }),
       ...buildObservabilityFragment(input.observabilitySettings),
     };
 
@@ -411,6 +457,10 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // inert.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    // The packaged sidecar is a Windows executable and cannot run inside the
+    // Linux WSL backend. Keep the field absent instead of passing an unusable
+    // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
+    // See docs/architecture/resource-telemetry.md.
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
@@ -621,7 +671,11 @@ export const make = Effect.gen(function* () {
 
   const buildWindowsPrimaryConfig = Effect.gen(function* () {
     const shared = yield* sharedInputs;
-    return yield* resolvePrimaryStartConfig(shared).pipe(
+    const resourceMonitorPath = yield* resolveResourceMonitorPath().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
+    return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );

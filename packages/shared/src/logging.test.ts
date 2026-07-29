@@ -127,6 +127,25 @@ describe("RotatingFileSink", () => {
     expect((thrown as RotatingFileSinkError).cause).toBeInstanceOf(Error);
   });
 
+  it("never reports a rotation failure after successfully appending a chunk", () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    NodeFS.mkdirSync(`${filePath}.1`);
+    const sink = new RotatingFileSink({
+      filePath,
+      maxBytes: 1,
+      maxFiles: 1,
+      throwOnError: true,
+    });
+
+    sink.write("oversized");
+
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("oversized");
+    const thrown = captureError(() => sink.write("next"));
+    expect(thrown).toMatchObject({ operation: "rotate", filePath });
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("oversized");
+  });
+
   it("preserves backup pruning failures", () => {
     const directory = makeTempDirectory();
     const filePath = NodePath.join(directory, "log.ndjson");
