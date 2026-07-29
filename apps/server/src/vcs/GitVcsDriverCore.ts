@@ -45,7 +45,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const REMOVE_WORKTREE_DIRECTORY_TIMEOUT_MS = 5 * 60_000;
 const REMOVE_WORKTREE_GIT_TIMEOUT_MS = 60_000;
 const REMOVE_WORKTREE_DIRECTORY_RETRY_SCHEDULE = Schedule.spaced("100 millis").pipe(
-  Schedule.take(50),
+  Schedule.while(({ attempt }) => attempt <= 50),
 );
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
