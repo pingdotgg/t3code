@@ -91,6 +91,17 @@ export const layer: Layer.Layer<
           cause: "The persisted rollback target is incomplete or no longer valid.",
         });
       }
+      if (
+        providerThread.id !== projection.thread.activeProviderThreadId ||
+        providerThread.providerInstanceId !== projection.thread.modelSelection.instanceId
+      ) {
+        return yield* new CheckpointRollbackExecutionError({
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+          cause: "The active provider changed before the rollback could execute.",
+        });
+      }
 
       const modelSelection = projection.thread.modelSelection;
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
