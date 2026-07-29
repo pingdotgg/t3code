@@ -161,6 +161,25 @@ describe("PreviewAutomationHost", () => {
 });
 
 describe("PreviewAutomationError", () => {
+  it("preserves a pinned host capability failure", () => {
+    const error = decodeAutomationError({
+      _tag: "PreviewAutomationPinnedHostUnsupportedOperationError",
+      operation: "resize",
+      environmentId: "environment-1",
+      threadId: "thread-1",
+      providerSessionId: "provider-session-1",
+      providerInstanceId: "codex",
+      clientId: "client-1",
+      connectionId: "connection-1",
+      supportedOperations: ["status"],
+    });
+
+    expect(error._tag).toBe("PreviewAutomationPinnedHostUnsupportedOperationError");
+    if (error._tag === "PreviewAutomationPinnedHostUnsupportedOperationError") {
+      expect(error.message).toContain("Start a new provider session");
+    }
+  });
+
   it("preserves a typed non-editable target failure", () => {
     const error = decodeAutomationError({
       _tag: "PreviewAutomationTargetNotEditableError",

@@ -683,6 +683,7 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedErrorCla
   "PreviewAutomationNoAvailableHostError",
   {
     ...PreviewAutomationScopeErrorFields,
+    environmentHasConnectedClients: Schema.optional(Schema.Boolean),
     clientId: Schema.optional(TrimmedNonEmptyString),
     connectionId: Schema.optional(PreviewAutomationConnectionId),
     requestId: Schema.optional(TrimmedNonEmptyString),
@@ -692,8 +693,23 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedErrorCla
   },
 ) {
   override get message(): string {
-    const summary = `No preview automation host is available for ${this.operation} in environment ${this.environmentId}.`;
-    return summary;
+    return this.environmentHasConnectedClients
+      ? `A T3 Code client is connected to environment ${this.environmentId}, but no desktop preview automation host is ready for ${this.operation}. Open or reconnect the T3 Code desktop app.`
+      : `No T3 Code desktop preview automation host is connected to environment ${this.environmentId} for ${this.operation}. Open the T3 Code desktop app and connect it to this environment.`;
+  }
+}
+
+export class PreviewAutomationPinnedHostUnsupportedOperationError extends Schema.TaggedErrorClass<PreviewAutomationPinnedHostUnsupportedOperationError>()(
+  "PreviewAutomationPinnedHostUnsupportedOperationError",
+  {
+    ...PreviewAutomationScopeErrorFields,
+    clientId: TrimmedNonEmptyString,
+    connectionId: PreviewAutomationConnectionId,
+    supportedOperations: Schema.Array(PreviewAutomationOperation),
+  },
+) {
+  override get message(): string {
+    return `Pinned preview automation host ${this.clientId} does not support ${this.operation}. Start a new provider session in a desktop runtime that supports it.`;
   }
 }
 
@@ -857,6 +873,7 @@ export class PreviewAutomationMalformedResponseError extends Schema.TaggedErrorC
 export const PreviewAutomationError = Schema.Union([
   PreviewAutomationUnavailableError,
   PreviewAutomationNoAvailableHostError,
+  PreviewAutomationPinnedHostUnsupportedOperationError,
   PreviewAutomationUnsupportedClientError,
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTimeoutError,

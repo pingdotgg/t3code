@@ -1,4 +1,3 @@
-import { PreviewAutomationHosts } from "~/components/preview/PreviewAutomationHosts";
 import { isElectron } from "~/env";
 
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
@@ -8,10 +7,5 @@ export function DesktopBrowserRuntime(props: { readonly authenticated: boolean }
     return null;
   }
 
-  return (
-    <>
-      <ElectronBrowserHost />
-      <PreviewAutomationHosts />
-    </>
-  );
+  return <ElectronBrowserHost />;
 }

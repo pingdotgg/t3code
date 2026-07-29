@@ -6,6 +6,7 @@ import {
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
+  PreviewAutomationPinnedHostUnsupportedOperationError,
   PreviewAutomationRemoteUnavailableError,
   PreviewAutomationRequestQueueClosedError,
   PreviewAutomationResultTooLargeError,
@@ -28,6 +29,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -106,6 +108,27 @@ interface BrokerState {
   readonly requestSequence: number;
   readonly focusSequence: number;
 }
+
+interface RoutedHostRequest {
+  readonly kind: "routed";
+  readonly connection: ClientConnection;
+  readonly requestId: string;
+  readonly requestContext: PreviewAutomationRequestErrorContext;
+  readonly requestSequence: number;
+}
+
+interface PinnedHostUnsupportedOperation {
+  readonly kind: "pinned-host-unsupported-operation";
+  readonly clientId: ClientConnection["clientId"];
+  readonly connectionId: ClientConnection["connectionId"];
+  readonly supportedOperations: ReadonlyArray<PreviewAutomationOperation>;
+}
+
+interface NoRoutableHost {
+  readonly kind: "no-routable-host";
+}
+
+type HostRoute = RoutedHostRequest | PinnedHostUnsupportedOperation | NoRoutableHost;
 
 const removeConnectionFromState = (
   current: BrokerState,
@@ -281,6 +304,7 @@ const classifyResponseError = (
 
 export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const crypto = yield* Crypto.Crypto;
+  const hostRouteChanges = yield* PubSub.unbounded<void>();
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     assignments: new Map(),
@@ -350,6 +374,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     if (registration.previousConnection) {
       yield* closeConnection(registration.previousConnection.queue, registration.disconnected);
     }
+    yield* PubSub.publish(hostRouteChanges, undefined);
     return registration.registeredConnection;
   });
 
@@ -422,98 +447,177 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    const now = yield* Clock.currentTimeMillis;
-    const route = yield* SynchronizedRef.modify(state, (current) => {
-      const assignments = new Map(
-        Array.from(current.assignments).filter(([, assignment]) => {
-          const connection = current.clients.get(assignment.clientId);
-          return (
-            assignment.expiresAt > now &&
-            connection?.connectionId === assignment.connectionId &&
-            connection.queue === assignment.queue
-          );
-        }),
-      );
-      const assignmentKey = hostAssignmentKey(input.scope);
-      const assigned = assignments.get(assignmentKey);
-      const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
-      const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
-      // Keep one provider session on one physical desktop runtime so a
-      // multi-step browser interaction cannot jump between independent
-      // Electron cookie/DOM state. A live assignment that predates an
-      // operation is not silently moved to a newer client: the caller gets a
-      // capability failure and can deliberately start a fresh provider
-      // session. A dead lease is pruned above and may fail over.
-      const connection =
-        hasLiveAssignment && supportsOperation(assignedConnection, input.operation)
+    const startedAt = yield* Clock.currentTimeMillis;
+    const deadline = startedAt + timeoutMs;
+    const selectHostRoute = Effect.fn("PreviewAutomationBroker.selectHostRoute")(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      return yield* SynchronizedRef.modify(state, (current): readonly [HostRoute, BrokerState] => {
+        const assignments = new Map(
+          Array.from(current.assignments).filter(([, assignment]) => {
+            const connection = current.clients.get(assignment.clientId);
+            return (
+              assignment.expiresAt > now &&
+              connection?.connectionId === assignment.connectionId &&
+              connection.queue === assignment.queue
+            );
+          }),
+        );
+        const assignmentKey = hostAssignmentKey(input.scope);
+        const assigned = assignments.get(assignmentKey);
+        const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
+        const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
+        if (hasLiveAssignment && !supportsOperation(assignedConnection, input.operation)) {
+          return [
+            {
+              kind: "pinned-host-unsupported-operation",
+              clientId: assignedConnection.clientId,
+              connectionId: assignedConnection.connectionId,
+              supportedOperations: Array.from(assignedConnection.supportedOperations),
+            } satisfies PinnedHostUnsupportedOperation,
+            { ...current, assignments },
+          ] as const;
+        }
+        if (now >= deadline) {
+          return [
+            { kind: "no-routable-host" } satisfies NoRoutableHost,
+            { ...current, assignments },
+          ] as const;
+        }
+        // Keep one provider session on one physical desktop runtime so a
+        // multi-step browser interaction cannot jump between independent
+        // Electron cookie/DOM state. Dead or expired assignments are pruned
+        // above and may fail over to another live host.
+        const connection = hasLiveAssignment
           ? assignedConnection
-          : hasLiveAssignment
-            ? undefined
-            : Array.from(current.clients.values())
-                .filter(
-                  (host) =>
-                    host.environmentId === input.scope.environmentId &&
-                    supportsOperation(host, input.operation),
-                )
-                .sort(
-                  (left, right) =>
-                    right.supportedOperations.size - left.supportedOperations.size ||
-                    Number(right.focused) - Number(left.focused) ||
-                    right.focusOrder - left.focusOrder,
-                )[0];
-      if (!connection) {
-        if (!hasLiveAssignment) assignments.delete(assignmentKey);
-        return [undefined, { ...current, assignments }] as const;
-      }
-      const canReuseAssignedTab =
-        assigned !== undefined &&
-        assigned.connectionId === connection.connectionId &&
-        assigned.queue === connection.queue;
-      assignments.set(assignmentKey, {
-        clientId: connection.clientId,
-        connectionId: connection.connectionId,
-        queue: connection.queue,
-        expiresAt: input.scope.expiresAt,
-        ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
-        ...(canReuseAssignedTab && assigned.tabSequence !== undefined
-          ? { tabSequence: assigned.tabSequence }
-          : {}),
-      });
+          : Array.from(current.clients.values())
+              .filter(
+                (host) =>
+                  host.environmentId === input.scope.environmentId &&
+                  supportsOperation(host, input.operation),
+              )
+              .sort(
+                (left, right) =>
+                  right.supportedOperations.size - left.supportedOperations.size ||
+                  Number(right.focused) - Number(left.focused) ||
+                  right.focusOrder - left.focusOrder,
+              )[0];
+        if (!connection) {
+          if (!hasLiveAssignment) assignments.delete(assignmentKey);
+          return [
+            { kind: "no-routable-host" } satisfies NoRoutableHost,
+            { ...current, assignments },
+          ] as const;
+        }
+        const canReuseAssignedTab =
+          assigned !== undefined &&
+          assigned.connectionId === connection.connectionId &&
+          assigned.queue === connection.queue;
+        assignments.set(assignmentKey, {
+          clientId: connection.clientId,
+          connectionId: connection.connectionId,
+          queue: connection.queue,
+          expiresAt: input.scope.expiresAt,
+          ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
+          ...(canReuseAssignedTab && assigned.tabSequence !== undefined
+            ? { tabSequence: assigned.tabSequence }
+            : {}),
+        });
 
-      const requestSequence = current.requestSequence;
-      const requestId = `preview-${requestSequence}`;
-      const tabId = input.tabId ?? (canReuseAssignedTab ? assigned.tabId : undefined);
-      const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
-      const context: PreviewAutomationRequestErrorContext = {
-        operation: input.operation,
-        environmentId: input.scope.environmentId,
-        threadId: input.scope.threadId,
-        providerSessionId: input.scope.providerSessionId,
-        providerInstanceId: input.scope.providerInstanceId,
-        clientId: connection.clientId,
-        connectionId: connection.connectionId,
-        requestId,
-        ...(tabId === undefined ? {} : { tabId }),
-        timeoutMs,
-        ...selectorDiagnostics,
-      };
-      const pending = new Map(current.pending);
-      pending.set(requestId, { queue: connection.queue, deferred, context });
-      return [
-        { connection, requestId, requestContext: context, requestSequence },
-        { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
-      ] as const;
-    });
-    if (!route) {
-      return yield* new PreviewAutomationNoAvailableHostError({
-        operation: input.operation,
-        environmentId: input.scope.environmentId,
-        threadId: input.scope.threadId,
-        providerSessionId: input.scope.providerSessionId,
-        providerInstanceId: input.scope.providerInstanceId,
+        const requestSequence = current.requestSequence;
+        const requestId = `preview-${requestSequence}`;
+        const tabId = input.tabId ?? (canReuseAssignedTab ? assigned.tabId : undefined);
+        const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
+        const context: PreviewAutomationRequestErrorContext = {
+          operation: input.operation,
+          environmentId: input.scope.environmentId,
+          threadId: input.scope.threadId,
+          providerSessionId: input.scope.providerSessionId,
+          providerInstanceId: input.scope.providerInstanceId,
+          clientId: connection.clientId,
+          connectionId: connection.connectionId,
+          requestId,
+          ...(tabId === undefined ? {} : { tabId }),
+          timeoutMs,
+          ...selectorDiagnostics,
+        };
+        const pending = new Map(current.pending);
+        pending.set(requestId, { queue: connection.queue, deferred, context });
+        return [
+          {
+            kind: "routed",
+            connection,
+            requestId,
+            requestContext: context,
+            requestSequence,
+          } satisfies RoutedHostRequest,
+          { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
+        ] as const;
       });
-    }
-    const { connection, requestId, requestContext, requestSequence } = route;
+    });
+    // Distinguishes "nothing is connected to this environment" from "a client is
+    // connected but cannot automate" (a browser-served UI registers with zero
+    // supported operations), so the caller gets an actionable remediation.
+    const noAvailableHostError = Effect.fn("PreviewAutomationBroker.noAvailableHostError")(
+      function* () {
+        const current = yield* SynchronizedRef.get(state);
+        return new PreviewAutomationNoAvailableHostError({
+          operation: input.operation,
+          environmentId: input.scope.environmentId,
+          threadId: input.scope.threadId,
+          providerSessionId: input.scope.providerSessionId,
+          providerInstanceId: input.scope.providerInstanceId,
+          timeoutMs,
+          environmentHasConnectedClients: Array.from(current.clients.values()).some(
+            (host) => host.environmentId === input.scope.environmentId,
+          ),
+        });
+      },
+    );
+    const route = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const registration = yield* PubSub.subscribe(hostRouteChanges);
+        while (true) {
+          const selected = yield* selectHostRoute();
+          if (selected.kind === "pinned-host-unsupported-operation") {
+            return yield* new PreviewAutomationPinnedHostUnsupportedOperationError({
+              operation: input.operation,
+              environmentId: input.scope.environmentId,
+              threadId: input.scope.threadId,
+              providerSessionId: input.scope.providerSessionId,
+              providerInstanceId: input.scope.providerInstanceId,
+              clientId: selected.clientId,
+              connectionId: selected.connectionId,
+              supportedOperations: selected.supportedOperations,
+            });
+          }
+          const now = yield* Clock.currentTimeMillis;
+          const remainingTimeoutMs = deadline - now;
+          if (selected.kind === "routed" && remainingTimeoutMs > 0) {
+            return { route: selected, remainingTimeoutMs };
+          }
+          if (remainingTimeoutMs <= 0) {
+            if (selected.kind === "routed") {
+              yield* SynchronizedRef.update(state, (current) => {
+                if (!current.pending.has(selected.requestId)) return current;
+                const pending = new Map(current.pending);
+                pending.delete(selected.requestId);
+                return { ...current, pending };
+              });
+            }
+            return yield* yield* noAvailableHostError();
+          }
+          const registered = yield* PubSub.take(registration).pipe(
+            Effect.timeoutOption(remainingTimeoutMs),
+          );
+          if (Option.isNone(registered)) return yield* yield* noAvailableHostError();
+        }
+      }),
+    );
+    // Routing can create a pin. Wake concurrent waiters so one that is now
+    // blocked behind an incapable pin fails fast instead of burning its budget.
+    yield* PubSub.publish(hostRouteChanges, undefined);
+    const { connection, requestId, requestContext, requestSequence } = route.route;
+    const requestTimeoutMs = route.remainingTimeoutMs;
     const removePending = SynchronizedRef.update(state, (next) => {
       if (!next.pending.has(requestId)) return next;
       const pending = new Map(next.pending);
@@ -531,7 +635,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           tabIdExplicit: input.tabId !== undefined,
           operation: input.operation,
           input: input.input,
-          timeoutMs,
+          timeoutMs: requestTimeoutMs,
         },
       });
       if (!offered) {
@@ -541,7 +645,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }
         return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
       }
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
+      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(requestTimeoutMs));
       return yield* Option.match(result, {
         onNone: () => Effect.fail(new PreviewAutomationTimeoutError(requestContext)),
         onSome: (value) => Effect.succeed(value as A),

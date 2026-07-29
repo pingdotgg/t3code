@@ -1,8 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import {
   getEnvironmentHttpBaseUrl,
+  readEnvironmentConnection,
+  subscribeEnvironmentConnections,
   useSavedEnvironmentRegistryStore,
 } from "~/environments/runtime";
 import { getPrimaryKnownEnvironment } from "~/environments/primary";
@@ -70,6 +72,32 @@ export function useEnvironmentHttpBaseUrl(environmentId: EnvironmentId | null): 
     () => (environmentId === null ? null : getEnvironmentHttpBaseUrl(environmentId)),
     [environmentId, environments],
   );
+}
+
+/**
+ * Identifies the live websocket connection for an environment, or `null` while
+ * none is registered. Consumers that build on `readEnvironmentConnection`
+ * (which throws when the connection is missing) must not mount before this is
+ * non-null, and must remount when it changes so they rebind to the new
+ * connection. Returning a number keeps the `useSyncExternalStore` snapshot
+ * referentially stable.
+ */
+export function useEnvironmentConnectionEpoch(environmentId: EnvironmentId): number | null {
+  const readEpoch = useCallback(() => environmentConnectionEpoch(environmentId), [environmentId]);
+  return useSyncExternalStore(subscribeEnvironmentConnections, readEpoch, readEpoch);
+}
+
+let lastConnectionEpoch = 0;
+const connectionEpochs = new WeakMap<object, number>();
+
+function environmentConnectionEpoch(environmentId: EnvironmentId): number | null {
+  const connection = readEnvironmentConnection(environmentId);
+  if (!connection) return null;
+  const existing = connectionEpochs.get(connection);
+  if (existing !== undefined) return existing;
+  lastConnectionEpoch += 1;
+  connectionEpochs.set(connection, lastConnectionEpoch);
+  return lastConnectionEpoch;
 }
 
 /**

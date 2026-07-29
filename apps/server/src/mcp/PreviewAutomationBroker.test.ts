@@ -6,6 +6,7 @@ import {
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
+  PreviewAutomationPinnedHostUnsupportedOperationError,
   PreviewAutomationTargetNotEditableError,
   PreviewTabId,
   ProviderInstanceId,
@@ -20,7 +21,7 @@ import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
+import { TestClock } from "effect/testing";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -441,12 +442,40 @@ it.effect("distinguishes malformed remote failures", () =>
   ),
 );
 
-it.effect("rejects calls when no connected host exists", () =>
+it.effect("waits for a host registration before routing the request", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const invocation = yield* broker
+        .invoke<string>({ scope, operation: "status", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "registered",
+        }),
+      ).pipe(Effect.forkScoped);
+
+      expect(yield* Fiber.join(invocation)).toBe("registered");
+    }),
+  ),
+);
+
+it.effect("fails after the registration window when no desktop host connects", () =>
   Effect.gen(function* () {
     const broker = yield* makeBroker;
-    const error = yield* broker
-      .invoke<void>({ scope, operation: "status", input: {} })
-      .pipe(Effect.flip);
+    const invocation = yield* broker
+      .invoke<void>({ scope, operation: "status", input: {}, timeoutMs: 100 })
+      .pipe(Effect.flip, Effect.forkScoped);
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("100 millis");
+    const error = yield* Fiber.join(invocation);
 
     expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
     expect(error).toMatchObject({
@@ -455,7 +484,9 @@ it.effect("rejects calls when no connected host exists", () =>
       threadId: scope.threadId,
       providerSessionId: scope.providerSessionId,
       providerInstanceId: scope.providerInstanceId,
+      environmentHasConnectedClients: false,
     });
+    expect(error.message).toContain("No T3 Code desktop preview automation host is connected");
   }),
 );
 
@@ -469,9 +500,12 @@ it.effect("does not create host state from focus updates without a live stream",
       focused: true,
     });
 
-    const error = yield* broker
-      .invoke<void>({ scope, operation: "status", input: {} })
-      .pipe(Effect.flip);
+    const invocation = yield* broker
+      .invoke<void>({ scope, operation: "status", input: {}, timeoutMs: 10 })
+      .pipe(Effect.flip, Effect.forkScoped);
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("10 millis");
+    const error = yield* Fiber.join(invocation);
     expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
   }),
 );
@@ -481,18 +515,24 @@ it.effect("removes host availability when the authoritative request stream disco
     Effect.gen(function* () {
       const broker = yield* makeBroker;
       const requests = requestsFrom(yield* broker.connect(makeHost()));
-      const beforeAcquisition = yield* broker
-        .invoke<void>({ scope, operation: "status", input: {} })
-        .pipe(Effect.flip);
+      const beforeAcquisitionFiber = yield* broker
+        .invoke<void>({ scope, operation: "status", input: {}, timeoutMs: 10 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 millis");
+      const beforeAcquisition = yield* Fiber.join(beforeAcquisitionFiber);
       expect(beforeAcquisition).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
 
       const consumer = yield* Stream.runDrain(requests).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
       yield* Fiber.interrupt(consumer);
 
-      const error = yield* broker
-        .invoke<void>({ scope, operation: "status", input: {} })
-        .pipe(Effect.flip);
+      const errorFiber = yield* broker
+        .invoke<void>({ scope, operation: "status", input: {}, timeoutMs: 10 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 millis");
+      const error = yield* Fiber.join(errorFiber);
       expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
     }),
   ),
@@ -666,12 +706,45 @@ it.effect("does not route new operations to legacy hosts that did not advertise 
       yield* Stream.runDrain(legacyEvents).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
 
-      const error = yield* broker
-        .invoke<void>({ scope, operation: "resize", input: { mode: "fill" } })
-        .pipe(Effect.flip);
+      const errorFiber = yield* broker
+        .invoke<void>({ scope, operation: "resize", input: { mode: "fill" }, timeoutMs: 10 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 millis");
+      const error = yield* Fiber.join(errorFiber);
 
       expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
-      expect(error).toMatchObject({ operation: "resize", environmentId: scope.environmentId });
+      expect(error).toMatchObject({
+        operation: "resize",
+        environmentHasConnectedClients: true,
+      });
+      expect(error.message).toContain("no desktop preview automation host is ready");
+    }),
+  ),
+);
+
+it.effect("reports a connected browser-only client as unable to automate", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      // A browser-served UI registers presence with zero supported operations so
+      // routing can tell "nothing connected" apart from "cannot automate".
+      const browserOnlyEvents = yield* broker.connect(
+        makeHost({ clientId: "client-browser", supportedOperations: [] }),
+      );
+      yield* Stream.runDrain(browserOnlyEvents).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const errorFiber = yield* broker
+        .invoke<void>({ scope, operation: "status", input: {}, timeoutMs: 10 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 millis");
+      const error = yield* Fiber.join(errorFiber);
+
+      expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+      expect(error).toMatchObject({ operation: "status", environmentHasConnectedClients: true });
+      expect(error.message).toContain("no desktop preview automation host is ready");
     }),
   ),
 );
@@ -756,10 +829,50 @@ it.effect("does not move a live legacy assignment to another runtime for resize"
       const error = yield* broker
         .invoke<void>({ scope, operation: "resize", input: { mode: "fill" } })
         .pipe(Effect.flip);
-      expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+      expect(error).toBeInstanceOf(PreviewAutomationPinnedHostUnsupportedOperationError);
+      expect(error).toMatchObject({
+        clientId: "client-legacy",
+        operation: "resize",
+        supportedOperations: expect.arrayContaining(["status"]),
+      });
+      expect(error.message).toContain("Start a new provider session");
       expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
         "legacy",
       );
+    }),
+  ),
+);
+
+it.effect("wakes waiting calls when a concurrent request creates an incapable pin", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const legacyRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "client-legacy" })),
+      );
+      yield* Stream.runForEach(legacyRequests, (request) =>
+        broker.respond({
+          clientId: "client-legacy",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "legacy",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const resize = yield* broker
+        .invoke<void>({ scope, operation: "resize", input: { mode: "fill" }, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
+        "legacy",
+      );
+
+      const error = yield* Fiber.join(resize);
+      expect(error).toBeInstanceOf(PreviewAutomationPinnedHostUnsupportedOperationError);
+      expect(error).toMatchObject({ clientId: "client-legacy", operation: "resize" });
     }),
   ),
 );

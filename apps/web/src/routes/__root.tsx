@@ -14,6 +14,7 @@ import { APP_DISPLAY_NAME } from "../branding";
 import { DesktopBrowserRuntime } from "../browser/DesktopBrowserRuntime";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { PreviewAutomationHosts } from "../components/preview/PreviewAutomationHosts";
 import {
   SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
@@ -111,6 +112,7 @@ function RootRouteView() {
         <StaleActiveTurnToastCoordinator />
         <EventRouter />
         <DesktopBrowserRuntime authenticated />
+        <PreviewAutomationHosts />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
         <WebSocketConnectionSurface>
