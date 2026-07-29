@@ -10,6 +10,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
@@ -552,6 +553,44 @@ effectIt("interrupts blocked listeners when their subscription scope closes", ()
     yield* Fiber.join(retainFiber);
     expect(deliveryCount).toBe(2);
   }).pipe(Effect.provide(layer));
+});
+
+effectIt("acknowledges delivery when a listener stops after its callback completes", () => {
+  const callbackCompleted = Deferred.makeUnsafe<void>();
+  let deliveryCount = 0;
+  const layer = makeProbeFailureLayer(() =>
+    Effect.succeed({
+      stdout: "p100\ncnode\nn*:3000\n",
+      stderr: "",
+      code: null,
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const subscriptionScope = yield* Scope.make();
+    yield* scanner
+      .subscribe(() => {
+        deliveryCount += 1;
+        return deliveryCount === 2
+          ? Deferred.succeed(callbackCompleted, undefined).pipe(Effect.asVoid)
+          : Effect.void;
+      })
+      .pipe(Effect.provideService(Scope.Scope, subscriptionScope));
+
+    const closeFiber = yield* Deferred.await(callbackCompleted).pipe(
+      Effect.andThen(Scope.close(subscriptionScope, Exit.void)),
+      Effect.forkScoped,
+    );
+    const retainFiber = yield* scanner.retain.pipe(Effect.forkScoped);
+
+    yield* Fiber.join(retainFiber);
+    yield* Fiber.join(closeFiber);
+    expect(deliveryCount).toBe(2);
+  }).pipe(Effect.provide(layer), Effect.provideService(Scheduler.MaxOpsBeforeYield, 1));
 });
 
 effectIt("serializes concurrent scans before publishing snapshots", () =>

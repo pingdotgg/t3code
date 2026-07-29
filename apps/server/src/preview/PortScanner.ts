@@ -500,14 +500,19 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         yield* Deferred.succeed(notification.deliveryResult, Exit.void).pipe(Effect.ignore);
         continue;
       }
-      const delivery = yield* registration.listener(notification.servers).pipe(
-        Effect.provideService(CurrentListenerRegistration, registration),
-        Effect.onInterrupt(() =>
-          Deferred.succeed(notification.deliveryResult, Exit.interrupt()).pipe(Effect.asVoid),
-        ),
-        Effect.exit,
+      const delivery = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const delivery = yield* Effect.exit(
+            restore(
+              registration
+                .listener(notification.servers)
+                .pipe(Effect.provideService(CurrentListenerRegistration, registration)),
+            ),
+          );
+          yield* Deferred.succeed(notification.deliveryResult, delivery).pipe(Effect.ignore);
+          return delivery;
+        }),
       );
-      yield* Deferred.succeed(notification.deliveryResult, delivery).pipe(Effect.ignore);
       if (notification.isReplay) {
         replayFailed = Exit.isFailure(delivery);
       } else if (Exit.isFailure(delivery)) {

@@ -7,7 +7,7 @@ Expected behavior:
 - Preview port discovery performs one immediate scan when the first subscriber retains it. Subscriptions replay the latest snapshot instead of initiating a duplicate scan.
 - Subscription replay and concurrent snapshot broadcasts are serialized so a stale replay cannot arrive after a newer scan result.
 - A failed initial snapshot replay rolls back listener registration before releasing the notification lock, so the failed subscriber cannot block later broadcasts to healthy subscribers.
-- Subscription cleanup is installed before awaiting initial replay, and scope closure removes the registration, acknowledges queued publications, and interrupts blocked callback work without waiting behind it.
+- Subscription cleanup is installed before awaiting initial replay, and scope closure removes the registration, acknowledges queued publications, and interrupts blocked callback work without waiting behind it. Active callback delivery is acknowledged atomically before a pending interruption resumes.
 - Subscriber callbacks run from per-listener notification queues outside the global notification lock. External publications still wait for delivery, while callback-reentrant publications and scan requests enqueue in order without waiting on their own delivery or the active scan lock.
 - Port scans are serialized before publication, so an older slow scan cannot finish after a newer scan and overwrite its snapshot.
 - Managed terminal process-set changes trigger an immediate port scan; unchanged registrations and redundant removals do not.
@@ -21,7 +21,7 @@ Primary files:
 
 Focused regression coverage:
 
-- `apps/server/src/preview/PortScanner.test.ts` covers snapshot replay without rescanning, ordered replay during concurrent broadcasts, replay- and scan-broadcast-reentrant scans without deadlock, failed/interrupted-replay listener cleanup, blocked-listener scope shutdown, serialized concurrent scans, adaptive rescheduling after terminal discovery, and unchanged terminal registrations avoiding redundant probes.
+- `apps/server/src/preview/PortScanner.test.ts` covers snapshot replay without rescanning, ordered replay during concurrent broadcasts, replay- and scan-broadcast-reentrant scans without deadlock, failed/interrupted-replay listener cleanup, blocked-listener scope shutdown, publisher acknowledgment when scope closure races callback completion, serialized concurrent scans, adaptive rescheduling after terminal discovery, and unchanged terminal registrations avoiding redundant probes.
 
 ## Development Ports
 
