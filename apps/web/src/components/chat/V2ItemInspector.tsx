@@ -11,6 +11,7 @@ import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
+import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
@@ -189,24 +190,29 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
 
       {item.type === "web_search" && item.results ? (
         <ul className="space-y-1.5 rounded-md border border-border/45 p-2">
-          {item.results.map((result) => (
-            <li key={JSON.stringify(result)}>
-              {result.url ? (
-                <a
-                  href={result.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
-                >
-                  {result.title ?? result.url}
-                  <ExternalLinkIcon className="size-3" />
-                </a>
-              ) : (
-                <p className="font-medium text-foreground">{result.title ?? "Search result"}</p>
-              )}
-              {result.snippet ? <p className="text-muted-foreground">{result.snippet}</p> : null}
-            </li>
-          ))}
+          {item.results.map((result) => {
+            const safeHref = resolveExternalWebLinkHref(result.url);
+            return (
+              <li key={JSON.stringify(result)}>
+                {safeHref ? (
+                  <a
+                    href={safeHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+                  >
+                    {result.title ?? result.url}
+                    <ExternalLinkIcon className="size-3" />
+                  </a>
+                ) : (
+                  <p className="font-medium text-foreground">
+                    {result.title ?? result.url ?? "Search result"}
+                  </p>
+                )}
+                {result.snippet ? <p className="text-muted-foreground">{result.snippet}</p> : null}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
