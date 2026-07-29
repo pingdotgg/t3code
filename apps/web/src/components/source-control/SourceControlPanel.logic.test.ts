@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, type VcsPanelSnapshotResult, type VcsRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ThreadId,
+  type VcsPanelSnapshotResult,
+  type VcsRef,
+} from "@t3tools/contracts";
 
 import {
   beginPanelFileDiffLoad,
@@ -24,6 +29,7 @@ import {
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
 import { operationPathsForFile, sourceControlPanelError } from "./SourceControlPanelModel";
+import { sourceControlPanelStateCacheKey } from "./SourceControlPanelCache";
 
 const PRIMARY_ENVIRONMENT_ID = EnvironmentId.make("environment-primary");
 const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
@@ -400,6 +406,25 @@ describe("SourceControlPanel refresh stability logic", () => {
 });
 
 describe("SourceControlPanel environment federation", () => {
+  it("changes panel identity with every repository cache scope", () => {
+    const base = {
+      environmentId: PRIMARY_ENVIRONMENT_ID,
+      threadId: "thread-one" as ThreadId,
+      cwd: "/repo/one",
+      worktreePath: null,
+    };
+
+    expect(sourceControlPanelStateCacheKey(base)).not.toBe(
+      sourceControlPanelStateCacheKey({ ...base, threadId: "thread-two" as ThreadId }),
+    );
+    expect(sourceControlPanelStateCacheKey(base)).not.toBe(
+      sourceControlPanelStateCacheKey({ ...base, cwd: "/repo/two" }),
+    );
+    expect(sourceControlPanelStateCacheKey(base)).not.toBe(
+      sourceControlPanelStateCacheKey({ ...base, worktreePath: "/worktrees/feature" }),
+    );
+  });
+
   it("always expands the current environment and collapses other environments by default", () => {
     expect(
       isFederatedSourceControlTargetExpanded(

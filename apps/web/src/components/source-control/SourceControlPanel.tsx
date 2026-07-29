@@ -13,6 +13,7 @@ import {
   SourceControlEnvironmentPanel,
   type SourceControlEnvironmentPanelProps,
 } from "./SourceControlEnvironmentPanel";
+import { sourceControlPanelStateCacheKey } from "./SourceControlPanelCache";
 
 interface SourceControlPanelProps {
   readonly environmentId: EnvironmentId;
@@ -54,8 +55,15 @@ export function SourceControlPanel({
   const showEnvironmentHeaders = targets.length > 1 || targets.some((target) => !target.isPrimary);
   if (!showEnvironmentHeaders) {
     const target = targets[0]!;
+    const panelKey = sourceControlPanelStateCacheKey({
+      environmentId: target.environmentId,
+      threadId,
+      cwd: target.cwd,
+      worktreePath: target.worktreePath,
+    });
     return (
       <SourceControlEnvironmentPanel
+        key={panelKey}
         environmentId={target.environmentId}
         threadId={threadId}
         cwd={target.cwd}
@@ -71,6 +79,12 @@ export function SourceControlPanel({
       {targets.map((target) => {
         const EnvironmentIcon = target.isPrimary ? MonitorIcon : ServerIcon;
         const expanded = isFederatedSourceControlTargetExpanded(target, expandedEnvironmentIds);
+        const panelKey = sourceControlPanelStateCacheKey({
+          environmentId: target.environmentId,
+          threadId,
+          cwd: target.cwd,
+          worktreePath: target.worktreePath,
+        });
         const environmentHeaderContents = (
           <>
             <EnvironmentIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
@@ -122,6 +136,7 @@ export function SourceControlPanel({
             )}
             {expanded ? (
               <SourceControlEnvironmentPanel
+                key={panelKey}
                 environmentId={target.environmentId}
                 threadId={threadId}
                 cwd={target.cwd}
