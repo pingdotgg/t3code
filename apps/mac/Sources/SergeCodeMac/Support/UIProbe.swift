@@ -853,6 +853,8 @@
                         UIProbeSurfaces.activityDock, threadID: "thread-7",
                         detail: "tool(command)", scene: "activity-dock"))
                 snapshot("18-activity-dock", dir: dir)
+                failures.append(
+                    contentsOf: await probeToolHandoff(model: model, dir: dir))
             } else {
                 print("UIProbe: activity dock skipped (live backend run)")
             }
@@ -968,6 +970,67 @@
                 multi.select(threadID: previousThreadID, on: model.deviceID)
                 try? await Task.sleep(for: .seconds(1))
             }
+            return failures
+        }
+
+        /// Completes `thread-7`'s parked running command in place and watches
+        /// its row fly out of the dock into transcript history — the handoff
+        /// flight (ToolHandoff.swift). Runs inside the activity-dock scene,
+        /// which has already selected the thread and let the tracker observe
+        /// the running state (the flight only fires on a running → terminal
+        /// diff between renders).
+        ///
+        /// The settled assertions are the load-bearing ones: the armed row
+        /// renders at opacity zero until its flight trigger fires, so a
+        /// regression in that arming would leave the promoted row invisible —
+        /// a state the model-level checks cannot see. The settled PNG is what
+        /// catches it.
+        private static func probeToolHandoff(model: AppModel, dir: String) async -> [String] {
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: tool-handoff skipped (live backend run)")
+                return []
+            }
+            var failures: [String] = []
+            let started = Date()
+            let completed = await mock.probeCompleteRunningToolEvent(threadID: "thread-7")
+            if !completed {
+                print("UIProbe: FAIL tool-handoff found no running tool to complete")
+                failures.append("tool-handoff-no-running-tool")
+            }
+            // Mid-flight frames, named by measured elapsed time — the flight
+            // is a KeyframeAnimator, which re-evaluates the body per
+            // interpolated value, so in-process `cacheDisplay` really samples
+            // it (same reasoning as the tool-group receive capture).
+            for index in 0..<6 {
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                snapshot(
+                    "18b-tool-handoff-\(String(format: "%02d", index))-\(elapsed)ms", dir: dir)
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            try? await Task.sleep(for: .seconds(0.8))
+
+            // The promoted row must now be permanent history: a single tool
+            // row with the same stable id, terminal, no longer owned by the
+            // dock.
+            let display = model.timeline(threadID: "thread-7")
+                .groupedForDisplay(includeSeparators: false)
+            let promotedVisible = display.contains { item in
+                guard case .single(.toolEvent(let id, _, _, _, let status, _, _, _)) = item
+                else { return false }
+                return id == "t7-tool-4" && status == .succeeded
+            }
+            if !promotedVisible {
+                print("UIProbe: FAIL tool-handoff promoted row missing from display items")
+                failures.append("tool-handoff-promoted-row")
+            }
+            // With the command closed the turn has nothing in flight, so the
+            // dock must have handed the tail back to the thinking phase.
+            failures.append(
+                contentsOf: expectSurface(
+                    UIProbeSurfaces.activityDock, threadID: "thread-7",
+                    detail: "thinking", scene: "tool-handoff"))
+            print("UIProbe: tool-handoff promoted=\(promotedVisible)")
+            snapshot("18b-tool-handoff-settled", dir: dir)
             return failures
         }
 
