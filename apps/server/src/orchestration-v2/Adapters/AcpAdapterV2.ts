@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
@@ -844,9 +845,9 @@ export type AcpPermissionDisposition = "allow" | "ask" | "deny";
 function resolveAcpPermissionPath(path: string, cwd: string | null): string | undefined {
   const trimmed = path.trim();
   if (trimmed.length === 0) return undefined;
-  if (NodePath.isAbsolute(trimmed)) return NodePath.resolve(trimmed);
+  if (NodePath.isAbsolute(trimmed)) return trimmed;
   if (cwd === null || cwd.trim().length === 0) return undefined;
-  return NodePath.resolve(cwd, trimmed);
+  return `${cwd}${cwd.endsWith(NodePath.sep) ? "" : NodePath.sep}${trimmed}`;
 }
 
 function acpPathIsWithinRoot(path: string, root: string): boolean {
@@ -859,6 +860,50 @@ function acpPathIsWithinRoot(path: string, root: string): boolean {
   );
 }
 
+/**
+ * Canonicalize a path for an authorization containment check.
+ *
+ * `realpath` cannot resolve a file that has not been created yet, so walk up
+ * to the deepest existing ancestor and append the missing suffix to that
+ * ancestor's canonical path. This follows symlinked directories while still
+ * allowing normal writes to new files. If an existing entry cannot be
+ * canonicalized (for example, a broken symlink), fail closed.
+ */
+function acpCanonicalPathForContainment(path: string): string | undefined {
+  // Do not lexically normalize before realpath. For a path such as
+  // `workspace/link/../file`, the kernel resolves `link` before `..`; an
+  // eager NodePath.resolve would erase that symlink traversal and could turn
+  // an outside target into an apparently in-workspace path.
+  let candidate = path;
+  const missingSuffix: Array<string> = [];
+
+  while (true) {
+    try {
+      return NodePath.resolve(NodeFS.realpathSync.native(candidate), ...missingSuffix);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+        return undefined;
+      }
+    }
+
+    try {
+      NodeFS.lstatSync(candidate);
+      // The entry exists but realpath could not resolve it, as with a broken
+      // symlink. Treat it as untrusted rather than authorizing its lexical path.
+      return undefined;
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+        return undefined;
+      }
+    }
+
+    const parent = NodePath.dirname(candidate);
+    if (parent === candidate) return undefined;
+    missingSuffix.unshift(NodePath.basename(candidate));
+    candidate = parent;
+  }
+}
+
 function acpWorkspaceWriteAllowsMutation(
   runtimePolicy: ProviderAdapterV2RuntimePolicy,
   sandboxPolicy: Record<string, unknown>,
@@ -866,15 +911,21 @@ function acpWorkspaceWriteAllowsMutation(
 ): boolean {
   const cwd =
     typeof runtimePolicy.cwd === "string" && runtimePolicy.cwd.trim().length > 0
-      ? NodePath.resolve(runtimePolicy.cwd)
+      ? (resolveAcpPermissionPath(runtimePolicy.cwd, process.cwd()) ?? null)
       : null;
-  const roots = cwd === null ? [] : [cwd];
+  const roots: Array<string> = [];
+  if (cwd !== null) {
+    const canonicalCwd = acpCanonicalPathForContainment(cwd);
+    if (canonicalCwd !== undefined) roots.push(canonicalCwd);
+  }
   const writableRoots = sandboxPolicy.writableRoots;
   if (Array.isArray(writableRoots)) {
     for (const writableRoot of writableRoots) {
       if (typeof writableRoot !== "string") continue;
       const resolved = resolveAcpPermissionPath(writableRoot, cwd);
-      if (resolved !== undefined) roots.push(resolved);
+      if (resolved === undefined) continue;
+      const canonicalRoot = acpCanonicalPathForContainment(resolved);
+      if (canonicalRoot !== undefined) roots.push(canonicalRoot);
     }
   }
   if (roots.length === 0) return false;
@@ -885,7 +936,12 @@ function acpWorkspaceWriteAllowsMutation(
   }
   for (const location of locations) {
     const resolved = resolveAcpPermissionPath(location.path, cwd);
-    if (resolved === undefined || !roots.some((root) => acpPathIsWithinRoot(resolved, root))) {
+    const canonicalPath =
+      resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
+    if (
+      canonicalPath === undefined ||
+      !roots.some((root) => acpPathIsWithinRoot(canonicalPath, root))
+    ) {
       return false;
     }
   }
