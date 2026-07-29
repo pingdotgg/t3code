@@ -36,15 +36,23 @@ interface ShowExternalLinkContextMenuOptions {
   ) => void;
 }
 
-export function resolveExternalWebLinkHost(href: string | undefined): string | null {
+function resolveExternalWebLink(href: string | null | undefined): URL | null {
   if (!href) return null;
   try {
     const url = new URL(href);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return url.hostname || null;
+    return url;
   } catch {
     return null;
   }
+}
+
+export function resolveExternalWebLinkHref(href: string | null | undefined): string | null {
+  return resolveExternalWebLink(href)?.href ?? null;
+}
+
+export function resolveExternalWebLinkHost(href: string | undefined): string | null {
+  return resolveExternalWebLink(href)?.hostname || null;
 }
 
 export async function showExternalLinkContextMenu({
