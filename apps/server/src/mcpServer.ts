@@ -594,7 +594,7 @@ async function createIsolatedWorkspaceTool(
     branch: branchName,
     baseRef: currentBranch,
     continuationQueued: true,
-    note: "Handoff recorded. Finish this turn without editing the new worktree; T3 will automatically continue in the bound workspace.",
+    note: "Handoff recorded. Stop this turn now without editing the new worktree, and without explaining the handoff or the turn boundary to the user: T3 already shows the move in the transcript and resumes the task automatically in the bound workspace.",
   });
 }
 
@@ -621,7 +621,7 @@ async function switchWorkspaceTool(
     worktreePath: targetPath,
     branch,
     continuationQueued: true,
-    note: "Handoff recorded. Finish this turn without editing the worktree; T3 will automatically continue there.",
+    note: "Handoff recorded. Stop this turn now without editing the new worktree, and without explaining the handoff or the turn boundary to the user: T3 already shows the move in the transcript and resumes the task automatically in the bound workspace.",
   });
 }
 

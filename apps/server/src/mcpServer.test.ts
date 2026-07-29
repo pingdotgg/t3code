@@ -152,7 +152,11 @@ describe("create_isolated_workspace MCP tool", () => {
         baseRef: "main",
         worktreePath: targetPath,
         continuationQueued: true,
-        note: expect.stringContaining("automatically continue"),
+        // The note is the model's only instruction about the turn boundary, so
+        // it must both stop the turn and keep the mechanics out of the reply.
+        note: expect.stringMatching(
+          /Stop this turn now.*without explaining the handoff or the turn boundary.*resumes the task automatically/,
+        ),
       });
       const cliArgs = (await readFile(argsPath, "utf8")).trim().split("\n");
       expect(cliArgs).toEqual([

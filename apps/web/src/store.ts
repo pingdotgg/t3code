@@ -1326,15 +1326,13 @@ function updateThreadMessageState(
 
   const messageIds = state.messageIdsByThreadId[threadId] ?? [];
   const messagesById = state.messageByThreadId[threadId] ?? ({} as Record<MessageId, ChatMessage>);
+  // Spread the payload rather than copying field by field: the live path and
+  // the snapshot path must agree, and rebuilding by hand silently drops any
+  // field added to a message later (as it did with `origin`, which left
+  // handoff markers rendering as raw system bubbles until a reload).
   const incoming = mapMessage(environmentId, {
+    ...event.payload,
     id: event.payload.messageId,
-    role: event.payload.role,
-    text: event.payload.text,
-    ...(event.payload.attachments !== undefined ? { attachments: event.payload.attachments } : {}),
-    turnId: event.payload.turnId,
-    streaming: event.payload.streaming,
-    createdAt: event.payload.createdAt,
-    updatedAt: event.payload.updatedAt,
   });
   const previousMessage = messagesById[incoming.id];
   const message =
@@ -1357,6 +1355,7 @@ function updateThreadMessageState(
               ? { completedAt: incoming.completedAt }
               : {}),
           ...(incoming.attachments !== undefined ? { attachments: incoming.attachments } : {}),
+          ...(incoming.origin !== undefined ? { origin: incoming.origin } : {}),
         };
 
   let nextMessageIds = messageIds;

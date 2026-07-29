@@ -36,6 +36,8 @@ import {
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 import type { SidebarThreadSummary } from "./types";
 import { deriveInsights, isInsightActivity } from "./insights";
+import { deriveTimelineEntries } from "./session-logic";
+import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
@@ -796,6 +798,103 @@ describe("incremental orchestration updates", () => {
       before.messageByThreadId[threadId]?.[messages[0]!.id],
     );
     expect(after.messageByThreadId[threadId]?.[messages.at(-1)!.id]?.text).toBe("partial text");
+  });
+
+  it("keeps the workspace handoff origin on live message events", () => {
+    const threadId = ThreadId.make("thread-1");
+    const state = makeState(makeThread({ id: threadId, messages: [] }));
+
+    // The transcript hides handoff plumbing by reading `origin`. If the live
+    // event path drops it, the marker renders as a raw system bubble and the
+    // boilerplate continuation reappears until the thread is reloaded.
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.message-sent", {
+        threadId,
+        messageId: MessageId.make("message-marker"),
+        role: "system",
+        text: "Moved to feature/handoff (/tmp/handoff)",
+        origin: {
+          kind: "workspace-handoff",
+          role: "marker",
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff",
+        },
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:00.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const message =
+      localEnvironmentStateOf(next).messageByThreadId[threadId]?.[MessageId.make("message-marker")];
+    expect(message?.origin).toEqual({
+      kind: "workspace-handoff",
+      role: "marker",
+      branch: "feature/handoff",
+      worktreePath: "/tmp/handoff",
+    });
+  });
+
+  it("hides handoff plumbing end to end, from live events through the timeline", () => {
+    const threadId = ThreadId.make("thread-1");
+    const origin = (role: "marker" | "continuation") => ({
+      kind: "workspace-handoff" as const,
+      role,
+      branch: "feature/handoff",
+      worktreePath: "/tmp/handoff",
+    });
+
+    // Exercising the real seam: earlier tests fed hand-built origins straight
+    // into the timeline, so a store that dropped `origin` still looked correct.
+    const next = applyOrchestrationEvents(
+      makeState(makeThread({ id: threadId, messages: [] })),
+      [
+        makeEvent("thread.message-sent", {
+          threadId,
+          messageId: MessageId.make("message-marker"),
+          role: "system",
+          text: "Moved to feature/handoff (/tmp/handoff)",
+          origin: origin("marker"),
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-02-27T00:00:01.000Z",
+          updatedAt: "2026-02-27T00:00:01.000Z",
+        }),
+        makeEvent("thread.message-sent", {
+          threadId,
+          messageId: MessageId.make("message-continuation"),
+          role: "user",
+          text: "Continue the task from the previous user request in the newly bound workspace.",
+          origin: origin("continuation"),
+          turnId: TurnId.make("turn-2"),
+          streaming: false,
+          createdAt: "2026-02-27T00:00:02.000Z",
+          updatedAt: "2026-02-27T00:00:02.000Z",
+        }),
+      ],
+      localEnvironmentId,
+    );
+
+    const environment = localEnvironmentStateOf(next);
+    const messages = (environment.messageIdsByThreadId[threadId] ?? []).map(
+      (messageId) => environment.messageByThreadId[threadId]![messageId]!,
+    );
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntries(messages, [], []),
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["workspace-handoff"]);
+    expect(JSON.stringify(rows)).not.toContain("Continue the task from the previous user request");
+    expect(JSON.stringify(rows)).not.toContain("Moved to feature/handoff (/tmp/handoff)");
   });
 
   it("preserves state identity for no-op project and thread deletes", () => {

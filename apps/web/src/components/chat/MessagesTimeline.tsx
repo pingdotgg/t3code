@@ -608,7 +608,7 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           const canRevertAgentWork =
             revertMessageId !== undefined && typeof row.revertTurnCount === "number";
           return (
-            <div className="group/handoff mx-1 flex items-center gap-2 text-[length:var(--app-status-line-font-size)] text-muted-foreground">
+            <div className="group/handoff mx-1 flex items-center gap-2 py-2 text-[length:var(--app-status-line-font-size)] text-muted-foreground">
               <span className="h-px flex-1 bg-border/60" aria-hidden="true" />
               <Tooltip>
                 <TooltipTrigger
