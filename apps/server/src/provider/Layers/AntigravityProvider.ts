@@ -115,27 +115,33 @@ const checkAntigravityAccountAuth = (
               Effect.map(fs.stat(file), (stat) => ({
                 file,
                 mtimeMs: Option.getOrElse(stat.mtime, () => new Date(0)).getTime(),
-              }))
+              })),
             ),
-            { concurrency: "unbounded" }
+            { concurrency: "unbounded" },
           );
 
-          const sortedFiles = statResults
-            .sort((a, b) => b.mtimeMs - a.mtimeMs)
-            .map((r) => r.file);
+          const sortedFiles = statResults.sort((a, b) => b.mtimeMs - a.mtimeMs).map((r) => r.file);
 
           for (const logFile of sortedFiles.slice(0, 5)) {
             const content = yield* fs.readFileString(logFile);
-            const authMatches = [...content.matchAll(/applyAuthResult:\s*email=([^\s,]+),\s*authMethod=([^\s,]+)/g)];
-            const emailMatches = [...content.matchAll(/authenticated successfully as ([^\s\n,]+)/g)];
+            const authMatches = [
+              ...content.matchAll(/applyAuthResult:\s*email=([^\s,]+),\s*authMethod=([^\s,]+)/g),
+            ];
+            const emailMatches = [
+              ...content.matchAll(/authenticated successfully as ([^\s\n,]+)/g),
+            ];
             const authMatch = authMatches.pop();
             const emailMatch = emailMatches.pop();
 
-            let latestMatch: { type: "auth"; match: RegExpMatchArray } | { type: "email"; match: RegExpMatchArray } | undefined;
+            let latestMatch:
+              | { type: "auth"; match: RegExpMatchArray }
+              | { type: "email"; match: RegExpMatchArray }
+              | undefined;
             if (authMatch && emailMatch) {
-              latestMatch = (authMatch.index ?? 0) > (emailMatch.index ?? 0)
-                ? { type: "auth", match: authMatch }
-                : { type: "email", match: emailMatch };
+              latestMatch =
+                (authMatch.index ?? 0) > (emailMatch.index ?? 0)
+                  ? { type: "auth", match: authMatch }
+                  : { type: "email", match: emailMatch };
             } else if (authMatch) {
               latestMatch = { type: "auth", match: authMatch };
             } else if (emailMatch) {
@@ -161,10 +167,11 @@ const checkAntigravityAccountAuth = (
               break;
             }
           }
+        }
       }),
       {
         PlatformError: () => Effect.void,
-      }
+      },
     );
 
     if (discoveredPlanType === "unknown") {
@@ -194,7 +201,7 @@ const checkAntigravityAccountAuth = (
         {
           PlatformError: () => Effect.void,
           ParseError: () => Effect.void,
-        }
+        },
       );
     }
 
