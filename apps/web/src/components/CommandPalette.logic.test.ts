@@ -4,8 +4,6 @@ import type { Thread } from "../types";
 import {
   buildBrowseGroups,
   buildThreadActionItems,
-  canPreloadBrowsePath,
-  createBrowseNavigationCoordinator,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   type CommandPaletteGroup,
@@ -232,67 +230,5 @@ describe("buildBrowseGroups", () => {
     finishNavigation?.();
     await action;
     expect(actionSettled).toBe(true);
-  });
-});
-
-describe("createBrowseNavigationCoordinator", () => {
-  it("only commits the latest overlapping navigation", async () => {
-    const coordinator = createBrowseNavigationCoordinator();
-    let finishFirst: (() => void) | undefined;
-    let finishSecond: (() => void) | undefined;
-    const commits: string[] = [];
-
-    const first = coordinator.run({
-      load: () =>
-        new Promise<void>((resolve) => {
-          finishFirst = resolve;
-        }),
-      commit: () => {
-        commits.push("first");
-      },
-    });
-    const second = coordinator.run({
-      load: () =>
-        new Promise<void>((resolve) => {
-          finishSecond = resolve;
-        }),
-      commit: () => {
-        commits.push("second");
-      },
-    });
-
-    finishSecond?.();
-    await expect(second).resolves.toBe(true);
-    finishFirst?.();
-    await expect(first).resolves.toBe(false);
-    expect(commits).toEqual(["second"]);
-  });
-
-  it("does not commit after newer user input invalidates the navigation", async () => {
-    const coordinator = createBrowseNavigationCoordinator();
-    let finishNavigation: (() => void) | undefined;
-    const commit = vi.fn();
-    const navigation = coordinator.run({
-      load: () =>
-        new Promise<void>((resolve) => {
-          finishNavigation = resolve;
-        }),
-      commit,
-    });
-
-    coordinator.invalidate();
-    finishNavigation?.();
-
-    await expect(navigation).resolves.toBe(false);
-    expect(commit).not.toHaveBeenCalled();
-  });
-});
-
-describe("canPreloadBrowsePath", () => {
-  it("only preloads paths for connected environments", () => {
-    expect(canPreloadBrowsePath("connected")).toBe(true);
-    expect(canPreloadBrowsePath("offline")).toBe(false);
-    expect(canPreloadBrowsePath("reconnecting")).toBe(false);
-    expect(canPreloadBrowsePath(null)).toBe(false);
   });
 });

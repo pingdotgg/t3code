@@ -1,9 +1,8 @@
 import {
-  type KeybindingCommand,
   type FilesystemBrowseEntry,
+  type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -15,39 +14,6 @@ import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
-
-export interface BrowseNavigationCoordinator {
-  readonly invalidate: () => void;
-  readonly run: (input: {
-    readonly load: () => Promise<void>;
-    readonly commit: () => void;
-  }) => Promise<boolean>;
-}
-
-export function createBrowseNavigationCoordinator(): BrowseNavigationCoordinator {
-  let generation = 0;
-
-  return {
-    invalidate: () => {
-      generation += 1;
-    },
-    run: async (input) => {
-      const navigationGeneration = ++generation;
-      await input.load();
-      if (navigationGeneration !== generation) {
-        return false;
-      }
-      input.commit();
-      return true;
-    },
-  };
-}
-
-export function canPreloadBrowsePath(
-  connectionPhase: EnvironmentConnectionPhase | null | undefined,
-): boolean {
-  return connectionPhase === "connected";
-}
 
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
@@ -103,30 +69,6 @@ export function enumerateCommandPaletteItems(
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
-
-export function filterBrowseEntries(input: {
-  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
-  browseFilterQuery: string;
-}): {
-  filteredEntries: FilesystemBrowseEntry[];
-  exactEntry: FilesystemBrowseEntry | null;
-} {
-  const lowerFilter = input.browseFilterQuery.toLowerCase();
-  const showHidden = input.browseFilterQuery.startsWith(".");
-
-  const filteredEntries = input.browseEntries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerFilter) &&
-      (showHidden || !entry.name.startsWith(".")),
-  );
-
-  const exactEntry =
-    input.browseFilterQuery.length > 0
-      ? (filteredEntries.find((entry) => entry.name === input.browseFilterQuery) ?? null)
-      : null;
-
-  return { filteredEntries, exactEntry };
-}
 
 export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
