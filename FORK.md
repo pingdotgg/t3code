@@ -68,6 +68,11 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 - The fork adds thread goal support, goal activity rendering, and goal sidebar/panel UI.
 
+### Subagent Activity
+
+- Parent timelines keep subagent commands, file changes, tool calls, web searches, image views, and diffs.
+- Subagent messages, reasoning, goals, plans, token usage, and thread/turn state stay out of the parent timeline. Codex child relationships are recognized from both `collabAgentToolCall` and `subAgentActivity` items.
+
 ### Provider Launch Environment
 
 - Provider sessions use a shared launch environment pipeline instead of ad hoc environment assembly.
