@@ -6,7 +6,9 @@ import { make as makeJsonSchemaGenerator } from "@effect/openapi-generator/JsonS
 import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const UPSTREAM_REF = "e4310be51f617f5e60382038fa9cbf53a2429ca4";
+// rust-v0.144.5 — ModelListResponse.ReasoningEffort became an open string here,
+// so new efforts ("max", "ultra", ...) no longer break model/list decoding.
+const UPSTREAM_REF = "87db9bc18ba5bc82c1cb4e4381b44f693ee35623";
 const USER_AGENT = "effect-codex-app-server-generator";
 const GITHUB_API_BASE =
   "https://api.github.com/repos/openai/codex/contents/codex-rs/app-server-protocol";
@@ -352,6 +354,9 @@ function resolveResponseTypeName(
   const overrides: Record<string, string> = {
     "account/logout": "LogoutAccountResponse",
     "account/rateLimits/read": "GetAccountRateLimitsResponse",
+    "account/usage/read": "GetAccountTokenUsageResponse",
+    "account/workspaceMessages/read": "GetWorkspaceMessagesResponse",
+    "externalAgentConfig/import/readHistories": "ExternalAgentConfigImportHistoriesReadResponse",
     "config/batchWrite": "ConfigWriteResponse",
     "config/mcpServer/reload": "McpServerRefreshResponse",
     "config/value/write": "ConfigWriteResponse",

@@ -98,7 +98,9 @@ export function getDefaultServerModel(
   provider: ProviderKind,
 ): string {
   const models = getProviderModels(providers, provider);
+  const configuredDefault = normalizeModelSlug(DEFAULT_MODEL_BY_PROVIDER[provider], provider);
   return (
+    models.find((model) => model.slug === configuredDefault)?.slug ??
     models.find((model) => !model.isCustom)?.slug ??
     models[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[provider]

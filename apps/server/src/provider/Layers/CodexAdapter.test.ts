@@ -366,6 +366,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         payload: {
           threadId: "thread-1",
           turnId: "turn-1",
+          completedAtMs: 1700000000000,
           item: {
             type: "agentMessage",
             id: "msg_1",
@@ -408,6 +409,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         payload: {
           threadId: "thread-1",
           turnId: "turn-1",
+          completedAtMs: 1700000000000,
           item: {
             type: "plan",
             id: "plan_1",

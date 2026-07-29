@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderKind, ServerProvider } from "@forma/contracts";
-import { resolveSelectableProvider } from "./providerModels";
+import { getDefaultServerModel, resolveSelectableProvider } from "./providerModels";
 
 function provider(input: {
   provider: ProviderKind;
@@ -47,5 +47,34 @@ describe("resolveSelectableProvider", () => {
         "grok",
       ),
     ).toBe("codex");
+  });
+});
+
+describe("getDefaultServerModel", () => {
+  it("prefers the configured provider default over model list order", () => {
+    expect(
+      getDefaultServerModel(
+        [
+          provider({
+            provider: "claudeAgent",
+            models: [
+              {
+                slug: "claude-fable-5",
+                name: "Claude Fable 5",
+                isCustom: false,
+                capabilities: null,
+              },
+              {
+                slug: "claude-sonnet-4-6",
+                name: "Claude Sonnet 4.6",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          }),
+        ],
+        "claudeAgent",
+      ),
+    ).toBe("claude-sonnet-4-6");
   });
 });

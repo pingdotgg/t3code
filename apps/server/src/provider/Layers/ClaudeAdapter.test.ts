@@ -1200,6 +1200,79 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("treats Claude success results with is_error true as failed turns", () => {
+    const forma = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      forma.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        api_error_status: 401,
+        result: "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+        stop_reason: "stop_sequence",
+        session_id: "sdk-session-auth-failed",
+        uuid: "result-auth-failed",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+          "runtime.error",
+          "turn.completed",
+        ],
+      );
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(
+          runtimeError.payload.message,
+          "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+        );
+      }
+
+      const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+        assert.equal(turnCompleted.payload.state, "failed");
+        assert.equal(
+          turnCompleted.payload.errorMessage,
+          "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+        );
+        assert.equal(turnCompleted.payload.stopReason, "stop_sequence");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(forma.layer),
+    );
+  });
+
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const forma = makeHarness();
     return Effect.gen(function* () {
