@@ -13,6 +13,7 @@ import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
+import { buildThreadActivityFileParams } from "./threadActivityFileNavigation";
 
 export function ThreadActivityInspector(props: {
   readonly activity: ThreadFeedActivity;
@@ -93,12 +94,15 @@ export function ThreadActivityInspector(props: {
                 onPress={() => {
                   if (!relativePath) return;
                   void Haptics.selectionAsync();
-                  router.push(
-                    buildThreadFilesNavigation(
-                      { environmentId: props.environmentId, threadId: row.sourceThreadId },
+                  navigation.navigate(
+                    "ThreadFile",
+                    buildThreadActivityFileParams({
+                      environmentId: props.environmentId,
+                      currentThreadId: props.currentThreadId,
+                      activitySourceThreadId: row.sourceThreadId,
                       relativePath,
-                      link.line,
-                    ),
+                      line: link.line,
+                    }),
                   );
                 }}
                 className="min-h-9 flex-row items-center gap-2 rounded-md border border-neutral-300/50 px-2.5 py-1.5 dark:border-white/[0.1]"
