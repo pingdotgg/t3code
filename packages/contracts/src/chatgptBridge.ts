@@ -46,6 +46,22 @@ export const WorkspaceRelativePath = TrimmedNonEmptyString.check(
 );
 export type WorkspaceRelativePath = typeof WorkspaceRelativePath.Type;
 
+/**
+ * What the workspace connector may do, chosen in provider settings and baked
+ * into the credential as capabilities at session start:
+ *
+ *   - `read`  — the five read-only tools.
+ *   - `write` — adds file mutations (`workspace_write`/`_edit`/`_patch`).
+ *   - `full`  — adds `workspace_bash`.
+ *
+ * Whether a granted mutation *executes* is a separate, per-operation decision:
+ * the thread's runtime mode either auto-approves it or routes it through the
+ * approval card in the SergeCode timeline, exactly like a local provider's
+ * tool call.
+ */
+export const WorkspaceBridgeAccess = Schema.Literals(["read", "write", "full"]);
+export type WorkspaceBridgeAccess = typeof WorkspaceBridgeAccess.Type;
+
 /* -------------------------------------------------------------------------- */
 /* workspace_overview                                                          */
 /* -------------------------------------------------------------------------- */
@@ -72,6 +88,8 @@ export const WorkspaceOverviewResult = Schema.Struct({
   instructionFiles: Schema.Array(TrimmedNonEmptyString),
   /** True when write and command tools are unavailable on this credential. */
   readOnly: Schema.Boolean,
+  /** Access level this credential grants; mutations may still need approval. */
+  access: WorkspaceBridgeAccess,
 });
 export type WorkspaceOverviewResult = typeof WorkspaceOverviewResult.Type;
 
@@ -219,6 +237,125 @@ export const WorkspaceChangesResult = Schema.Struct({
 export type WorkspaceChangesResult = typeof WorkspaceChangesResult.Type;
 
 /* -------------------------------------------------------------------------- */
+/* Mutations: workspace_write / _edit / _patch / _bash / _wait                 */
+/* -------------------------------------------------------------------------- */
+
+export const WorkspaceMutationTool = Schema.Literals(["write", "edit", "patch", "bash"]);
+export type WorkspaceMutationTool = typeof WorkspaceMutationTool.Type;
+
+/**
+ * Lifecycle of one staged mutation.
+ *
+ * `pending-approval` is a normal, expected state — MCP calls must stay short,
+ * and a human decision can take longer than a tool call may block. The caller
+ * polls `workspace_wait` with the operation id until the state is terminal.
+ * `failed` is terminal-but-approved: the user said yes and the operation
+ * itself did not work (patch rejected, command spawn failed); the summary
+ * carries the reason so the model can correct and retry.
+ */
+export const WorkspaceOperationStatus = Schema.Literals([
+  "completed",
+  "pending-approval",
+  "denied",
+  "failed",
+]);
+export type WorkspaceOperationStatus = typeof WorkspaceOperationStatus.Type;
+
+/**
+ * One result shape for every mutating tool and for `workspace_wait`, so the
+ * remote model handles approval deferral the same way regardless of which
+ * tool it called. Tool-specific fields are optional and populated only on
+ * `completed`.
+ */
+export const WorkspaceMutationResult = Schema.Struct({
+  operationId: TrimmedNonEmptyString,
+  tool: WorkspaceMutationTool,
+  status: WorkspaceOperationStatus,
+  /** Human-readable outcome: what happened, or why it is pending/denied/failed. */
+  summary: Schema.String,
+  /** Workspace-relative paths touched (write/edit/patch). */
+  filesChanged: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Bash exit code; null when the process was killed by a signal or timeout. */
+  exitCode: Schema.optional(Schema.NullOr(Schema.Int)),
+  /** Bash combined output, byte-capped. */
+  output: Schema.optional(Schema.String),
+  /** True when the bash output hit its byte cap. */
+  truncated: Schema.optional(Schema.Boolean),
+});
+export type WorkspaceMutationResult = typeof WorkspaceMutationResult.Type;
+
+export const WorkspaceWriteInput = Schema.Struct({
+  path: WorkspaceRelativePath.annotate({
+    description: "File to create or overwrite, relative to the workspace root.",
+  }),
+  content: Schema.String.annotate({
+    description: "Complete new file content. This replaces the whole file.",
+  }),
+  createDirs: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Create missing parent directories.",
+      default: true,
+    }),
+  ),
+});
+export type WorkspaceWriteInput = typeof WorkspaceWriteInput.Type;
+
+export const WorkspaceEditInput = Schema.Struct({
+  path: WorkspaceRelativePath.annotate({
+    description: "File to edit, relative to the workspace root.",
+  }),
+  oldText: TrimmedNonEmptyString.annotate({
+    description:
+      "Exact text to replace, including whitespace. Must match the file verbatim; read the file first if unsure.",
+  }),
+  newText: Schema.String.annotate({
+    description: "Replacement text.",
+  }),
+  replaceAll: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Replace every occurrence instead of requiring exactly one.",
+      default: false,
+    }),
+  ),
+});
+export type WorkspaceEditInput = typeof WorkspaceEditInput.Type;
+
+export const WorkspacePatchInput = Schema.Struct({
+  patch: TrimmedNonEmptyString.annotate({
+    description:
+      "Unified diff to apply, as produced by `git diff`. Paths must be workspace-relative (a/… b/…).",
+  }),
+});
+export type WorkspacePatchInput = typeof WorkspacePatchInput.Type;
+
+export const WorkspaceBashInput = Schema.Struct({
+  command: TrimmedNonEmptyString.annotate({
+    description:
+      "Shell command to run in the workspace root. Runs with a minimal environment; interactive commands will hang and time out.",
+  }),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 180_000 })).annotate({
+      description: "Milliseconds before the command is killed (1s-180s).",
+      default: 30_000,
+    }),
+  ),
+});
+export type WorkspaceBashInput = typeof WorkspaceBashInput.Type;
+
+export const WorkspaceWaitInput = Schema.Struct({
+  operationId: TrimmedNonEmptyString.annotate({
+    description: "Operation id returned by a mutating workspace tool.",
+  }),
+  waitSeconds: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 30 })).annotate({
+      description: "Seconds to wait for a decision before returning the current status (0-30).",
+      default: 20,
+    }),
+  ),
+});
+export type WorkspaceWaitInput = typeof WorkspaceWaitInput.Type;
+
+/* -------------------------------------------------------------------------- */
 /* Errors                                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -233,6 +370,9 @@ export const WorkspaceBridgeErrorReason = Schema.Literals([
   "too-large",
   "read-failed",
   "git-unavailable",
+  "operation-not-found",
+  "approval-unavailable",
+  "invalid-input",
 ]);
 export type WorkspaceBridgeErrorReason = typeof WorkspaceBridgeErrorReason.Type;
 

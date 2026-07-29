@@ -3,14 +3,16 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { beforeEach, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationThreadShell,
+  type RuntimeMode,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,37 +21,51 @@ import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import type { McpCapability, McpInvocationScope } from "../../McpInvocationContext.ts";
 import {
+  __testing as brokerTesting,
+  registerWorkspaceApprovalChannel,
+  resolveWorkspaceApproval,
+} from "./WorkspaceApprovalBroker.ts";
+import {
+  __testing as coordinatorTesting,
   WorkspaceBridgeCoordinator,
   WorkspaceBridgeCoordinatorLive,
+  extractPatchPaths,
   filterGitDiff,
   filterGitStatus,
   formatNumberedSlice,
   matchesQuery,
   parseGitStatus,
   splitLines,
+  workspaceMutationNeedsApproval,
 } from "./WorkspaceBridgeCoordinator.ts";
 
 const threadId = ThreadId.make("thread-chatgpt-1");
 
-const scope: McpInvocationScope = {
+const makeScope = (capabilities: ReadonlyArray<McpCapability>): McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment-1"),
   threadId,
   providerSessionId: "provider-session-1",
   providerInstanceId: ProviderInstanceId.make("chatgpt"),
-  capabilities: new Set(["workspace"]),
+  capabilities: new Set(capabilities),
   issuedAt: 0,
   expiresAt: Number.MAX_SAFE_INTEGER,
-};
+});
 
-const makeThreadShell = (worktreePath: string): OrchestrationThreadShell =>
+const scope = makeScope(["workspace"]);
+const fullScope = makeScope(["workspace", "workspace-write", "workspace-bash"]);
+
+const makeThreadShell = (
+  worktreePath: string,
+  runtimeMode: RuntimeMode = "approval-required",
+): OrchestrationThreadShell =>
   ({
     id: threadId,
     projectId: "project-1",
     title: "ChatGPT thread",
     modelSelection: { instanceId: ProviderInstanceId.make("chatgpt"), model: "chatgpt" },
-    runtimeMode: "approval-required",
+    runtimeMode,
     interactionMode: "default",
     executorModelSelection: null,
     executorMaxSubAgents: 3,
@@ -100,7 +116,7 @@ const makeWorkspace = Effect.fn("test.makeWorkspace")(function* () {
   return { root, outside };
 });
 
-const makeHarness = (root: string) => {
+const makeHarness = (root: string, runtimeMode: RuntimeMode = "approval-required") => {
   const dispatched: Array<OrchestrationCommand> = [];
   const engine = OrchestrationEngineService.of({
     readEvents: () => Stream.empty,
@@ -127,7 +143,7 @@ const makeHarness = (root: string) => {
     getFirstActiveThreadIdByProjectId: unused,
     getThreadCheckpointContext: unused,
     getFullThreadDiffContext: unused,
-    getThreadShellById: () => Effect.succeed(Option.some(makeThreadShell(root))),
+    getThreadShellById: () => Effect.succeed(Option.some(makeThreadShell(root, runtimeMode))),
     getThreadDetailById: unused,
     getThreadDetailSnapshot: unused,
     listChildThreadRefs: () => Effect.succeed([]),
@@ -151,15 +167,24 @@ const withCoordinator = <A, E>(
     coordinator: WorkspaceBridgeCoordinator["Service"],
     context: { readonly root: string; readonly dispatched: Array<OrchestrationCommand> },
   ) => Effect.Effect<A, E, never>,
+  options?: { readonly runtimeMode?: RuntimeMode },
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const { root } = yield* makeWorkspace();
-      const { dispatched, layer } = makeHarness(root);
-      const coordinator = yield* WorkspaceBridgeCoordinator.pipe(Effect.provide(layer));
+      const { dispatched, layer } = makeHarness(root, options?.runtimeMode);
+      // Build the layer into this test's scope rather than Effect.provide-ing
+      // it: the coordinator forks approval executors into its layer scope, and
+      // provide would close that scope the moment the service was extracted.
+      const built = yield* Layer.build(layer);
+      const coordinator = Context.get(built, WorkspaceBridgeCoordinator);
       return yield* use(coordinator, { root, dispatched });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+beforeEach(() => {
+  brokerTesting.reset();
+});
 
 it.effect("overview reports the repository and hides blocked entries", () =>
   withCoordinator((coordinator) =>
@@ -320,6 +345,270 @@ it.effect("a missing thread is refused before any filesystem access", () =>
     }).pipe(Effect.provide(NodeServices.layer)),
   ),
 );
+
+/* -------------------------------------------------------------------------- */
+/* Mutations                                                                   */
+/* -------------------------------------------------------------------------- */
+
+it.effect("full-access mode executes write, edit, and patch without approval", () =>
+  withCoordinator(
+    (coordinator, context) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+
+        const written = yield* coordinator.write(fullScope, {
+          path: "notes/new.md",
+          content: "hello\n",
+        });
+        expect(written.status).toBe("completed");
+        expect(written.filesChanged).toEqual(["notes/new.md"]);
+        expect(yield* fs.readFileString(NodePath.join(context.root, "notes/new.md"))).toBe(
+          "hello\n",
+        );
+
+        const edited = yield* coordinator.edit(fullScope, {
+          path: "src/index.ts",
+          oldText: "const greeting = 1;",
+          newText: "const greeting = 42;",
+        });
+        expect(edited.status).toBe("completed");
+        expect(yield* fs.readFileString(NodePath.join(context.root, "src/index.ts"))).toContain(
+          "const greeting = 42;",
+        );
+
+        const patch = [
+          "diff --git a/README.md b/README.md",
+          "--- a/README.md",
+          "+++ b/README.md",
+          "@@ -1 +1,2 @@",
+          " # Demo",
+          "+patched",
+          "",
+        ].join("\n");
+        const applied = yield* coordinator.patch(fullScope, { patch });
+        expect(applied.status).toBe("completed");
+        expect(applied.filesChanged).toEqual(["README.md"]);
+        expect(yield* fs.readFileString(NodePath.join(context.root, "README.md"))).toBe(
+          "# Demo\npatched\n",
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    { runtimeMode: "full-access" },
+  ),
+);
+
+it.effect("bash runs in the worktree with a scrubbed environment", () =>
+  withCoordinator(
+    (coordinator) =>
+      Effect.gen(function* () {
+        process.env["CHATGPT_BRIDGE_TEST_SECRET"] = "leak-me";
+        const result = yield* coordinator
+          .bash(fullScope, {
+            command: 'echo "v=${CHATGPT_BRIDGE_TEST_SECRET:-empty}"; pwd >/dev/null',
+          })
+          .pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                delete process.env["CHATGPT_BRIDGE_TEST_SECRET"];
+              }),
+            ),
+          );
+        expect(result.status).toBe("completed");
+        expect(result.exitCode).toBe(0);
+        // The server's environment must not be observable from inside the
+        // command — its output is relayed to OpenAI.
+        expect(result.output).toContain("v=empty");
+        expect(result.output).not.toContain("leak-me");
+
+        const failing = yield* coordinator.bash(fullScope, { command: "exit 3" });
+        expect(failing.status).toBe("completed");
+        expect(failing.exitCode).toBe(3);
+      }),
+    { runtimeMode: "full-access" },
+  ),
+);
+
+it.effect("auto-accept-edits auto-approves file changes but not commands", () =>
+  withCoordinator(
+    (coordinator) =>
+      Effect.gen(function* () {
+        const written = yield* coordinator.write(fullScope, {
+          path: "auto.md",
+          content: "x\n",
+        });
+        expect(written.status).toBe("completed");
+
+        // No approval channel is registered, so a command that needs approval
+        // has nobody to ask.
+        const command = yield* coordinator
+          .bash(fullScope, { command: "echo hi" })
+          .pipe(Effect.flip);
+        expect(command.reason).toBe("approval-unavailable");
+      }),
+    { runtimeMode: "auto-accept-edits" },
+  ),
+);
+
+// `it.live`: the deferral path races a Deferred against a wall-clock timeout,
+// and under the default TestClock that timer never fires.
+it.live("approval-required defers the write until the user accepts", () =>
+  withCoordinator((coordinator, context) =>
+    Effect.gen(function* () {
+      coordinatorTesting.setInitialApprovalWait("30 millis");
+      const opened: Array<{ requestId: string; requestType: string; detail: string }> = [];
+      registerWorkspaceApprovalChannel(threadId, {
+        emitOpened: (request) =>
+          Effect.sync(() => {
+            opened.push(request);
+          }),
+        emitResolved: () => Effect.void,
+      });
+
+      const pending = yield* coordinator.write(fullScope, {
+        path: "approved.md",
+        content: "after approval\n",
+      });
+      expect(pending.status).toBe("pending-approval");
+      expect(opened).toHaveLength(1);
+      expect(opened[0]?.requestType).toBe("file_change_approval");
+      expect(opened[0]?.detail).toContain("approved.md");
+
+      // Nothing touched disk while pending.
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(NodePath.join(context.root, "approved.md"))).toBe(false);
+
+      yield* resolveWorkspaceApproval(threadId, opened[0]!.requestId, "accept");
+      const settled = yield* coordinator.wait(fullScope, { operationId: pending.operationId });
+      expect(settled.status).toBe("completed");
+      expect(yield* fs.readFileString(NodePath.join(context.root, "approved.md"))).toBe(
+        "after approval\n",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  ),
+);
+
+it.live("a declined approval denies the operation and leaves the file alone", () =>
+  withCoordinator((coordinator, context) =>
+    Effect.gen(function* () {
+      coordinatorTesting.setInitialApprovalWait("30 millis");
+      const opened: Array<{ requestId: string }> = [];
+      registerWorkspaceApprovalChannel(threadId, {
+        emitOpened: (request) =>
+          Effect.sync(() => {
+            opened.push(request);
+          }),
+        emitResolved: () => Effect.void,
+      });
+
+      const pending = yield* coordinator.bash(fullScope, { command: "echo dangerous" });
+      expect(pending.status).toBe("pending-approval");
+      yield* resolveWorkspaceApproval(threadId, opened[0]!.requestId, "decline");
+
+      const settled = yield* coordinator.wait(fullScope, { operationId: pending.operationId });
+      expect(settled.status).toBe("denied");
+      expect(settled.summary).toContain("declined");
+
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(NodePath.join(context.root, "dangerous"))).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  ),
+);
+
+it.effect("mutations refuse blocked paths, escapes, and missing capabilities", () =>
+  withCoordinator(
+    (coordinator) =>
+      Effect.gen(function* () {
+        const secret = yield* coordinator
+          .write(fullScope, { path: ".env", content: "X=1\n" })
+          .pipe(Effect.flip);
+        expect(secret.reason).toBe("path-not-allowed");
+
+        const escape = yield* coordinator
+          .write(fullScope, { path: "escape.txt", content: "overwrite\n" })
+          .pipe(Effect.flip);
+        expect(escape.reason).toBe("path-not-allowed");
+
+        const patchEscape = yield* coordinator
+          .patch(fullScope, {
+            patch:
+              "diff --git a/../outside.txt b/../outside.txt\n--- a/../outside.txt\n+++ b/../outside.txt\n@@ -0,0 +1 @@\n+x\n",
+          })
+          .pipe(Effect.flip);
+        expect(patchEscape.reason).toBe("path-not-allowed");
+
+        // A read-only credential cannot mutate even in full-access mode.
+        const readOnly = yield* coordinator
+          .write(scope, { path: "ok.md", content: "x\n" })
+          .pipe(Effect.flip);
+        expect(readOnly.reason).toBe("capability-unavailable");
+
+        const noBash = yield* coordinator
+          .bash(makeScope(["workspace", "workspace-write"]), { command: "echo hi" })
+          .pipe(Effect.flip);
+        expect(noBash.reason).toBe("capability-unavailable");
+      }),
+    { runtimeMode: "full-access" },
+  ),
+);
+
+it.effect("a rejected patch reports failed with git's reason", () =>
+  withCoordinator(
+    (coordinator) =>
+      Effect.gen(function* () {
+        const result = yield* coordinator.patch(fullScope, {
+          patch:
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-# Not The Real Content\n+# Something\n",
+        });
+        expect(result.status).toBe("failed");
+        expect(result.summary).toContain("does not apply");
+      }),
+    { runtimeMode: "full-access" },
+  ),
+);
+
+it.effect("wait refuses unknown operations and other threads' operations", () =>
+  withCoordinator((coordinator) =>
+    Effect.gen(function* () {
+      const missing = yield* coordinator
+        .wait(fullScope, { operationId: "write:nope" })
+        .pipe(Effect.flip);
+      expect(missing.reason).toBe("operation-not-found");
+    }),
+  ),
+);
+
+it("workspaceMutationNeedsApproval mirrors the runtime-mode ladder", () => {
+  expect(workspaceMutationNeedsApproval("approval-required", "write")).toBe(true);
+  expect(workspaceMutationNeedsApproval("approval-required", "bash")).toBe(true);
+  expect(workspaceMutationNeedsApproval("auto-accept-edits", "edit")).toBe(false);
+  expect(workspaceMutationNeedsApproval("auto-accept-edits", "bash")).toBe(true);
+  expect(workspaceMutationNeedsApproval("auto", "patch")).toBe(false);
+  expect(workspaceMutationNeedsApproval("auto", "bash")).toBe(true);
+  expect(workspaceMutationNeedsApproval("full-access", "write")).toBe(false);
+  expect(workspaceMutationNeedsApproval("full-access", "bash")).toBe(false);
+});
+
+it("extractPatchPaths reads git headers and ignores /dev/null", () => {
+  const patch = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1 +1 @@",
+    "-x",
+    "+y",
+    "diff --git a/new.ts b/new.ts",
+    "--- /dev/null",
+    "+++ b/new.ts",
+    "rename from old/name.ts",
+    "rename to fresh/name.ts",
+  ].join("\n");
+  expect([...extractPatchPaths(patch)].sort()).toEqual([
+    "fresh/name.ts",
+    "new.ts",
+    "old/name.ts",
+    "src/a.ts",
+  ]);
+  expect(extractPatchPaths("not a patch at all")).toEqual([]);
+});
 
 it("splitLines does not invent a trailing line for newline-terminated files", () => {
   expect(splitLines("a\nb\n")).toEqual(["a", "b"]);

@@ -28,16 +28,26 @@
  * @module mcp/toolkits/workspace/WorkspaceBridgeCoordinator
  */
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
 import {
   CommandId,
   EventId,
   WorkspaceBridgeError,
+  type CanonicalRequestType,
+  type RuntimeMode,
+  type ThreadId,
+  type WorkspaceBashInput,
+  type WorkspaceBridgeAccess,
   type WorkspaceChangedFile,
   type WorkspaceChangesInput,
   type WorkspaceChangesResult,
+  type WorkspaceEditInput,
+  type WorkspaceMutationResult,
+  type WorkspaceMutationTool,
   type WorkspaceOverviewResult,
+  type WorkspacePatchInput,
   type WorkspaceReadInput,
   type WorkspaceReadResult,
   type WorkspaceSearchInput,
@@ -46,9 +56,13 @@ import {
   type WorkspaceTreeEntry,
   type WorkspaceTreeInput,
   type WorkspaceTreeResult,
+  type WorkspaceWaitInput,
+  type WorkspaceWriteInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -58,6 +72,7 @@ import { OrchestrationEngineService } from "../../../orchestration/Services/Orch
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProcessRunner, layer as ProcessRunnerLive } from "../../../processRunner.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import { openWorkspaceApproval } from "./WorkspaceApprovalBroker.ts";
 import { BLOCKED_PATH_SEGMENTS, describeRejection, resolveWithin } from "./WorkspacePathGuard.ts";
 
 /** Largest slice of a single file returned to the caller. */
@@ -75,6 +90,32 @@ const GIT_TIMEOUT = "10 seconds";
 const DEFAULT_TREE_DEPTH = 3;
 const DEFAULT_TREE_ENTRIES = 400;
 const DEFAULT_SEARCH_RESULTS = 100;
+
+/** How long a mutating MCP call blocks hoping for a quick human decision. */
+let initialApprovalWait: Duration.Input = "20 seconds";
+const DEFAULT_WAIT_SECONDS = 20;
+/** Staged-operation bookkeeping cap; completed records are pruned first. */
+const MAX_TRACKED_OPERATIONS = 200;
+const DEFAULT_BASH_TIMEOUT_MS = 30_000;
+const MAX_BASH_TIMEOUT_MS = 180_000;
+/** Per-stream cap while the command runs. */
+const MAX_BASH_OUTPUT_BYTES = 262_144;
+/** Cap on the merged output echoed back to the model. */
+const MAX_BASH_RESULT_BYTES = 32_000;
+/** Cap on the detail body shown in an approval card. */
+const MAX_APPROVAL_DETAIL_CHARS = 1_600;
+
+const MUTATION_PAST_TENSE: Record<WorkspaceMutationTool, string> = {
+  write: "wrote a file",
+  edit: "edited a file",
+  patch: "applied a patch",
+  bash: "ran a command",
+};
+
+const truncateDetail = (detail: string): string =>
+  detail.length <= MAX_APPROVAL_DETAIL_CHARS
+    ? detail
+    : `${detail.slice(0, MAX_APPROVAL_DETAIL_CHARS)}\n… (truncated)`;
 
 /** Root files that tell an agent how this repository expects to be worked on. */
 const INSTRUCTION_FILE_NAMES: ReadonlyArray<string> = [
@@ -104,6 +145,26 @@ export interface WorkspaceBridgeCoordinatorShape {
     scope: McpInvocationScope,
     input: WorkspaceChangesInput,
   ) => Effect.Effect<WorkspaceChangesResult, WorkspaceBridgeError>;
+  readonly write: (
+    scope: McpInvocationScope,
+    input: WorkspaceWriteInput,
+  ) => Effect.Effect<WorkspaceMutationResult, WorkspaceBridgeError>;
+  readonly edit: (
+    scope: McpInvocationScope,
+    input: WorkspaceEditInput,
+  ) => Effect.Effect<WorkspaceMutationResult, WorkspaceBridgeError>;
+  readonly patch: (
+    scope: McpInvocationScope,
+    input: WorkspacePatchInput,
+  ) => Effect.Effect<WorkspaceMutationResult, WorkspaceBridgeError>;
+  readonly bash: (
+    scope: McpInvocationScope,
+    input: WorkspaceBashInput,
+  ) => Effect.Effect<WorkspaceMutationResult, WorkspaceBridgeError>;
+  readonly wait: (
+    scope: McpInvocationScope,
+    input: WorkspaceWaitInput,
+  ) => Effect.Effect<WorkspaceMutationResult, WorkspaceBridgeError>;
 }
 
 export class WorkspaceBridgeCoordinator extends Context.Service<
@@ -189,6 +250,55 @@ export const filterGitDiff = (root: string, statusOutput: string, rawDiff: strin
     ? ""
     : rawDiff;
 
+/**
+ * Whether a granted mutation still needs a human decision, given the thread's
+ * runtime mode. This mirrors what the same modes mean for local providers:
+ * `auto-accept-edits` and above auto-approve file changes, and only
+ * `full-access` auto-approves commands.
+ */
+export const workspaceMutationNeedsApproval = (
+  mode: RuntimeMode,
+  tool: WorkspaceMutationTool,
+): boolean => (tool === "bash" ? mode !== "full-access" : mode === "approval-required");
+
+/**
+ * Extracts the workspace-relative paths a unified diff touches, from the
+ * `diff --git`, `---`/`+++`, and `rename` headers. Only `a/`-/`b/`-prefixed
+ * paths are accepted — which is also why the caller refuses a patch that
+ * yields no paths: a diff written with absolute paths or `--unsafe-paths`
+ * conventions never gets as far as `git apply`.
+ */
+export const extractPatchPaths = (patch: string): ReadonlyArray<string> => {
+  const paths = new Set<string>();
+  for (const line of patch.split("\n")) {
+    const gitHeader = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (gitHeader) {
+      paths.add(gitHeader[1] ?? "");
+      paths.add(gitHeader[2] ?? "");
+      continue;
+    }
+    const fileHeader = /^(?:---|\+\+\+) (?:a\/|b\/)(.+)$/.exec(line);
+    if (fileHeader) {
+      paths.add((fileHeader[1] ?? "").trim());
+      continue;
+    }
+    const rename = /^rename (?:from|to) (.+)$/.exec(line);
+    if (rename) {
+      paths.add((rename[1] ?? "").trim());
+    }
+  }
+  paths.delete("");
+  return [...paths];
+};
+
+/** Derives the settings-level access from the capabilities in the credential. */
+export const accessFromScope = (scope: McpInvocationScope): WorkspaceBridgeAccess =>
+  scope.capabilities.has("workspace-bash")
+    ? "full"
+    : scope.capabilities.has("workspace-write")
+      ? "write"
+      : "read";
+
 const truncateUtf8 = (value: string, maxBytes: number): { text: string; truncated: boolean } => {
   const encoded = new TextEncoder().encode(value);
   if (encoded.byteLength <= maxBytes) return { text: value, truncated: false };
@@ -203,6 +313,11 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
   const engine = yield* OrchestrationEngineService;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const processRunner = yield* ProcessRunner;
+  // Executor fibers for approval-deferred mutations live in the coordinator's
+  // own scope (the layer scope, i.e. server lifetime), so a mutation approved
+  // after the MCP call returned still executes, and everything is interrupted
+  // together on shutdown.
+  const coordinatorScope = yield* Effect.scope;
 
   /**
    * Canonicalises the workspace root before anything is compared against it.
@@ -217,57 +332,63 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
     fs.realPath(NodePath.resolve(root)).pipe(Effect.orElseSucceed(() => NodePath.resolve(root)));
 
   /**
-   * Resolves the credential's thread to a worktree on disk.
+   * Resolves the credential's thread to a worktree on disk plus the thread's
+   * current runtime mode (the mode is what decides whether a mutation
+   * auto-executes or goes through the approval card).
    *
    * `worktreePath` wins over the project root because a thread working in a
    * git worktree must see that worktree's files, not the main checkout's.
    */
-  const requireWorkspaceRoot = Effect.fn("WorkspaceBridgeCoordinator.requireWorkspaceRoot")(
-    function* (scope: McpInvocationScope) {
-      const shell = yield* snapshotQuery.getThreadShellById(scope.threadId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new WorkspaceBridgeError({
-              reason: "workspace-unavailable",
-              description: `Could not read the thread behind this connector: ${cause.message}`,
-            }),
-        ),
-      );
-      if (Option.isNone(shell)) {
-        return yield* new WorkspaceBridgeError({
-          reason: "thread-not-found",
-          description:
-            "The SergeCode thread this connector was issued for no longer exists. Create a new ChatGPT thread to get a fresh connector URL.",
-        });
-      }
+  const requireThread = Effect.fn("WorkspaceBridgeCoordinator.requireThread")(function* (
+    scope: McpInvocationScope,
+  ) {
+    const shell = yield* snapshotQuery.getThreadShellById(scope.threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceBridgeError({
+            reason: "workspace-unavailable",
+            description: `Could not read the thread behind this connector: ${cause.message}`,
+          }),
+      ),
+    );
+    if (Option.isNone(shell)) {
+      return yield* new WorkspaceBridgeError({
+        reason: "thread-not-found",
+        description:
+          "The SergeCode thread this connector was issued for no longer exists. Create a new ChatGPT thread to get a fresh connector URL.",
+      });
+    }
+    const runtimeMode = shell.value.runtimeMode;
 
-      // A thread working in a git worktree must see that worktree's files,
-      // not the project's main checkout — otherwise ChatGPT reads a different
-      // branch than the one the user is looking at. Only fall back to the
-      // project root when the thread has no worktree of its own.
-      const worktreePath = shell.value.worktreePath;
-      if (worktreePath !== null && worktreePath.trim().length > 0) {
-        return yield* realWorkspaceRoot(worktreePath);
-      }
+    // A thread working in a git worktree must see that worktree's files,
+    // not the project's main checkout — otherwise ChatGPT reads a different
+    // branch than the one the user is looking at. Only fall back to the
+    // project root when the thread has no worktree of its own.
+    const worktreePath = shell.value.worktreePath;
+    if (worktreePath !== null && worktreePath.trim().length > 0) {
+      return { root: yield* realWorkspaceRoot(worktreePath), runtimeMode };
+    }
 
-      const project = yield* snapshotQuery.getProjectShellById(shell.value.projectId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new WorkspaceBridgeError({
-              reason: "workspace-unavailable",
-              description: `Could not read the project behind this connector: ${cause.message}`,
-            }),
-        ),
-      );
-      if (Option.isNone(project) || project.value.workspaceRoot.trim().length === 0) {
-        return yield* new WorkspaceBridgeError({
-          reason: "workspace-unavailable",
-          description: "This thread has no workspace on disk.",
-        });
-      }
-      return yield* realWorkspaceRoot(project.value.workspaceRoot);
-    },
-  );
+    const project = yield* snapshotQuery.getProjectShellById(shell.value.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceBridgeError({
+            reason: "workspace-unavailable",
+            description: `Could not read the project behind this connector: ${cause.message}`,
+          }),
+      ),
+    );
+    if (Option.isNone(project) || project.value.workspaceRoot.trim().length === 0) {
+      return yield* new WorkspaceBridgeError({
+        reason: "workspace-unavailable",
+        description: "This thread has no workspace on disk.",
+      });
+    }
+    return { root: yield* realWorkspaceRoot(project.value.workspaceRoot), runtimeMode };
+  });
+
+  const requireWorkspaceRoot = (scope: McpInvocationScope) =>
+    Effect.map(requireThread(scope), ({ root }) => root);
 
   /** Applies the path guard, consulting the real path so symlinks cannot escape. */
   const guardPath = Effect.fn("WorkspaceBridgeCoordinator.guardPath")(function* (input: {
@@ -298,6 +419,36 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
       });
     }
     return confirmed;
+  });
+
+  /**
+   * The write-side guard. Everything `guardPath` checks, plus the parent
+   * directory's real path — a symlinked directory inside the worktree must
+   * not become a portal for writing outside it, even when the target file
+   * does not exist yet (so the file itself has no realpath to check).
+   */
+  const guardWritePath = Effect.fn("WorkspaceBridgeCoordinator.guardWritePath")(function* (input: {
+    readonly root: string;
+    readonly requestedPath: string;
+  }) {
+    const guarded = yield* guardPath(input);
+    const parentReal = yield* fs
+      .realPath(NodePath.dirname(guarded.absolutePath))
+      .pipe(Effect.option);
+    if (
+      Option.isSome(parentReal) &&
+      !resolveWithin({
+        root: input.root,
+        requestedPath: input.requestedPath,
+        realPath: NodePath.join(parentReal.value, NodePath.basename(guarded.absolutePath)),
+      }).ok
+    ) {
+      return yield* new WorkspaceBridgeError({
+        reason: "path-not-allowed",
+        description: describeRejection("symlink-escapes-workspace"),
+      });
+    }
+    return guarded;
   });
 
   const runGit = (root: string, args: ReadonlyArray<string>) =>
@@ -369,7 +520,8 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
       dirty: status !== null && status.trim().length > 0,
       entries: visible,
       instructionFiles: INSTRUCTION_FILE_NAMES.filter((name) => visible.includes(name)),
-      readOnly: true,
+      readOnly: accessFromScope(scope) === "read",
+      access: accessFromScope(scope),
     };
   });
 
@@ -591,7 +743,461 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
     };
   });
 
-  return WorkspaceBridgeCoordinator.of({ overview, tree, read, search, changes });
+  /* ------------------------------------------------------------------ */
+  /* Mutations                                                           */
+  /* ------------------------------------------------------------------ */
+
+  interface OperationRecord {
+    readonly operationId: string;
+    readonly threadId: ThreadId;
+    readonly tool: WorkspaceMutationTool;
+    /** Latest observable state; replaced as the operation progresses. */
+    snapshot: WorkspaceMutationResult;
+    readonly done: Deferred.Deferred<WorkspaceMutationResult>;
+  }
+
+  const operations = new Map<string, OperationRecord>();
+
+  const pruneOperations = () => {
+    if (operations.size < MAX_TRACKED_OPERATIONS) return;
+    for (const [operationId, record] of operations) {
+      if (record.snapshot.status !== "pending-approval") {
+        operations.delete(operationId);
+        if (operations.size < MAX_TRACKED_OPERATIONS) return;
+      }
+    }
+  };
+
+  const finishOperation = (record: OperationRecord, result: WorkspaceMutationResult) =>
+    Effect.gen(function* () {
+      record.snapshot = result;
+      yield* Deferred.succeed(record.done, result);
+    });
+
+  const requireCapability = (scope: McpInvocationScope, tool: WorkspaceMutationTool) => {
+    const needed = tool === "bash" ? "workspace-bash" : "workspace-write";
+    return scope.capabilities.has(needed)
+      ? Effect.void
+      : Effect.fail(
+          new WorkspaceBridgeError({
+            reason: "capability-unavailable",
+            description: `This connector was issued without ${tool === "bash" ? "shell" : "write"} access. Raise "Workspace access" in SergeCode's ChatGPT provider settings and start a new thread.`,
+          }),
+        );
+  };
+
+  /**
+   * Stages one mutation and applies the approval policy.
+   *
+   * The execute effect never reaches the error channel of the MCP call once
+   * the operation is staged: an approved-but-failed operation (patch
+   * rejected, command not found) resolves to a `failed` result with the
+   * reason in the summary, identically whether it ran inline or after a
+   * deferred approval. Only pre-staging rejections — capability, path guard,
+   * malformed input — fail the call itself.
+   */
+  const stageMutation = Effect.fn("WorkspaceBridgeCoordinator.stageMutation")(function* (input: {
+    readonly scope: McpInvocationScope;
+    readonly tool: WorkspaceMutationTool;
+    readonly runtimeMode: RuntimeMode;
+    readonly requestType: CanonicalRequestType;
+    readonly approvalDetail: string;
+    readonly execute: Effect.Effect<
+      Omit<WorkspaceMutationResult, "operationId" | "tool" | "status">,
+      WorkspaceBridgeError
+    >;
+  }) {
+    const { scope, tool } = input;
+    pruneOperations();
+    const operationId = `${tool}:${NodeCrypto.randomUUID()}`;
+    const done = yield* Deferred.make<WorkspaceMutationResult>();
+    const record: OperationRecord = {
+      operationId,
+      threadId: scope.threadId,
+      tool,
+      snapshot: {
+        operationId,
+        tool,
+        status: "pending-approval",
+        summary: "Waiting for the user to decide in SergeCode.",
+      },
+      done,
+    };
+    operations.set(operationId, record);
+
+    const runExecute = Effect.gen(function* () {
+      const outcome = yield* input.execute.pipe(
+        Effect.map(
+          (partial): WorkspaceMutationResult => ({
+            operationId,
+            tool,
+            status: "completed",
+            ...partial,
+          }),
+        ),
+        Effect.catch((error: WorkspaceBridgeError) =>
+          Effect.succeed<WorkspaceMutationResult>({
+            operationId,
+            tool,
+            status: "failed",
+            summary: error.message,
+          }),
+        ),
+      );
+      yield* finishOperation(record, outcome);
+      yield* recordActivity({
+        scope,
+        tool,
+        summary:
+          outcome.status === "completed"
+            ? `ChatGPT ${MUTATION_PAST_TENSE[tool]}: ${outcome.summary}`
+            : `ChatGPT ${tool} failed: ${outcome.summary}`,
+        payload: {
+          operationId,
+          status: outcome.status,
+          ...(outcome.filesChanged ? { filesChanged: outcome.filesChanged } : {}),
+          ...(outcome.exitCode !== undefined ? { exitCode: outcome.exitCode } : {}),
+        },
+      });
+      return outcome;
+    });
+
+    if (!workspaceMutationNeedsApproval(input.runtimeMode, tool)) {
+      return yield* runExecute;
+    }
+
+    const ticket = yield* openWorkspaceApproval({
+      threadId: scope.threadId,
+      requestType: input.requestType,
+      detail: input.approvalDetail,
+    });
+    if (ticket === undefined) {
+      operations.delete(operationId);
+      return yield* new WorkspaceBridgeError({
+        reason: "approval-unavailable",
+        description:
+          "This thread's runtime mode requires approval, but its ChatGPT session is not running in SergeCode, so there is no one to ask. Tell the user to keep the SergeCode thread open, or switch the thread's runtime mode.",
+      });
+    }
+    if (ticket === "auto-accepted") {
+      return yield* runExecute;
+    }
+
+    // The decision fiber outlives this MCP call on purpose: the write happens
+    // the moment the user clicks approve, not when ChatGPT next polls.
+    yield* Effect.gen(function* () {
+      const decision = yield* ticket.decision;
+      if (decision === "accept" || decision === "acceptForSession") {
+        yield* runExecute;
+        return;
+      }
+      yield* finishOperation(record, {
+        operationId,
+        tool,
+        status: "denied",
+        summary:
+          decision === "decline"
+            ? "The user declined this operation in SergeCode."
+            : "The session ended before the user decided.",
+      });
+    }).pipe(Effect.forkIn(coordinatorScope));
+
+    // Give a quick human decision the chance to produce a final answer in
+    // this same MCP response; otherwise hand back the pending state for
+    // workspace_wait to poll.
+    const settled = yield* Deferred.await(done).pipe(Effect.timeoutOption(initialApprovalWait));
+    if (Option.isSome(settled)) return settled.value;
+    return {
+      ...record.snapshot,
+      summary:
+        "Approval requested in the SergeCode timeline. Call workspace_wait with this operationId until it resolves.",
+    };
+  });
+
+  const write: WorkspaceBridgeCoordinatorShape["write"] = Effect.fn(
+    "WorkspaceBridgeCoordinator.write",
+  )(function* (scope, input) {
+    yield* requireCapability(scope, "write");
+    const { root, runtimeMode } = yield* requireThread(scope);
+    const guarded = yield* guardWritePath({ root, requestedPath: input.path });
+    const existing = yield* fs.stat(guarded.absolutePath).pipe(Effect.option);
+    if (Option.isSome(existing) && existing.value.type === "Directory") {
+      return yield* new WorkspaceBridgeError({
+        reason: "not-a-file",
+        description: `${guarded.relativePath} is a directory.`,
+      });
+    }
+    const bytes = new TextEncoder().encode(input.content).byteLength;
+    const action = Option.isSome(existing) ? "Overwrite" : "Create";
+
+    return yield* stageMutation({
+      scope,
+      tool: "write",
+      runtimeMode,
+      requestType: "file_change_approval",
+      approvalDetail: truncateDetail(
+        `ChatGPT wants to ${action.toLowerCase()} ${guarded.relativePath} (${bytes} bytes):\n\n${input.content}`,
+      ),
+      execute: Effect.gen(function* () {
+        if (input.createDirs !== false) {
+          yield* fs
+            .makeDirectory(NodePath.dirname(guarded.absolutePath), { recursive: true })
+            .pipe(Effect.ignore);
+        }
+        yield* fs.writeFileString(guarded.absolutePath, input.content).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceBridgeError({
+                reason: "read-failed",
+                description: `Could not write ${guarded.relativePath}: ${cause.message}`,
+              }),
+          ),
+        );
+        return {
+          summary: `${action}d ${guarded.relativePath} (${bytes} bytes)`,
+          filesChanged: [guarded.relativePath],
+        };
+      }),
+    });
+  });
+
+  const edit: WorkspaceBridgeCoordinatorShape["edit"] = Effect.fn(
+    "WorkspaceBridgeCoordinator.edit",
+  )(function* (scope, input) {
+    yield* requireCapability(scope, "edit");
+    const { root, runtimeMode } = yield* requireThread(scope);
+    const guarded = yield* guardWritePath({ root, requestedPath: input.path });
+
+    return yield* stageMutation({
+      scope,
+      tool: "edit",
+      runtimeMode,
+      requestType: "file_change_approval",
+      approvalDetail: truncateDetail(
+        `ChatGPT wants to edit ${guarded.relativePath}:\n\n--- remove\n${input.oldText}\n+++ insert\n${input.newText}`,
+      ),
+      execute: Effect.gen(function* () {
+        const current = yield* fs.readFileString(guarded.absolutePath).pipe(
+          Effect.mapError(
+            () =>
+              new WorkspaceBridgeError({
+                reason: "not-found",
+                description: `No such file: ${guarded.relativePath}`,
+              }),
+          ),
+        );
+        const occurrences = current.split(input.oldText).length - 1;
+        if (occurrences === 0) {
+          return yield* new WorkspaceBridgeError({
+            reason: "invalid-input",
+            description: `oldText not found in ${guarded.relativePath}. Read the file and match it exactly, including whitespace.`,
+          });
+        }
+        if (occurrences > 1 && input.replaceAll !== true) {
+          return yield* new WorkspaceBridgeError({
+            reason: "invalid-input",
+            description: `oldText matches ${occurrences} places in ${guarded.relativePath}. Add more context to make it unique, or pass replaceAll: true.`,
+          });
+        }
+        const next =
+          input.replaceAll === true
+            ? current.split(input.oldText).join(input.newText)
+            : current.replace(input.oldText, input.newText);
+        yield* fs.writeFileString(guarded.absolutePath, next).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceBridgeError({
+                reason: "read-failed",
+                description: `Could not write ${guarded.relativePath}: ${cause.message}`,
+              }),
+          ),
+        );
+        return {
+          summary: `Edited ${guarded.relativePath} (${occurrences} replacement${occurrences === 1 ? "" : "s"})`,
+          filesChanged: [guarded.relativePath],
+        };
+      }),
+    });
+  });
+
+  const patch: WorkspaceBridgeCoordinatorShape["patch"] = Effect.fn(
+    "WorkspaceBridgeCoordinator.patch",
+  )(function* (scope, input) {
+    yield* requireCapability(scope, "patch");
+    const { root, runtimeMode } = yield* requireThread(scope);
+
+    const touched = extractPatchPaths(input.patch);
+    if (touched.length === 0) {
+      return yield* new WorkspaceBridgeError({
+        reason: "invalid-input",
+        description:
+          "No a/…, b/… file headers found in the patch. Provide a unified diff as produced by `git diff`.",
+      });
+    }
+    for (const path of touched) {
+      const resolution = resolveWithin({ root, requestedPath: path });
+      if (!resolution.ok) {
+        return yield* new WorkspaceBridgeError({
+          reason: "path-not-allowed",
+          description: `Patch touches ${path}: ${describeRejection(resolution.rejection)}`,
+        });
+      }
+    }
+
+    return yield* stageMutation({
+      scope,
+      tool: "patch",
+      runtimeMode,
+      requestType: "apply_patch_approval",
+      approvalDetail: truncateDetail(
+        `ChatGPT wants to apply a patch to ${touched.join(", ")}:\n\n${input.patch}`,
+      ),
+      execute: Effect.gen(function* () {
+        const runApply = (args: ReadonlyArray<string>) =>
+          processRunner
+            .run({
+              command: "git",
+              args,
+              cwd: root,
+              stdin: input.patch.endsWith("\n") ? input.patch : `${input.patch}\n`,
+              timeout: GIT_TIMEOUT,
+              outputMode: "truncate",
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new WorkspaceBridgeError({
+                    reason: "git-unavailable",
+                    description: `Could not run git apply: ${cause.message}`,
+                  }),
+              ),
+            );
+
+        const check = yield* runApply(["apply", "--check", "--whitespace=nowarn", "-"]);
+        if (check.code !== 0) {
+          return yield* new WorkspaceBridgeError({
+            reason: "invalid-input",
+            description: `Patch does not apply cleanly: ${check.stderr.trim() || check.stdout.trim() || "unknown git apply error"}`,
+          });
+        }
+        const applied = yield* runApply(["apply", "--whitespace=nowarn", "-"]);
+        if (applied.code !== 0) {
+          return yield* new WorkspaceBridgeError({
+            reason: "invalid-input",
+            description: `git apply failed after a clean check: ${applied.stderr.trim()}`,
+          });
+        }
+        return {
+          summary: `Applied patch to ${touched.length} file${touched.length === 1 ? "" : "s"} (${touched.join(", ")})`,
+          filesChanged: touched,
+        };
+      }),
+    });
+  });
+
+  const bash: WorkspaceBridgeCoordinatorShape["bash"] = Effect.fn(
+    "WorkspaceBridgeCoordinator.bash",
+  )(function* (scope, input) {
+    yield* requireCapability(scope, "bash");
+    const { root, runtimeMode } = yield* requireThread(scope);
+    const timeoutMs = Math.min(input.timeoutMs ?? DEFAULT_BASH_TIMEOUT_MS, MAX_BASH_TIMEOUT_MS);
+
+    return yield* stageMutation({
+      scope,
+      tool: "bash",
+      runtimeMode,
+      requestType: "exec_command_approval",
+      approvalDetail: truncateDetail(
+        `ChatGPT wants to run in ${NodePath.basename(root)}:\n\n$ ${input.command}`,
+      ),
+      execute: Effect.gen(function* () {
+        // `env -i` rebuilds the environment from scratch. The command's output
+        // is relayed to OpenAI, so the server's own environment — API keys,
+        // tokens, anything a dev shell exports — must not be observable from
+        // inside the command.
+        const output = yield* processRunner
+          .run({
+            command: "/usr/bin/env",
+            args: [
+              "-i",
+              `PATH=${process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin"}`,
+              `HOME=${process.env.HOME ?? root}`,
+              `TMPDIR=${process.env.TMPDIR ?? "/tmp"}`,
+              "TERM=dumb",
+              "NO_COLOR=1",
+              "CI=1",
+              "/bin/bash",
+              "-c",
+              input.command,
+            ],
+            cwd: root,
+            timeout: `${timeoutMs} millis`,
+            maxOutputBytes: MAX_BASH_OUTPUT_BYTES,
+            outputMode: "truncate",
+            timeoutBehavior: "timedOutResult",
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new WorkspaceBridgeError({
+                  reason: "invalid-input",
+                  description: `Could not run the command: ${cause.message}`,
+                }),
+            ),
+          );
+
+        if (output.timedOut) {
+          return {
+            summary: `Command timed out after ${Math.round(timeoutMs / 1000)}s: ${input.command}`,
+            exitCode: null,
+            output: "",
+            truncated: false,
+          };
+        }
+        const merged =
+          output.stderr.trim().length > 0
+            ? `${output.stdout}${output.stdout.endsWith("\n") || output.stdout.length === 0 ? "" : "\n"}[stderr]\n${output.stderr}`
+            : output.stdout;
+        const capped = truncateUtf8(merged, MAX_BASH_RESULT_BYTES);
+        return {
+          summary: `Ran \`${input.command}\` (exit ${output.code ?? "signal"})`,
+          exitCode: output.code === null ? null : Number(output.code),
+          output: capped.text,
+          truncated: capped.truncated || output.stdoutTruncated || output.stderrTruncated,
+        };
+      }),
+    });
+  });
+
+  const wait: WorkspaceBridgeCoordinatorShape["wait"] = Effect.fn(
+    "WorkspaceBridgeCoordinator.wait",
+  )(function* (scope, input) {
+    const record = operations.get(input.operationId);
+    if (!record || record.threadId !== scope.threadId) {
+      return yield* new WorkspaceBridgeError({
+        reason: "operation-not-found",
+        description: `No operation ${input.operationId} for this thread. Operation ids are only valid for the session that created them.`,
+      });
+    }
+    const waitSeconds = input.waitSeconds ?? DEFAULT_WAIT_SECONDS;
+    const settled = yield* Deferred.await(record.done).pipe(
+      Effect.timeoutOption(`${waitSeconds} seconds`),
+    );
+    return Option.isSome(settled) ? settled.value : record.snapshot;
+  });
+
+  return WorkspaceBridgeCoordinator.of({
+    overview,
+    tree,
+    read,
+    search,
+    changes,
+    write,
+    edit,
+    patch,
+    bash,
+    wait,
+  });
 });
 
 /**
@@ -605,3 +1211,13 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
 export const WorkspaceBridgeCoordinatorLive = Layer.effect(WorkspaceBridgeCoordinator, make()).pipe(
   Layer.provide(ProcessRunnerLive),
 );
+
+/**
+ * Exposed for tests: shrink the in-call approval wait so a pending-approval
+ * flow can be exercised without a 20-second stall per case.
+ */
+export const __testing = {
+  setInitialApprovalWait(wait: Duration.Input): void {
+    initialApprovalWait = wait;
+  },
+};

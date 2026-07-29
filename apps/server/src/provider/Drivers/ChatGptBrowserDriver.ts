@@ -18,6 +18,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -45,7 +46,10 @@ const DRIVER_KIND = ProviderDriverKind.make("chatgpt");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const decodeChatGptBrowserSettings = Schema.decodeSync(ChatGptBrowserSettings);
 
-export type ChatGptBrowserDriverEnv = HttpClient.HttpClient | ServerSettingsService;
+export type ChatGptBrowserDriverEnv =
+  | HttpClient.HttpClient
+  | ServerSettingsService
+  | ChildProcessSpawner.ChildProcessSpawner;
 
 const maintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,

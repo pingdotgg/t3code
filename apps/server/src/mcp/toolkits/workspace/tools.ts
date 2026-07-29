@@ -7,22 +7,30 @@
  * does, what it will refuse, and which tool to reach for instead — so the
  * model routes correctly on the first call rather than probing.
  *
- * Every tool is annotated `Destructive: false` and `OpenWorld: false` because
- * the toolkit is read-only by construction; there is no write or command tool
- * to gate.
+ * The read tools are annotated `Readonly`/non-destructive; the mutating tools
+ * (`workspace_write`/`_edit`/`_patch`/`_bash`) are `Destructive` and are
+ * additionally gated twice at runtime: by the credential's capabilities
+ * (settings-level access) and by the thread's runtime mode (per-operation
+ * approval in the SergeCode timeline).
  */
 import {
+  WorkspaceBashInput,
   WorkspaceBridgeError,
   WorkspaceChangesInput,
   WorkspaceChangesResult,
+  WorkspaceEditInput,
+  WorkspaceMutationResult,
   WorkspaceOverviewInput,
   WorkspaceOverviewResult,
+  WorkspacePatchInput,
   WorkspaceReadInput,
   WorkspaceReadResult,
   WorkspaceSearchInput,
   WorkspaceSearchResult,
   WorkspaceTreeInput,
   WorkspaceTreeResult,
+  WorkspaceWaitInput,
+  WorkspaceWriteInput,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
@@ -96,10 +104,92 @@ export const WorkspaceChangesTool = Tool.make("workspace_changes", {
   .annotate(Tool.OpenWorld, false)
   .annotate(Tool.Destructive, false);
 
+/**
+ * Shared tail for every mutating tool's description. The pending/poll
+ * protocol is the part remote models get wrong most often, so it is stated
+ * on every tool rather than once in a place the model may not have read.
+ */
+const APPROVAL_PROTOCOL =
+  " Depending on the thread's runtime mode this may return status pending-approval — the user is being asked in SergeCode. Poll workspace_wait with the returned operationId until the status is terminal; do not re-submit the operation.";
+
+export const WorkspaceWriteTool = Tool.make("workspace_write", {
+  description:
+    "Create or completely overwrite one file in the workspace. Prefer workspace_edit for small changes so the user reviews a focused diff instead of a whole file." +
+    APPROVAL_PROTOCOL,
+  parameters: WorkspaceWriteInput,
+  success: WorkspaceMutationResult,
+  failure: WorkspaceBridgeError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Write workspace file")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(Tool.Destructive, true);
+
+export const WorkspaceEditTool = Tool.make("workspace_edit", {
+  description:
+    "Replace an exact text snippet in one file. oldText must match the current file content verbatim (read the file first); the call fails if it matches zero or several places unless replaceAll is set." +
+    APPROVAL_PROTOCOL,
+  parameters: WorkspaceEditInput,
+  success: WorkspaceMutationResult,
+  failure: WorkspaceBridgeError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Edit workspace file")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(Tool.Destructive, true);
+
+export const WorkspacePatchTool = Tool.make("workspace_patch", {
+  description:
+    "Apply one unified diff (git diff format, a/… b/… paths) to the workspace. The patch is checked with `git apply --check` first and rejected wholesale if any hunk fails, so a partial apply never happens." +
+    APPROVAL_PROTOCOL,
+  parameters: WorkspacePatchInput,
+  success: WorkspaceMutationResult,
+  failure: WorkspaceBridgeError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Apply patch to workspace")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(Tool.Destructive, true);
+
+export const WorkspaceBashTool = Tool.make("workspace_bash", {
+  description:
+    "Run one shell command in the workspace root (tests, linters, builds, git). Non-interactive only; runs with a minimal environment and a hard timeout. The exit code and combined output come back in the result — a non-zero exit is a normal result, not an error." +
+    APPROVAL_PROTOCOL,
+  parameters: WorkspaceBashInput,
+  success: WorkspaceMutationResult,
+  failure: WorkspaceBridgeError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Run command in workspace")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(Tool.Destructive, true);
+
+export const WorkspaceWaitTool = Tool.make("workspace_wait", {
+  description:
+    "Check on a pending workspace operation. Returns the operation's current state, waiting briefly for the user's approval decision. Keep calling it while the status is pending-approval; when it turns completed, denied, or failed, act on that result.",
+  parameters: WorkspaceWaitInput,
+  success: WorkspaceMutationResult,
+  failure: WorkspaceBridgeError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Wait for workspace operation")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(Tool.Destructive, false);
+
 export const WorkspaceToolkit = Toolkit.make(
   WorkspaceOverviewTool,
   WorkspaceTreeTool,
   WorkspaceReadTool,
   WorkspaceSearchTool,
   WorkspaceChangesTool,
+  WorkspaceWriteTool,
+  WorkspaceEditTool,
+  WorkspacePatchTool,
+  WorkspaceBashTool,
+  WorkspaceWaitTool,
 );

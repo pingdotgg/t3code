@@ -218,9 +218,11 @@ export const issueActiveMcpCredential = (
  *
  * Deliberately separate from `issueActiveMcpCredential`: that one grants
  * `agents` to a locally-spawned provider process, while this token is pasted
- * into a third-party settings field and travels to OpenAI's backend. Granting
- * only `workspace` keeps a leaked connector URL at "can read this thread's
- * files" rather than "can start agents on this machine".
+ * into a third-party settings field and travels to OpenAI's backend. The
+ * capability list is chosen by the caller from the provider's configured
+ * access level, but `agents` is stripped unconditionally here — whatever a
+ * future caller passes, a connector credential must never be able to start
+ * an agent on this machine.
  *
  * Unlike the provider-session credential, this one does not revoke the
  * thread's existing credentials first — the browser session's own MCP
@@ -228,10 +230,16 @@ export const issueActiveMcpCredential = (
  */
 export const issueActiveWorkspaceConnector = (
   request: McpCredentialRequest,
-): Effect.Effect<McpIssuedCredential | undefined> =>
-  activeMcpSessionRegistry
-    ? activeMcpSessionRegistry.issue({ ...request, capabilities: ["workspace"] })
+): Effect.Effect<McpIssuedCredential | undefined> => {
+  const requested = request.capabilities ?? ["workspace"];
+  const capabilities = requested.filter((capability) => capability !== "agents");
+  return activeMcpSessionRegistry
+    ? activeMcpSessionRegistry.issue({
+        ...request,
+        capabilities: capabilities.length > 0 ? capabilities : ["workspace"],
+      })
     : Effect.sync((): McpIssuedCredential | undefined => undefined);
+};
 
 export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
