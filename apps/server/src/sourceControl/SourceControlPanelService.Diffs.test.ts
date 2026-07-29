@@ -409,6 +409,70 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("disables user-configured diff rendering for untracked files", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/untracked.ts",
+        source: { kind: "working-tree", staged: false },
+      });
+
+      assert.equal(result.patch, "untracked patch");
+      assert.deepStrictEqual(
+        calls.map((call) => ({
+          operation: call.operation,
+          args: call.args,
+          allowNonZeroExit: call.allowNonZeroExit,
+        })),
+        [
+          {
+            operation: "vcs.panel.readFileDiff",
+            args: [
+              "diff",
+              "--no-ext-diff",
+              "--patch",
+              "--minimal",
+              "--find-renames=20%",
+              "--",
+              "src/untracked.ts",
+            ],
+            allowNonZeroExit: false,
+          },
+          {
+            operation: "vcs.panel.readUntrackedFileDiff",
+            args: [
+              "diff",
+              "--no-index",
+              "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--minimal",
+              "--",
+              "/dev/null",
+              "src/untracked.ts",
+            ],
+            allowNonZeroExit: true,
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.readUntrackedFileDiff"
+              ? success("untracked patch")
+              : success("");
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("reads tracked stash file diffs against the stash base", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {

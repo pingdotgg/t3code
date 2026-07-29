@@ -408,7 +408,18 @@ export function makeSourceControlPanelActions(
       patch = yield* run(
         "vcs.panel.readUntrackedFileDiff",
         input.cwd,
-        ["diff", "--no-index", "--", "/dev/null", input.path],
+        [
+          "diff",
+          "--no-index",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--minimal",
+          "--",
+          "/dev/null",
+          input.path,
+        ],
         { allowNonZeroExit: true },
       );
     }
