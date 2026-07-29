@@ -425,11 +425,13 @@ export function openCodePermissionRequestKind(
   const normalizedTool = toolName?.toLowerCase() ?? "";
   if (
     normalized === "edit" ||
-    normalized.includes("write") ||
-    normalized.includes("patch") ||
-    normalizedTool.includes("edit") ||
-    normalizedTool.includes("write") ||
-    normalizedTool.includes("patch")
+    normalized === "write" ||
+    normalized === "patch" ||
+    normalized === "apply_patch" ||
+    normalizedTool === "edit" ||
+    normalizedTool === "write" ||
+    normalizedTool === "patch" ||
+    normalizedTool === "apply_patch"
   ) {
     return "file-change";
   }
@@ -453,6 +455,9 @@ export function openCodeToolProjectionKind(
   toolName: string,
 ): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
   const normalized = toolName.toLowerCase();
+  if (normalized === "todowrite") {
+    return "dynamic_tool";
+  }
   if (normalized.includes("bash") || normalized.includes("shell")) {
     return "command_execution";
   }
