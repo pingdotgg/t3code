@@ -111,6 +111,18 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings completion sound", () => {
+  it("defaults the completion sound on", () => {
+    expect(decodeClientSettings({}).enableCompletionSounds).toBe(true);
+  });
+
+  it("preserves an explicit disabled preference", () => {
+    expect(decodeClientSettings({ enableCompletionSounds: false }).enableCompletionSounds).toBe(
+      false,
+    );
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

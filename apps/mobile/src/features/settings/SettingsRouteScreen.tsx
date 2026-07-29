@@ -539,6 +539,9 @@ function GeneralSettingsSection() {
   const projectGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.projectGroupingEnabled !== false
     : true;
+  const completionSoundEnabled = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.completionSoundEnabled !== false
+    : true;
 
   return (
     <SettingsSection title="General">
@@ -547,6 +550,12 @@ function GeneralSettingsSection() {
         label="Project Grouping"
         value={projectGroupingEnabled}
         onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
+      />
+      <SettingsSwitchRow
+        icon="speaker.wave.2"
+        label="Completion Sound"
+        value={completionSoundEnabled}
+        onValueChange={(value) => savePreferences({ completionSoundEnabled: value })}
       />
     </SettingsSection>
   );

@@ -8,7 +8,8 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { play } from "cuelume";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -27,7 +28,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -38,7 +39,7 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
-import { shellEnvironment } from "../state/shell";
+import { liveEnvironmentIdsAtom, shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
@@ -47,7 +48,21 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useThreadShells,
+} from "../state/entities";
+import {
+  captureThreadSoundState,
+  captureThreadSoundStatePreservingUnobserved,
+  captureThreadSoundStateWhileSettingsHydrating,
+  deriveInteractionSoundCues,
+  selectLiveThreadShells,
+  shouldPlayInteractionSound,
+  type ThreadSoundStateByKey,
+} from "@t3tools/client-runtime/interaction-sounds";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -135,6 +150,7 @@ function RootRouteView() {
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+        <InteractionSoundCoordinator />
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
       </AnchoredToastProvider>
@@ -148,6 +164,65 @@ function GlassAppearanceSync() {
   useEffect(() => {
     document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);
   }, [glassOpacity]);
+
+  return null;
+}
+
+function InteractionSoundCoordinator() {
+  const threads = useThreadShells();
+  const liveEnvironmentIds = useAtomValue(liveEnvironmentIdsAtom);
+  const completionSoundEnabled = useClientSettings((settings) => settings.enableCompletionSounds);
+  const settingsHydrated = useClientSettingsHydrated();
+  const previousStateRef = useRef<ThreadSoundStateByKey | null>(null);
+  const liveThreads = useMemo(
+    () => selectLiveThreadShells(threads, liveEnvironmentIds),
+    [liveEnvironmentIds, threads],
+  );
+
+  useEffect(() => {
+    const cleanup = () => {
+      document.removeEventListener("pointerdown", prime, true);
+      document.removeEventListener("keydown", prime, true);
+    };
+    const prime = (event: Event) => {
+      if (!event.isTrusted) {
+        return;
+      }
+      // Cuelume owns a lazy AudioContext. Touch it from the first real user
+      // gesture at an effectively inaudible level so later background cues
+      // are not rejected by browser autoplay policy.
+      play("press", { volume: 0.0001 });
+      cleanup();
+    };
+
+    document.addEventListener("pointerdown", prime, true);
+    document.addEventListener("keydown", prime, true);
+    return cleanup;
+  }, []);
+
+  useEffect(() => {
+    if (!settingsHydrated) {
+      previousStateRef.current = captureThreadSoundStateWhileSettingsHydrating(
+        previousStateRef.current,
+        liveThreads,
+      );
+      return;
+    }
+
+    const previous = previousStateRef.current;
+    if (previous !== null) {
+      for (const cue of deriveInteractionSoundCues(previous, liveThreads)) {
+        if (!shouldPlayInteractionSound(cue, completionSoundEnabled)) {
+          continue;
+        }
+        play(cue);
+      }
+    }
+    previousStateRef.current =
+      previous === null
+        ? captureThreadSoundState(liveThreads)
+        : captureThreadSoundStatePreservingUnobserved(previous, liveThreads, threads);
+  }, [completionSoundEnabled, liveThreads, settingsHydrated, threads]);
 
   return null;
 }
