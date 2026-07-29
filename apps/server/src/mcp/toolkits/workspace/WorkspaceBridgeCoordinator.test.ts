@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -76,20 +76,20 @@ const makeWorkspace = Effect.fn("test.makeWorkspace")(function* () {
   const outside = yield* fs.makeTempDirectoryScoped({ prefix: "chatgpt-outside-" });
 
   yield* Effect.promise(async () => {
-    await NodeFs.mkdir(NodePath.join(root, "src"), { recursive: true });
-    await NodeFs.mkdir(NodePath.join(root, ".git"), { recursive: true });
-    await NodeFs.mkdir(NodePath.join(root, "node_modules", "left-pad"), { recursive: true });
-    await NodeFs.writeFile(
+    await NodeFSP.mkdir(NodePath.join(root, "src"), { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, ".git"), { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, "node_modules", "left-pad"), { recursive: true });
+    await NodeFSP.writeFile(
       NodePath.join(root, "src", "index.ts"),
       "const greeting = 1;\nconst other = 2;\nexport { greeting };\n",
     );
-    await NodeFs.writeFile(NodePath.join(root, "README.md"), "# Demo\n");
-    await NodeFs.writeFile(NodePath.join(root, "AGENTS.md"), "conventions\n");
-    await NodeFs.writeFile(NodePath.join(root, ".env"), "OPENAI_API_KEY=sk-secret\n");
-    await NodeFs.writeFile(NodePath.join(root, ".git", "config"), "[core]\n");
-    await NodeFs.writeFile(NodePath.join(root, "node_modules", "left-pad", "index.js"), "//\n");
-    await NodeFs.writeFile(NodePath.join(outside, "secrets.txt"), "TOP SECRET\n");
-    await NodeFs.symlink(NodePath.join(outside, "secrets.txt"), NodePath.join(root, "escape.txt"));
+    await NodeFSP.writeFile(NodePath.join(root, "README.md"), "# Demo\n");
+    await NodeFSP.writeFile(NodePath.join(root, "AGENTS.md"), "conventions\n");
+    await NodeFSP.writeFile(NodePath.join(root, ".env"), "OPENAI_API_KEY=sk-secret\n");
+    await NodeFSP.writeFile(NodePath.join(root, ".git", "config"), "[core]\n");
+    await NodeFSP.writeFile(NodePath.join(root, "node_modules", "left-pad", "index.js"), "//\n");
+    await NodeFSP.writeFile(NodePath.join(outside, "secrets.txt"), "TOP SECRET\n");
+    await NodeFSP.symlink(NodePath.join(outside, "secrets.txt"), NodePath.join(root, "escape.txt"));
   });
 
   return { root, outside };
@@ -141,11 +141,11 @@ const makeHarness = (root: string) => {
   return { dispatched, layer };
 };
 
-const withCoordinator = <A>(
+const withCoordinator = <A, E>(
   use: (
     coordinator: WorkspaceBridgeCoordinator["Service"],
     context: { readonly root: string; readonly dispatched: Array<OrchestrationCommand> },
-  ) => Effect.Effect<A, unknown, never>,
+  ) => Effect.Effect<A, E, never>,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
