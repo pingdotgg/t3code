@@ -317,6 +317,20 @@ export function makeCursorAgentSdkReplayRunner(
           );
         }
         if (entry.type === "expect_outbound") {
+          const expectedCancel = {
+            type: "run.cancel",
+            runId,
+          };
+          if (!sameFrame(entry.frame, expectedCancel)) {
+            return yield* recordFailure(
+              new CursorReplayFrameMismatchError({
+                scenario: transcript.scenario,
+                cursor,
+                expected: expectedCancel,
+                actual: entry.frame,
+              }),
+            );
+          }
           const signal = cursorAdvanced;
           yield* Effect.promise(() => signal.promise);
           continue;
