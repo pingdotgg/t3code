@@ -4,6 +4,7 @@ import {
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
+  normalizePathCaseForComparison,
 } from "./path.ts";
 
 describe("path helpers", () => {
@@ -30,5 +31,10 @@ describe("path helpers", () => {
     expect(isExplicitRelativePath("./repo")).toBe(true);
     expect(isExplicitRelativePath("..\\repo")).toBe(true);
     expect(isExplicitRelativePath("~/repo")).toBe(false);
+  });
+
+  it("normalizes windows path casing without trimming filenames", () => {
+    expect(normalizePathCaseForComparison("C:/Repo/file.ts ")).toBe("c:\\repo\\file.ts ");
+    expect(normalizePathCaseForComparison("/repo/file.ts ")).toBe("/repo/file.ts ");
   });
 });

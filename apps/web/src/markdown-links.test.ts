@@ -132,6 +132,14 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("preserves trailing whitespace in encoded workspace file paths", () => {
+    expect(resolveMarkdownFileLinkMeta("/tmp/repo/file.ts%20", "/tmp/repo")).toMatchObject({
+      targetPath: "/tmp/repo/file.ts ",
+      displayPath: "repo/file.ts ",
+      workspaceRelativePath: "file.ts ",
+    });
+  });
+
   it("keeps windows workspace containment case-insensitive", () => {
     expect(
       resolveMarkdownFileLinkMeta(

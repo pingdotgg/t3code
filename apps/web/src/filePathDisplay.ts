@@ -1,5 +1,6 @@
 import {
   isWindowsAbsolutePath,
+  normalizePathCaseForComparison,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
 } from "@t3tools/shared/path";
@@ -24,11 +25,11 @@ function stripRelativePrefixes(path: string): string {
 }
 
 export function resolveWorkspaceRelativePath(path: string, workspaceRoot: string): string | null {
-  const normalizedPath = canonicalizeWindowsDrivePath(normalizeProjectPathForDispatch(path));
+  const normalizedPath = canonicalizeWindowsDrivePath(path);
   const normalizedRoot = canonicalizeWindowsDrivePath(
     normalizeProjectPathForDispatch(workspaceRoot),
   );
-  const pathForCompare = normalizeProjectPathForComparison(normalizedPath);
+  const pathForCompare = normalizePathCaseForComparison(normalizedPath);
   const rootForCompare = normalizeProjectPathForComparison(normalizedRoot);
 
   if (pathForCompare === rootForCompare) return "";
