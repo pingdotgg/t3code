@@ -725,7 +725,7 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
-  it("tombstones tasks the model kills via kill_command_or_subagent", () => {
+  it("tombstones confirmed kills and ignores failed kill calls", () => {
     expect(
       extractXAiKilledBackgroundTasks({
         toolCallId: "call-kill-1",
@@ -750,7 +750,7 @@ describe("XAiAcpExtension", () => {
         status: "failed",
         data: { rawInput: { variant: "kill", task_id: "call-bg-3" } },
       }),
-    ).toEqual([{ taskId: "call-bg-3", status: "completed", appendOutput: "" }]);
+    ).toEqual([]);
     // In-flight kill calls and unrelated tools contribute nothing.
     expect(
       extractXAiKilledBackgroundTasks({
