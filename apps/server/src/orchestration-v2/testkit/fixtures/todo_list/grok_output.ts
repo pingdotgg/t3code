@@ -35,8 +35,9 @@ export function assertTodoListGrokOutput(
 
   const planEvents = result.domainEvents.filter((event) => event.type === "plan.updated");
   assert.lengthOf(planEvents, 2);
-  assert.lengthOf(
-    new Set(planEvents.map((event) => (event.type === "plan.updated" ? event.payload.id : null))),
+  assert.equal(
+    new Set(planEvents.map((event) => (event.type === "plan.updated" ? event.payload.id : null)))
+      .size,
     1,
     "ACP plan updates must preserve one plan identity",
   );
