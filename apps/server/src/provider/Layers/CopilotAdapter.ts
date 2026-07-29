@@ -17,6 +17,7 @@ import {
   RuntimeRequestId,
   RuntimeTaskId,
   ProviderDriverKind,
+  ProviderInstanceId,
   type ThreadId,
   TurnId,
   type UserInputQuestion,
@@ -130,6 +131,7 @@ interface CopilotRetainedTurnSnapshot {
 
 interface CopilotSessionContext {
   readonly threadId: ThreadId;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly copilotSettings: CopilotRuntimeCopilotSettings;
   session: ProviderSession;
   scope: Scope.Closeable;
@@ -817,6 +819,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
 
     const openRuntime = (input: {
       readonly threadId: ThreadId;
+      readonly providerInstanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly runtimeMode: ProviderSession["runtimeMode"];
       readonly copilotSettings: CopilotRuntimeCopilotSettings;
@@ -850,6 +853,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             : undefined,
           childProcessSpawner,
           threadId: input.threadId,
+          providerInstanceId: input.providerInstanceId,
           cwd: input.cwd,
           baseDir: serverConfig.baseDir,
           runtimeMode: input.runtimeMode,
@@ -1231,6 +1235,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         yield* closeRuntimeInternal(ctx);
         const runtime = yield* openRuntime({
           threadId: ctx.threadId,
+          providerInstanceId: ctx.providerInstanceId,
           cwd,
           runtimeMode: ctx.session.runtimeMode,
           copilotSettings: ctx.copilotSettings,
@@ -1373,6 +1378,13 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               issue: "cwd is required and must be non-empty.",
             });
           }
+          const providerInstanceId = input.providerInstanceId ?? ProviderInstanceId.make(PROVIDER);
+          if (input.providerInstanceId === undefined) {
+            yield* Effect.logWarning("copilot.session.missing-provider-instance", {
+              threadId: input.threadId,
+              providerInstanceId,
+            });
+          }
 
           const cwd = nodePath.resolve(input.cwd.trim());
           const copilotModelSelection =
@@ -1408,6 +1420,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           const resumeSessionId = parseCopilotResume(input.resumeCursor)?.sessionId;
           const runtime = yield* openRuntime({
             threadId: input.threadId,
+            providerInstanceId,
             cwd,
             runtimeMode: input.runtimeMode,
             copilotSettings: { binaryPath: copilotSettings.binaryPath },
@@ -1449,6 +1462,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           return yield* Effect.gen(function* () {
             ctx = {
               threadId: input.threadId,
+              providerInstanceId,
               copilotSettings: { binaryPath: copilotSettings.binaryPath },
               session,
               scope: runtime.scope,

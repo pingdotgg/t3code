@@ -3,6 +3,7 @@ import * as os from "node:os";
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Stream } from "effect";
@@ -16,7 +17,8 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterRequestError } from "../Errors.ts";
 import { COPILOT_PLAN_MODE_ID } from "../acp/CopilotAcpSupport.ts";
@@ -102,16 +104,30 @@ async function readArgvLog(filePath: string) {
     .map((line) => line.split("\t").filter((token) => token.length > 0));
 }
 
-const copilotAdapterTestLayer = it.layer(
-  makeCopilotAdapterLive().pipe(
-    Layer.provideMerge(ServerSettingsService.layerTest()),
-    Layer.provideMerge(
-      ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3code-copilot-adapter-test-",
+const copilotAdapterLayer = makeCopilotAdapterLive().pipe(
+  Layer.provideMerge(ServerSettingsService.layerTest()),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3code-copilot-adapter-test-",
+    }),
+  ),
+  Layer.provideMerge(NodeServices.layer),
+);
+const mcpSessionRegistryTestLayer = McpSessionRegistry.layer.pipe(
+  Layer.provideMerge(
+    Layer.succeed(
+      ServerEnvironment,
+      ServerEnvironment.of({
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("copilot-adapter-test")),
+        getDescriptor: Effect.die("unused"),
       }),
     ),
-    Layer.provideMerge(NodeServices.layer),
   ),
+  Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(NodeServices.layer),
+);
+const copilotAdapterTestLayer = it.layer(
+  Layer.merge(copilotAdapterLayer, mcpSessionRegistryTestLayer),
 );
 
 copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
@@ -1387,7 +1403,6 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
 
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          McpProviderSession.clearMcpProviderSession(threadId);
           if (previousEnableMcp === undefined) {
             delete process.env.T3_COPILOT_ACP_ENABLE_MCP;
           } else {
@@ -1409,15 +1424,14 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       process.env.T3_COPILOT_ACP_ENABLE_MCP = "1";
       process.env.T3_COPILOT_ACP_MCP_COMMAND = "t3-test";
       process.env.T3_COPILOT_ACP_MCP_TOOLSETS = "read_file,search_files";
-      McpProviderSession.setMcpProviderSession({
-        environmentId: EnvironmentId.make("environment-1"),
+      const credential = yield* McpSessionRegistry.issueActiveMcpCredential({
         threadId,
-        providerSessionId: "provider-session-1",
         providerInstanceId: COPILOT_INSTANCE_ID,
-        endpoint: "http://127.0.0.1:3000/mcp",
-        authorizationHeader: "******",
       });
-
+      assert.isDefined(credential);
+      if (!credential) {
+        return;
+      }
       yield* isolateCopilotHome();
 
       const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "copilot-mcp-")));
@@ -1432,6 +1446,7 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       yield* adapter.startSession({
         threadId,
         provider: COPILOT_DRIVER,
+        providerInstanceId: COPILOT_INSTANCE_ID,
         cwd: process.cwd(),
         runtimeMode: "full-access",
         modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
@@ -1483,11 +1498,10 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
         {
           type: "http",
           name: "t3-code",
-          url: "http://127.0.0.1:3000/mcp",
-          headers: [{ name: "Authorization", value: "******" }],
+          url: credential.config.endpoint,
+          headers: [{ name: "Authorization", value: credential.config.authorizationHeader }],
         },
       );
-
       yield* adapter.stopSession(threadId);
     }),
   );

@@ -23,16 +23,20 @@ import {
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 
-const unauthorized = HttpServerResponse.jsonUnsafe(
+export const invalidMcpCredentialBody = {
+  error: "invalid_mcp_credential",
+  message:
+    "The T3 Code MCP session credential is invalid or expired. Restart the chat/session to reconnect browser automation.",
+} as const;
+
+export const invalidMcpCredentialResponse = HttpServerResponse.jsonUnsafe(
   {
-    error: "invalid_mcp_credential",
-    message: "A valid provider-scoped MCP bearer credential is required.",
+    ...invalidMcpCredentialBody,
   },
   {
     status: 401,
     headers: {
       "cache-control": "no-store",
-      "www-authenticate": "Bearer",
     },
   },
 );
@@ -74,7 +78,7 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
             ? authorization.slice("Bearer ".length).trim()
             : "";
         const invocation = yield* registry.resolve(token);
-        if (!invocation) return unauthorized;
+        if (!invocation) return invalidMcpCredentialResponse;
         return yield* httpEffect.pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.map(normalizeMcpHttpResponse),

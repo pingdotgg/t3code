@@ -37,7 +37,6 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
@@ -221,18 +220,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
 
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
-    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
-      Effect.tap((credential) =>
-        credential
-          ? Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config))
-          : Effect.void,
-      ),
-    );
+    McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId });
 
-  const clearMcpSession = (threadId: ThreadId) =>
-    McpSessionRegistry.revokeActiveMcpThread(threadId).pipe(
-      Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
-    );
+  const clearMcpSession = (providerSessionId: string | undefined) =>
+    providerSessionId
+      ? McpSessionRegistry.revokeActiveMcpProviderSession(providerSessionId)
+      : Effect.void;
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
@@ -404,7 +397,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      const credential = yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -415,9 +408,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
         })
-        .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
+        .pipe(Effect.onError(() => clearMcpSession(credential?.config.providerSessionId)));
       if (resumed.provider !== adapter.provider) {
-        yield* clearMcpSession(input.binding.threadId);
+        yield* clearMcpSession(credential?.config.providerSessionId);
         return yield* toValidationError(
           input.operation,
           `Adapter/provider mismatch while recovering thread '${input.binding.threadId}'. Expected '${adapter.provider}', received '${resumed.provider}'.`,
@@ -513,6 +506,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                     provider: adapter.provider,
                   }),
                 ),
+                Effect.ensuring(
+                  McpSessionRegistry.revokeActiveMcpProviderInstance(input.threadId, instanceId),
+                ),
                 Effect.catchCause((cause) =>
                   Effect.logWarning("provider.session.stop-stale-failed", {
                     threadId: input.threadId,
@@ -598,7 +594,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             "provider.cwd.effective": effectiveCwd ?? "",
           });
           const adapter = yield* registry.getByInstance(resolvedInstanceId);
-          yield* prepareMcpSession(threadId, resolvedInstanceId);
+          const credential = yield* prepareMcpSession(threadId, resolvedInstanceId);
           const session = yield* adapter
             .startSession({
               ...input,
@@ -608,10 +604,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 ? { resumeCursor: effectiveResumeCursor }
                 : {}),
             })
-            .pipe(Effect.onError(() => clearMcpSession(threadId)));
+            .pipe(Effect.onError(() => clearMcpSession(credential?.config.providerSessionId)));
 
           if (session.provider !== adapter.provider) {
-            yield* clearMcpSession(threadId);
+            yield* clearMcpSession(credential?.config.providerSessionId);
             return yield* toValidationError(
               "ProviderService.startSession",
               `Adapter/provider mismatch: requested '${adapter.provider}', received '${session.provider}'.`,
@@ -938,7 +934,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           if (routed.isActive) {
             yield* routed.adapter.stopSession(routed.threadId);
           }
-          yield* clearMcpSession(input.threadId);
+          yield* McpSessionRegistry.revokeActiveMcpProviderInstance(
+            input.threadId,
+            routed.instanceId,
+          );
           yield* directory.upsert({
             threadId: input.threadId,
             provider: routed.adapter.provider,
@@ -1103,7 +1102,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
     yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
-    McpProviderSession.clearAllMcpProviderSessions();
     const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(bindings, (binding) => {
       const providerInstanceId = dieOnMissingBindingInstanceId("ProviderService.stopAll", binding);

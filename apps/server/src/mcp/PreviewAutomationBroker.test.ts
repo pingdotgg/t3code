@@ -16,9 +16,11 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -758,6 +760,65 @@ it.effect("does not move a live legacy assignment to another runtime for resize"
       expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
         "legacy",
       );
+    }),
+  ),
+);
+
+it.effect("keeps a provider session pinned for the credential lifetime", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      let firstConnectionId = "";
+      let secondConnectionId = "";
+      const firstRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "client-first" })),
+        (connectionId) => {
+          firstConnectionId = connectionId;
+        },
+      );
+      const secondRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "client-second" })),
+        (connectionId) => {
+          secondConnectionId = connectionId;
+        },
+      );
+      yield* Stream.runForEach(firstRequests, (request) =>
+        broker.respond({
+          clientId: "client-first",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "first",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Stream.runForEach(secondRequests, (request) =>
+        broker.respond({
+          clientId: "client-second",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "second",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.focusHost({
+        clientId: "client-first",
+        environmentId: scope.environmentId,
+        connectionId: firstConnectionId,
+        focused: true,
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe("first");
+
+      yield* broker.focusHost({
+        clientId: "client-second",
+        environmentId: scope.environmentId,
+        connectionId: secondConnectionId,
+        focused: true,
+      });
+      yield* TestClock.adjust(Duration.minutes(31));
+
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe("first");
     }),
   ),
 );

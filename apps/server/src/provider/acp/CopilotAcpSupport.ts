@@ -1,5 +1,6 @@
 import {
   ThreadId,
+  type ProviderInstanceId,
   type CopilotSettings,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -10,7 +11,8 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { startMcpHttpServer, type McpHttpServer, type McpServeOptions } from "../../mcpServer.ts";
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import type { McpProviderSessionConfig } from "../../mcp/McpSessionRegistry.ts";
 import {
   AcpSessionRuntime,
   type AcpSessionRuntimeOptions,
@@ -67,16 +69,24 @@ type CopilotAcpRuntimeCopilotSettings = {
   readonly binaryPath: CopilotSettings["binaryPath"];
 };
 
-export interface CopilotAcpRuntimeInput extends Omit<
+type CopilotAcpRuntimeBaseInput = Omit<
   AcpSessionRuntimeOptions,
   "auth" | "authMethodId" | "clientCapabilities" | "clientInfo" | "modeSwitchMethod" | "spawn"
-> {
+> & {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly copilotSettings: CopilotAcpRuntimeCopilotSettings | null | undefined;
   readonly runtimeMode: RuntimeMode;
-  readonly threadId?: string;
   readonly baseDir?: string;
-}
+};
+export type CopilotAcpRuntimeInput =
+  | (CopilotAcpRuntimeBaseInput & {
+      readonly threadId: string;
+      readonly providerInstanceId: ProviderInstanceId;
+    })
+  | (CopilotAcpRuntimeBaseInput & {
+      readonly threadId?: undefined;
+      readonly providerInstanceId?: undefined;
+    });
 
 export function buildCopilotRuntimeModeArgs(_runtimeMode: RuntimeMode): ReadonlyArray<string> {
   // Keep permission requests flowing through ACP in every runtime mode. T3
@@ -136,7 +146,7 @@ export function buildCopilotMcpServerOptions(
 
 export function buildCopilotMcpServers(
   server: Pick<McpHttpServer, "authorization" | "url">,
-  threadId?: string,
+  providerSession: McpProviderSessionConfig | undefined,
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
   const servers: Array<EffectAcpSchema.McpServer> = [
     {
@@ -147,9 +157,6 @@ export function buildCopilotMcpServers(
     },
   ];
 
-  const providerSession = threadId
-    ? McpProviderSession.readMcpProviderSession(ThreadId.make(threadId))
-    : undefined;
   if (providerSession) {
     servers.push({
       type: "http",
@@ -166,6 +173,15 @@ export function buildCopilotMcpServers(
 
   return servers;
 }
+
+export const logMissingCopilotMcpProviderSession = (
+  threadId: string,
+  providerInstanceId: ProviderInstanceId,
+) =>
+  Effect.logWarning("copilot.mcp.provider-session-missing", {
+    threadId,
+    providerInstanceId,
+  });
 
 export function resolveCopilotAcpModeId(
   interactionMode: ProviderInteractionMode | null | undefined,
@@ -215,6 +231,15 @@ export const makeCopilotAcpRuntime = (
       }),
       (server) => Effect.promise(() => server.close()).pipe(Effect.orDie),
     );
+    const providerSession = input.threadId
+      ? yield* McpSessionRegistry.readActiveMcpProviderSession(
+          ThreadId.make(input.threadId),
+          input.providerInstanceId,
+        )
+      : undefined;
+    if (input.threadId && !providerSession) {
+      yield* logMissingCopilotMcpProviderSession(input.threadId, input.providerInstanceId);
+    }
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
@@ -228,7 +253,7 @@ export const makeCopilotAcpRuntime = (
         clientInfo: COPILOT_CLIENT_INFO,
         clientCapabilities: COPILOT_CLIENT_CAPABILITIES,
         modeSwitchMethod: "set_mode",
-        mcpServers: buildCopilotMcpServers(mcpHttpServer, input.threadId),
+        mcpServers: buildCopilotMcpServers(mcpHttpServer, providerSession),
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

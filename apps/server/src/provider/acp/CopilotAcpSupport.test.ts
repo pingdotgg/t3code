@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { Effect, Logger } from "effect";
+import { HttpServer } from "effect/unstable/http";
 
-import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import {
   COPILOT_AGENT_MODE_ID,
   COPILOT_LEGACY_AGENT_MODE_ID,
@@ -13,9 +17,20 @@ import {
   buildCopilotMcpServerOptions,
   buildCopilotMcpServers,
   isCopilotPlanModeId,
+  logMissingCopilotMcpProviderSession,
   normalizeCopilotAcpModeId,
   resolveCopilotAcpModeId,
 } from "./CopilotAcpSupport.ts";
+
+const makeFakeHttpServer = () =>
+  HttpServer.HttpServer.of({
+    address: { _tag: "TcpAddress", hostname: "127.0.0.1", port: 43123 },
+    serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+  });
+const fakeEnvironment = ServerEnvironment.of({
+  getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+  getDescriptor: Effect.die("unused"),
+});
 
 describe("buildCopilotAcpSpawnInput", () => {
   it("builds the default GitHub Copilot ACP command", () => {
@@ -59,10 +74,13 @@ describe("buildCopilotAcpSpawnInput", () => {
       });
 
       expect(
-        buildCopilotMcpServers({
-          url: "http://127.0.0.1:1234/mcp",
-          authorization: "Bearer secret",
-        }),
+        buildCopilotMcpServers(
+          {
+            url: "http://127.0.0.1:1234/mcp",
+            authorization: "Bearer secret",
+          },
+          undefined,
+        ),
       ).toEqual([
         {
           type: "http",
@@ -94,46 +112,72 @@ describe("buildCopilotAcpSpawnInput", () => {
       });
     });
 
-    it("appends the provider-scoped browser automation server", () => {
-      const threadId = ThreadId.make("thread-1");
-      McpProviderSession.setMcpProviderSession({
-        environmentId: EnvironmentId.make("environment-1"),
-        threadId,
-        providerSessionId: "provider-session-1",
-        providerInstanceId: ProviderInstanceId.make("copilot"),
-        endpoint: "http://127.0.0.1:3000/mcp",
-        authorizationHeader: "******",
-      });
+    it.effect("appends the provider-scoped browser automation server from the registry", () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-1");
+        const providerInstanceId = ProviderInstanceId.make("copilot");
+        const registry = yield* McpSessionRegistry.__testing
+          .make()
+          .pipe(
+            Effect.provideService(HttpServer.HttpServer, makeFakeHttpServer()),
+            Effect.provideService(ServerEnvironment, fakeEnvironment),
+            Effect.provide(NodeServices.layer),
+          );
+        const issued = yield* registry.issue({ threadId, providerInstanceId });
+        const providerSession = yield* registry.readProviderSession(threadId, providerInstanceId);
+        expect(providerSession).toBe(issued.config);
+        if (!providerSession) {
+          return;
+        }
 
-      expect(
-        buildCopilotMcpServers(
+        expect(
+          buildCopilotMcpServers(
+            {
+              url: "http://127.0.0.1:1234/mcp",
+              authorization: "t3-tools-token",
+            },
+            providerSession,
+          ),
+        ).toEqual([
           {
+            type: "http",
+            name: "t3-tools",
             url: "http://127.0.0.1:1234/mcp",
-            authorization: "t3-tools-token",
+            headers: [{ name: "Authorization", value: "t3-tools-token" }],
           },
-          threadId,
-        ),
-      ).toEqual([
-        {
-          type: "http",
-          name: "t3-tools",
-          url: "http://127.0.0.1:1234/mcp",
-          headers: [{ name: "Authorization", value: "t3-tools-token" }],
-        },
-        {
-          type: "http",
-          name: "t3-code",
-          url: "http://127.0.0.1:3000/mcp",
-          headers: [{ name: "Authorization", value: "******" }],
-        },
-      ]);
-
-      McpProviderSession.clearMcpProviderSession(threadId);
-    });
+          {
+            type: "http",
+            name: "t3-code",
+            url: providerSession.endpoint,
+            headers: [{ name: "Authorization", value: providerSession.authorizationHeader }],
+          },
+        ]);
+      }),
+    );
   });
 });
 
 describe("buildCopilotRuntimeModeArgs", () => {
+  it.effect("logs a missing provider MCP session at spawn", () => {
+    const messages: Array<string> = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(String(message));
+    });
+    return logMissingCopilotMcpProviderSession(
+      "thread-missing-provider-session",
+      ProviderInstanceId.make("copilot"),
+    ).pipe(
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(messages).toContainEqual(
+            expect.stringContaining("copilot.mcp.provider-session-missing"),
+          );
+        }),
+      ),
+    );
+  });
+
   it("keeps ACP permission interception active in full-access mode", () => {
     expect(buildCopilotRuntimeModeArgs("full-access")).toEqual([]);
   });
