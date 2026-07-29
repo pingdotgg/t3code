@@ -4,6 +4,7 @@ import {
   EventId,
   PreviewSessionLookupError,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationEvent,
@@ -73,7 +74,9 @@ function testReactorLayer(input: {
   readonly getProjectedSession: ProjectionThreadSessionRepository["Service"]["getByThreadId"];
   readonly archiveThread: ThreadColdStorage["Service"]["archiveThread"];
   readonly closePreview?: PreviewManager["Service"]["close"];
+  readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly pendingArchives?: ReadonlyArray<ThreadId>;
+  readonly runArchiveQuiesce?: boolean;
 }) {
   return ThreadDeletionReactorLive.pipe(
     Layer.provide(
@@ -97,7 +100,7 @@ function testReactorLayer(input: {
     ),
     Layer.provide(
       Layer.mock(TerminalManager.TerminalManager)({
-        close: () => Effect.void,
+        close: input.closeTerminal ?? (() => Effect.void),
       }),
     ),
     Layer.provide(
@@ -108,7 +111,18 @@ function testReactorLayer(input: {
     Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
     Layer.provide(
       Layer.mock(ThreadColdStorage)({
-        archiveThread: input.archiveThread,
+        archiveThread: (threadId, quiesce) =>
+          (input.runArchiveQuiesce === false ? Effect.void : (quiesce ?? Effect.void)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ThreadColdStorageError({
+                  operation: "archive",
+                  threadId,
+                  cause,
+                }),
+            ),
+            Effect.andThen(input.archiveThread(threadId)),
+          ),
         deleteThread: () => Effect.void,
         compactLegacyStorage: Effect.void,
         listPendingArchiveThreadIds: Effect.succeed(input.pendingArchives ?? []),
@@ -230,6 +244,44 @@ effectIt.effect("closes previews when observing an archive event", () =>
       yield* reactor.drain;
 
       expect(yield* Ref.get(previewCloseCalls)).toEqual([threadId]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("leaves stale archive cleanup to cold-storage eligibility", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-stale-archive-cleanup");
+    const archived = yield* Deferred.make<void>();
+    const stopCalls = yield* Ref.make(0);
+    const terminalCloseCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Ref.update(stopCalls, (count) => count + 1),
+      getBinding: () =>
+        Effect.succeed(
+          Option.some({
+            threadId,
+            provider: ProviderDriverKind.make("codex"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          }),
+        ),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closeTerminal: () => Ref.update(terminalCloseCalls, (count) => count + 1),
+      archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
+      runArchiveQuiesce: false,
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(archived);
+      yield* reactor.drain;
+
+      expect(yield* Ref.get(stopCalls)).toBe(0);
+      expect(yield* Ref.get(terminalCloseCalls)).toBe(0);
     }).pipe(Effect.provide(layer));
   }),
 );

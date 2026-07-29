@@ -155,12 +155,17 @@ const make = Effect.gen(function* () {
     const { threadId } = job;
     if (job.type === "archive") {
       // Archiving must not snapshot or delete hot rows while any active writer
-      // can still mutate them. A failure leaves the durable archived shell or
-      // manifest discoverable so startup recovery can retry the boundary.
-      yield* stopArchiveProviderSession(threadId);
-      yield* terminalManager.close({ threadId, deleteHistory: true });
-      yield* closeProviderLogWritersRequired(threadId);
-      yield* threadColdStorage.archiveThread(threadId);
+      // can still mutate them. Cold storage runs this cleanup while holding the
+      // same tree lock used by unarchive and only after rechecking eligibility,
+      // so a stale archive job cannot stop a newly active thread.
+      yield* threadColdStorage.archiveThread(
+        threadId,
+        Effect.gen(function* () {
+          yield* stopArchiveProviderSession(threadId);
+          yield* terminalManager.close({ threadId, deleteHistory: true });
+          yield* closeProviderLogWritersRequired(threadId);
+        }),
+      );
       return;
     }
     yield* stopProviderSession(threadId);

@@ -3,7 +3,6 @@ import * as NodeUtil from "node:util";
 import * as NodeZlib from "node:zlib";
 
 import { ThreadId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -41,9 +40,36 @@ type AcquiredThreadLock = {
   readonly semaphore: Semaphore.Semaphore;
 };
 
-class ArchiveCodecError extends Data.TaggedError("ArchiveCodecError")<{
-  readonly cause: unknown;
-}> {}
+class ArchiveCodecError extends Schema.TaggedErrorClass<ArchiveCodecError>()("ArchiveCodecError", {
+  operation: Schema.Literals(["encode", "decode", "compress", "decompress"]),
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Archive ${this.operation} failed`;
+  }
+}
+
+class ArchiveTableValidationError extends Schema.TaggedErrorClass<ArchiveTableValidationError>()(
+  "ArchiveTableValidationError",
+  {
+    table: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Archive chunk targets unknown table '${this.table}'`;
+  }
+}
+
+class ArchiveChunkKindValidationError extends Schema.TaggedErrorClass<ArchiveChunkKindValidationError>()(
+  "ArchiveChunkKindValidationError",
+  {
+    chunkKind: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Archive contains unknown chunk kind '${this.chunkKind}'`;
+  }
+}
 
 const ARCHIVED_THREAD_TABLES = [
   ["orchestration_events", "stream_id"],
@@ -62,10 +88,6 @@ const THREAD_TABLES = [
   ["orchestration_command_receipts", "aggregate_id"] as const,
 ] as const;
 
-function storageError(operation: string, threadId: string, cause: unknown) {
-  return new ThreadColdStorageError({ operation, threadId, cause });
-}
-
 function encodeRows(rows: ReadonlyArray<SqlRow>): Effect.Effect<Uint8Array, ArchiveCodecError> {
   return encodeUnknownJsonString(
     rows.map((row) =>
@@ -80,7 +102,7 @@ function encodeRows(rows: ReadonlyArray<SqlRow>): Effect.Effect<Uint8Array, Arch
     ),
   ).pipe(
     Effect.map((encoded) => Buffer.from(encoded, "utf8")),
-    Effect.mapError((cause) => new ArchiveCodecError({ cause })),
+    Effect.mapError((cause) => new ArchiveCodecError({ operation: "encode", cause })),
   );
 }
 
@@ -120,11 +142,13 @@ function decodeRows(data: Uint8Array): Effect.Effect<ReadonlyArray<SqlRow>, Arch
             );
           });
         },
-        catch: (cause) => new ArchiveCodecError({ cause }),
+        catch: (cause) => new ArchiveCodecError({ operation: "decode", cause }),
       }),
     ),
     Effect.mapError((cause) =>
-      cause instanceof ArchiveCodecError ? cause : new ArchiveCodecError({ cause }),
+      cause instanceof ArchiveCodecError
+        ? cause
+        : new ArchiveCodecError({ operation: "decode", cause }),
     ),
   );
 }
@@ -149,13 +173,13 @@ function isSafeAttachmentEntry(entry: string): boolean {
 const compress = (data: Uint8Array) =>
   Effect.tryPromise({
     try: () => gzipAsync(data),
-    catch: (cause) => new ArchiveCodecError({ cause }),
+    catch: (cause) => new ArchiveCodecError({ operation: "compress", cause }),
   }).pipe(Effect.map((value) => new Uint8Array(value)));
 
 const decompress = (data: Uint8Array) =>
   Effect.tryPromise({
     try: () => gunzipAsync(data),
-    catch: (cause) => new ArchiveCodecError({ cause }),
+    catch: (cause) => new ArchiveCodecError({ operation: "decompress", cause }),
   }).pipe(Effect.map((value) => new Uint8Array(value)));
 
 const make = Effect.gen(function* () {
@@ -338,6 +362,7 @@ const make = Effect.gen(function* () {
   const archiveImpl = Effect.fn("archiveThreadImpl")(function* (
     threadId: ThreadId,
     allowRestored: boolean,
+    quiesce: Effect.Effect<void, unknown>,
   ) {
     const manifestRows = (yield* sql.unsafe(
       `SELECT root_thread_id, archived_at, status
@@ -379,6 +404,7 @@ const make = Effect.gen(function* () {
     ) {
       return;
     }
+    yield* quiesce;
     const archivedAt = String(
       threadRows[0]?.archived_at ?? source.archived_at ?? DateTime.formatIso(yield* DateTime.now),
     );
@@ -511,9 +537,7 @@ const make = Effect.gen(function* () {
     rows: ReadonlyArray<SqlRow>,
   ) {
     if (!THREAD_TABLE_NAMES.has(table)) {
-      return yield* new ArchiveCodecError({
-        cause: new TypeError(`Archive chunk targets unknown table '${table}'`),
-      });
+      return yield* new ArchiveTableValidationError({ table });
     }
     const tableInfo = (yield* sql.unsafe(
       `PRAGMA main.table_info(${quoteIdentifier(table)})`,
@@ -550,10 +574,8 @@ const make = Effect.gen(function* () {
       [threadId],
     )) as ReadonlyArray<SqlRow>;
     if (invalidKinds.length > 0) {
-      return yield* new ArchiveCodecError({
-        cause: new TypeError(
-          `Archive contains unknown chunk kind '${String(invalidKinds[0]?.kind)}'`,
-        ),
+      return yield* new ArchiveChunkKindValidationError({
+        chunkKind: String(invalidKinds[0]?.kind),
       });
     }
 
@@ -704,7 +726,7 @@ const make = Effect.gen(function* () {
       )) as ReadonlyArray<SqlRow>;
       yield* Effect.forEach(
         rows,
-        (row) => archiveImpl(ThreadId.make(String(row.thread_id)), true),
+        (row) => archiveImpl(ThreadId.make(String(row.thread_id)), true, Effect.void),
         {
           discard: true,
         },
@@ -861,18 +883,21 @@ const make = Effect.gen(function* () {
       getTreeSemaphore(threadId),
       ({ semaphore }) => semaphore.withPermit(effect),
       releaseTreeSemaphore,
-    ).pipe(Effect.mapError((cause) => storageError(operation, threadId, cause)));
+    ).pipe(Effect.mapError((cause) => new ThreadColdStorageError({ operation, threadId, cause })));
 
   const listIds = (query: string, operation: string) =>
     sql.unsafe(query).pipe(
       Effect.map((rows) =>
         (rows as ReadonlyArray<SqlRow>).map((row) => ThreadId.make(String(row.thread_id))),
       ),
-      Effect.mapError((cause) => storageError(operation, "startup", cause)),
+      Effect.mapError(
+        (cause) => new ThreadColdStorageError({ operation, threadId: "startup", cause }),
+      ),
     );
 
   return {
-    archiveThread: (threadId) => wrap("archive", threadId, archiveImpl(threadId, false)),
+    archiveThread: (threadId, quiesce = Effect.void) =>
+      wrap("archive", threadId, archiveImpl(threadId, false, quiesce)),
     restoreTree: (threadId) => wrap("restore", threadId, restoreTreeImpl(threadId)),
     rollbackRestoreTree: (threadId) =>
       wrap("rollback-restore", threadId, rollbackRestoreTreeImpl(threadId)),
@@ -882,7 +907,14 @@ const make = Effect.gen(function* () {
     removeProviderLogs: (threadId) =>
       wrap("remove-provider-logs", threadId, removeProviderLogsImpl(threadId)),
     compactLegacyStorage: compactLegacyStorageImpl().pipe(
-      Effect.mapError((cause) => storageError("compact-legacy-storage", "startup", cause)),
+      Effect.mapError(
+        (cause) =>
+          new ThreadColdStorageError({
+            operation: "compact-legacy-storage",
+            threadId: "startup",
+            cause,
+          }),
+      ),
     ),
     listPendingArchiveThreadIds: listIds(
       `SELECT thread_id

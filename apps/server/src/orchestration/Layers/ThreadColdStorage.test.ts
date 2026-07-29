@@ -90,7 +90,13 @@ layer("ThreadColdStorage", (it) => {
 
       assert.isTrue(yield* storage.restoreTree(threadId));
       assert.deepInclude(yield* storage.listPendingArchiveThreadIds, threadId);
-      yield* storage.archiveThread(threadId);
+      let quiesceCalls = 0;
+      yield* storage.archiveThread(
+        threadId,
+        Effect.sync(() => {
+          quiesceCalls += 1;
+        }),
+      );
 
       const messages = yield* sql<{ readonly text: string }>`
         SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}
@@ -98,6 +104,7 @@ layer("ThreadColdStorage", (it) => {
       const manifest = yield* sql<{ readonly status: string }>`
         SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}
       `;
+      assert.strictEqual(quiesceCalls, 0);
       assert.deepStrictEqual(messages, [{ text: "keep hot until unarchive commits" }]);
       assert.deepStrictEqual(manifest, [{ status: "restored" }]);
 
@@ -106,6 +113,39 @@ layer("ThreadColdStorage", (it) => {
         SELECT COUNT(*) AS count FROM thread_archive_manifests WHERE thread_id = ${threadId}
       `;
       assert.deepStrictEqual(remainingManifest, [{ count: 0 }]);
+    }),
+  );
+
+  it.effect("reports unknown archive chunk kinds with structured validation detail", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-unknown-archive-chunk-kind");
+
+      yield* insertArchivedThread(threadId, "Unknown archive chunk kind");
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'message-unknown-archive-chunk-kind', ${threadId}, NULL, 'user',
+          'corrupt this chunk kind', '[]', 0,
+          '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
+        )
+      `;
+
+      yield* storage.archiveThread(threadId);
+      yield* sql`
+        UPDATE cold_archive.archive_thread_chunks
+        SET kind = 'future:unsupported'
+        WHERE thread_id = ${threadId}
+      `;
+
+      const failure = yield* Effect.flip(storage.restoreTree(threadId));
+      assert.deepInclude(failure.cause, {
+        _tag: "ArchiveChunkKindValidationError",
+        chunkKind: "future:unsupported",
+      });
     }),
   );
 
