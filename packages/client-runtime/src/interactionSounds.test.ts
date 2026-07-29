@@ -1,13 +1,13 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import type { EnvironmentThreadShell } from "./state/shell.ts";
 import {
   captureThreadSoundState,
   captureThreadSoundStateWhileSettingsHydrating,
   deriveInteractionSoundCues,
   selectLiveThreadShells,
   shouldPlayInteractionSound,
-} from "./interactionSounds";
+} from "./interactionSounds.ts";
 
 function makeThread(overrides: Partial<EnvironmentThreadShell> = {}): EnvironmentThreadShell {
   return {

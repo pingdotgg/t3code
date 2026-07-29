@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "./state/shell.ts";
 
 export type InteractionSoundCue = "bloom" | "success";
 
