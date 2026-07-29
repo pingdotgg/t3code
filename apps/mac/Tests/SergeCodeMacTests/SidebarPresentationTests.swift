@@ -231,6 +231,33 @@ struct SidebarPresentationTests {
         #expect(groups.map(\.name) == ["Fresh", "Stale", "Empty"])
     }
 
+    @Test("settling a thread does not promote its project")
+    func settlingThreadDoesNotPromoteProject() {
+        let olderActivity = Date(timeIntervalSince1970: 10)
+        let newerActivity = Date(timeIntervalSince1970: 20)
+        let settlement = Date(timeIntervalSince1970: 30)
+        var settledThread = makeThread(
+            id: "settled-thread", projectID: "older", status: .settled, at: 30,
+            settledOverride: "settled", settledAt: settlement)
+        settledThread.createdAt = Date(timeIntervalSince1970: 1)
+        settledThread.latestTurnCompletedAt = olderActivity
+        var newerThread = makeThread(id: "newer-thread", projectID: "newer", at: 20)
+        newerThread.createdAt = Date(timeIntervalSince1970: 2)
+        newerThread.latestTurnCompletedAt = newerActivity
+        let local = makeModel(
+            projects: [
+                Project(id: "older", name: "Older", path: "/older"),
+                Project(id: "newer", name: "Newer", path: "/newer"),
+            ],
+            threads: [settledThread, newerThread])
+
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        #expect(groups.map(\.name) == ["Newer", "Older"])
+        #expect(groups.map(\.lastActivityAt) == [newerActivity, olderActivity])
+    }
+
     @Test("group threads rank pinned then attention then running then recent")
     func groupThreadsRankPinnedAttentionRunningRecent() {
         let suffix = UUID().uuidString
