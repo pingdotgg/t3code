@@ -88,13 +88,26 @@ function parseClaudeReset(input: {
   }
   if (hour === 12) hour = 0;
   if (input.meridiem.toLowerCase() === "pm") hour += 12;
-  const year = checkedParts.month === 12 && month === 1 ? checkedParts.year + 1 : checkedParts.year;
-  const localDateTime = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ${String(hour).padStart(2, "0")}:${input.minute ?? "00"}:00`;
-  const reset = DateTime.makeZoned(localDateTime, {
-    timeZone: input.timeZone,
-    adjustForTimeZone: true,
-  });
-  return Option.isSome(reset) ? DateTime.formatIso(reset.value) : undefined;
+  // Claude reports resets without a year, and a reset is always upcoming. Pick the earliest
+  // candidate year that still lands at or after the probe time, which handles both directions
+  // of a year boundary (a January reset probed in December, and a December reset probed just
+  // after New Year in UTC). A minute of slack absorbs rounding in the reported time.
+  const checkedMillis = DateTime.toEpochMillis(checkedInResetZone.value) - 60_000;
+  let best: { readonly iso: string; readonly millis: number } | undefined;
+  for (const year of [checkedParts.year - 1, checkedParts.year, checkedParts.year + 1]) {
+    const localDateTime = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ${String(hour).padStart(2, "0")}:${input.minute ?? "00"}:00`;
+    const reset = DateTime.makeZoned(localDateTime, {
+      timeZone: input.timeZone,
+      adjustForTimeZone: true,
+    });
+    if (Option.isNone(reset)) continue;
+    const millis = DateTime.toEpochMillis(reset.value);
+    if (millis < checkedMillis) continue;
+    if (!best || millis < best.millis) {
+      best = { iso: DateTime.formatIso(reset.value), millis };
+    }
+  }
+  return best?.iso;
 }
 
 export function parseClaudeUsageLimitsJson(

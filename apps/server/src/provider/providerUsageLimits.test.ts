@@ -94,6 +94,26 @@ describe("parseClaudeUsageLimitsJson", () => {
     ).toBe("2027-01-01T07:00:00.000Z");
   });
 
+  it("rolls the reset year forward when the reported date already passed this year", () => {
+    const output = JSON.stringify({
+      result: "Current session: 30% used \u00b7 resets Jan 2, 1am (America/Chicago)",
+    });
+
+    expect(
+      parseClaudeUsageLimitsJson(output, "2026-12-31T12:00:00.000Z")?.windows[0]?.resetsAt,
+    ).toBe("2027-01-02T07:00:00.000Z");
+  });
+
+  it("never reports a reset in the past", () => {
+    const output = JSON.stringify({
+      result: "Current week (all models): 30% used \u00b7 resets Jan 5, 1am (America/Chicago)",
+    });
+
+    expect(
+      parseClaudeUsageLimitsJson(output, "2026-02-10T12:00:00.000Z")?.windows[0]?.resetsAt,
+    ).toBe("2027-01-05T07:00:00.000Z");
+  });
+
   it("parses Claude usage with CRLF line endings", () => {
     const output = JSON.stringify({
       result: [

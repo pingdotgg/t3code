@@ -922,18 +922,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
     [activeThreadActivities],
   );
+  // The running session's instance is the source of truth for both the popover's provider
+  // name and its usage limits, so the two can never describe different providers.
+  const activeThreadProviderInstanceId =
+    activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId;
   const activeThreadProviderDisplayName = useMemo(() => {
-    if (!activeThreadModelSelection) return null;
-    const entry = providerStatuses.find(
-      (p) => p.instanceId === activeThreadModelSelection.instanceId,
-    );
+    if (!activeThreadProviderInstanceId) return null;
+    const entry = providerStatuses.find((p) => p.instanceId === activeThreadProviderInstanceId);
     if (entry) {
       return getProviderDisplayName(providerStatuses, entry.driver);
     }
-    return formatProviderDisplayName(activeThreadModelSelection.instanceId);
-  }, [providerStatuses, activeThreadModelSelection]);
-  const activeThreadProviderInstanceId =
-    activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId;
+    return formatProviderDisplayName(activeThreadProviderInstanceId);
+  }, [providerStatuses, activeThreadProviderInstanceId]);
   const activeProviderUsageLimits = settings.showProviderUsageInContextPopover
     ? providerStatuses.find((provider) => provider.instanceId === activeThreadProviderInstanceId)
         ?.usageLimits
