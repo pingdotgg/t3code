@@ -34,9 +34,26 @@ const projectionSnapshotLayer = it.layer(
   ),
 );
 
+const projectKindRepositoryIdentityResolveCalls: string[] = [];
 const projectionSnapshotWithServerConfigLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
-    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (cwd: string) =>
+          Effect.sync(() => {
+            projectKindRepositoryIdentityResolveCalls.push(cwd);
+            return {
+              canonicalKey: "github.com/acme/parent-repository",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://github.com/acme/parent-repository.git",
+              },
+              rootPath: cwd,
+            };
+          }),
+      }),
+    ),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(
       Layer.fresh(
@@ -53,6 +70,7 @@ projectionSnapshotWithServerConfigLayer("ProjectionSnapshotQuery project kind", 
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const serverConfig = yield* ServerConfigModule.ServerConfig;
       const sql = yield* SqlClient.SqlClient;
+      projectKindRepositoryIdentityResolveCalls.length = 0;
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`
@@ -95,6 +113,13 @@ projectionSnapshotWithServerConfigLayer("ProjectionSnapshotQuery project kind", 
       );
       assert.equal(kindsById.get(asProjectId("project-chats")), "chats");
       assert.equal(kindsById.get(asProjectId("project-standard")), "standard");
+      const projectsById = new Map(shellSnapshot.projects.map((project) => [project.id, project]));
+      assert.equal(projectsById.get(asProjectId("project-chats"))?.repositoryIdentity, null);
+      assert.equal(
+        projectsById.get(asProjectId("project-standard"))?.repositoryIdentity?.rootPath,
+        "/tmp/project-standard",
+      );
+      assert.deepStrictEqual(projectKindRepositoryIdentityResolveCalls, ["/tmp/project-standard"]);
 
       const chatsProject = yield* snapshotQuery.getActiveProjectByWorkspaceRoot(
         serverConfig.chatsDir,
@@ -102,7 +127,9 @@ projectionSnapshotWithServerConfigLayer("ProjectionSnapshotQuery project kind", 
       assert.equal(chatsProject._tag, "Some");
       if (chatsProject._tag === "Some") {
         assert.equal(chatsProject.value.kind, "chats");
+        assert.equal(chatsProject.value.repositoryIdentity, null);
       }
+      assert.deepStrictEqual(projectKindRepositoryIdentityResolveCalls, ["/tmp/project-standard"]);
     }),
   );
 });

@@ -6,7 +6,9 @@ import {
   buildProjectActionItems,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
+  findChatsProjectForEnvironment,
   filterCommandPaletteGroups,
+  selectPreferredProjectEntry,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -272,5 +274,33 @@ describe("buildProjectActionItems", () => {
 
     expect(item?.title).toBe("t3code");
     expect(item?.description).toBe("/dev/t3code");
+  });
+
+  it("selects the Chat project from the contextual environment", () => {
+    const localChats = makeProject({
+      id: ProjectId.make("chat-local"),
+      environmentId: EnvironmentId.make("env-local"),
+      kind: "chats",
+    });
+    const remoteChats = makeProject({
+      id: ProjectId.make("chat-remote"),
+      environmentId: EnvironmentId.make("env-remote"),
+      kind: "chats",
+    });
+
+    expect(
+      findChatsProjectForEnvironment([localChats, remoteChats], EnvironmentId.make("env-remote"))
+        ?.id,
+    ).toBe(ProjectId.make("chat-remote"));
+    expect(findChatsProjectForEnvironment([localChats], null)).toBeNull();
+  });
+
+  it("selects the preferred codebase entry and otherwise falls back to the first", () => {
+    const first = { id: "first", isPreferred: false };
+    const preferred = { id: "preferred", isPreferred: true };
+
+    expect(selectPreferredProjectEntry([first, preferred])).toBe(preferred);
+    expect(selectPreferredProjectEntry([first])).toBe(first);
+    expect(selectPreferredProjectEntry([])).toBeNull();
   });
 });

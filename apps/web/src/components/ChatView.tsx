@@ -261,6 +261,7 @@ import {
   dismissBranchMismatchForSession,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isWorkspaceShortcutBlockedForChats,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -1655,7 +1656,16 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore
       .getState()
       .reconcileWorkspaceSurfaces(activeThreadRef, !activeProjectIsChats);
-  }, [activeEnvironmentBootstrapComplete, activeProject, activeProjectIsChats, activeThreadRef]);
+    if (activeProjectIsChats) {
+      storeSetTerminalOpen(activeThreadRef, false);
+    }
+  }, [
+    activeEnvironmentBootstrapComplete,
+    activeProject,
+    activeProjectIsChats,
+    activeThreadRef,
+    storeSetTerminalOpen,
+  ]);
 
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.
@@ -2467,7 +2477,7 @@ function ChatViewContent(props: ChatViewProps) {
     [keybindings, terminalShortcutLabelOptions],
   );
   const onToggleDiff = useCallback(() => {
-    if (!isServerThread) {
+    if (!isServerThread || !isGitRepo) {
       return;
     }
     if (!diffOpen) {
@@ -2476,7 +2486,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (activeThreadRef) {
       useRightPanelStore.getState().toggle(activeThreadRef, "diff");
     }
-  }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
+  }, [activeThreadRef, diffOpen, isGitRepo, isServerThread, onDiffPanelOpen]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -2570,10 +2580,10 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThreadRef, storeSetTerminalOpen],
   );
   const toggleTerminalVisibility = useCallback(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || activeProjectIsChats) return;
     const nextOpen = !terminalUiState.terminalOpen;
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
-      if (!activeThreadId || !activeProject || activeProjectIsChats) {
+      if (!activeThreadId || !activeProject) {
         return;
       }
       const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
@@ -2616,7 +2626,13 @@ function ChatViewContent(props: ChatViewProps) {
   ]);
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
-      if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
+      if (
+        !activeThreadRef ||
+        hasReachedSplitLimit ||
+        !activeThreadId ||
+        !activeProject ||
+        activeProjectIsChats
+      ) {
         return;
       }
       const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
@@ -2646,6 +2662,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeProject,
+      activeProjectIsChats,
       activeKnownTerminalIds,
       activeThreadId,
       activeThreadRef,
@@ -2659,7 +2676,7 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
   const createNewTerminal = useCallback(() => {
-    if (!activeThreadRef || !activeThreadId || !activeProject) {
+    if (!activeThreadRef || !activeThreadId || !activeProject || activeProjectIsChats) {
       return;
     }
     const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
@@ -2684,6 +2701,7 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, [
     activeProject,
+    activeProjectIsChats,
     activeKnownTerminalIds,
     activeThreadId,
     activeThreadRef,
@@ -3130,6 +3148,7 @@ function ChatViewContent(props: ChatViewProps) {
         !activeThreadRef ||
         !activeThreadId ||
         !activeProject ||
+        activeProjectIsChats ||
         activeRightPanelSurface?.kind !== "terminal" ||
         activeRightPanelSurface.terminalIds.length >= MAX_TERMINALS_PER_GROUP
       ) {
@@ -3158,6 +3177,7 @@ function ChatViewContent(props: ChatViewProps) {
     [
       activeKnownTerminalIds,
       activeProject,
+      activeProjectIsChats,
       activeRightPanelSurface,
       activeThreadId,
       activeThreadRef,
@@ -4323,6 +4343,12 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (isWorkspaceShortcutBlockedForChats(command, activeProjectIsChats)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -4407,6 +4433,11 @@ function ChatViewContent(props: ChatViewProps) {
 
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
+      if (activeProjectIsChats) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
       if (!script) return;
       event.preventDefault();

@@ -6,20 +6,13 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import {
-  isChatsProject,
-  type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type {
-  ProjectKind,
-  ScopedThreadRef,
-  SidebarProjectGroupingMode,
-} from "@t3tools/contracts";
+import type { ProjectKind, ScopedThreadRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -83,6 +76,7 @@ import {
 } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  filterManageableSidebarProjectSnapshots,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -1154,7 +1148,7 @@ export default function SidebarV2() {
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
   const manageableProjectGroups = useMemo(
-    () => projectGroups.filter((group) => !group.memberProjects.some(isChatsProject)),
+    () => filterManageableSidebarProjectSnapshots(projectGroups),
     [projectGroups],
   );
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -1232,7 +1226,8 @@ export default function SidebarV2() {
     () =>
       projectScopeKey === null
         ? null
-        : (manageableProjectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+        : (manageableProjectGroups.find((project) => project.projectKey === projectScopeKey) ??
+          null),
     [manageableProjectGroups, projectScopeKey],
   );
   const scopedProjectKeys = useMemo(

@@ -58,6 +58,24 @@ export interface CommandPaletteView {
   readonly initialQuery?: string;
 }
 
+export function findChatsProjectForEnvironment<T extends Pick<Project, "environmentId" | "kind">>(
+  projects: ReadonlyArray<T>,
+  environmentId: Project["environmentId"] | null,
+): T | null {
+  if (environmentId === null) return null;
+  return (
+    projects.find(
+      (project) => project.environmentId === environmentId && isChatsProject(project),
+    ) ?? null
+  );
+}
+
+export function selectPreferredProjectEntry<T extends { readonly isPreferred: boolean }>(
+  entries: ReadonlyArray<T>,
+): T | null {
+  return entries.find((entry) => entry.isPreferred) ?? entries[0] ?? null;
+}
+
 export function enumerateCommandPaletteItems(
   items: ReadonlyArray<CommandPaletteActionItem>,
 ): CommandPaletteActionItem[] {

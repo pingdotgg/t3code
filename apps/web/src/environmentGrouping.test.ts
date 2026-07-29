@@ -12,6 +12,7 @@ import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  filterManageableSidebarProjectSnapshots,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -79,6 +80,29 @@ describe("environment grouping", () => {
     }).length;
 
     expect(projectGroupCount).toBe(1);
+  });
+
+  it("keeps the reserved Chat project out of project management groups", () => {
+    const chats = makeProject({
+      id: ProjectId.make("project-chats"),
+      title: "Chats",
+      workspaceRoot: "/tmp/chats",
+      kind: "chats",
+    });
+    const codebase = makeProject({
+      id: ProjectId.make("project-codebase"),
+      title: "t3code",
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [chats, codebase],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    expect(filterManageableSidebarProjectSnapshots(groups).map((group) => group.id)).toEqual([
+      ProjectId.make("project-codebase"),
+    ]);
   });
 
   it("keeps projects without repository identity physically scoped", () => {

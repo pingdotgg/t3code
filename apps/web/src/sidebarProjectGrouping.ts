@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { projectDisplayTitle } from "@t3tools/client-runtime/state/models";
+import { isChatsProject, projectDisplayTitle } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -36,6 +36,12 @@ export interface SidebarProjectPickerEntry {
   group: SidebarProjectSnapshot;
   targetProject: SidebarProjectGroupMember;
   isPreferred: boolean;
+}
+
+export function filterManageableSidebarProjectSnapshots(
+  groups: ReadonlyArray<SidebarProjectSnapshot>,
+): SidebarProjectSnapshot[] {
+  return groups.filter((group) => !group.memberProjects.some(isChatsProject));
 }
 
 interface SidebarProjectGroupCandidate {

@@ -66,7 +66,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveThreadActionProjectRef } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -97,12 +97,14 @@ import {
   buildRootGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
+  findChatsProjectForEnvironment,
   type CommandPaletteActionItem,
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
   filterCommandPaletteGroups,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
+  selectPreferredProjectEntry,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
 } from "./CommandPalette.logic";
@@ -603,8 +605,12 @@ function OpenCommandPaletteDialog(props: {
   // The Chat pseudo-project is not a codebase: it never appears in project
   // lists, and is reachable only through its own "Start a new chat" action.
   const chatProject = useMemo(
-    () => pickerProjects.find((project) => isChatsProject(project)) ?? null,
-    [pickerProjects],
+    () =>
+      findChatsProjectForEnvironment(
+        pickerProjects,
+        contextualProjectRef?.environmentId ?? primaryEnvironmentId,
+      ),
+    [contextualProjectRef?.environmentId, pickerProjects, primaryEnvironmentId],
   );
   const codebasePickerProjects = useMemo(
     () => pickerProjects.filter((project) => !isChatsProject(project)),
@@ -1274,30 +1280,28 @@ function OpenCommandPaletteDialog(props: {
     );
     // "New thread in X" always names a real codebase, even while a chat
     // thread is the active one.
-    const activeProjectTitle =
-      codebasePickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      codebasePickerEntries[0]?.group.displayName ??
-      null;
+    const activeCodebaseEntry = selectPreferredProjectEntry(codebasePickerEntries);
 
-    if (activeProjectTitle) {
+    if (activeCodebaseEntry) {
       actionItems.push({
         kind: "action",
         value: "action:new-thread",
         searchTerms: ["new thread", "chat", "create", "draft"],
         title: (
           <>
-            New thread in <span className="font-semibold">{activeProjectTitle}</span>
+            New thread in{" "}
+            <span className="font-semibold">{activeCodebaseEntry.group.displayName}</span>
           </>
         ),
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.new",
         run: async () => {
-          await startNewThreadFromContext({
-            activeDraftThread,
-            activeThread: activeThread ?? undefined,
-            defaultProjectRef,
-            handleNewThread,
-          });
+          await handleNewThread(
+            scopeProjectRef(
+              activeCodebaseEntry.targetProject.environmentId,
+              activeCodebaseEntry.targetProject.id,
+            ),
+          );
         },
       });
     }

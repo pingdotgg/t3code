@@ -62,6 +62,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { isChatsProject } from "@t3tools/client-runtime/state/models";
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -1113,6 +1114,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const sidebarThreadPreviewCount = useClientSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
   );
+  const projectIsChats = isChatsProject(project);
+  const projectIsSortable = isManualProjectSorting && !projectIsChats;
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
@@ -2217,16 +2220,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     <>
       <div className="group/project-header relative">
         <SidebarMenuButton
-          ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
+          ref={projectIsSortable ? dragHandleProps?.setActivatorNodeRef : undefined}
           className={`pr-8 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground max-sm:pr-14 ${
-            isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : ""
+            projectIsSortable ? "cursor-grab active:cursor-grabbing" : ""
           }`}
-          {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
-          {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
+          {...(projectIsSortable && dragHandleProps ? dragHandleProps.attributes : {})}
+          {...(projectIsSortable && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
           onClick={handleProjectButtonClick}
           onKeyDown={handleProjectButtonKeyDown}
-          onContextMenu={handleProjectButtonContextMenu}
+          onContextMenu={projectIsChats ? undefined : handleProjectButtonContextMenu}
         >
           {!projectExpanded && projectStatus ? (
             <Tooltip>
@@ -2922,7 +2925,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 strategy={verticalListSortingStrategy}
               >
                 {sortedProjects.map((project) => (
-                  <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
+                  <SortableProjectItem
+                    key={project.projectKey}
+                    projectId={project.projectKey}
+                    disabled={isChatsProject(project)}
+                  >
                     {(dragHandleProps) => (
                       <SidebarProjectItem
                         project={project}
