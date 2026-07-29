@@ -93,6 +93,19 @@ function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
   }
 }
 
+/**
+ * Fit to the container and report the resulting grid. Keeps the viewport pinned
+ * to the bottom when it already was, so a resize never scrolls output away.
+ */
+function refitTerminal(terminal: Terminal, fitAddon: FitAddon): { cols: number; rows: number } {
+  const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+  fitTerminalSafely(fitAddon);
+  if (wasAtBottom) {
+    terminal.scrollToBottom();
+  }
+  return { cols: terminal.cols, rows: terminal.rows };
+}
+
 function fitTerminalSafely(fitAddon: FitAddon): boolean {
   try {
     fitAddon.fit();
@@ -707,13 +720,8 @@ export function TerminalViewport({
       const activeTerminal = terminalRef.current;
       const activeFitAddon = fitAddonRef.current;
       if (!activeTerminal || !activeFitAddon) return;
-      const wasAtBottom =
-        activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
-      fitTerminalSafely(activeFitAddon);
-      if (wasAtBottom) {
-        activeTerminal.scrollToBottom();
-      }
-      void resizeTerminal(activeTerminal.cols, activeTerminal.rows);
+      const size = refitTerminal(activeTerminal, activeFitAddon);
+      void resizeTerminal(size.cols, size.rows);
     }, 30);
 
     return () => {
@@ -811,18 +819,43 @@ export function TerminalViewport({
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     if (!terminal || !fitAddon) return;
-    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
     const frame = window.requestAnimationFrame(() => {
-      fitTerminalSafely(fitAddon);
-      if (wasAtBottom) {
-        terminal.scrollToBottom();
-      }
-      void resizeTerminal(terminal.cols, terminal.rows);
+      const size = refitTerminal(terminal, fitAddon);
+      void resizeTerminal(size.cols, size.rows);
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
+
+  // The props above only cover resizes the drawer knows about. Dragging a
+  // divider, resizing the window, or any surrounding reflow changes the
+  // container without changing them, and the grid would keep its mount size.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      // A drag emits a callback per frame; coalesce them so one gesture costs
+      // one fit instead of one per pixel.
+      frame = window.requestAnimationFrame(() => {
+        const terminal = terminalRef.current;
+        const fitAddon = fitAddonRef.current;
+        if (!terminal || !fitAddon) return;
+        const previous = { cols: terminal.cols, rows: terminal.rows };
+        const size = refitTerminal(terminal, fitAddon);
+        // Pixel changes rarely move the grid; only tell the PTY when they do.
+        if (size.cols === previous.cols && size.rows === previous.rows) return;
+        void resizeTerminal(size.cols, size.rows);
+      });
+    });
+    observer.observe(container);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
   return (
     <div
       ref={containerRef}
