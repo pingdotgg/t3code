@@ -234,6 +234,17 @@ describe("thread workflows", () => {
     expect(resolveLatestMergeBackRun(projection)?.id).toBe("newest-finished");
   });
 
+  it("does not let a stale completed run later in storage order hide the waiting checkpoint", () => {
+    const projection = {
+      runs: [
+        { id: "newest-finished", status: "waiting", ordinal: 2 },
+        { id: "older-completed", status: "completed", ordinal: 1 },
+      ],
+    } as never;
+
+    expect(resolveLatestMergeBackRun(projection)?.id).toBe("newest-finished");
+  });
+
   it.each(["preparing", "starting", "running"] as const)(
     "does not merge older history while a newer run is %s",
     (status) => {
