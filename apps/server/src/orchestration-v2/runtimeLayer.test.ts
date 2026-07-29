@@ -584,6 +584,20 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: "feature/v2",
         worktreePath: "/tmp/t3-v2-worktree",
       });
+      const staleWorkspaceUpdate = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-lifecycle-stale-workspace"),
+          threadId,
+          branch: "feature/stale",
+          worktreePath: "/tmp/stale-worktree",
+          expectedWorktreePath: null,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleWorkspaceUpdate, OrchestratorDispatchError);
+      const projectionAfterStaleWorkspaceUpdate = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projectionAfterStaleWorkspaceUpdate.thread.branch, "feature/v2");
+      assert.equal(projectionAfterStaleWorkspaceUpdate.thread.worktreePath, "/tmp/t3-v2-worktree");
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("runtime-layer-lifecycle-runtime"),

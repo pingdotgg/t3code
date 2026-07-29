@@ -269,9 +269,21 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as({ status: "failed", detail } as const));
           });
 
-        // suspend: build the removal call only if cleanup actually runs.
+        // suspend: build the rollback only if cleanup actually runs. Removing
+        // the worktree must succeed before deleting its freshly created branch;
+        // otherwise the branch may still be checked out there.
         const removeCreatedWorktree = Effect.suspend(() =>
-          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }),
+          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
+            Effect.andThen(
+              Effect.suspend(() =>
+                gitWorkflow.deleteLocalBranch({
+                  cwd: projectCwd,
+                  refName: worktree.worktree.refName,
+                  force: true,
+                }),
+              ),
+            ),
+          ),
         ).pipe(Effect.ignoreCause({ log: true }));
 
         const recheckAndBind = Effect.gen(function* () {
@@ -299,6 +311,7 @@ const make = Effect.gen(function* () {
               threadId: scope.threadId,
               branch: worktree.worktree.refName,
               worktreePath,
+              expectedWorktreePath: null,
             })
             .pipe(
               Effect.catchCause((cause) =>
