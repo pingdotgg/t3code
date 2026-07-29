@@ -868,6 +868,73 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
+  it.effect("keeps a timed-out run active until its process exits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const finishTeardown = yield* Deferred.make<void>();
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              const closed = yield* Deferred.make<void>();
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              if (startCount === 1) {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishTeardown)),
+                    Effect.andThen(Deferred.succeed(closed, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+              } else {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+                );
+              }
+              return makeProcess({
+                exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        const stopFiber = yield* instance
+          .stop({ timeout: Duration.millis(100) })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(teardownStarted).pipe(Effect.timeout("1 second"));
+        yield* instance.start;
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Fiber.join(stopFiber).pipe(Effect.timeout("1 second"));
+
+        assert.equal(startCount, 1);
+        const timedOut = yield* instance.snapshot;
+        assert.equal(timedOut.desiredRunning, true);
+        assert.deepEqual(timedOut.activePid, Option.some(123));
+
+        yield* Deferred.succeed(finishTeardown, undefined);
+        yield* TestClock.adjust(Duration.millis(500));
+
+        assert.equal(yield* Queue.take(starts).pipe(Effect.timeout("1 second")), 2);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
   it.effect("does not notify shutdown before the first start has prior state", () =>
     Effect.scoped(
       Effect.gen(function* () {

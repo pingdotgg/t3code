@@ -344,17 +344,25 @@ const calculateRestartDelay = (attempt: number): Duration.Duration =>
 
 const closeRun = (
   run: ActiveBackendRun,
+  parentScope: Scope.Scope,
   options?: { readonly timeout?: Duration.Duration },
-): Effect.Effect<void> => {
+): Effect.Effect<boolean> => {
   const waitForFiber = Option.match(run.fiber, {
     onNone: () => Effect.void,
     onSome: (fiber) => Fiber.await(fiber).pipe(Effect.asVoid),
   });
   const close = Scope.close(run.scope, Exit.void).pipe(Effect.andThen(waitForFiber));
+  const timeout = options?.timeout;
 
-  return (
-    options?.timeout ? close.pipe(Effect.timeoutOption(options.timeout), Effect.asVoid) : close
-  ).pipe(Effect.ignore);
+  if (!timeout) {
+    return close.pipe(Effect.as(true));
+  }
+
+  return Effect.forkIn(close, parentScope).pipe(
+    Effect.flatMap((closeFiber) =>
+      Fiber.await(closeFiber).pipe(Effect.timeoutOption(timeout), Effect.map(Option.isSome)),
+    ),
+  );
 };
 
 export const waitForHttpReady = (
@@ -1046,16 +1054,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       onNone: () => Effect.void,
       onSome: (run) =>
         Effect.gen(function* () {
-          if (run.exitObserved && Option.isSome(run.fiber)) {
-            const awaitExit = Fiber.await(run.fiber.value).pipe(Effect.asVoid);
-            yield* (
-              options?.timeout
-                ? awaitExit.pipe(Effect.timeoutOption(options.timeout), Effect.asVoid)
-                : awaitExit
-            ).pipe(Effect.ignore);
-            yield* Scope.close(run.scope, Exit.void).pipe(Effect.ignore);
-          } else {
-            yield* closeRun(run, options);
+          const closed = yield* closeRun(run, parentScope, options);
+          if (!closed) {
+            return;
           }
           const cleanup = yield* mutex.withPermits(1)(
             Ref.modify(
