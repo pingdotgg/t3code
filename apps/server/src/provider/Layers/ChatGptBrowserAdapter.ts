@@ -570,8 +570,9 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
    */
   const issueWorkspaceConnector = (
     threadId: ThreadId,
-  ): Effect.Effect<IssuedWorkspaceConnector | undefined> =>
-    Effect.gen(function* () {
+  ): Effect.Effect<IssuedWorkspaceConnector | undefined> => {
+    let issuedProviderSessionId: string | undefined;
+    return Effect.gen(function* () {
       if (!settings.workspaceBridge) return undefined;
 
       const credential = yield* McpSessionRegistry.issueActiveWorkspaceConnector({
@@ -580,6 +581,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
         capabilities: workspaceCapabilitiesForAccess(settings.workspaceBridgeAccess),
       });
       if (!credential) return undefined;
+      issuedProviderSessionId = credential.config.providerSessionId;
 
       // Manual address wins: a user who configured a stable hostname wants
       // that hostname, not whatever the managed tunnel scraped this boot.
@@ -606,9 +608,17 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
         Effect.logWarning("Could not issue a ChatGPT workspace connector", {
           threadId,
           cause,
-        }).pipe(Effect.as(undefined)),
+        }).pipe(
+          Effect.andThen(
+            issuedProviderSessionId === undefined
+              ? Effect.void
+              : McpSessionRegistry.revokeActiveMcpProviderSession(issuedProviderSessionId),
+          ),
+          Effect.as(undefined),
+        ),
       ),
     );
+  };
 
   const deleteSessionIfCurrent = (threadId: ThreadId, session: ChatGptSessionContext): void => {
     if (sessions.get(threadId) === session) {

@@ -55,6 +55,27 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
+it.effect("revokes only credentials for the selected provider session", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const threadId = ThreadId.make("thread-provider-session-revoke");
+    const connector = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("chatgpt"),
+      capabilities: ["workspace"],
+    });
+    const other = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+
+    yield* registry.revokeProviderSession(connector.config.providerSessionId);
+
+    expect(yield* registry.resolve(connector.token)).toBeUndefined();
+    expect(yield* registry.resolve(other.token)).toBeDefined();
+  }),
+);
+
 it.effect("builds MCP endpoints from the bound server host", () =>
   Effect.gen(function* () {
     const cases = [
