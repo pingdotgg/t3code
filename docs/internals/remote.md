@@ -145,7 +145,9 @@ are part of it: a hosted HTTPS client cannot connect to plain `ws://` or `http:/
 Managed T3 Connect relay tunnels use `RelayConnectionTarget` and are the answer when the host is
 behind NAT, inbound ports are unavailable, or mobile must reach a desktop-hosted environment. From
 the client's perspective this is still an ordinary WebSocket connection; the route is mediated. The
-relay is not in the hot path once connected. See [t3-connect.md](./t3-connect.md).
+relay Worker only brokers credentials and a managed endpoint; application traffic then flows over
+the provisioned Cloudflare tunnel hostname for the life of the connection, not through the relay
+Worker itself. See [t3-connect.md](./t3-connect.md).
 
 ### Tailscale access
 
