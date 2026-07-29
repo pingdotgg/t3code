@@ -131,16 +131,13 @@ struct PlanProgressStrip: View {
         .frame(height: Self.railHeight)
         .frame(maxWidth: .infinity)
         .background { track(fraction: fraction, total: total, done: done) }
-        .clipShape(Capsule())
-        .overlay {
-            Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1)
-        }
+        .alpineGlassSurface(in: Capsule())
         // One-shot ring when the last step lands — the same celebration the
         // timeline's activity rows use.
         .successRipple(fire: done, cornerRadius: Self.railHeight / 2)
         .contentShape(Capsule())
-        // Always-dark chrome: every color in the rail is an explicit white or
-        // tint over the black track, exactly like the credit pill beside it.
+        // The rail sits directly on photography, so its compact labels stay
+        // in the same always-dark foreground treatment as New Session.
         .sceneryChrome()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Plan progress")
@@ -193,9 +190,6 @@ struct PlanProgressStrip: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             ZStack(alignment: .leading) {
-                // Solid translucent base, not a material — same treatment as
-                // the credit pill it sits beside (see FrostedSceneryBackdrop).
-                Capsule().fill(Color.black.opacity(0.32))
                 fill(width: max(0, width * fraction), height: proxy.size.height, done: done)
                 ticks(total: total, width: width, fraction: fraction)
             }

@@ -126,26 +126,14 @@ private struct HeaderChipChrome: ViewModifier {
 // MARK: - Unified bar
 
 extension View {
-    /// One quiet material and one outline around the whole repository control.
-    /// The one-point HStack gaps reveal this surface as internal separators.
+    /// One quiet translucent surface around the whole repository control. The
+    /// one-point HStack gaps reveal it as internal separators.
     func headerControlBarChrome() -> some View {
         padding(HeaderChipMetrics.barInset)
-            .background {
+            .alpineGlassSurface(
+                in:
                 RoundedRectangle(
-                    cornerRadius: HeaderChipMetrics.barCornerRadius, style: .continuous
-                )
-                .fill(.regularMaterial)
-                .overlay {
-                    RoundedRectangle(
-                        cornerRadius: HeaderChipMetrics.barCornerRadius, style: .continuous
-                    )
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                }
-            }
-            .clipShape(
-                RoundedRectangle(
-                    cornerRadius: HeaderChipMetrics.barCornerRadius, style: .continuous)
-            )
+                    cornerRadius: HeaderChipMetrics.barCornerRadius, style: .continuous))
     }
 }
 
