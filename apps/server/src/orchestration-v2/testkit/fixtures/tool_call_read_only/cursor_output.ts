@@ -47,4 +47,18 @@ export function assertToolCallReadOnlyCursorOutput(
     ),
   );
   assert.isTrue(fileSearches.some((item) => JSON.stringify(item.results ?? []).includes("ES2022")));
+  const expectedPaths = [
+    "/tmp/claude-replay-tool_call_read_only/package.json",
+    "/tmp/claude-replay-tool_call_read_only/tsconfig.json",
+  ];
+  assert.deepEqual(
+    fileSearches.map((item) => item.pattern).toSorted(),
+    expectedPaths,
+    "Cursor file_search patterns must match the files named in the recorded prompt",
+  );
+  assert.deepEqual(
+    fileSearches.flatMap((item) => item.results?.map((result) => result.fileName) ?? []).toSorted(),
+    expectedPaths,
+    "Cursor file_search paths must match the files named in the recorded prompt",
+  );
 }

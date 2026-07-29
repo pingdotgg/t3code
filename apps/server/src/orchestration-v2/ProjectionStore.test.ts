@@ -84,6 +84,100 @@ it("includes imported runless history when selecting fork context through a run"
 });
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect("only exposes interruptible runs through the shell activeRunId", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:projection-shell-interruptible");
+      const projectId = ProjectId.make("project:projection-shell-interruptible");
+      const runId = RunId.make("run:projection-shell-interruptible");
+      const rootNodeId = NodeId.make("node:projection-shell-interruptible");
+      const run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:projection-shell-interruptible"),
+        rootNodeId,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shell-interruptible:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId,
+          title: "Interruptible shell run",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shell-interruptible:running"),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: now,
+        payload: run,
+      });
+
+      let shell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      assert.equal(shell?.status, "running");
+      assert.equal(shell?.activeRunId, runId);
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shell-interruptible:waiting"),
+        type: "run.updated",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: now,
+        payload: { ...run, status: "waiting" },
+      });
+
+      shell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      assert.equal(shell?.status, "waiting");
+      assert.isNull(shell?.activeRunId);
+    }),
+  );
+
   it.effect("projects one shared provider session into multiple thread bindings", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;
@@ -173,10 +267,12 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         [providerSessionId],
       );
       assert.deepEqual(
-        (yield* projectionStore.getShellSnapshot()).threads.map((thread) => ({
-          id: thread.id,
-          lastError: thread.lastError,
-        })),
+        (yield* projectionStore.getShellSnapshot()).threads
+          .filter((thread) => thread.id === firstThreadId || thread.id === secondThreadId)
+          .map((thread) => ({
+            id: thread.id,
+            lastError: thread.lastError,
+          })),
         [
           { id: firstThreadId, lastError: "provider process exited" },
           { id: secondThreadId, lastError: "provider process exited" },

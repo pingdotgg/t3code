@@ -6,7 +6,6 @@ import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   deriveLatestThreadRun,
   deriveThreadActivityRun,
-  deriveThreadInterruptibleRunId,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
@@ -51,7 +50,6 @@ describe("thread execution presentation", () => {
       activeRunId: runningRun.id,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
-    expect(deriveThreadInterruptibleRunId(projection)).toBe(runningRun.id);
   });
 
   it("does not expose a queued-only run as interruptible", () => {
@@ -69,7 +67,6 @@ describe("thread execution presentation", () => {
       activeRunId: null,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
-    expect(deriveThreadInterruptibleRunId(projection)).toBeNull();
   });
 
   it("keeps checkpoint-wait activity visible without exposing a non-functional interrupt", () => {
@@ -87,7 +84,5 @@ describe("thread execution presentation", () => {
       activeRunId: null,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
-    expect(deriveThreadInterruptibleRunId(projection)).toBeNull();
-    expect(deriveThreadInterruptibleRunId(null)).toBeNull();
   });
 });

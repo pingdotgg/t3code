@@ -97,6 +97,46 @@ it("restarts compatible instances for workspace or runtime changes", () => {
   );
 });
 
+it("preserves a rejected selection when the workspace also changes", () => {
+  assert.deepEqual(
+    decideProviderSessionTransition({
+      current: base,
+      target: {
+        ...base,
+        modelSelection: { ...base.modelSelection, model: "gpt-5.2-codex" },
+        workspace: "/other",
+        available: true,
+      },
+      selectionTransition: {
+        type: "reject",
+        reason: "The active session cannot apply that model.",
+      },
+    }),
+    { type: "reject", reason: "The active session cannot apply that model." },
+  );
+});
+
+it("preserves handoff and missing-classification outcomes across workspace changes", () => {
+  const target = {
+    ...base,
+    modelSelection: { ...base.modelSelection, model: "gpt-5.2-codex" },
+    workspace: "/other",
+    available: true,
+  };
+  assert.deepEqual(
+    decideProviderSessionTransition({
+      current: base,
+      target,
+      selectionTransition: { type: "create_with_handoff" },
+    }),
+    { type: "create_with_handoff" },
+  );
+  assert.deepEqual(decideProviderSessionTransition({ current: base, target }), {
+    type: "reject",
+    reason: "The provider adapter did not classify the selection change.",
+  });
+});
+
 it("uses portable handoff for incompatible continuation identities", () => {
   assert.deepEqual(
     decideProviderSessionTransition({
