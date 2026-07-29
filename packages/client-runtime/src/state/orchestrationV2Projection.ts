@@ -67,15 +67,15 @@ function upsertVisibleTurnItem(
   const rows = projection.visibleTurnItems;
   const index = rows.findIndex((row) => row.sourceItemId === item.id);
   const next = {
-    position: index === -1 ? rows.length : rows[index]!.position,
+    position: 0,
     visibility: "local" as const,
     sourceThreadId: item.threadId,
     sourceItemId: item.id,
     item,
   };
-  if (index === -1) return [...rows, next];
-  const previous = rows[index]!;
+  const previous = index === -1 ? undefined : rows[index]!;
   if (
+    previous !== undefined &&
     previous.visibility === next.visibility &&
     previous.sourceThreadId === next.sourceThreadId &&
     previous.sourceItemId === next.sourceItemId &&
@@ -83,9 +83,16 @@ function upsertVisibleTurnItem(
   ) {
     return rows;
   }
-  const updated = [...rows];
-  updated[index] = next;
-  return updated;
+  const updated = index === -1 ? [...rows] : [...rows.slice(0, index), ...rows.slice(index + 1)];
+  const insertionIndex = updated.findIndex(
+    (row) =>
+      row.visibility === "local" &&
+      (row.item.ordinal > item.ordinal ||
+        (row.item.ordinal === item.ordinal &&
+          String(row.item.id).localeCompare(String(item.id)) > 0)),
+  );
+  updated.splice(insertionIndex === -1 ? updated.length : insertionIndex, 0, next);
+  return renumberVisibleItems(updated);
 }
 
 /** Applies one committed event to a matching thread projection. */
@@ -107,6 +114,10 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.model-selection-updated":
     case "thread.provider-switched":
       return { ...base, thread: event.payload };
+    // Visited tracking is read state, not activity: skip the updatedAt bump.
+    case "thread.visited":
+    case "thread.marked-unread":
+      return { ...projection, thread: event.payload };
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };

@@ -36,7 +36,7 @@ const run = {
   contextHandoffId: null,
 } satisfies OrchestrationV2Run;
 
-function commandItem(id: string, output = "done"): OrchestrationV2TurnItem {
+function commandItem(id: string, output = "done", ordinal = 1): OrchestrationV2TurnItem {
   return {
     id: TurnItemId.make(id),
     threadId,
@@ -46,7 +46,7 @@ function commandItem(id: string, output = "done"): OrchestrationV2TurnItem {
     providerTurnId: null,
     nativeItemRef: null,
     parentItemId: null,
-    ordinal: 1,
+    ordinal,
     status: "completed",
     title: null,
     startedAt: now,
@@ -77,6 +77,9 @@ const emptyProjection = {
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
     deletedAt: null,
   },
   runs: [],
@@ -195,6 +198,39 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[0]).not.toBe(firstRow);
     expect(next?.visibleTurnItems[0]?.item).toBe(updated);
     expect(next?.visibleTurnItems[1]).toBe(secondRow);
+  });
+
+  it("inserts live turn items by authoritative ordinal", () => {
+    const queuedFuture = commandItem("item-queued-future", "queued", 300);
+    const activeAssistant = commandItem("item-active-assistant", "done", 201);
+    const queuedRow = {
+      position: 0,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: queuedFuture.id,
+      item: queuedFuture,
+    };
+    const projection = {
+      ...emptyProjection,
+      runs: [run],
+      turnItems: [queuedFuture],
+      visibleTurnItems: [queuedRow],
+    };
+    const event = {
+      id: "event-active-assistant",
+      type: "turn-item.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: activeAssistant,
+    } as OrchestrationV2DomainEvent;
+
+    const next = applyOrchestrationV2ProjectionEvent(projection, event);
+    expect(next?.visibleTurnItems.map((row) => row.item.id)).toEqual([
+      activeAssistant.id,
+      queuedFuture.id,
+    ]);
+    expect(next?.visibleTurnItems.map((row) => row.position)).toEqual([0, 1]);
   });
 
   it("removes only hidden local items while preserving inherited rows", () => {
