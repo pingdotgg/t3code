@@ -1,6 +1,14 @@
-import type { OrchestrationV2TurnItem, ThreadId } from "@t3tools/contracts";
+import { Fragment } from "react";
+import type {
+  OrchestrationV2Run,
+  OrchestrationV2TurnItem,
+  ProviderInstanceId,
+  ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  ArrowRightIcon,
   BotIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
@@ -12,7 +20,9 @@ import {
   ZapIcon,
 } from "lucide-react";
 
+import { getProviderInstanceEntry } from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
+import { PROVIDER_ICON_BY_PROVIDER, getTriggerDisplayModelName } from "./providerIconUtils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -49,6 +59,8 @@ export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly createdAt: string;
   readonly timestampFormat: TimestampFormat;
+  readonly providerStatuses: ReadonlyArray<ServerProvider>;
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const { item } = props;
@@ -95,14 +107,58 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "handoff") {
+    // Items persisted before models were stamped only carry instance ids;
+    // recover the models from the thread's runs (the handoff's own run is
+    // the target, the newest earlier run per source instance is the origin).
+    // HandoffEndpoint falls back to the provider display name when neither
+    // source has a model.
+    const handoffRun =
+      item.runId === null ? undefined : props.runs.find((run) => run.id === item.runId);
+    const toModel =
+      item.toModel ??
+      (handoffRun !== undefined && handoffRun.providerInstanceId === item.toProviderInstanceId
+        ? handoffRun.modelSelection.model
+        : undefined);
+    const fromEndpoints: ReadonlyArray<{
+      readonly instanceId: ProviderInstanceId;
+      readonly model?: string | undefined;
+    }> =
+      item.fromModelSelections !== undefined && item.fromModelSelections.length > 0
+        ? item.fromModelSelections
+        : item.fromProviderInstanceIds.map((instanceId) => ({
+            instanceId,
+            model: latestRunModelBefore(props.runs, instanceId, handoffRun?.ordinal),
+          }));
     return (
       <TimelineSystemDivider
         label="Context handoff"
         icon={ZapIcon}
         tone={item.status === "failed" ? "danger" : "neutral"}
         detail={
-          item.summary ??
-          `${item.fromProviderInstanceIds.join(", ")} → ${item.toProviderInstanceId}`
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            {fromEndpoints.map((endpoint, index) => (
+              <Fragment key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}>
+                {index > 0 ? (
+                  <span aria-hidden="true" className="-ml-1">
+                    ,
+                  </span>
+                ) : null}
+                <HandoffEndpoint
+                  providers={props.providerStatuses}
+                  instanceId={endpoint.instanceId}
+                  model={endpoint.model}
+                />
+              </Fragment>
+            ))}
+            {fromEndpoints.length > 0 ? (
+              <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
+            ) : null}
+            <HandoffEndpoint
+              providers={props.providerStatuses}
+              instanceId={item.toProviderInstanceId}
+              model={toModel}
+            />
+          </span>
         }
       />
     );
@@ -237,4 +293,55 @@ function RelatedThreadCard(props: {
 
 function subagentDisplayTitle(title: string): string {
   return title.replace(/^Subagent:\s*/i, "");
+}
+
+/**
+ * Model of the newest run for `instanceId` that started before the handoff's
+ * own run. Legacy handoff items don't record their source models, but the
+ * covered runs are still in the projection.
+ */
+function latestRunModelBefore(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  instanceId: ProviderInstanceId,
+  beforeOrdinal: number | undefined,
+): string | undefined {
+  let latest: OrchestrationV2Run | undefined;
+  for (const run of runs) {
+    if (run.providerInstanceId !== instanceId) continue;
+    if (beforeOrdinal !== undefined && run.ordinal >= beforeOrdinal) continue;
+    if (latest === undefined || run.ordinal > latest.ordinal) latest = run;
+  }
+  return latest?.modelSelection.model;
+}
+
+/**
+ * One side of a context handoff: the provider's brand icon plus the model's
+ * display name. Falls back to the raw model slug when the instance no longer
+ * lists it, and to the instance display name (or id) when no model was
+ * recorded on the item.
+ */
+function HandoffEndpoint(props: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly instanceId: ProviderInstanceId;
+  readonly model?: string | undefined;
+}) {
+  const entry = getProviderInstanceEntry(props.providers, props.instanceId);
+  const Icon = entry === undefined ? null : (PROVIDER_ICON_BY_PROVIDER[entry.driverKind] ?? null);
+  const model = props.model?.trim();
+  const providerModel =
+    model === undefined || model.length === 0
+      ? undefined
+      : entry?.models.find((candidate) => candidate.slug === model);
+  const label =
+    providerModel !== undefined
+      ? getTriggerDisplayModelName(providerModel)
+      : model !== undefined && model.length > 0
+        ? model
+        : (entry?.displayName ?? props.instanceId);
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      {Icon === null ? null : <Icon aria-hidden="true" className="size-3 shrink-0" />}
+      <span className="max-w-40 truncate">{label}</span>
+    </span>
+  );
 }
