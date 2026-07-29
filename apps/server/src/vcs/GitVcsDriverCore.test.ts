@@ -265,6 +265,36 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("exposes shared ref snapshot invalidation for raw Git mutation services", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      const initialRefs = yield* driver.listRefs({ cwd, refresh: true });
+      assert.equal(
+        initialRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        false,
+      );
+
+      yield* git(cwd, ["branch", "feature/raw-panel"]);
+      const cachedRefs = yield* driver.listRefs({ cwd });
+      assert.equal(
+        cachedRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        false,
+      );
+
+      yield* driver.invalidateRefs(cwd);
+      const invalidatedRefs = yield* driver.listRefs({ cwd });
+      assert.equal(
+        invalidatedRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        true,
+      );
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
   Effect.scoped(
     Effect.gen(function* () {

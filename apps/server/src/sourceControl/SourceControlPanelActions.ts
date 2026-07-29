@@ -19,7 +19,7 @@ import {
 import { parsePathLines, uniquePaths } from "./SourceControlPanelParsers.ts";
 import type { SourceControlPanelService } from "./SourceControlPanelService.ts";
 
-type ActionMethodName =
+export type SourceControlPanelActionMethodName =
   | "stageFiles"
   | "unstageFiles"
   | "discardFiles"
@@ -43,6 +43,23 @@ type ActionMethodName =
   | "popStash"
   | "dropStash"
   | "compare";
+
+export const SOURCE_CONTROL_PANEL_REF_AFFECTING_ACTION_METHODS = [
+  "commitStaged",
+  "pullBranch",
+  "pushBranch",
+  "deleteBranch",
+  "undoLatestCommit",
+  "revertCommit",
+  "checkoutCommit",
+  "createBranchFromCommit",
+  "mergeBranchIntoCurrent",
+  "rebaseCurrentOnto",
+  "fetchBranch",
+  "fetchRemote",
+  "addRemote",
+  "removeRemote",
+] as const satisfies readonly SourceControlPanelActionMethodName[];
 
 interface RunOptions {
   readonly allowNonZeroExit?: boolean;
@@ -74,6 +91,7 @@ type SelectedIndex = <A, E>(
 ) => Effect.Effect<A, E | GitCommandError>;
 
 export interface SourceControlPanelActionDependencies {
+  readonly invalidateRefs: (cwd: string) => Effect.Effect<void>;
   readonly run: Run;
   readonly withTemporaryIntentToAddIndex: TemporaryIndex;
   readonly withTemporarySelectedIndex: SelectedIndex;
@@ -194,10 +212,11 @@ function resolveRemoteBranchRef(refName: string, remoteNamesByLength: readonly s
 
 export function makeSourceControlPanelActions(
   deps: SourceControlPanelActionDependencies,
-): Pick<SourceControlPanelService["Service"], ActionMethodName> {
+): Pick<SourceControlPanelService["Service"], SourceControlPanelActionMethodName> {
   const {
     generatedCommitMessage,
     generatedStashMessage,
+    invalidateRefs,
     refExists,
     run,
     snapshot,
@@ -206,6 +225,10 @@ export function makeSourceControlPanelActions(
     withTemporarySelectedIndex,
     workflow,
   } = deps;
+  const withRefInvalidation = <A, E>(
+    cwd: string,
+    effect: Effect.Effect<A, E>,
+  ): Effect.Effect<A, E> => effect.pipe(Effect.ensuring(invalidateRefs(cwd)));
   const stageFiles: SourceControlPanelService["Service"]["stageFiles"] = (input) =>
     run("vcs.panel.stageFiles", input.cwd, [
       "--literal-pathspecs",
@@ -778,45 +801,59 @@ export function makeSourceControlPanelActions(
     unstageFiles,
     discardFiles,
     readFileDiff,
-    commitStaged,
-    pullBranch,
-    pushBranch,
-    deleteBranch,
-    undoLatestCommit,
-    revertCommit,
-    checkoutCommit,
-    createBranchFromCommit,
-    mergeBranchIntoCurrent,
-    rebaseCurrentOnto,
-    fetchBranch,
+    commitStaged: (input) => withRefInvalidation(input.cwd, commitStaged(input)),
+    pullBranch: (input) => withRefInvalidation(input.cwd, pullBranch(input)),
+    pushBranch: (input) => withRefInvalidation(input.cwd, pushBranch(input)),
+    deleteBranch: (input) => withRefInvalidation(input.cwd, deleteBranch(input)),
+    undoLatestCommit: (input) => withRefInvalidation(input.cwd, undoLatestCommit(input)),
+    revertCommit: (input) => withRefInvalidation(input.cwd, revertCommit(input)),
+    checkoutCommit: (input) => withRefInvalidation(input.cwd, checkoutCommit(input)),
+    createBranchFromCommit: (input) =>
+      withRefInvalidation(input.cwd, createBranchFromCommit(input)),
+    mergeBranchIntoCurrent: (input) =>
+      withRefInvalidation(input.cwd, mergeBranchIntoCurrent(input)),
+    rebaseCurrentOnto: (input) => withRefInvalidation(input.cwd, rebaseCurrentOnto(input)),
+    fetchBranch: (input) => withRefInvalidation(input.cwd, fetchBranch(input)),
     fetchRemote: (input) =>
-      run("vcs.panel.fetchRemote", input.cwd, ["fetch", input.remoteName]).pipe(Effect.asVoid),
+      withRefInvalidation(
+        input.cwd,
+        run("vcs.panel.fetchRemote", input.cwd, ["fetch", input.remoteName]).pipe(Effect.asVoid),
+      ),
     addRemote: (input) =>
-      Effect.gen(function* () {
-        const remoteName = yield* validateGitPositionalName({
-          operation: "vcs.panel.addRemote",
-          cwd: input.cwd,
-          args: ["remote", "add", "<name>", input.url],
-          kind: "Remote name",
-          value: input.name,
-        });
-        yield* run("vcs.panel.addRemote", input.cwd, ["remote", "add", remoteName, input.url]).pipe(
-          Effect.asVoid,
-        );
-      }),
+      withRefInvalidation(
+        input.cwd,
+        Effect.gen(function* () {
+          const remoteName = yield* validateGitPositionalName({
+            operation: "vcs.panel.addRemote",
+            cwd: input.cwd,
+            args: ["remote", "add", "<name>", input.url],
+            kind: "Remote name",
+            value: input.name,
+          });
+          yield* run("vcs.panel.addRemote", input.cwd, [
+            "remote",
+            "add",
+            remoteName,
+            input.url,
+          ]).pipe(Effect.asVoid);
+        }),
+      ),
     removeRemote: (input) =>
-      Effect.gen(function* () {
-        const remoteName = yield* validateGitPositionalName({
-          operation: "vcs.panel.removeRemote",
-          cwd: input.cwd,
-          args: ["remote", "remove", "<name>"],
-          kind: "Remote name",
-          value: input.remoteName,
-        });
-        yield* run("vcs.panel.removeRemote", input.cwd, ["remote", "remove", remoteName]).pipe(
-          Effect.asVoid,
-        );
-      }),
+      withRefInvalidation(
+        input.cwd,
+        Effect.gen(function* () {
+          const remoteName = yield* validateGitPositionalName({
+            operation: "vcs.panel.removeRemote",
+            cwd: input.cwd,
+            args: ["remote", "remove", "<name>"],
+            kind: "Remote name",
+            value: input.remoteName,
+          });
+          yield* run("vcs.panel.removeRemote", input.cwd, ["remote", "remove", remoteName]).pipe(
+            Effect.asVoid,
+          );
+        }),
+      ),
     createStash: (input) => {
       const mode = input.mode ?? "all";
       const modeArgs =

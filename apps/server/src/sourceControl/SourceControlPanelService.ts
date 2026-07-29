@@ -354,11 +354,13 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const fetchAllRemotes: SourceControlPanelService["Service"]["fetchAllRemotes"] = Effect.fn(
     "fetchAllRemotes",
   )(function* (input) {
-    const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
-    if (input.force === true) {
-      yield* Cache.invalidate(fetchAllRemotesCache, gitCommonDir);
-    }
-    yield* Cache.get(fetchAllRemotesCache, gitCommonDir);
+    yield* Effect.gen(function* () {
+      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+      if (input.force === true) {
+        yield* Cache.invalidate(fetchAllRemotesCache, gitCommonDir);
+      }
+      yield* Cache.get(fetchAllRemotesCache, gitCommonDir);
+    }).pipe(Effect.ensuring(git.invalidateRefs(input.cwd)));
   });
 
   const withTemporaryIntentToAddIndex = <A, E>(
@@ -871,6 +873,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const actions = makeSourceControlPanelActions({
     generatedCommitMessage,
     generatedStashMessage,
+    invalidateRefs: git.invalidateRefs,
     refExists,
     run,
     snapshot,

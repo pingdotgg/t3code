@@ -165,6 +165,7 @@ function makeTestLayer(
     Layer.provide(
       Layer.succeed(GitVcsDriver, {
         execute,
+        invalidateRefs: () => Effect.void,
       } as unknown as GitVcsDriver["Service"]),
     ),
     Layer.provide(

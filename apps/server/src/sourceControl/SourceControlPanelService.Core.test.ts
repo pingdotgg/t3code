@@ -22,6 +22,7 @@ import {
   SourceControlPanelService,
   layer as SourceControlPanelServiceLayer,
 } from "./SourceControlPanelService.ts";
+import { SOURCE_CONTROL_PANEL_REF_AFFECTING_ACTION_METHODS } from "./SourceControlPanelActions.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -111,6 +112,7 @@ function makeTestLayer(
     Record<SourceControlProviderKind, SourceControlProvider.SourceControlProvider["Service"]>
   > = {},
   settings: Parameters<typeof ServerSettingsService.layerTest>[0] = {},
+  gitDriver: Partial<GitVcsDriver["Service"]> = {},
 ) {
   return SourceControlPanelServiceLayer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -165,6 +167,8 @@ function makeTestLayer(
     Layer.provide(
       Layer.succeed(GitVcsDriver, {
         execute,
+        invalidateRefs: () => Effect.void,
+        ...gitDriver,
       } as unknown as GitVcsDriver["Service"]),
     ),
     Layer.provide(
@@ -1151,6 +1155,98 @@ describe("SourceControlPanelService", () => {
             calls.push(input);
             return success("patch");
           }),
+        ),
+      ),
+    );
+  });
+
+  it("classifies only ref-affecting panel actions for shared ref invalidation", () => {
+    assert.deepStrictEqual(SOURCE_CONTROL_PANEL_REF_AFFECTING_ACTION_METHODS, [
+      "commitStaged",
+      "pullBranch",
+      "pushBranch",
+      "deleteBranch",
+      "undoLatestCommit",
+      "revertCommit",
+      "checkoutCommit",
+      "createBranchFromCommit",
+      "mergeBranchIntoCurrent",
+      "rebaseCurrentOnto",
+      "fetchBranch",
+      "fetchRemote",
+      "addRemote",
+      "removeRemote",
+    ]);
+  });
+
+  it.effect("invalidates shared refs after successful and failed ref mutations", () => {
+    const invalidations: string[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.createBranchFromCommit({
+        cwd: "/repo",
+        sha: "abc123",
+        branchName: "feature/success",
+      });
+      assert.deepStrictEqual(invalidations, ["/repo"]);
+
+      const failed = yield* Effect.exit(
+        service.createBranchFromCommit({
+          cwd: "/repo",
+          sha: "abc123",
+          branchName: "feature/failure",
+        }),
+      );
+      assert(Exit.isFailure(failed));
+      assert.deepStrictEqual(invalidations, ["/repo", "/repo"]);
+
+      yield* service.fetchAllRemotes({ cwd: "/repo", force: true });
+      assert.deepStrictEqual(invalidations, ["/repo", "/repo", "/repo"]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.succeed(
+              input.args.includes("feature/failure")
+                ? failure("branch creation failed")
+                : success(),
+            ),
+          {},
+          {},
+          {},
+          {
+            invalidateRefs: (cwd) =>
+              Effect.sync(() => {
+                invalidations.push(cwd);
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("does not invalidate shared refs for working-tree-only panel actions", () => {
+    const invalidations: string[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.stageFiles({ cwd: "/repo", paths: ["file.ts"] });
+
+      assert.deepStrictEqual(invalidations, []);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          () => Effect.succeed(success()),
+          {},
+          {},
+          {},
+          {
+            invalidateRefs: (cwd) =>
+              Effect.sync(() => {
+                invalidations.push(cwd);
+              }),
+          },
         ),
       ),
     );
