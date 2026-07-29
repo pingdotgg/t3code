@@ -42,11 +42,12 @@ public struct PlanCard: View {
             }
         }
         .padding(14)
-        // Long-form markdown lives here, so the surface stays opaque — glass
-        // is reserved for chrome, never behind reading content.
-        .background(
-            Color(nsColor: .textBackgroundColor),
-            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous))
+        // Let the system manage vibrancy and refraction for long-form plan
+        // content while keeping the surface visibly translucent.
+        .glassEffect(
+            .regular,
+            in: RoundedRectangle(
+                cornerRadius: AlpineTheme.Corners.card, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
                 .stroke(borderTint, lineWidth: 1)
