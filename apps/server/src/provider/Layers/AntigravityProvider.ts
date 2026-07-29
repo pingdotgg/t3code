@@ -101,7 +101,7 @@ const checkAntigravityAccountAuth = (
     let discoveredEmail: string | undefined = undefined;
     let discoveredPlanType: AntigravityPlanType = "unknown";
 
-    yield* Effect.catch(
+    yield* Effect.catchTags(
       Effect.gen(function* () {
         const exists = yield* fs.exists(logDir);
         if (exists) {
@@ -161,9 +161,10 @@ const checkAntigravityAccountAuth = (
               break;
             }
           }
-        }
       }),
-      () => Effect.void
+      {
+        PlatformError: () => Effect.void,
+      }
     );
 
     if (discoveredPlanType === "unknown") {

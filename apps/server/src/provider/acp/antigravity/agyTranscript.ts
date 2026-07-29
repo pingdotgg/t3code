@@ -29,6 +29,16 @@ export interface AgyTranscriptRecord {
  * particular holds a summary of truncated context and would read as the
  * assistant talking to itself.
  */
+/**
+ * Ceiling on a single held-back transcript line.
+ *
+ * The transcript is read incrementally, so nothing else bounds a record that
+ * never terminates: the cursor would hold every byte of it waiting for a
+ * newline. Generous enough that a real tool output is never truncated — the
+ * largest observed records are a few hundred KiB.
+ */
+export const MAX_TRANSCRIPT_LINE_CHARS = 4 * 1024 * 1024;
+
 const IGNORED_RECORD_TYPES = new Set([
   "CONVERSATION_HISTORY",
   "CHECKPOINT",
@@ -51,6 +61,16 @@ export function parseTranscriptLine(line: string): AgyTranscriptRecord | null {
     // A partially-flushed final line is expected while tailing a live turn.
     return null;
   }
+}
+
+/**
+ * Size of the complete parsed record retained by the bridge.
+ *
+ * Computed once when a record enters the deferred queue; callers carry the
+ * result with the record instead of repeatedly serializing held entries.
+ */
+export function serializedTranscriptRecordSize(record: AgyTranscriptRecord): number {
+  return JSON.stringify(record).length;
 }
 
 /**
@@ -86,6 +106,11 @@ export interface TranscriptUpdateResult {
   readonly updates: ReadonlyArray<AgySessionUpdate>;
   /** True when the record produced assistant-visible text. */
   readonly emittedAssistantText: boolean;
+  /**
+   * True when the record belongs to a tool call that has not been announced
+   * yet. The caller should hold it and try again after reading more hooks.
+   */
+  readonly deferred?: boolean;
 }
 
 /**
@@ -130,17 +155,22 @@ export function transcriptRecordUpdates(
   if (typeof stepIndex !== "number") {
     return { updates: [], emittedAssistantText: false };
   }
-  // Recorded before the early returns below: the transcript is read once by
-  // byte offset, so "this step's record has gone by" holds even when it
-  // carried nothing worth emitting.
-  state.transcriptSeenSteps.add(stepIndex);
   // Completed calls stay in the map precisely so this lookup still resolves:
   // a fast tool's `PostToolUse` hook and its transcript record routinely land
   // in the same drain pass, and hooks are read first.
   const active = state.toolCalls.get(stepIndex);
   if (!active) {
-    return { updates: [], emittedAssistantText: false };
+    // The hook directory is listed before the transcript is read, so a tool
+    // whose `PreToolUse` file appeared in between has a record here and no
+    // call yet. The transcript is consumed once by byte offset, so dropping it
+    // loses that tool's output for good — it is held instead and retried once
+    // the hook shows up.
+    return { updates: [], emittedAssistantText: false, deferred: true };
   }
+  // Recorded only once the record has actually been matched: marking a step
+  // seen before that would tell the caller a tool it has not announced yet is
+  // already finished.
+  state.transcriptSeenSteps.add(stepIndex);
   const output = normalizeToolOutput(content);
   if (output.length === 0) {
     return { updates: [], emittedAssistantText: false };
@@ -191,9 +221,29 @@ export function dropPriorTurnRecords(lines: ReadonlyArray<string>): ReadonlyArra
 export class AgyTranscriptCursor {
   private offset = 0;
   private carry = "";
+  /**
+   * Set once a single record has grown past {@link MAX_TRANSCRIPT_LINE_CHARS}.
+   * Its bytes keep arriving, so the remainder is swallowed up to the next
+   * newline rather than surfacing as a fragment that parses as nothing.
+   */
+  private discarding = false;
+  /**
+   * Whole lines handed back by {@link retain}, kept apart from {@link carry}.
+   *
+   * They were once prepended to the carry, which put finished records into the
+   * same buffer as a half-written one: retaining while a record was being
+   * abandoned made the first retained line look like that record's tail, so it
+   * was dropped and the real fragment emitted in its place.
+   */
+  private retained: Array<string> = [];
 
   get bytesConsumed(): number {
     return this.offset;
+  }
+
+  /** Size of everything held back, for callers enforcing their own budget. */
+  get carryLength(): number {
+    return this.retained.reduce((total, line) => total + line.length + 1, this.carry.length);
   }
 
   /**
@@ -205,7 +255,36 @@ export class AgyTranscriptCursor {
     const combined = this.carry + chunk;
     const lines = combined.split("\n");
     this.carry = lines.pop() ?? "";
-    return lines;
+
+    let completed: ReadonlyArray<string> = lines;
+    if (this.discarding) {
+      // The first line to complete here is the tail of the record that was
+      // given up on; everything after it is intact.
+      if (lines.length > 0) {
+        completed = lines.slice(1);
+        this.discarding = false;
+      } else {
+        completed = [];
+      }
+    }
+
+    // A record with no newline in sight would otherwise be held in full, so a
+    // single malformed or enormous transcript entry could exhaust memory no
+    // matter how small each read is.
+    if (this.carry.length > MAX_TRANSCRIPT_LINE_CHARS) {
+      this.carry = "";
+      this.discarding = true;
+    }
+
+    // Retained lines go back in front, where they were read from, and are not
+    // subject to the discard above — they are complete records that have
+    // already been through it once.
+    if (this.retained.length > 0) {
+      const restored = this.retained;
+      this.retained = [];
+      return [...restored, ...completed];
+    }
+    return completed;
   }
 
   /**
@@ -216,13 +295,44 @@ export class AgyTranscriptCursor {
    * are re-examined against the next read rather than emitted or discarded.
    */
   retain(lines: ReadonlyArray<string>): void {
-    this.carry = lines.length > 0 ? `${lines.join("\n")}\n${this.carry}` : this.carry;
+    if (lines.length > 0) {
+      this.retained.push(...lines);
+    }
+  }
+
+  /**
+   * Retain a candidate suffix only while all held transcript text fits within
+   * the caller's budget.
+   *
+   * Resumed conversations are scanned from byte zero when no baseline was
+   * measurable. Complete history is expendable on overflow, but the bounded
+   * partial line may be the current turn's `USER_INPUT` boundary. Its caller
+   * keeps suppressing completed records until that boundary is observed, so
+   * preserving the partial line cannot surface historical output.
+   */
+  retainWithinLimit(lines: ReadonlyArray<string>, maxChars: number): boolean {
+    const lineChars = lines.reduce((total, line) => total + line.length + 1, 0);
+    if (this.carryLength + lineChars > maxChars) {
+      this.retained = [];
+      return false;
+    }
+    this.retain(lines);
+    return true;
   }
 
   /** Flush the trailing line once the writer is known to be finished. */
   flush(): ReadonlyArray<string> {
     const remaining = this.carry;
     this.carry = "";
-    return remaining.trim().length > 0 ? [remaining] : [];
+    // Retained records are whole and still owed to the caller even at EOF.
+    const restored = this.retained;
+    this.retained = [];
+    if (this.discarding) {
+      // Whatever is left of the carry is the tail of an abandoned record, not a
+      // record. The retained lines are unaffected.
+      this.discarding = false;
+      return restored;
+    }
+    return remaining.trim().length > 0 ? [...restored, remaining] : restored;
   }
 }

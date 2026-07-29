@@ -72,6 +72,15 @@ export interface AgyHookEvent {
    * place that observes the true pre-edit state.
    */
   readonly capturedFileText?: string | null;
+  /**
+   * The hook's own stdin, verbatim.
+   *
+   * Written by the hook and hashed by both sides, so an approval is bound to
+   * the exact request the user saw: a payload swapped on disk between the hook
+   * writing it and the bridge reading it produces a different digest, and the
+   * decision is rejected.
+   */
+  readonly rawPayload?: string;
 }
 
 /**
@@ -172,8 +181,15 @@ export interface AgyToolCallRecord {
   readonly name: string | undefined;
   readonly kind: AcpToolKind;
   readonly targetPath: string | undefined;
-  /** File contents captured at `PreToolUse`, used to build an edit diff. */
-  readonly beforeText: string | undefined;
+  /**
+   * File contents captured at `PreToolUse`, used to build an edit diff.
+   *
+   * Released as soon as that diff has been built. Records are kept for the
+   * whole turn so late transcript output can still attach to them, and holding
+   * every edited file's prior contents for that long is what turns a long edit
+   * loop into gigabytes of heap.
+   */
+  beforeText: string | undefined;
   /** Set by `PostToolUse`. Records are kept after completion so a transcript
    * record that lands in the same poll can still attach the tool's output. */
   completed: boolean;
@@ -204,6 +220,28 @@ export interface AgyTurnState {
    * as running until the turn ended.
    */
   readonly transcriptSeenSteps: Set<number>;
+  /**
+   * Transcript records whose tool call has not been announced yet.
+   *
+   * The hook directory is listed before the transcript is read, so a tool whose
+   * `PreToolUse` file lands in between produces a record with nothing to attach
+   * it to. The transcript is consumed once by byte offset, so these are held
+   * rather than dropped and retried on the next pass.
+   */
+  readonly deferredRecords: Array<AgyDeferredTranscriptRecord>;
+  /**
+   * Serialized size of `deferredRecords`.
+   *
+   * Maintained as entries enter and leave the queue so enforcing the aggregate
+   * cap does not have to rescan every retained record on every drain pass.
+   */
+  deferredRecordChars: number;
+  /**
+   * Drains the held records have waited. Antigravity emits unpaired steps for
+   * its own internal work, so a record whose hook is never coming must not
+   * block the stream indefinitely.
+   */
+  deferredDrains: number;
   conversationId: string | undefined;
   transcriptPath: string | undefined;
   /** Transcript file pinned for the turn; see `resolveTranscriptPath`. */
@@ -213,6 +251,12 @@ export interface AgyTurnState {
    * byte 0, which on a resumed conversation is the start of the whole history.
    */
   transcriptPrimed: boolean;
+  /**
+   * Whether resumed-transcript priming discarded its candidate suffix after
+   * exceeding the memory budget. Records that follow can still be history, so
+   * none are emitted until a later `USER_INPUT` establishes a new boundary.
+   */
+  transcriptPrimingOverflowed: boolean;
   /**
    * Whether this turn resumed an existing conversation. Only then can the
    * transcript already hold other turns' records at byte 0.
@@ -226,17 +270,74 @@ export function makeAgyTurnState(conversationId?: string): AgyTurnState {
     toolCalls: new Map(),
     pendingTerminal: new Map(),
     transcriptSeenSteps: new Set(),
+    deferredRecords: [],
+    deferredRecordChars: 0,
+    deferredDrains: 0,
     conversationId,
     transcriptPath: undefined,
     resolvedTranscriptPath: undefined,
     transcriptPrimed: false,
+    transcriptPrimingOverflowed: false,
     resumedConversation: conversationId !== undefined,
     modelName: undefined,
   };
 }
 
+/** Minimal shape of a transcript record, kept here to avoid a circular import. */
+export interface AgyTranscriptRecordLike {
+  readonly step_index?: number;
+  readonly type?: string;
+  readonly content?: string;
+}
+
+/** A retained transcript record and its one-time complete serialized size. */
+export interface AgyDeferredTranscriptRecord {
+  readonly record: AgyTranscriptRecordLike;
+  readonly serializedChars: number;
+}
+
 /** A `session/update` payload, shaped for ACP but kept as plain JSON. */
 export type AgySessionUpdate = Record<string, unknown>;
+
+export interface AgyOrderedSessionUpdate {
+  readonly stepIdx: number | undefined;
+  readonly phase: "pre" | "transcript" | "terminal";
+  readonly update: AgySessionUpdate;
+}
+
+/**
+ * Order updates reconstructed from independent hook and transcript sources.
+ *
+ * Step index preserves the order Antigravity executed them in. Within one
+ * step, the call must exist before output is attached and must stay open until
+ * that output has been sent.
+ */
+export function orderAgySessionUpdates(
+  entries: ReadonlyArray<AgyOrderedSessionUpdate>,
+): ReadonlyArray<AgySessionUpdate> {
+  const phaseOrder = { pre: 0, transcript: 1, terminal: 2 } as const;
+  let precedingKey: { readonly step: number; readonly phase: number } | undefined;
+  return entries
+    .map((entry) => {
+      // PLANNER_RESPONSE records may omit step_index. Reusing the preceding
+      // entry's complete ordering key lets the stable sort keep the response
+      // immediately after that entry, including when it followed a terminal
+      // update, while indexed entries still use step and lifecycle phase.
+      const key =
+        entry.stepIdx === undefined
+          ? (precedingKey ?? {
+              step: Number.NEGATIVE_INFINITY,
+              phase: phaseOrder[entry.phase],
+            })
+          : { step: entry.stepIdx, phase: phaseOrder[entry.phase] };
+      precedingKey = key;
+      return { entry, key };
+    })
+    .sort((left, right) => {
+      return left.key.step - right.key.step || left.key.phase - right.key.phase;
+    })
+    .map(({ entry }) => entry.update);
+}
 
 /**
  * Translate one `PreToolUse` hook into an ACP `tool_call` announcement.
@@ -329,6 +430,10 @@ export function postToolUseUpdate(
       newText: afterText,
     });
   }
+  // The diff is built, so the captured contents have no further use. This is
+  // the only thing held here that scales with file size rather than with the
+  // number of steps.
+  active.beforeText = undefined;
 
   return {
     sessionUpdate: "tool_call_update",

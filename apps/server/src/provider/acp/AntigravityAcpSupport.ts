@@ -43,10 +43,6 @@ interface AntigravityAcpRuntimeInput extends Omit<
   readonly model?: string | undefined;
   /** Reasoning effort for `agy --effort`. */
   readonly effort?: string | undefined;
-  /** Interaction mode for `agy --mode`. */
-  readonly mode?: string | undefined;
-  /** System prompt / instructions for the session. */
-  readonly systemPrompt?: string | undefined;
 }
 
 /**
@@ -55,15 +51,7 @@ interface AntigravityAcpRuntimeInput extends Omit<
  * Under `node src/bin.ts` the entry script must be passed explicitly; a packed
  * single-file build is itself the executable.
  */
-export function resolveBridgeCommand(environment?: NodeJS.ProcessEnv): {
-  command: string;
-  args: ReadonlyArray<string>;
-} {
-  const customBridge =
-    environment?.["T3_AGY_BRIDGE_COMMAND"] ?? process.env["T3_AGY_BRIDGE_COMMAND"];
-  if (customBridge?.trim()) {
-    return { command: process.execPath, args: [customBridge.trim()] };
-  }
+export function resolveBridgeCommand(): { command: string; args: ReadonlyArray<string> } {
   const entry = process.argv[1];
   return entry
     ? { command: process.execPath, args: [entry, "agy-acp"] }
@@ -76,10 +64,8 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly model?: string | undefined;
   readonly effort?: string | undefined;
-  readonly mode?: string | undefined;
-  readonly systemPrompt?: string | undefined;
 }): AcpSessionRuntime.AcpSpawnInput {
-  const { command, args } = resolveBridgeCommand(input.environment);
+  const { command, args } = resolveBridgeCommand();
   const settings = input.antigravitySettings;
   // The bridge reads its per-turn configuration from the environment so that
   // `agy` invocation details stay entirely inside the bridge process.
@@ -102,13 +88,6 @@ export function buildAntigravityAcpSpawnInput(input: {
   if (input.effort?.trim()) {
     env["T3_AGY_EFFORT"] = input.effort.trim();
   }
-  if (input.mode?.trim()) {
-    env["T3_AGY_MODE"] = input.mode.trim();
-  }
-  if (input.systemPrompt?.trim()) {
-    env["T3_AGY_SYSTEM_PROMPT"] = input.systemPrompt.trim();
-  }
-  env["T3_AGY_FAST_START"] = "1";
 
   return { command, args: [...args], cwd: input.cwd, env };
 }
@@ -130,8 +109,6 @@ export const makeAntigravityAcpRuntime = (
           ...(input.environment ? { environment: input.environment } : {}),
           ...(input.model ? { model: input.model } : {}),
           ...(input.effort ? { effort: input.effort } : {}),
-          ...(input.mode ? { mode: input.mode } : {}),
-          ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
         }),
         authMethodId: ANTIGRAVITY_AUTH_METHOD,
       }).pipe(

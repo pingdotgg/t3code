@@ -14,6 +14,9 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off - Standalone stdio bridge process, not an Effect runtime.
 // @effect-diagnostics globalTimers:off - Polls Antigravity hook output outside any Effect runtime.
+// @effect-diagnostics globalDate:off - Approval deadlines are measured in the hook subprocess, which has no Clock.
+/* eslint-disable t3code/no-global-process-runtime -- Standalone process: there
+   is no Effect runtime here to inject HostProcessPlatform from. */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -35,20 +38,22 @@ import {
   agyToolTitle,
   hookSessionUpdate,
   makeAgyTurnState,
+  orderAgySessionUpdates,
   type AgyHookDecision,
   type AgyHookEvent,
   type AgyHookPayload,
+  type AgyOrderedSessionUpdate,
   type AgySessionUpdate,
   type AgyTurnState,
 } from "./agyEvents.ts";
 import {
   AgyTranscriptCursor,
   dropPriorTurnRecords,
+  MAX_TRANSCRIPT_LINE_CHARS,
   parseTranscriptLine,
+  serializedTranscriptRecordSize,
   transcriptRecordUpdates,
 } from "./agyTranscript.ts";
-
-
 
 const HOOK_DIR_ENV = "T3_AGY_HOOK_DIR";
 const REQUIRE_APPROVAL_ENV = "T3_AGY_REQUIRE_APPROVAL";
@@ -62,7 +67,52 @@ const DECISION_SUFFIX = ".decision";
 const APPROVAL_WAIT_MS = 10 * 60 * 1000;
 const APPROVAL_HOOK_TIMEOUT_SECONDS = 11 * 60;
 const APPROVAL_POLL_INTERVAL_MS = 50;
+/** Grace period before a cancelled process group is killed outright. */
+const KILL_ESCALATION_MS = 5_000;
+/** Backstop when a child reports `error` but never follows it with `close`. */
+const CHILD_ERROR_CLOSE_GRACE_MS = KILL_ESCALATION_MS + 1_000;
+/** Secret shared with hook processes so a decision cannot be forged. */
+const HOOK_SECRET_ENV = "T3_AGY_HOOK_SECRET";
 const HOOK_POLL_INTERVAL_MS = 50;
+/** Total finalization time allowed for stdout to recover from backpressure. */
+const STDOUT_DRAIN_GRACE_MS = 1_000;
+/**
+ * Drains a transcript record waits for the hook that would announce its tool
+ * call. Twenty polls is a second — long enough for a hook that is merely late,
+ * short enough that a step no hook will ever cover does not stall the stream.
+ */
+const MAX_DEFERRED_DRAINS = 20;
+
+/**
+ * Aggregate ceiling on records held waiting for a tool call to be announced.
+ *
+ * `MAX_DEFERRED_DRAINS` expires the head of the queue, which is enough when
+ * unmatched records are occasional. It is not enough when they arrive faster
+ * than one per drain, which is what a transcript full of internal planner steps
+ * looks like — hence a cap on the queue as a whole.
+ */
+const MAX_DEFERRED_RECORDS = 512;
+const MAX_DEFERRED_CHARS = 8 * 1024 * 1024;
+/**
+ * Cap on the `agy` output held in memory per stream. Only the tail is kept:
+ * stdout is a fallback used when the transcript streamed nothing, and stderr
+ * only needs to explain a failure.
+ */
+const MAX_CAPTURED_OUTPUT = 256 * 1024;
+
+/**
+ * Ceiling on one transcript read. Keeps a single poll from allocating a buffer
+ * the size of whatever a tool just wrote; the rest is read by the next poll.
+ */
+const MAX_TRANSCRIPT_READ_BYTES = 1024 * 1024;
+
+/**
+ * Backstop on how many extra passes the final drain will make to consume a
+ * transcript tail larger than one read. Set far above any real transcript —
+ * this exists so a file being appended to faster than it is read cannot spin
+ * the exit path forever, not to bound normal output.
+ */
+const MAX_FINAL_DRAIN_PASSES = 512;
 const DEFAULT_PRINT_TIMEOUT = "2h";
 const HOOKS_KEY = "t3code-antigravity-observer";
 
@@ -112,21 +162,27 @@ function transcriptDirFor(conversationId: string): string {
  * output as live. Returns 0 when the file cannot be measured, which falls back
  * to the marker heuristic rather than skipping the turn's own output.
  */
-interface TranscriptBaselines {
-  readonly transcript: number;
-  readonly transcriptFull: number;
-}
-function transcriptBaselines(conversationId: string | undefined): TranscriptBaselines {
-  const result = { transcript: 0, transcriptFull: 0 };
-  if (!conversationId) return result;
+function transcriptBaseline(
+  conversationId: string | undefined,
+): { readonly path: string; readonly size: number } | undefined {
+  if (!conversationId) {
+    return undefined;
+  }
+  // Path and size come from one measurement and are used together. Deciding
+  // the file twice would let the condensed transcript appear between the two
+  // and apply an offset taken from `transcript_full.jsonl` to a different
+  // file — which, if it exceeded that file's size, reads nothing at all.
   const dir = transcriptDirFor(conversationId);
-  try {
-    result.transcript = NodeFS.statSync(NodePath.join(dir, "transcript.jsonl")).size;
-  } catch {}
-  try {
-    result.transcriptFull = NodeFS.statSync(NodePath.join(dir, "transcript_full.jsonl")).size;
-  } catch {}
-  return result;
+  const condensed = NodePath.join(dir, "transcript.jsonl");
+  const full = NodePath.join(dir, "transcript_full.jsonl");
+  for (const path of [condensed, full]) {
+    try {
+      return { path, size: NodeFS.statSync(path).size };
+    } catch {
+      // Try the sibling, then report nothing measurable.
+    }
+  }
+  return undefined;
 }
 
 function stateDirPath(): string {
@@ -201,8 +257,55 @@ function lookupConversationId(sessionId: string): string | undefined {
 
 // ── JSON-RPC plumbing ─────────────────────────────────────────────────
 
+/**
+ * Set while stdout has reported that it is behind.
+ *
+ * Node buffers whatever `write` cannot hand over immediately, so ignoring its
+ * return value turns a slow reader into unbounded growth inside this process.
+ * Polling pauses while this is set. Nothing is lost by waiting: the transcript
+ * stays on disk and is read from its own byte offset, so a skipped poll only
+ * defers work to the next one.
+ */
+let stdoutBlocked = false;
+
 function writeMessage(value: unknown): void {
-  process.stdout.write(`${JSON.stringify(value)}\n`);
+  const flushed = process.stdout.write(`${JSON.stringify(value)}\n`);
+  if (!flushed && !stdoutBlocked) {
+    stdoutBlocked = true;
+    process.stdout.once("drain", () => {
+      stdoutBlocked = false;
+    });
+  }
+}
+
+/**
+ * Wait for stdout to accept more data, but never past the finalization budget.
+ *
+ * `writeMessage` remains synchronous: this wait is used only by async turn
+ * finalization between transcript drain passes. Its own listener continues to
+ * clear `stdoutBlocked`, including when no turn is currently waiting here.
+ */
+function waitForStdoutDrain(deadline: number): Promise<boolean> {
+  if (!stdoutBlocked) {
+    return Promise.resolve(false);
+  }
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    return Promise.resolve(stdoutBlocked);
+  }
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (timedOut: boolean) => {
+      process.stdout.off("drain", onDrain);
+      if (timer) {
+        clearTimeout(timer);
+      }
+      resolve(timedOut);
+    };
+    const onDrain = () => finish(false);
+    process.stdout.once("drain", onDrain);
+    timer = setTimeout(() => finish(stdoutBlocked), remaining);
+  });
 }
 
 function sendResult(id: unknown, result: unknown): void {
@@ -229,33 +332,36 @@ function sendSessionUpdate(sessionId: string, update: AgySessionUpdate): void {
 let nextOutboundId = 1;
 const pendingOutbound = new Map<
   number,
-  { readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void }
+  {
+    readonly resolve: (value: unknown) => void;
+    readonly reject: (error: Error) => void;
+    /** Deadline for this request; cleared when it settles. */
+    timer?: ReturnType<typeof setTimeout>;
+  }
 >();
 
 function sendRequest(method: string, params: unknown, timeoutMs?: number): Promise<unknown> {
   const id = nextOutboundId;
   nextOutboundId += 1;
   return new Promise((resolve, reject) => {
-    let timer: NodeJS.Timeout | undefined;
-    pendingOutbound.set(id, {
-      resolve: (value) => {
-        if (timer) clearTimeout(timer);
-        resolve(value);
-      },
-      reject: (error) => {
-        if (timer) clearTimeout(timer);
-        reject(error);
-      },
-    });
+    const pending: {
+      readonly resolve: (value: unknown) => void;
+      readonly reject: (error: Error) => void;
+      timer?: ReturnType<typeof setTimeout>;
+    } = { resolve, reject };
+    pendingOutbound.set(id, pending);
     if (timeoutMs !== undefined) {
       // A client that never answers would otherwise pin this entry for the
-      // life of the bridge process.
-      timer = setTimeout(() => {
+      // life of the bridge process. Held on the entry so an answered request
+      // can drop it — `unref` keeps the timer from holding the loop open but
+      // still retains the closure until it fires.
+      const timer = setTimeout(() => {
         if (pendingOutbound.delete(id)) {
           reject(new Error(`${method} timed out`));
         }
       }, timeoutMs);
       timer.unref?.();
+      pending.timer = timer;
     }
     writeMessage({ jsonrpc: "2.0", id, method, params });
   });
@@ -275,6 +381,9 @@ function resolveOutbound(message: Record<string, unknown>): boolean {
   if (!pending) {
     return false;
   }
+  if (pending.timer) {
+    clearTimeout(pending.timer);
+  }
   const error = message["error"];
   if (isRecord(error)) {
     const detail = typeof error["message"] === "string" ? error["message"] : "request failed";
@@ -288,6 +397,9 @@ function resolveOutbound(message: Record<string, unknown>): boolean {
 /** Reject everything still outstanding; used when the client goes away. */
 function failPendingOutbound(reason: string): void {
   for (const [, pending] of pendingOutbound) {
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+    }
     pending.reject(new Error(reason));
   }
   pendingOutbound.clear();
@@ -377,7 +489,40 @@ function readHookEvents(hookDir: string, seen: Set<string>): ReadonlyArray<Obser
       const raw = NodeFS.readFileSync(NodePath.join(hookDir, name), "utf8");
       const parsed: unknown = JSON.parse(raw);
       if (typeof parsed === "object" && parsed !== null) {
-        events.push({ name, event: parsed as AgyHookEvent });
+        const record = parsed as AgyHookEvent;
+        // The signed digest and the payload shown to the user must come from
+        // the same bytes. Taking the outer `payload` for display while signing
+        // `rawPayload` would let an attacker rewrite only the outer copy: the
+        // user approves harmless-looking arguments, the hook's digest still
+        // matches its untouched stdin, and the original request runs.
+        const raw = record.rawPayload;
+        if (typeof raw !== "string") {
+          continue;
+        }
+        let payload: AgyHookPayload;
+        try {
+          const reparsed: unknown = JSON.parse(raw);
+          if (typeof reparsed !== "object" || reparsed === null) {
+            continue;
+          }
+          payload = reparsed as AgyHookPayload;
+        } catch {
+          continue;
+        }
+        hookPayloadDigests.set(name, digestPayload(raw));
+        events.push({ name, event: { ...record, payload } });
+        // Reclaimed as soon as its contents are in memory. An edit hook carries
+        // the file it is about to change, up to `MAX_CAPTURED_FILE_BYTES` each,
+        // and the directory only went away at the end of the turn — so a long
+        // turn editing large files held every version of every one of them on
+        // disk at once. The waiting hook never reads this file back; it polls
+        // for its `.decision` sibling, which is written separately.
+        try {
+          NodeFS.unlinkSync(NodePath.join(hookDir, name));
+        } catch {
+          // Losing the reclaim is not worth failing the hook over; the whole
+          // directory is removed when the turn ends.
+        }
       }
     } catch {
       // A half-written hook file is picked up on the next poll.
@@ -388,6 +533,22 @@ function readHookEvents(hookDir: string, seen: Set<string>): ReadonlyArray<Obser
 }
 
 // ── Tool approval ─────────────────────────────────────────────────────
+
+/**
+ * Identity for one `runTurn`, used to bound the lifetime of its approvals.
+ *
+ * A cancel generation alone is not enough: a hook file first read after the
+ * turn ended has no earlier generation to compare against, and a decision
+ * banked from a dead turn must not carry into the next one.
+ */
+interface TurnToken {
+  readonly sessionId: string;
+  live: boolean;
+}
+
+function turnTokenLive(token: TurnToken): boolean {
+  return token.live && !cancelledSessions.has(token.sessionId);
+}
 
 const APPROVE_OPTION = "allow";
 const APPROVE_SESSION_OPTION = "allow-session";
@@ -409,11 +570,56 @@ function decisionPath(hookDir: string, hookName: string): string {
   return NodePath.join(hookDir, `${hookName}${DECISION_SUFFIX}`);
 }
 
+/**
+ * Authenticate a decision so only this bridge can issue one.
+ *
+ * The decision is a file in a temp directory, and anything running as the user
+ * — including a tool the user has just approved — could otherwise drop an
+ * `allow` there and have every later tool wave itself through. The secret is
+ * generated per bridge process and reaches the hook through its environment,
+ * so a forged file fails the check and is treated as no decision at all.
+ */
+function signDecision(
+  secret: string,
+  hookName: string,
+  decision: AgyHookDecision,
+  payloadDigest: string,
+): string {
+  // The payload digest is part of what is signed, so a decision cannot be
+  // lifted onto a different request. Without it, a watcher could swap a
+  // dangerous hook payload for a harmless one, let the user approve what they
+  // were shown, and have the signed answer authorise the original.
+  return NodeCrypto.createHmac("sha256", secret)
+    .update(`${hookName}:${decision.decision}:${payloadDigest}`)
+    .digest("hex");
+}
+
+function digestPayload(raw: string): string {
+  return NodeCrypto.createHash("sha256").update(raw).digest("hex");
+}
+
+/**
+ * Digest of each observed hook's raw payload, so a decision can be bound to the
+ * exact request the user was shown.
+ */
+const hookPayloadDigests = new Map<string, string>();
+
 function writeDecision(hookDir: string, hookName: string, decision: AgyHookDecision): void {
   try {
     const target = decisionPath(hookDir, hookName);
     const staging = `${target}.tmp`;
-    NodeFS.writeFileSync(staging, JSON.stringify(decision));
+    NodeFS.writeFileSync(
+      staging,
+      JSON.stringify({
+        ...decision,
+        mac: signDecision(
+          turnHookSecret,
+          hookName,
+          decision,
+          hookPayloadDigests.get(hookName) ?? "",
+        ),
+      }),
+    );
     NodeFS.renameSync(staging, target);
   } catch {
     // The waiting hook falls back to denying when its deadline passes, which
@@ -439,7 +645,18 @@ function requestToolApproval(input: {
   readonly hookDir: string;
   readonly hookName: string;
   readonly payload: AgyHookPayload;
+  /** The turn that asked. Approvals are only valid while it is still running. */
+  readonly turnToken: TurnToken;
 }): void {
+  // Checked before the session-wide fast path, not after: a hook first seen
+  // after a cancel would otherwise be waved through by a blanket approval.
+  if (!turnTokenLive(input.turnToken)) {
+    writeDecision(input.hookDir, input.hookName, {
+      decision: "deny",
+      reason: "Cancelled before this tool was approved",
+    });
+    return;
+  }
   // Already approved for the whole session: answer without troubling the user.
   if (sessionWideApprovals.has(input.sessionId)) {
     writeDecision(input.hookDir, input.hookName, { decision: "allow" });
@@ -447,6 +664,7 @@ function requestToolApproval(input: {
   }
   const toolCall = input.payload.toolCall;
   const stepIdx = typeof input.payload.stepIdx === "number" ? input.payload.stepIdx : 0;
+
   void sendRequest(
     "session/request_permission",
     {
@@ -472,7 +690,16 @@ function requestToolApproval(input: {
     APPROVAL_WAIT_MS,
   )
     .then((result) => {
-      const decision = approvalOutcomeToDecision(result, [APPROVE_OPTION, APPROVE_SESSION_OPTION]);
+      // Re-checked at the moment of answering: the turn may have ended or been
+      // cancelled while the user was deciding.
+      const decision = !turnTokenLive(input.turnToken)
+        ? ({
+            decision: "deny",
+            reason: "Cancelled before this tool was approved",
+          } satisfies AgyHookDecision)
+        : approvalOutcomeToDecision(result, [APPROVE_OPTION, APPROVE_SESSION_OPTION]);
+      // Only recorded for a still-live turn. A blanket approval banked from a
+      // turn that has already ended would silently pre-approve the next one.
       if (decision.decision === "allow" && selectedOptionId(result) === APPROVE_SESSION_OPTION) {
         sessionWideApprovals.add(input.sessionId);
       }
@@ -529,6 +756,7 @@ export async function runAgyHook(event: string): Promise<void> {
       const record: AgyHookEvent = {
         event,
         payload,
+        rawPayload: raw,
         // Snapshot the file here, while the hook still brackets the tool call.
         ...(agyToolKind(payload?.toolCall?.name) === "edit"
           ? { capturedFileText: captureFileText(agyTargetPath(payload?.toolCall)) }
@@ -549,7 +777,7 @@ export async function runAgyHook(event: string): Promise<void> {
         // fall through to the observation-only response, which allows — so a
         // change in Antigravity's payload shape would have run tools unapproved.
         const decision = payload?.toolCall
-          ? await awaitDecision(hookDir, name)
+          ? await awaitDecision(hookDir, name, digestPayload(raw))
           : ({
               decision: "deny",
               reason: "T3 Code could not identify this tool call for approval",
@@ -581,7 +809,11 @@ export async function runAgyHook(event: string): Promise<void> {
  * Fails closed: if the bridge dies, the client never answers, or the deadline
  * passes, the tool is denied rather than quietly allowed.
  */
-async function awaitDecision(hookDir: string, hookName: string): Promise<AgyHookDecision> {
+async function awaitDecision(
+  hookDir: string,
+  hookName: string,
+  payloadDigest: string,
+): Promise<AgyHookDecision> {
   const target = decisionPath(hookDir, hookName);
   const deadline = Date.now() + APPROVAL_WAIT_MS;
   while (Date.now() < deadline) {
@@ -589,10 +821,36 @@ async function awaitDecision(hookDir: string, hookName: string): Promise<AgyHook
       const raw = NodeFS.readFileSync(target, "utf8");
       const parsed: unknown = JSON.parse(raw);
       if (isRecord(parsed) && (parsed["decision"] === "allow" || parsed["decision"] === "deny")) {
-        return parsed as unknown as AgyHookDecision;
+        const decision = { decision: parsed["decision"] } as AgyHookDecision;
+        const expected = signDecision(
+          process.env[HOOK_SECRET_ENV] ?? "",
+          hookName,
+          decision,
+          payloadDigest,
+        );
+        const presented = typeof parsed["mac"] === "string" ? parsed["mac"] : "";
+        // Length-checked before comparing: `timingSafeEqual` throws on a
+        // mismatch, and an unsigned file is a forgery either way.
+        if (
+          presented.length === expected.length &&
+          NodeCrypto.timingSafeEqual(Buffer.from(presented), Buffer.from(expected))
+        ) {
+          return {
+            decision: decision.decision,
+            ...(typeof parsed["reason"] === "string" ? { reason: parsed["reason"] } : {}),
+          };
+        }
+        // Unsigned or forged: ignore it and keep waiting, so a planted file
+        // cannot allow a tool and cannot short-circuit a real decision either.
       }
     } catch {
       // Not written yet, or written partially; try again.
+    }
+    if (!NodeFS.existsSync(hookDir)) {
+      // The turn is over and its directory reclaimed, so no decision can ever
+      // land here. Stop waiting rather than polling a path that will not come
+      // back.
+      return { decision: "deny", reason: "Antigravity turn ended before approval" };
     }
     await new Promise((resolve) => setTimeout(resolve, APPROVAL_POLL_INTERVAL_MS));
   }
@@ -791,33 +1049,233 @@ interface TurnOutcome {
   readonly failure?: string;
 }
 
+/**
+ * Secret authenticating this turn's approval decisions.
+ *
+ * Rotated per turn, not per process. The secret has to reach the hook, the hook
+ * is spawned by `agy`, and every tool `agy` runs inherits that environment — so
+ * an approved tool can always forge decisions for the turn it is part of.
+ * Rotating means it cannot forge for any later turn.
+ */
+let turnHookSecret = "";
+
 let activeChild: NodeChildProcess.ChildProcess | null = null;
+
+/**
+ * Stop the running turn's whole process group, escalating if it lingers.
+ *
+ * Signalling only the direct child leaves anything it spawned running: a tool
+ * mid-write keeps changing the workspace after the user pressed Stop, and its
+ * output can still arrive against a turn that has been reported cancelled.
+ */
+/**
+ * Children whose group has been signalled, so a fence and the cancel behind it
+ * do not arm two backstops for the same process.
+ */
+const pendingKills = new Map<
+  NodeChildProcess.ChildProcess,
+  { readonly pid: number; timer?: ReturnType<typeof setTimeout> }
+>();
+
+/**
+ * Signal a child's process group — but only while the child is alive.
+ *
+ * A group id is safe to use only while the leader still holds it. Once the
+ * leader has been reaped the number is free for reuse, and a signal sent then
+ * can land on whatever inherited it. Every call site is therefore guarded on
+ * the leader being alive, and nothing signals a group after its `exit` event.
+ *
+ * The cost is that a tool which deliberately outlives `agy` is not reaped. That
+ * is the same boundary the approval gate draws: code the user has already
+ * approved can do what it likes, including backgrounding itself.
+ */
+function signalGroupOf(
+  child: NodeChildProcess.ChildProcess,
+  pid: number,
+  signal: NodeJS.Signals,
+): void {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  if (process.platform === "win32") {
+    // No process groups; this walks the tree while the leader still anchors it.
+    try {
+      NodeChildProcess.execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
+    } catch {
+      try {
+        child.kill(signal);
+      } catch {
+        // Nothing left to signal.
+      }
+    }
+    return;
+  }
+  try {
+    // Negative pid targets the group, which `detached: true` gave the child.
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // Nothing left to signal.
+    }
+  }
+}
+
+function clearPendingKill(child: NodeChildProcess.ChildProcess): void {
+  const pending = pendingKills.get(child);
+  if (pending?.timer) {
+    clearTimeout(pending.timer);
+  }
+  pendingKills.delete(child);
+}
+
+/** Release tracking when a child ends, so nothing signals it afterwards. */
+function forgetChildOnExit(child: NodeChildProcess.ChildProcess): void {
+  child.once("exit", () => {
+    clearPendingKill(child);
+  });
+}
+
+/** Kill every group still being tracked. Used on shutdown. */
+function killPendingGroups(): void {
+  for (const [child, pending] of pendingKills) {
+    signalGroupOf(child, pending.pid, "SIGKILL");
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+    }
+  }
+  pendingKills.clear();
+}
+
+function killActiveChild(options?: { readonly immediate?: boolean }): void {
+  const child = activeChild;
+  if (!child?.pid) {
+    return;
+  }
+  const { pid } = child;
+  // Windows goes through the same guarded helper. A `taskkill` here would run
+  // against a numeric pid with no liveness check, and `close` can lag `exit`
+  // long enough for Windows to have reused it.
+  if (options?.immediate) {
+    signalGroupOf(child, pid, "SIGKILL");
+    clearPendingKill(child);
+    return;
+  }
+  if (pendingKills.has(child)) {
+    // Already signalled — a fence and the cancel behind it both land here. A
+    // second timer would be another delayed signal nobody cancels.
+    return;
+  }
+  if (child.exitCode !== null || child.signalCode !== null) {
+    // Leader already gone: the spawn-time handler has this, or has run.
+    signalGroupOf(child, pid, "SIGKILL");
+    return;
+  }
+  signalGroupOf(child, pid, "SIGTERM");
+  const pending: { readonly pid: number; timer?: ReturnType<typeof setTimeout> } = { pid };
+  pendingKills.set(child, pending);
+  // The group is killed when the leader exits by the handler installed at
+  // spawn, so nothing needs attaching here.
+  //
+  // Backstop for a leader that ignores SIGTERM outright. Safe to target by
+  // group, because the leader is by definition still alive if this fires.
+  const escalation = setTimeout(() => {
+    if (pendingKills.get(child) === pending && child.exitCode === null) {
+      signalGroupOf(child, pid, "SIGKILL");
+    }
+    clearPendingKill(child);
+  }, KILL_ESCALATION_MS);
+  escalation.unref?.();
+  pending.timer = escalation;
+}
 /** Session whose turn is currently running, if any. Gates `session/cancel`. */
 let activeTurnSessionId: string | null = null;
+/**
+ * Set once stdin closes. Queued prompts decline instead of spawning: killing
+ * only the running child let the queue advance and start another `agy` after
+ * the client had gone, which then ran to the print timeout.
+ */
+let shuttingDown = false;
 const cancelledSessions = new Set<string>();
 /**
- * Cancels seen per session, counted rather than flagged.
+ * Highest cancelled epoch per session.
  *
- * A prompt records this value when it is queued. If the count has moved by the
- * time the prompt reaches the front, a cancel arrived while it waited and the
- * prompt must not run — turns are serialized, so a steer queued behind a long
- * turn would otherwise start executing tools after the user pressed Stop. A
- * counter rather than a flag is what keeps this from also swallowing a cancel
- * that lands harmlessly between two turns.
+ * Each submission carries the adapter's cancel epoch, and an interrupt names
+ * the epoch it is cancelling *through*. Everything at or below that is
+ * cancelled; anything accepted afterwards has a higher epoch and is untouched.
+ *
+ * This replaces a set of individual prompt ids. Keying by id needed the set to
+ * be bounded, and any eviction policy can drop a fence whose prompt has not
+ * arrived yet — which would let exactly the prompt being cancelled run. A
+ * single high-water mark per session cannot lose one and cannot grow.
  */
-const cancelGenerations = new Map<string, number>();
-/** Cancel generation captured when each queued prompt was accepted, by JSON-RPC id. */
-const queuedPromptGenerations = new Map<unknown, number>();
+const cancelledThroughEpoch = new Map<string, number>();
+/**
+ * Sessions whose next queued prompt has been cancelled without an epoch.
+ *
+ * Only for clients that do not send fences: without an epoch there is nothing
+ * to compare a queued prompt against, so a plain `session/cancel` for a
+ * session whose turn has not started yet would be dropped and its prompt would
+ * run afterwards. Consumed by the next prompt for that session.
+ */
+const unscopedCancels = new Set<string>();
 
-function cancelGeneration(sessionId: string): number {
-  return cancelGenerations.get(sessionId) ?? 0;
+function cancelledThrough(sessionId: string): number {
+  return cancelledThroughEpoch.get(sessionId) ?? -1;
 }
+
+/**
+ * Prompts accepted for a session but not yet handled, counting only those that
+ * carry no epoch. A tagged prompt is already covered by the session's mark and
+ * consumes no marker, so banking a cancel on its account would leave an entry
+ * that only some later untagged prompt could consume.
+ */
+const queuedUntaggedCounts = new Map<string, number>();
+
+function queuedUntagged(sessionId: string): number {
+  return queuedUntaggedCounts.get(sessionId) ?? 0;
+}
+
+/** The adapter's cancel epoch for a submission, carried in `_meta.t3.epoch`. */
+function promptEpochOf(params: Record<string, unknown>): number | undefined {
+  const meta = params["_meta"];
+  const t3 = isRecord(meta) ? meta["t3"] : undefined;
+  const epoch = isRecord(t3) ? t3["epoch"] : undefined;
+  return typeof epoch === "number" ? epoch : undefined;
+}
+/**
+ * Cancel epoch of the turn currently running, or undefined when its prompt
+ * carried no epoch. An untagged client is not using the extension, so it keeps
+ * plain `session/cancel` semantics rather than being scoped by a mark it never
+ * contributes to.
+ */
+let activeTurnEpoch: number | undefined;
+/**
+ * Temp directories the running turn owns.
+ *
+ * Tracked outside `runTurn` so a signal that ends the process can still remove
+ * them: `process.exit` skips the cleanup at the end of the turn, and these hold
+ * copies of the user's attachments and file contents captured around edits.
+ */
+const activeTurnTempDirs = new Set<string>();
+
+function cleanupActiveTurnTempDirs(): void {
+  for (const dir of activeTurnTempDirs) {
+    cleanupDir(dir);
+  }
+  activeTurnTempDirs.clear();
+}
+/** Token of that turn, retired when its epoch is cancelled. */
+let activeTurnToken: TurnToken | undefined;
 
 /**
  * Drain everything Antigravity has produced so far and emit it as ACP updates.
  *
- * Hooks are read first so a tool call is always announced before the
- * transcript record carrying its output is matched against it.
+ * Hooks are ingested first so transcript records can match tool calls, then
+ * both sources are emitted in Antigravity step order.
  */
 function drain(input: {
   readonly sessionId: string;
@@ -826,11 +1284,15 @@ function drain(input: {
   readonly state: AgyTurnState;
   readonly cursor: AgyTranscriptCursor;
   readonly decoder: NodeStringDecoder.StringDecoder;
-  readonly transcriptBaselines: TranscriptBaselines;
   readonly transcriptOffset: { value: number };
   readonly assistantText: { emitted: boolean };
+  readonly turnToken: TurnToken;
   readonly final: boolean;
-}): void {
+  /** Defaults to true; set false to run hook and terminal cleanup only. */
+  readonly readTranscript?: boolean;
+}): boolean {
+  const bufferedUpdates: Array<AgyOrderedSessionUpdate> = [];
+  const approvals: Array<{ readonly name: string; readonly payload: AgyHookPayload }> = [];
   for (const { name, event: hook } of readHookEvents(input.hookDir, input.seenHooks)) {
     // Diffing the file contents each hook captured, rather than the arguments
     // of the edit, keeps this correct across tools whose argument shapes
@@ -852,50 +1314,78 @@ function drain(input: {
         // since the transcript is read once by byte offset.
         input.state.pendingTerminal.set(stepIdx, update);
       } else {
-        sendSessionUpdate(input.sessionId, update);
+        bufferedUpdates.push({
+          stepIdx,
+          phase: hook.event === "pre-tool-use" ? "pre" : "terminal",
+          update,
+        });
       }
     }
     // The hook process is blocked until a decision file appears, so this has
     // to be started for every announced tool call.
-    // Not during the final drain: the child has already exited, so no tool is
-    // waiting on the answer and the request would never be settled.
-    if (
-      !input.final &&
-      approvalRequired() &&
-      hook.event === "pre-tool-use" &&
-      hook.payload?.toolCall
-    ) {
-      requestToolApproval({
-        sessionId: input.sessionId,
-        hookDir: input.hookDir,
-        hookName: name,
-        payload: hook.payload,
-      });
+    if (approvalRequired() && hook.event === "pre-tool-use" && hook.payload?.toolCall) {
+      if (input.final) {
+        // The child has exited, so nothing will consume an approval — but the
+        // hook subprocess may still be polling, and its directory is about to
+        // be removed. Deny explicitly so it stops now instead of spinning until
+        // its own timeout with no possible answer.
+        writeDecision(input.hookDir, name, {
+          decision: "deny",
+          reason: "Antigravity turn ended before this tool was approved",
+        });
+      } else {
+        approvals.push({ name, payload: hook.payload });
+      }
     }
   }
 
-  const transcriptPath = resolveTranscriptPath(input.state);
+  const transcriptPath =
+    input.readTranscript === false ? undefined : resolveTranscriptPath(input.state);
+  let moreTranscript = false;
   if (transcriptPath) {
-    if (input.transcriptOffset.value === -1) {
-      input.transcriptOffset.value = transcriptPath.endsWith("transcript_full.jsonl")
-        ? input.transcriptBaselines.transcriptFull
-        : input.transcriptBaselines.transcript;
-    }
     let chunk = "";
     try {
       const stats = NodeFS.statSync(transcriptPath);
       if (stats.size > input.transcriptOffset.value) {
         const fd = NodeFS.openSync(transcriptPath, "r");
         try {
-          const length = stats.size - input.transcriptOffset.value;
+          // Capped rather than sized to the whole unread region: a tool that
+          // writes a very large record would otherwise have the bridge
+          // allocate a buffer as big as its output in one go, which the 256
+          // KiB stdout cap does nothing to prevent. Whatever is left is picked
+          // up by the next poll, and the final drain loops until it is gone.
+          const length = Math.min(
+            stats.size - input.transcriptOffset.value,
+            MAX_TRANSCRIPT_READ_BYTES,
+          );
           const buffer = Buffer.alloc(length);
-          NodeFS.readSync(fd, buffer, 0, length, input.transcriptOffset.value);
+          // `readSync` may return fewer bytes than asked for. Decoding the
+          // whole buffer would feed the zero-filled tail through as content
+          // and skip the real bytes for good. Read until the measured range is
+          // filled rather than relying on the next poll — the final drain has
+          // no next poll, and would lose the tail along with whatever partial
+          // record the cursor is about to flush.
+          let bytesRead = 0;
+          while (bytesRead < length) {
+            const read = NodeFS.readSync(
+              fd,
+              buffer,
+              bytesRead,
+              length - bytesRead,
+              input.transcriptOffset.value + bytesRead,
+            );
+            if (read <= 0) {
+              break;
+            }
+            bytesRead += read;
+          }
           // Decoded through the turn's streaming decoder, not `toString`: a
           // write can land mid-multibyte-character, and decoding each slice
           // independently would replace the partial sequence with U+FFFD and
           // advance past it, silently corrupting non-ASCII output.
-          chunk = input.decoder.write(buffer);
-          input.transcriptOffset.value = stats.size;
+          chunk = bytesRead > 0 ? input.decoder.write(buffer.subarray(0, bytesRead)) : "";
+          input.transcriptOffset.value += bytesRead;
+          moreTranscript = stats.size > input.transcriptOffset.value && bytesRead > 0;
         } finally {
           NodeFS.closeSync(fd);
         }
@@ -910,26 +1400,159 @@ function drain(input: {
     // conversation carries every prior turn. Trim once, then stream.
     if (!input.state.transcriptPrimed && allLines.length > 0) {
       const trimmed = dropPriorTurnRecords(allLines);
-      if (trimmed.length === allLines.length && input.state.resumedConversation && !input.final) {
-        // Resuming, and this batch holds no `USER_INPUT` — so the current
-        // turn's opening record has not been written yet and everything here
-        // belongs to a previous turn. Emitting it would replay old output;
-        // hold off and re-examine once more has been appended.
-        input.cursor.retain(allLines);
+      const foundBoundary = trimmed.length !== allLines.length;
+      if (foundBoundary) {
+        // A boundary observed after an overflow makes its suffix eligible
+        // again: everything retained from here belongs after that input, while
+        // text discarded before it remains permanently excluded.
+        input.state.transcriptPrimingOverflowed = false;
+      }
+      if (input.state.resumedConversation && !input.final && moreTranscript) {
+        // Still short of the end of the file, so no `USER_INPUT` seen so far can
+        // be trusted to be this turn's: the current turn's opening record may
+        // sit in bytes not yet read. Reads are capped, so this is the ordinary
+        // case for a long transcript rather than an edge one.
+        //
+        // What is held back is `trimmed`, not the whole batch — history is
+        // discarded as it is scanned, which is both what the turn wants and
+        // what keeps the hold bounded to a single turn's output.
+        if (
+          !input.state.transcriptPrimingOverflowed &&
+          !input.cursor.retainWithinLimit(trimmed, MAX_TRANSCRIPT_LINE_CHARS)
+        ) {
+          // Complete retained history is discarded, but a bounded partial line
+          // at the read cutoff is preserved because it may be this turn's
+          // USER_INPUT. Suppression remains active until that boundary is
+          // observed, so a historical record completed from the carry is still
+          // never emitted as current-turn output.
+          input.state.transcriptPrimingOverflowed = true;
+        }
         allLines = [];
       } else {
-        allLines = [...trimmed];
+        // Overflow discarded an unknown part of the candidate turn. Without a
+        // later input boundary, the remaining tail is just as likely to be old
+        // history and must not be surfaced as current-turn output.
+        allLines = input.state.transcriptPrimingOverflowed ? [] : [...trimmed];
         input.state.transcriptPrimed = true;
       }
     }
-    for (const line of allLines) {
-      const record = parseTranscriptLine(line);
-      if (!record) {
+    // Records held from an earlier pass go first: their hook may have arrived
+    // since, and they are older than anything read just now.
+    const carried = input.state.deferredRecords.splice(0, input.state.deferredRecords.length);
+    let remainingRecordChars = input.state.deferredRecordChars;
+    input.state.deferredRecordChars = 0;
+    const records = [
+      ...carried,
+      ...allLines.flatMap((line) => {
+        const record = parseTranscriptLine(line);
+        if (record === null) {
+          return [];
+        }
+        const deferred = {
+          record,
+          serializedChars: serializedTranscriptRecordSize(record),
+        };
+        remainingRecordChars += deferred.serializedChars;
+        return [deferred];
+      }),
+    ];
+
+    // A deferral is a barrier, not a skip: everything after it is held too.
+    // Emitting later records while an earlier one waits would put a tool's
+    // output after text that followed it, and replay it out of order next pass.
+    //
+    // Bounded, because Antigravity emits steps for its own internal work that
+    // no hook ever announces. Past the limit the held records are released in
+    // order and any still unmatched are dropped, so an unhookable step costs
+    // its own output rather than stalling everything behind it.
+    const held = input.state.deferredRecords;
+    // Only the record that actually waited out the bound is given up on, and
+    // only while it is still at the head. Applying its age to the whole batch
+    // would discard a record read moments ago that has had no chance at all.
+    const agedHead = carried.length > 0 && input.state.deferredDrains >= MAX_DEFERRED_DRAINS;
+    for (let index = 0; index < records.length; index += 1) {
+      const deferredRecord = records[index];
+      if (deferredRecord === undefined) {
         continue;
       }
+      const record = deferredRecord.record;
       const result = transcriptRecordUpdates(record, input.state);
+      if (!result.deferred) {
+        // Something matched, so whatever was blocking the queue has cleared.
+        input.state.deferredDrains = 0;
+      } else if (input.final) {
+        // Nothing further is coming; holding it would only lose it silently.
+        remainingRecordChars -= deferredRecord.serializedChars;
+        continue;
+      } else if (index === 0 && agedHead) {
+        // Waited its full budget with no hook. Drop just this one and let the
+        // rest of the batch start over with a fresh budget.
+        input.state.deferredDrains = 0;
+        remainingRecordChars -= deferredRecord.serializedChars;
+        continue;
+      } else {
+        held.push(...records.slice(index).filter((entry) => entry !== undefined));
+        input.state.deferredRecordChars = remainingRecordChars;
+        input.state.deferredDrains += 1;
+        // Aged out one at a time, but refilled by every poll. Antigravity emits
+        // internal steps far faster than one record per drain interval, so on a
+        // transcript with unhookable steps the queue grows no matter how
+        // patiently the head expires.
+        //
+        // Overflow is consumed rather than discarded: a record stuck behind an
+        // unmatchable one may have had its own hook arrive in the meantime, and
+        // dropping it unexamined would lose that tool's output for good. Each is
+        // offered again on the way out; only those still unmatched are dropped.
+        let heldChars = input.state.deferredRecordChars;
+        let trimmed = false;
+        while (held.length > MAX_DEFERRED_RECORDS || heldChars > MAX_DEFERRED_CHARS) {
+          const candidate = held.shift();
+          if (candidate === undefined) {
+            break;
+          }
+          trimmed = true;
+          heldChars -= candidate.serializedChars;
+          const retried = transcriptRecordUpdates(candidate.record, input.state);
+          if (retried.deferred) {
+            continue;
+          }
+          for (const update of retried.updates) {
+            bufferedUpdates.push({
+              stepIdx: candidate.record.step_index,
+              phase: "transcript",
+              update,
+            });
+          }
+          if (retried.emittedAssistantText) {
+            input.assistantText.emitted = true;
+          }
+          const retriedStep = candidate.record.step_index;
+          if (typeof retriedStep === "number") {
+            const terminal = takeTerminal(input.state, retriedStep);
+            if (terminal) {
+              bufferedUpdates.push({
+                stepIdx: retriedStep,
+                phase: "terminal",
+                update: terminal,
+              });
+            }
+          }
+        }
+        input.state.deferredRecordChars = heldChars;
+        if (trimmed) {
+          // The head that had been accruing age is gone, so its budget must not
+          // carry over to whatever is now in front — that record would expire
+          // without ever having waited.
+          input.state.deferredDrains = 0;
+        }
+        break;
+      }
       for (const update of result.updates) {
-        sendSessionUpdate(input.sessionId, update);
+        bufferedUpdates.push({
+          stepIdx: record.step_index,
+          phase: "transcript",
+          update,
+        });
       }
       if (result.emittedAssistantText) {
         input.assistantText.emitted = true;
@@ -937,29 +1560,52 @@ function drain(input: {
       // This step's output is out; the call can be completed now.
       const stepIndex = record.step_index;
       if (typeof stepIndex === "number") {
-        flushTerminal(input.sessionId, input.state, stepIndex);
+        const terminal = takeTerminal(input.state, stepIndex);
+        if (terminal) {
+          bufferedUpdates.push({
+            stepIdx: stepIndex,
+            phase: "terminal",
+            update: terminal,
+          });
+        }
       }
+      remainingRecordChars -= deferredRecord.serializedChars;
     }
   }
 
   // Nothing more will arrive, so anything still waiting on a transcript record
   // that never came is completed without output rather than left spinning.
   if (input.final) {
-    const remaining = [...input.state.pendingTerminal.values()];
+    const remaining = [...input.state.pendingTerminal];
     input.state.pendingTerminal.clear();
-    for (const terminal of remaining) {
-      sendSessionUpdate(input.sessionId, terminal);
+    for (const [stepIdx, terminal] of remaining) {
+      bufferedUpdates.push({ stepIdx, phase: "terminal", update: terminal });
     }
   }
+
+  for (const update of orderAgySessionUpdates(bufferedUpdates)) {
+    sendSessionUpdate(input.sessionId, update);
+  }
+  for (const approval of approvals) {
+    requestToolApproval({
+      sessionId: input.sessionId,
+      hookDir: input.hookDir,
+      hookName: approval.name,
+      payload: approval.payload,
+      turnToken: input.turnToken,
+    });
+  }
+
+  return moreTranscript;
 }
 
-function flushTerminal(sessionId: string, state: AgyTurnState, stepIdx: number): void {
+function takeTerminal(state: AgyTurnState, stepIdx: number): AgySessionUpdate | undefined {
   const terminal = state.pendingTerminal.get(stepIdx);
   if (!terminal) {
-    return;
+    return undefined;
   }
   state.pendingTerminal.delete(stepIdx);
-  sendSessionUpdate(sessionId, terminal);
+  return terminal;
 }
 
 /**
@@ -986,30 +1632,70 @@ function resolveTranscriptPath(state: AgyTurnState): string | undefined {
   return state.resolvedTranscriptPath;
 }
 
+/**
+ * Thrown when a cancel lands in the window between claiming the turn and
+ * spawning `agy`. Carries no message: it never surfaces to the client, it only
+ * unwinds setup through the same path a spawn failure takes.
+ */
+class TurnCancelledBeforeSpawn extends Error {}
+
 async function runTurn(
   sessionId: string,
   session: BridgeSession,
   prompt: RenderedPrompt,
+  promptEpoch: number | undefined,
 ): Promise<TurnOutcome> {
   // A cancel that raced the end of an earlier turn must not decide this one.
   cancelledSessions.delete(sessionId);
+
   // Claimed before any setup work: spawning `agy` takes long enough that a
   // cancel can land first, and cancels are only honoured for the session
   // holding this claim. Leaving it unset until after the spawn would silently
   // drop those, letting an auto-approving child run on past a cancelled turn.
   activeTurnSessionId = sessionId;
+  // Claimed together. Setting the epoch later left a window where this turn
+  // looked untagged, and an untagged turn is cancelled unconditionally — so a
+  // late cancel carrying an older epoch would kill a turn it does not cover.
+  activeTurnEpoch = promptEpoch;
+  // Rotated before the spawn, so the child is handed this turn's secret: a tool
+  // approved in an earlier turn holds that turn's, and cannot sign anything
+  // this one will accept.
+  turnHookSecret = NodeCrypto.randomBytes(32).toString("hex");
   // Measured before `agy` starts: whatever the transcript already holds
   // belongs to earlier turns of the conversation being resumed.
-  const baselines = transcriptBaselines(session.conversationId);
+  const baseline = transcriptBaseline(session.conversationId);
   let hookDir: string | undefined;
   let hookWorkspace: string | undefined;
   let attachmentDir: string | undefined;
   let child: NodeChildProcess.ChildProcess;
   try {
     hookDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agy-hookout-"));
+    activeTurnTempDirs.add(hookDir);
     hookWorkspace = createHookWorkspace();
+    activeTurnTempDirs.add(hookWorkspace);
     const attachments = stageAttachments(prompt.attachments);
     attachmentDir = attachments.dir;
+    if (attachmentDir) {
+      activeTurnTempDirs.add(attachmentDir);
+    }
+    // Yielded to the event loop once, with the claim held and the directories
+    // staged, before anything is spawned.
+    //
+    // Everything above this point is synchronous, so a `t3/fence` or
+    // `session/cancel` already sitting in the stdin buffer could not be parsed
+    // until after `agy` was running: the turn the user stopped still reached
+    // the model, and was only killed afterwards. One turn of the event loop is
+    // enough for the reader to deliver it, and the recheck below then declines
+    // to spawn at all.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (
+      shuttingDown ||
+      cancelledSessions.has(sessionId) ||
+      (promptEpoch !== undefined && promptEpoch <= cancelledThrough(sessionId))
+    ) {
+      throw new TurnCancelledBeforeSpawn();
+    }
+
     const rawCommand = process.env["T3_AGY_COMMAND"]?.trim() || "agy";
     const spawnCommand = Effect.runSync(
       resolveSpawnCommand(
@@ -1027,18 +1713,34 @@ async function runTurn(
       spawnCommand.args,
       {
         cwd: session.cwd,
-        env: { ...process.env, [HOOK_DIR_ENV]: hookDir },
+        env: { ...process.env, [HOOK_DIR_ENV]: hookDir, [HOOK_SECRET_ENV]: turnHookSecret },
         stdio: ["ignore", "pipe", "pipe"],
+        // Its own process group, so cancelling can reach the tools `agy`
+        // spawned rather than only `agy` itself. A tool left running keeps
+        // modifying the workspace after Stop.
+        detached: true,
         shell: spawnCommand.shell,
       },
     );
   } catch (error) {
-    // Setup failed, so no turn is running: release the claim and reclaim the
-    // directories, or repeated failures would leak one set each time.
+    // Setup failed or the turn was cancelled before it started, so no turn is
+    // running: release the claim and reclaim the directories, or repeated
+    // failures would leak one set each time.
     activeTurnSessionId = null;
+    activeTurnEpoch = undefined;
     cleanupDir(hookDir);
     cleanupDir(hookWorkspace);
     cleanupDir(attachmentDir);
+    if (hookDir) activeTurnTempDirs.delete(hookDir);
+    if (hookWorkspace) activeTurnTempDirs.delete(hookWorkspace);
+    if (attachmentDir) activeTurnTempDirs.delete(attachmentDir);
+    if (error instanceof TurnCancelledBeforeSpawn) {
+      // Nothing ran, so there is nothing to report but the cancellation. The
+      // flag is consumed here because no later stage will reach the drain that
+      // normally clears it.
+      cancelledSessions.delete(sessionId);
+      return { stopReason: "cancelled" };
+    }
     throw error;
   }
 
@@ -1046,31 +1748,65 @@ async function runTurn(
   const seenHooks = new Set<string>();
   const cursor = new AgyTranscriptCursor();
   const decoder = new NodeStringDecoder.StringDecoder("utf8");
-  const transcriptOffset = { value: -1 };
-  if (baselines.transcript > 0 || baselines.transcriptFull > 0) {
+  const transcriptOffset = { value: baseline?.size ?? 0 };
+  if (baseline && baseline.size > 0) {
     // Reading starts past every earlier turn, so there is no prior-turn
-    // content left for the `USER_INPUT` heuristic to guess at.
+    // content left for the `USER_INPUT` heuristic to guess at. The turn is
+    // pinned to the exact file the baseline was measured from.
     state.transcriptPrimed = true;
+    state.resolvedTranscriptPath = baseline.path;
   }
   const assistantText = { emitted: false };
+  const turnToken: TurnToken = { sessionId, live: true };
+  // Published so an out-of-band fence covering this epoch can retire the turn
+  // rather than being recorded for an arrival that already happened.
+  activeTurnToken = turnToken;
   activeChild = child;
+  if (child.pid !== undefined) {
+    // Tracking is released the moment it ends, so nothing ever signals a group
+    // id that is no longer ours.
+    forgetChildOnExit(child);
+  }
   // A cancel during startup had no process to signal; deliver it now.
   if (cancelledSessions.has(sessionId)) {
-    child.kill("SIGTERM");
+    killActiveChild();
   }
 
+  // Both are kept as bounded tails. A turn that prints a large file — or a tool
+  // that loops — would otherwise grow these strings for the whole run and take
+  // the bridge's heap with it, turning a noisy turn into a dead provider.
+  // stdout is only ever a fallback for when the transcript produced nothing,
+  // and stderr only has to carry enough to explain a failure.
   let stdout = "";
   let stderr = "";
+  let stdoutTruncated = false;
+  let stderrTruncated = false;
+  const appendBounded = (current: string, chunk: string): [string, boolean] => {
+    const combined = current + chunk;
+    return combined.length <= MAX_CAPTURED_OUTPUT
+      ? [combined, false]
+      : [combined.slice(combined.length - MAX_CAPTURED_OUTPUT), true];
+  };
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
-    stdout += chunk;
+    const [next, dropped] = appendBounded(stdout, chunk);
+    stdout = next;
+    stdoutTruncated = stdoutTruncated || dropped;
   });
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => {
-    stderr += chunk;
+    const [next, dropped] = appendBounded(stderr, chunk);
+    stderr = next;
+    stderrTruncated = stderrTruncated || dropped;
   });
 
   const poller = setInterval(() => {
+    // Skipped rather than queued behind a reader that is already behind.
+    // `writeMessage` clears the flag on `drain`, so a later interval resumes
+    // only after stdout has accepted its buffered data.
+    if (stdoutBlocked) {
+      return;
+    }
     drain({
       sessionId,
       hookDir,
@@ -1078,21 +1814,97 @@ async function runTurn(
       state,
       cursor,
       decoder,
-      transcriptBaselines: baselines,
       transcriptOffset,
       assistantText,
+      turnToken,
       final: false,
     });
   }, HOOK_POLL_INTERVAL_MS);
 
+  let childError: Error | undefined;
   const exitCode = await new Promise<number | null>((resolve) => {
-    child.on("error", () => resolve(null));
-    child.on("close", (code) => resolve(code));
+    let settled = false;
+    let missingCloseTimer: ReturnType<typeof setTimeout> | undefined;
+    const settle = (code: number | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (missingCloseTimer) {
+        clearTimeout(missingCloseTimer);
+      }
+      resolve(code);
+    };
+    child.on("error", (error) => {
+      childError = error;
+      // An error can report a failed kill while the process is still alive.
+      // The turn continues to own and poll the child until `close`; arm the
+      // normal escalation rather than releasing its directories underneath it.
+      if (
+        activeChild === child &&
+        child.pid !== undefined &&
+        child.exitCode === null &&
+        child.signalCode === null
+      ) {
+        killActiveChild();
+      }
+      // Node normally follows `error` with `close`, including failed spawns.
+      // Keep that path intact, but do not let a platform/runtime that omits
+      // `close` pin the turn and its temp directories forever. The grace
+      // outlasts the ordinary process-group escalation above.
+      missingCloseTimer ??= setTimeout(() => settle(child.exitCode), CHILD_ERROR_CLOSE_GRACE_MS);
+    });
+    child.once("close", settle);
   });
 
   clearInterval(poller);
   activeChild = null;
   activeTurnSessionId = null;
+  // Each pass reads at most `MAX_TRANSCRIPT_READ_BYTES`, so the tail of a large
+  // transcript needs several. Only the last one runs as `final`: flushing the
+  // cursor while bytes remain would emit a half-written record as if it were
+  // whole, and leave the rest of that line to be read as a fragment.
+  const stdoutDrainDeadline = Date.now() + STDOUT_DRAIN_GRACE_MS;
+  let finalPasses = 0;
+  let transcriptRemains: boolean;
+  do {
+    transcriptRemains = drain({
+      sessionId,
+      hookDir,
+      seenHooks,
+      state,
+      cursor,
+      decoder,
+      transcriptOffset,
+      assistantText,
+      turnToken,
+      final: false,
+    });
+    finalPasses += 1;
+    if (!transcriptRemains || finalPasses >= MAX_FINAL_DRAIN_PASSES) {
+      break;
+    }
+    const stdoutDrainTimedOut = await waitForStdoutDrain(stdoutDrainDeadline);
+    if (stdoutDrainTimedOut) {
+      break;
+    }
+  } while (transcriptRemains);
+  if (transcriptRemains) {
+    // Final draining stopped with bytes still unread. Flushing the cursor now
+    // would present a half-written line as a whole record and then abandon the
+    // rest in silence, so the partial line is dropped and the shortfall is said
+    // out loud instead.
+    cursor.flush();
+    await waitForStdoutDrain(stdoutDrainDeadline);
+    sendSessionUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: "[Transcript truncated: Antigravity produced more output than this turn could read.]",
+      },
+    });
+  }
+  await waitForStdoutDrain(stdoutDrainDeadline);
   drain({
     sessionId,
     hookDir,
@@ -1100,10 +1912,15 @@ async function runTurn(
     state,
     cursor,
     decoder,
-    transcriptBaselines: baselines,
     transcriptOffset,
     assistantText,
+    turnToken,
     final: true,
+    // Reading more after announcing truncation would emit records that follow
+    // the notice, and abandon everything past that one extra read just as
+    // silently. Once truncation is declared the transcript is closed; this pass
+    // exists only to flush hooks and any terminal state still owed.
+    readTranscript: !transcriptRemains,
   });
 
   // Any tool still open at exit would otherwise render as spinning forever.
@@ -1125,27 +1942,64 @@ async function runTurn(
     persistConversationId(sessionId, state.conversationId);
   }
 
+  // Retired before the directories are reclaimed: any approval still in flight
+  // now resolves to a denial rather than writing into a vanishing directory or
+  // banking a blanket approval for the next turn.
+  turnToken.live = false;
+  // Scoped to the turn: every hook of every turn would otherwise stay in here
+  // for the life of the bridge.
+  hookPayloadDigests.clear();
+  activeTurnEpoch = undefined;
+  activeTurnToken = undefined;
   cleanupDir(hookDir);
   cleanupDir(hookWorkspace);
   cleanupDir(attachmentDir);
+  activeTurnTempDirs.delete(hookDir);
+  activeTurnTempDirs.delete(hookWorkspace);
+  if (attachmentDir) {
+    activeTurnTempDirs.delete(attachmentDir);
+  }
 
-  if (cancelledSessions.delete(sessionId)) {
-    return { stopReason: "cancelled" };
-  }
-  if (exitCode !== 0) {
-    const detail = stderr.trim() || stdout.trim() || `agy exited with code ${exitCode}`;
-    return { stopReason: "end_turn", failure: detail };
-  }
+  const cancelled = cancelledSessions.delete(sessionId);
 
   // The transcript already streamed the assistant text. stdout is only used
   // when transcript observation produced nothing, so the reply is never
   // duplicated.
-  if (!assistantText.emitted && stdout.trim().length > 0) {
+  //
+  // Emitted before the cancelled check, not after: a turn stopped mid-reply is
+  // exactly the case where the transcript may not have been discovered yet,
+  // and the partial answer already captured from stdout is the only record of
+  // what the model said. A nonzero exit is excluded because it reports the same
+  // bytes as its failure detail.
+  if ((cancelled || exitCode === 0) && !assistantText.emitted && stdout.trim().length > 0) {
+    // Says so when it is only the tail. Presenting a suffix as the whole reply
+    // reads as a complete answer that happens to begin mid-sentence, which is
+    // worse than admitting the beginning was dropped.
+    const text = stdoutTruncated
+      ? `[Earlier output dropped: the reply exceeded ${Math.floor(MAX_CAPTURED_OUTPUT / 1024)} KiB.]\n\n${stdout.trim()}`
+      : stdout.trim();
     sendSessionUpdate(sessionId, {
       sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: stdout.trim() },
+      content: { type: "text", text },
     });
   }
+
+  if (cancelled) {
+    return { stopReason: "cancelled" };
+  }
+  if (exitCode !== 0 || childError !== undefined) {
+    const processError = childError?.message.trim() ?? "";
+    const processOutput = stderr.trim() || stdout.trim();
+    const captured = [processError, processOutput].filter((part) => part.length > 0).join("\n");
+    const truncated = stderr.trim() ? stderrTruncated : stdoutTruncated;
+    const detail = captured
+      ? truncated
+        ? `[earlier output dropped] ${captured}`
+        : captured
+      : `agy exited with code ${exitCode}`;
+    return { stopReason: "end_turn", failure: detail };
+  }
+
   return { stopReason: "end_turn" };
 }
 
@@ -1248,10 +2102,27 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
         sendError(id, -32602, "unknown sessionId");
         return;
       }
-      const queuedAt = queuedPromptGenerations.get(id);
-      queuedPromptGenerations.delete(id);
-      if (queuedAt !== undefined && queuedAt !== cancelGeneration(sessionId)) {
-        // Cancelled while it sat in the queue; never spawn `agy` for it.
+      if (shuttingDown) {
+        // The client is gone; starting `agy` now would leave it running with
+        // nobody to read its output.
+        sendResult(id, { stopReason: "cancelled" });
+        return;
+      }
+      // Compared against the session's cancelled high-water mark. A cancel
+      // that outran this prompt raised that mark, and anything the user sends
+      // afterwards carries a higher epoch and is unaffected.
+      //
+      // A prompt without an epoch is from a client that does not send fences,
+      // so there is no mark it could be measured against — refusing it would
+      // reject every prompt such a client ever sends once a mark exists.
+      const promptEpoch = promptEpochOf(params);
+      // One-shot, and only reachable for a client that sends no epochs.
+      const unscopedCancelled = promptEpoch === undefined && unscopedCancels.delete(sessionId);
+      if (
+        unscopedCancelled ||
+        (promptEpoch !== undefined && promptEpoch <= cancelledThrough(sessionId))
+      ) {
+        // Cancelled before it could start; never spawn `agy` for it.
         sendResult(id, { stopReason: "cancelled" });
         return;
       }
@@ -1260,7 +2131,7 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
         sendError(id, -32602, "session/prompt requires at least one text block");
         return;
       }
-      const outcome = await runTurn(sessionId, session, prompt);
+      const outcome = await runTurn(sessionId, session, prompt, promptEpoch);
       if (outcome.failure) {
         sendError(id, -32000, `Antigravity turn failed: ${outcome.failure}`);
         return;
@@ -1268,20 +2139,64 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
       sendResult(id, { stopReason: outcome.stopReason });
       return;
     }
+    // Sent by the adapter immediately before it cancels, naming the epoch it
+    // is cancelling through. Handled out of band: queued, it would sit behind
+    // the very prompt it is meant to stop. Notifications carry no id, so
+    // nothing is replied.
+    case "t3/fence": {
+      const sessionId = typeof params["sessionId"] === "string" ? params["sessionId"] : undefined;
+      const epoch = typeof params["epoch"] === "number" ? params["epoch"] : undefined;
+      if (!sessionId || epoch === undefined) {
+        return;
+      }
+      cancelledThroughEpoch.set(sessionId, Math.max(cancelledThrough(sessionId), epoch));
+      // A turn already running under a cancelled epoch has nothing left to
+      // stop on arrival, so it is stopped here. Retiring the token is what
+      // makes an approval still in flight deny, including one the client
+      // would auto-approve.
+      if (
+        activeTurnToken?.sessionId === sessionId &&
+        activeTurnEpoch !== undefined &&
+        activeTurnEpoch <= epoch
+      ) {
+        activeTurnToken.live = false;
+        cancelledSessions.add(sessionId);
+        killActiveChild();
+      }
+      return;
+    }
     case "session/cancel": {
       const sessionId = typeof params["sessionId"] === "string" ? params["sessionId"] : undefined;
-      if (sessionId) {
-        // Always recorded, so prompts already queued for this session can see
-        // that a cancel happened and refuse to start.
-        cancelGenerations.set(sessionId, cancelGeneration(sessionId) + 1);
-        // Only a cancel aimed at the turn actually running decides its stop
-        // reason. Cancels bypass the request queue, so one arriving after a
-        // turn finished — or targeting an idle session — must not sit in the
-        // set and mark the next successful turn cancelled.
-        if (sessionId === activeTurnSessionId) {
-          cancelledSessions.add(sessionId);
-          activeChild?.kill("SIGTERM");
+      if (!sessionId || !sessions.has(sessionId)) {
+        return;
+      }
+      // Recorded before anything else. A cancel bypasses the request queue and
+      // its prompt does not, so the two can arrive together with the prompt
+      // still waiting — and returning early below would drop the epoch and let
+      // that prompt spawn `agy` after the Stop that was meant to catch it.
+      const cancelEpoch = typeof params["epoch"] === "number" ? params["epoch"] : undefined;
+      if (cancelEpoch !== undefined) {
+        cancelledThroughEpoch.set(sessionId, Math.max(cancelledThrough(sessionId), cancelEpoch));
+      }
+      if (sessionId !== activeTurnSessionId) {
+        // No turn running for it yet. An untagged prompt has no epoch to be
+        // measured against, so it needs a marker — banked only when one is
+        // genuinely waiting, or a cancel that merely arrived after its own turn
+        // finished would sit here and stop something sent much later.
+        if (queuedUntagged(sessionId) > 0) {
+          unscopedCancels.add(sessionId);
         }
+        return;
+      }
+      // Only the turn actually running is stopped, and only when its epoch has
+      // been cancelled: a prompt accepted after the fence carries a higher one
+      // and must survive this notification, which the runtime forks and can
+      // therefore deliver late. A turn whose prompt carried no epoch cannot be
+      // scoped by a mark it never contributed to, so it takes plain ACP
+      // semantics.
+      if (activeTurnEpoch === undefined || activeTurnEpoch <= cancelledThrough(sessionId)) {
+        cancelledSessions.add(sessionId);
+        killActiveChild();
       }
       return;
     }
@@ -1295,6 +2210,33 @@ async function handleRequest(message: Record<string, unknown>): Promise<void> {
 
 /** Entry point for `t3 agy-acp`. */
 export async function runAgyBridge(): Promise<void> {
+  // `detached: true` means the child outlives this process unless it is told
+  // otherwise. Losing the bridge — a signal, a crashing parent — would
+  // otherwise leave `agy` and its tools running against the user's workspace
+  // with nothing left to stop them.
+  // Shutdown kills outright rather than scheduling an escalation: `process.exit`
+  // runs no timers, so a graceful SIGTERM here would leave a tool that ignores
+  // it alive in its own detached group with the bridge already gone.
+  const stopChildOnExit = () => {
+    shuttingDown = true;
+    killActiveChild({ immediate: true });
+    // The turn's own cleanup never runs when the process is going down, and
+    // these hold copies of the user's attachments and captured file contents.
+    cleanupActiveTurnTempDirs();
+    // Groups whose leader already exited are known only to their pending
+    // escalation, and `process.exit` runs no timers.
+    killPendingGroups();
+  };
+  process.once("SIGTERM", () => {
+    stopChildOnExit();
+    process.exit(0);
+  });
+  process.once("SIGINT", () => {
+    stopChildOnExit();
+    process.exit(0);
+  });
+  process.once("exit", stopChildOnExit);
+
   let buffer = "";
   // Requests are handled strictly in order: a turn holds the agent busy, and
   // ACP clients do not pipeline prompts for one session.
@@ -1331,6 +2273,14 @@ export async function runAgyBridge(): Promise<void> {
         continue;
       }
 
+      // Handled out of band alongside cancel. Queued, it would sit behind the
+      // very prompt it is meant to stop and only be recorded once that prompt
+      // had already run.
+      if (message["method"] === "t3/fence") {
+        void handleRequest(message);
+        continue;
+      }
+
       // Cancellation must interrupt an in-flight turn, so it bypasses the
       // queue that would otherwise make it wait for that turn to finish.
       if (message["method"] === "session/cancel") {
@@ -1338,16 +2288,34 @@ export async function runAgyBridge(): Promise<void> {
         continue;
       }
       const pending = message;
-      // Captured now, not when the turn starts: the gap between the two is
-      // exactly the window a cancel has to arrive in while this prompt waits.
-      if (pending["method"] === "session/prompt") {
-        const target = (pending["params"] as Record<string, unknown> | undefined)?.["sessionId"];
-        if (typeof target === "string" && pending["id"] !== undefined) {
-          queuedPromptGenerations.set(pending["id"], cancelGeneration(target));
-        }
+      // Counted from acceptance to handling, so a cancel can tell "a prompt is
+      // waiting" from "nothing is outstanding".
+      const queuedParams =
+        pending["method"] === "session/prompt"
+          ? (pending["params"] as Record<string, unknown> | undefined)
+          : undefined;
+      const queuedSessionId =
+        queuedParams && promptEpochOf(queuedParams) === undefined
+          ? queuedParams["sessionId"]
+          : undefined;
+      if (typeof queuedSessionId === "string") {
+        queuedUntaggedCounts.set(queuedSessionId, queuedUntagged(queuedSessionId) + 1);
       }
       queue = queue
         .then(() => handleRequest(pending))
+        .finally(() => {
+          if (typeof queuedSessionId === "string") {
+            const remaining = queuedUntagged(queuedSessionId) - 1;
+            if (remaining > 0) {
+              queuedUntaggedCounts.set(queuedSessionId, remaining);
+            } else {
+              queuedUntaggedCounts.delete(queuedSessionId);
+              // Nothing untagged is waiting any more, so a marker banked for
+              // one cannot be consumed and must not outlive it.
+              unscopedCancels.delete(queuedSessionId);
+            }
+          }
+        })
         .catch((error: unknown) => {
           // Every request must be answered. Swallowing a handler failure would
           // leave the client blocked on a response that never arrives.
@@ -1359,9 +2327,15 @@ export async function runAgyBridge(): Promise<void> {
     }
   }
 
+  // Recorded before anything else so queued prompts see it and decline.
+  shuttingDown = true;
   // stdin closed: no approval can still be answered, so unblock the hooks
   // waiting on them (they fail closed) rather than letting them time out.
   failPendingOutbound("T3 Code disconnected before approving this tool call");
+  // Killed before awaiting the queue, not after: an in-flight `session/prompt`
+  // only resolves when `agy` exits, so waiting first would keep the bridge and
+  // its child alive for the whole print timeout — hours — after the client
+  // disconnected.
+  killActiveChild();
   await queue;
-  activeChild?.kill("SIGTERM");
 }

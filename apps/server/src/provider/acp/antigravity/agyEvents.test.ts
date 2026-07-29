@@ -230,18 +230,4 @@ describe("agyHookResponse", () => {
   });
 });
 
-describe("resolveAgyCommand", () => {
-  it("returns unchanged command for non-windows platforms", async () => {
-    const { resolveAgyCommand } = await import("./agyBridge.ts");
-    expect(resolveAgyCommand("agy", {}, "linux")).toEqual({ command: "agy", shell: false });
-    expect(resolveAgyCommand("agy", {}, "darwin")).toEqual({ command: "agy", shell: false });
-  });
 
-  it("identifies explicit cmd files on windows", async () => {
-    const { resolveAgyCommand } = await import("./agyBridge.ts");
-    expect(resolveAgyCommand("C:\\tools\\agy.cmd", {}, "win32")).toEqual({
-      command: "C:\\tools\\agy.cmd",
-      shell: true,
-    });
-  });
-});
