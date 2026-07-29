@@ -1968,7 +1968,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   if (workEntry.tone === "subagent") {
     const isRunning =
       workEntry.toolLifecycleStatus === "inProgress" || workEntry.toolLifecycleStatus === undefined;
-    const isFailed = workEntry.toolLifecycleStatus === "failed" || workEntry.toolLifecycleStatus === "declined" || workEntry.toolLifecycleStatus === "stopped";
+    const isFailed =
+      workEntry.toolLifecycleStatus === "failed" ||
+      workEntry.toolLifecycleStatus === "declined" ||
+      workEntry.toolLifecycleStatus === "stopped";
     const isDeclined = workEntry.toolLifecycleStatus === "declined";
     const isStopped = workEntry.toolLifecycleStatus === "stopped";
     const isDestructive = isFailed || isDeclined || isStopped;
