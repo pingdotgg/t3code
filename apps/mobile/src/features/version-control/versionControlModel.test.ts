@@ -15,6 +15,7 @@ import {
   panelChangeSets,
   reconcileSelectedPaths,
   relativeLabel,
+  renameOriginalPathForFile,
   selectedFileStats,
   snapshotForCwd,
   snapshotIsPendingForCwd,
@@ -210,6 +211,21 @@ describe("native Version Control model", () => {
     expect(
       operationPaths([{ path: "copy.ts", originalPath: "source.ts", status: "copied" }]),
     ).toEqual(["copy.ts"]);
+  });
+
+  it("passes an original path to diff requests only for renames", () => {
+    expect(
+      renameOriginalPathForFile({
+        originalPath: "old.ts",
+        status: "renamed",
+      }),
+    ).toBe("old.ts");
+    expect(
+      renameOriginalPathForFile({
+        originalPath: "source.ts",
+        status: "copied",
+      }),
+    ).toBeUndefined();
   });
 
   it("exposes snapshots only to the cwd that loaded them", () => {

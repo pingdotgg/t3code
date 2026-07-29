@@ -28,7 +28,11 @@ import {
   stashIdentityKey,
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
-import { operationPathsForFile, sourceControlPanelError } from "./SourceControlPanelModel";
+import {
+  operationPathsForFile,
+  renameOriginalPathForFile,
+  sourceControlPanelError,
+} from "./SourceControlPanelModel";
 import { sourceControlPanelStateCacheKey } from "./SourceControlPanelCache";
 
 const PRIMARY_ENVIRONMENT_ID = EnvironmentId.make("environment-primary");
@@ -273,6 +277,21 @@ describe("SourceControlPanel working-tree presentation logic", () => {
         status: "copied",
       }),
     ).toEqual(["src/copied.ts"]);
+  });
+
+  it("passes an original path to diff requests only for renames", () => {
+    expect(
+      renameOriginalPathForFile({
+        originalPath: "src/original.ts",
+        status: "renamed",
+      }),
+    ).toBe("src/original.ts");
+    expect(
+      renameOriginalPathForFile({
+        originalPath: "src/original.ts",
+        status: "copied",
+      }),
+    ).toBeUndefined();
   });
 });
 

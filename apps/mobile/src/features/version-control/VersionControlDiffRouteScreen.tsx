@@ -24,6 +24,7 @@ import {
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import { useVersionControlPanelApi } from "./useVersionControlPanelApi";
+import { renameOriginalPathForFile } from "./versionControlModel";
 import { retryInterruptedVersionControlRequest } from "./versionControlRequest";
 
 const EMPTY_IDS: readonly string[] = [];
@@ -78,6 +79,7 @@ export function VersionControlDiffRouteScreen(props: VersionControlDiffRouteScre
   const colorScheme = useColorScheme();
   const scheme = colorScheme === "dark" ? "dark" : "light";
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
+  const originalPath = renameOriginalPathForFile(file);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,7 +88,7 @@ export function VersionControlDiffRouteScreen(props: VersionControlDiffRouteScre
       api.readFileDiff({
         cwd,
         path: file.path,
-        ...(file.originalPath ? { originalPath: file.originalPath } : {}),
+        ...(originalPath ? { originalPath } : {}),
         source,
       }),
     )
@@ -101,7 +103,7 @@ export function VersionControlDiffRouteScreen(props: VersionControlDiffRouteScre
     return () => {
       cancelled = true;
     };
-  }, [api, cwd, file.originalPath, file.path, source]);
+  }, [api, cwd, file.path, originalPath, source]);
 
   const patch = state.status === "loaded" ? state.patch : "";
   const cacheKey = `${cwd}:${file.path}:${JSON.stringify(source)}`;

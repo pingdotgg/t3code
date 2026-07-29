@@ -167,12 +167,17 @@ export function uniquePaths(paths: readonly string[]): string[] {
   return [...new Set(paths.filter((path) => path.length > 0))];
 }
 
+export function renameOriginalPathForFile(
+  file: Pick<VcsPanelFileChange, "originalPath" | "status">,
+): string | undefined {
+  return file.status === "renamed" && file.originalPath ? file.originalPath : undefined;
+}
+
 export function operationPathsForFile(
   file: Pick<VcsPanelFileChange, "path" | "originalPath" | "status">,
 ): string[] {
-  return uniquePaths(
-    file.status === "renamed" && file.originalPath ? [file.path, file.originalPath] : [file.path],
-  );
+  const originalPath = renameOriginalPathForFile(file);
+  return uniquePaths(originalPath ? [file.path, originalPath] : [file.path]);
 }
 
 export function worktreeChangeSetId(

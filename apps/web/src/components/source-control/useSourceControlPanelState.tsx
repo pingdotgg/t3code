@@ -50,6 +50,7 @@ import {
   expandedStashesForSnapshot,
   mapBranchDetails,
   operationPathsForFile,
+  renameOriginalPathForFile,
   shouldEnrichWorkingTreeFile,
   sourceControlPanelError,
   splitEnrichmentFileKey,
@@ -565,6 +566,7 @@ export function useSourceControlPanelState({
     ) => {
       if (!api) return;
       const key = fileDiffKey(file, source, targetCwd);
+      const originalPath = renameOriginalPathForFile(file);
       const nextRequestId = (fileDiffRequestIdsRef.current.get(key) ?? 0) + 1;
       fileDiffRequestIdsRef.current.set(key, nextRequestId);
       setFileDiffsByKey((current) => {
@@ -579,7 +581,7 @@ export function useSourceControlPanelState({
         .readFileDiff({
           cwd: targetCwd,
           path: file.path,
-          ...(file.originalPath ? { originalPath: file.originalPath } : {}),
+          ...(originalPath ? { originalPath } : {}),
           staged: source.kind === "working-tree" ? source.staged : false,
           source,
         })

@@ -117,16 +117,21 @@ export function visibleRemoteBranches(
   return expanded ? remote.branches : [];
 }
 
+export function renameOriginalPathForFile(
+  file: Pick<VcsPanelFileChange, "originalPath" | "status">,
+): string | undefined {
+  return file.status === "renamed" && file.originalPath ? file.originalPath : undefined;
+}
+
 export function operationPaths(
   files: readonly Pick<VcsPanelFileChange, "path" | "originalPath" | "status">[],
 ) {
   return [
     ...new Set(
-      files.flatMap((file) =>
-        file.status === "renamed" && file.originalPath
-          ? [file.path, file.originalPath]
-          : [file.path],
-      ),
+      files.flatMap((file) => {
+        const originalPath = renameOriginalPathForFile(file);
+        return originalPath ? [file.path, originalPath] : [file.path];
+      }),
     ),
   ];
 }
