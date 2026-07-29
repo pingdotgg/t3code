@@ -50,6 +50,8 @@ function makeThread(
     checkpoints: [],
     session: null,
     ...input,
+    settledOverride: input.settledOverride ?? null,
+    settledAt: input.settledAt ?? null,
   };
 }
 
@@ -159,20 +161,22 @@ describe("buildThreadFeed", () => {
       return;
     }
 
-    expect(group.activities).toEqual([
-      {
-        id: "tool-completed",
-        createdAt: "2026-04-01T00:00:02.000Z",
-        turnId: "turn-1",
-        summary: "Run tests",
-        detail: "bun run test",
-        fullDetail: "/bin/zsh -lc 'bun run test'",
-        copyText: "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
-        icon: "command",
-        toolLike: true,
-        status: "success",
-      },
-    ]);
+    expect(group.activities).toHaveLength(1);
+    expect(group.activities[0]).toMatchObject({
+      id: "tool-completed",
+      createdAt: "2026-04-01T00:00:02.000Z",
+      turnId: "turn-1",
+      summary: "Run tests",
+      detail: "bun run test",
+      canExpand: true,
+      icon: "command",
+      toolLike: true,
+      status: "success",
+    });
+    expect(group.activities[0]?.getFullDetail()).toBe("/bin/zsh -lc 'bun run test'");
+    expect(group.activities[0]?.getCopyText()).toBe(
+      "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
+    );
   });
 
   it("keeps MCP inputs available to expanded mobile work rows", () => {
@@ -221,8 +225,55 @@ describe("buildThreadFeed", () => {
     }
 
     expect(group.activities[0]?.icon).toBe("wrench");
-    expect(group.activities[0]?.fullDetail).toContain('"query": "work log"');
-    expect(group.activities[0]?.fullDetail).toContain("repository.search");
+    expect(group.activities[0]?.getFullDetail()).toContain('"query": "work log"');
+    expect(group.activities[0]?.getFullDetail()).toContain("repository.search");
+  });
+
+  it("defers large tool output expansion until a work row is opened or copied", () => {
+    let serializedToolOutputs = 0;
+    const activities = Array.from({ length: 5_000 }, (_, index) =>
+      makeActivity({
+        id: EventId.make(`large-tool-${index}`),
+        kind: "tool.completed",
+        tone: "tool",
+        summary: `Tool ${index}`,
+        createdAt: new Date(Date.UTC(2026, 3, 1, 0, 0, index)).toISOString(),
+        payload: {
+          title: `Tool ${index}`,
+          itemType: "mcp_tool_call",
+          status: "completed",
+          data: {
+            item: {
+              toJSON: () => {
+                serializedToolOutputs += 1;
+                return { output: "x".repeat(32_768) };
+              },
+            },
+          },
+        },
+      }),
+    );
+    const thread = makeThread({
+      id: ThreadId.make("thread-large-tools"),
+      projectId: ProjectId.make("project-1"),
+      title: "Large tools",
+      activities,
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(serializedToolOutputs).toBe(0);
+
+    const group = feed[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+
+    expect(group.activities).toHaveLength(5_000);
+    expect(group.activities[0]?.getFullDetail()).toContain('"output"');
+    expect(serializedToolOutputs).toBe(1);
+    expect(group.activities[0]?.getCopyText()).toContain('"output"');
+    expect(serializedToolOutputs).toBe(1);
   });
 
   it("folds settled turn work while leaving the terminal answer visible", () => {
@@ -412,6 +463,20 @@ describe("buildThreadFeed", () => {
     });
   });
 
+  it("appends active work as a normal timeline row", () => {
+    const startedAt = "2026-04-01T00:00:01.000Z";
+    const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
+
+    expect(presented).toEqual([
+      {
+        type: "working",
+        id: "working-indicator-row",
+        createdAt: startedAt,
+      },
+    ]);
+    expect(deriveThreadFeedPresentation(presented, null, new Set())).toEqual([]);
+  });
+
   it("models work-log overflow as list rows", () => {
     const activity = (
       id: string,
@@ -423,8 +488,9 @@ describe("buildThreadFeed", () => {
       turnId: null,
       summary: `Tool ${id}`,
       detail: null,
-      fullDetail: null,
-      copyText: id,
+      canExpand: false,
+      getFullDetail: () => null,
+      getCopyText: () => id,
       icon: "command",
       toolLike: true,
       status,

@@ -213,12 +213,23 @@ export interface DesktopUpdateState {
   runningUnderArm64Translation: boolean;
   availableVersion: string | null;
   downloadedVersion: string | null;
+  releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
   downloadPercent: number | null;
   checkedAt: string | null;
   message: string | null;
   errorContext: "check" | "download" | "install" | null;
   canRetry: boolean;
 }
+
+export interface DesktopUpdateReleaseNote {
+  version: string;
+  items: ReadonlyArray<string>;
+}
+
+export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
+  version: Schema.String,
+  items: Schema.Array(Schema.String),
+});
 
 export const DesktopUpdateStateSchema = Schema.Struct({
   enabled: Schema.Boolean,
@@ -230,6 +241,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   runningUnderArm64Translation: Schema.Boolean,
   availableVersion: Schema.NullOr(Schema.String),
   downloadedVersion: Schema.NullOr(Schema.String),
+  releaseNotes: Schema.Array(DesktopUpdateReleaseNoteSchema),
   downloadPercent: Schema.NullOr(Schema.Number),
   checkedAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),
@@ -498,6 +510,15 @@ export type DesktopPreviewNavStatus =
       description: string;
     };
 
+/**
+ * Emulated `prefers-color-scheme` for the guest page. "system" clears the
+ * override so the page follows the OS appearance.
+ */
+export type DesktopPreviewColorScheme = "system" | "light" | "dark";
+
+export const DesktopPreviewColorSchemeSchema: Schema.Codec<DesktopPreviewColorScheme> =
+  Schema.Literals(["system", "light", "dark"]);
+
 export interface DesktopPreviewTabState {
   tabId: string;
   webContentsId: number | null;
@@ -506,6 +527,9 @@ export interface DesktopPreviewTabState {
   canGoForward: boolean;
   /** Current zoom factor (1.0 = 100%). */
   zoomFactor: number;
+  /** Whether this tab is currently mirrored into a desktop picture-in-picture window. */
+  pictureInPicture: boolean;
+  colorScheme: DesktopPreviewColorScheme;
   controller: "human" | "agent" | "none";
   updatedAt: string;
 }
@@ -542,6 +566,8 @@ export const DesktopPreviewTabStateSchema: Schema.Codec<DesktopPreviewTabState> 
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
   zoomFactor: Schema.Number,
+  pictureInPicture: Schema.Boolean,
+  colorScheme: DesktopPreviewColorSchemeSchema,
   controller: Schema.Literals(["human", "agent", "none"]),
   updatedAt: Schema.String,
 });
@@ -900,6 +926,11 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
 });
 
+export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  colorScheme: DesktopPreviewColorSchemeSchema,
+});
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1022,6 +1053,11 @@ export interface DesktopPreviewBridge {
   resetZoom: (tabId: string) => Promise<void>;
   /** Reload bypassing the HTTP cache. */
   hardReload: (tabId: string) => Promise<void>;
+  /**
+   * Emulate `prefers-color-scheme` on the guest page ("system" clears the
+   * override). Persists per tab and is re-applied across webview swaps.
+   */
+  setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   /** Open the guest webview's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
@@ -1047,6 +1083,10 @@ export interface DesktopPreviewBridge {
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
+  pictureInPicture: {
+    open: (tabId: string) => Promise<void>;
+    close: (tabId: string) => Promise<void>;
+  };
   recording: {
     startScreencast: (tabId: string) => Promise<void>;
     stopScreencast: (tabId: string) => Promise<void>;

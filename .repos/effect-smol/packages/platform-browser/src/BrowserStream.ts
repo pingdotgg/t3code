@@ -1,40 +1,9 @@
 /**
- * Convert browser DOM events into Effect streams.
+ * Browser DOM event streams.
  *
- * This module provides typed constructors for listening to `window` and
- * `document` events from Effect programs. Use {@link fromEventListenerWindow}
- * for viewport, network, focus, pointer, keyboard, and other `Window` events,
- * and use {@link fromEventListenerDocument} for document lifecycle,
- * visibility, selection, fullscreen, and other `Document` events.
- *
- * ## Mental model
- *
- * Each constructor registers a DOM `addEventListener` callback when the stream
- * is consumed and removes it when the stream is finalized. Browser events are
- * push-based `EventTarget` notifications, so the browser does not slow down the
- * event source when downstream stream processing is busy. Events are buffered
- * inside the stream until a consumer pulls them.
- *
- * ## Common tasks
- *
- * - Track browser state such as resize, online / offline, focus, visibility, or
- *   pointer activity with Effect stream operators.
- * - Scope DOM listeners to a fiber so they are removed when the consuming
- *   effect is interrupted or completes.
- * - Set `bufferSize` for bursty event sources before applying sampling,
- *   throttling, debouncing, or dropping logic downstream.
- *
- * ## Gotchas
- *
- * The default buffer is unbounded. High-frequency sources such as `scroll`,
- * `pointermove`, or `mousemove` should usually specify `bufferSize` and reduce
- * the event rate with stream operators.
- *
- * These helpers are for DOM events, not for `ReadableStream` request or
- * response bodies. Fetch bodies follow Web Streams rules such as
- * single-consumer locking and disturbed bodies after reads. When using the DOM
- * `once` option, also use `Stream.take(1)` if the consuming code needs a finite
- * stream.
+ * This module provides typed constructors that turn `window.addEventListener`
+ * and `document.addEventListener` events into Effect `Stream` values. Both
+ * helpers accept the usual listener options and an optional stream buffer size.
  *
  * @since 4.0.0
  */
@@ -50,7 +19,7 @@ import * as Stream from "effect/Stream"
  * buffer size by passing an object as the second argument with the `bufferSize`
  * field.
  *
- * @category Streams
+ * @category streams
  * @since 4.0.0
  */
 export const fromEventListenerWindow = <K extends keyof WindowEventMap>(
@@ -72,7 +41,7 @@ export const fromEventListenerWindow = <K extends keyof WindowEventMap>(
  * buffer size by passing an object as the second argument with the `bufferSize`
  * field.
  *
- * @category Streams
+ * @category streams
  * @since 4.0.0
  */
 export const fromEventListenerDocument = <K extends keyof DocumentEventMap>(

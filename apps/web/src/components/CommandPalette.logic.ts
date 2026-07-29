@@ -1,4 +1,8 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
+import {
+  type FilesystemBrowseEntry,
+  type KeybindingCommand,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -52,39 +56,19 @@ export interface CommandPaletteView {
   readonly initialQuery?: string;
 }
 
-export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
+export function enumerateCommandPaletteItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+): CommandPaletteActionItem[] {
+  return items.map((item, index) => {
+    const shortcutCommand = THREAD_JUMP_KEYBINDING_COMMANDS[index];
+    if (shortcutCommand) return { ...item, shortcutCommand };
 
-export function filterBrowseEntries(input: {
-  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
-  browseFilterQuery: string;
-  highlightedItemValue: string | null;
-}): {
-  filteredEntries: FilesystemBrowseEntry[];
-  highlightedEntry: FilesystemBrowseEntry | null;
-  exactEntry: FilesystemBrowseEntry | null;
-} {
-  const lowerFilter = input.browseFilterQuery.toLowerCase();
-  const showHidden = input.browseFilterQuery.startsWith(".");
-
-  const filteredEntries = input.browseEntries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerFilter) &&
-      (showHidden || !entry.name.startsWith(".")),
-  );
-
-  let highlightedEntry: FilesystemBrowseEntry | null = null;
-  if (input.highlightedItemValue?.startsWith("browse:")) {
-    const highlightedPath = input.highlightedItemValue.slice("browse:".length);
-    highlightedEntry = filteredEntries.find((entry) => entry.fullPath === highlightedPath) ?? null;
-  }
-
-  const exactEntry =
-    input.browseFilterQuery.length > 0
-      ? (filteredEntries.find((entry) => entry.name === input.browseFilterQuery) ?? null)
-      : null;
-
-  return { filteredEntries, highlightedEntry, exactEntry };
+    const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
+    return itemWithoutShortcut;
+  });
 }
+
+export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
 export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -95,12 +79,13 @@ export function buildProjectActionItems(input: {
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
   runProject: (project: Project) => Promise<void>;
+  searchTerms?: (project: Project) => ReadonlyArray<string>;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.title, project.workspaceRoot],
+    searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
     title: project.title,
     description: project.workspaceRoot,
     icon: input.icon(project),
@@ -285,8 +270,8 @@ export function buildBrowseGroups(input: {
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
-  browseUp: () => void;
-  browseTo: (name: string) => void;
+  browseUp: () => void | Promise<void>;
+  browseTo: (name: string) => void | Promise<void>;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -299,7 +284,7 @@ export function buildBrowseGroups(input: {
       icon: input.upIcon,
       keepOpen: true,
       run: async () => {
-        input.browseUp();
+        await input.browseUp();
       },
     });
   }
@@ -313,7 +298,7 @@ export function buildBrowseGroups(input: {
       icon: input.directoryIcon,
       keepOpen: true,
       run: async () => {
-        input.browseTo(entry.name);
+        await input.browseTo(entry.name);
       },
     });
   }

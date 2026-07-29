@@ -75,7 +75,7 @@ export interface OriginRequestPolicy extends Resource<
  * addition to those used in the cache key) CloudFront includes when sending
  * a request to the origin. They are referenced by ID on a Distribution's
  * default behavior or per-path cache behaviors.
- *
+ * @resource
  * @section Creating Origin Request Policies
  * @example Forward all viewer headers and cookies
  * ```typescript
@@ -180,6 +180,36 @@ export const OriginRequestPolicyProvider = () =>
           if (!found) return undefined;
           return toAttrs(found.id, found.config, found.etag);
         }),
+        // CloudFront is global (no region). `listOriginRequestPolicies`
+        // returns both AWS-managed and custom policies; we filter to
+        // `Type: "custom"` since those are the only ones we create/delete.
+        // The op is marker-paginated (no `.pages`), so we loop until
+        // `NextMarker` is exhausted and hydrate each summary's ETag via
+        // `getById` so every row matches read().
+        list: () =>
+          Effect.gen(function* () {
+            const items: ReturnType<typeof toAttrs>[] = [];
+            let marker: string | undefined = undefined;
+            do {
+              const listed: cloudfront.ListOriginRequestPoliciesResult =
+                yield* cloudfront.listOriginRequestPolicies({
+                  Type: "custom",
+                  Marker: marker,
+                });
+              for (const summary of listed.OriginRequestPolicyList?.Items ??
+                []) {
+                if (summary.Type !== "custom") continue;
+                const id = summary.OriginRequestPolicy?.Id;
+                const config =
+                  summary.OriginRequestPolicy?.OriginRequestPolicyConfig;
+                if (!id || !config) continue;
+                const found = yield* getById(id);
+                items.push(toAttrs(id, found?.config ?? config, found?.etag));
+              }
+              marker = listed.OriginRequestPolicyList?.NextMarker;
+            } while (marker);
+            return items;
+          }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           const name = yield* createName(id, news);
 

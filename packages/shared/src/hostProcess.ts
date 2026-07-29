@@ -30,4 +30,25 @@ export const HostProcessEnvironment = Context.Reference<NodeJS.ProcessEnv>(
   },
 );
 
+export const HostProcessWorkingDirectory = Context.Reference<string>(
+  "@t3tools/shared/hostProcess/HostProcessWorkingDirectory",
+  {
+    defaultValue: () => process.cwd(),
+  },
+);
+
+export const HostProcessExecutablePath = Context.Reference<string>(
+  "@t3tools/shared/hostProcess/HostProcessExecutablePath",
+  {
+    defaultValue: () => process.execPath,
+  },
+);
+
+export const HostProcessArguments = Context.Reference<ReadonlyArray<string>>(
+  "@t3tools/shared/hostProcess/HostProcessArguments",
+  {
+    defaultValue: () => process.argv,
+  },
+);
+
 export const isHostWindows = Effect.map(HostProcessPlatform, (platform) => platform === "win32");

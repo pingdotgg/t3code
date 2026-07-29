@@ -10,15 +10,60 @@ import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
 
+/**
+ * Cookies are scoped by host but *not* by port, so any two servers that can be
+ * live on one hostname at once need separate names — otherwise the second
+ * clobbers the first's session and both sides see "Invalid session token
+ * signature" until someone clears cookies by hand.
+ *
+ * Two populations qualify, for the same reason but from different causes:
+ *
+ * - **Dev servers** (`devUrl` set), which run several at a time across worktrees.
+ * - **Desktop**, which scans upward from 3773 for a free port and binds
+ *   127.0.0.1, so a second instance lands on a different port and the same host.
+ *
+ * Hosted deployments keep the stable production name: their public port can
+ * change between releases, and scoping it would log every user out.
+ */
 export function resolveSessionCookieName(input: {
   readonly mode: "web" | "desktop";
   readonly port: number;
+  readonly host: string | undefined;
+  readonly instanceKey: string;
+  readonly development: boolean;
 }): string {
-  if (input.mode !== "desktop") {
+  if (input.mode === "desktop") {
+    return `${SESSION_COOKIE_NAME}_${input.port}`;
+  }
+
+  if (!input.development && isRemoteReachableHost(input.host)) {
     return SESSION_COOKIE_NAME;
   }
 
-  return `${SESSION_COOKIE_NAME}_${input.port}`;
+  // Cookies are scoped by host, not port. Loopback development servers need an
+  // instance-specific name or parallel agents overwrite each other's session,
+  // and a server that later reuses the port receives a token signed elsewhere.
+  const instanceHash = NodeCrypto.createHash("sha256")
+    .update(input.instanceKey)
+    .digest("hex")
+    .slice(0, 12);
+  return `${SESSION_COOKIE_NAME}_${input.port}_${instanceHash}`;
+}
+
+export function isRemoteReachableHost(host: string | undefined): boolean {
+  if (host === "0.0.0.0" || host === "::" || host === "[::]") {
+    return true;
+  }
+  if (!host || host.length === 0) {
+    return false;
+  }
+  return !(
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.startsWith("127.")
+  );
 }
 
 export function base64UrlEncode(input: string | Uint8Array): string {

@@ -35,6 +35,8 @@ const statusColor = (status: ApplyStatus): ((s: string) => string) => {
       return green;
     case "deleted":
       return dim;
+    case "retained":
+      return dim;
     case "fail":
       return red;
     case "attaching":
@@ -51,6 +53,7 @@ const isTerminal = (status: ApplyStatus): boolean =>
   status === "created" ||
   status === "updated" ||
   status === "deleted" ||
+  status === "retained" ||
   status === "replaced" ||
   status === "fail";
 
@@ -110,22 +113,25 @@ export const LoggingCli = Layer.succeed(
 
         const counts = { ok: 0, fail: 0 };
         return {
+          // Write through the Effect Console SERVICE (not the global
+          // `console`) so environments that override it — e.g. the
+          // alchemy-test runner's per-test buffering console — capture
+          // apply progress instead of having it leak to stdout.
           emit: (event: ApplyEvent) =>
-            Effect.sync(() => {
+            Effect.suspend(() => {
               if (event.kind === "annotate") {
-                console.log(`${tag(event.id)} ${blue(event.message)}`);
-                return;
+                return Console.log(`${tag(event.id)} ${blue(event.message)}`);
               }
               const id = event.bindingId
                 ? `${event.id}/${event.bindingId}`
                 : event.id;
               const status = statusColor(event.status)(event.status);
               const msg = event.message ? ` ${dim("—")} ${event.message}` : "";
-              console.log(`${tag(id)} ${status}${msg}`);
               if (isTerminal(event.status)) {
                 if (event.status === "fail") counts.fail++;
                 else counts.ok++;
               }
+              return Console.log(`${tag(id)} ${status}${msg}`);
             }),
           done: () =>
             Console.log(

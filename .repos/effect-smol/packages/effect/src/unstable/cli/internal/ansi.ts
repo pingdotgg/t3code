@@ -52,25 +52,13 @@ export const eraseLine = `${ESC}2K`
 export const beep = BEL
 
 /** @internal */
-export const black = `${ESC}30m`
-
-/** @internal */
 export const red = `${ESC}31m`
 
 /** @internal */
 export const green = `${ESC}32m`
 
 /** @internal */
-export const yellow = `${ESC}33m`
-
-/** @internal */
-export const blue = `${ESC}34m`
-
-/** @internal */
 export const magenta = `${ESC}35m`
-
-/** @internal */
-export const cyan = `${ESC}36m`
 
 /** @internal */
 export const white = `${ESC}37m`
@@ -79,25 +67,7 @@ export const white = `${ESC}37m`
 export const blackBright = `${ESC}90m`
 
 /** @internal */
-export const redBright = `${ESC}91m`
-
-/** @internal */
-export const greenBright = `${ESC}92m`
-
-/** @internal */
-export const yellowBright = `${ESC}93m`
-
-/** @internal */
-export const blueBright = `${ESC}94m`
-
-/** @internal */
-export const magentaBright = `${ESC}95m`
-
-/** @internal */
 export const cyanBright = `${ESC}96m`
-
-/** @internal */
-export const whiteBright = `${ESC}97m`
 
 export const annotate = (text: string, ...styles: Array<string | Array<string>>) => {
   const flat = styles.flat()

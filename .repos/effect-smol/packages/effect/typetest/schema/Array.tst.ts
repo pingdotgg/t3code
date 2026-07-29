@@ -44,3 +44,21 @@ describe("NonEmptyArray", () => {
     expect(schema.schema.value).type.toBe<typeof Schema.FiniteFromString>()
   })
 })
+
+describe("ArrayEnsure", () => {
+  it("ArrayEnsure<FiniteFromString>", () => {
+    const schema = Schema.ArrayEnsure(Schema.FiniteFromString)
+    expect(Schema.revealCodec(schema)).type.toBe<Schema.Codec<ReadonlyArray<number>, string | ReadonlyArray<string>>>()
+    expect(schema).type.toBe<Schema.ArrayEnsure<typeof Schema.FiniteFromString>>()
+    expect(schema.annotate({})).type.toBe<Schema.ArrayEnsure<typeof Schema.FiniteFromString>>()
+  })
+})
+
+describe("UniqueArray", () => {
+  it("UniqueArray<FiniteFromString>", () => {
+    const schema = Schema.UniqueArray(Schema.FiniteFromString)
+    expect(Schema.revealCodec(schema)).type.toBe<Schema.Codec<ReadonlyArray<number>, ReadonlyArray<string>>>()
+    expect(schema).type.toBe<Schema.UniqueArray<typeof Schema.FiniteFromString>>()
+    expect(schema.annotate({})).type.toBe<Schema.UniqueArray<typeof Schema.FiniteFromString>>()
+  })
+})

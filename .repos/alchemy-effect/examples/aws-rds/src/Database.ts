@@ -1,4 +1,5 @@
 import * as AWS from "alchemy/AWS";
+import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -17,7 +18,7 @@ export class Database extends Context.Service<
     query<Row extends Record<string, unknown> = Record<string, unknown>>(
       statement: string,
       values?: ReadonlyArray<unknown>,
-    ): Effect.Effect<ReadonlyArray<Row>, SqlError>;
+    ): Effect.Effect<ReadonlyArray<Row>, SqlError, RuntimeContext>;
   }
 >()("Sql") {}
 
@@ -30,7 +31,7 @@ export const DatabaseAurora = Layer.effect(
       securityGroupIds: [databaseSecurityGroup.groupId],
     });
 
-    const connect = yield* AWS.RDS.Connect.bind(database.cluster, {
+    const connect = yield* AWS.RDS.Connect(database.cluster, {
       secret: database.secret,
       subnetIds: vpc.privateSubnetIds,
       securityGroupIds: [databaseSecurityGroup.groupId],
@@ -40,7 +41,7 @@ export const DatabaseAurora = Layer.effect(
       query: <Row extends Record<string, unknown>>(
         statement: string,
         values: ReadonlyArray<unknown> = [],
-      ): Effect.Effect<ReadonlyArray<Row>, SqlError> =>
+      ): Effect.Effect<ReadonlyArray<Row>, SqlError, RuntimeContext> =>
         connect.pipe(
           Effect.catch((cause) =>
             Effect.fail(

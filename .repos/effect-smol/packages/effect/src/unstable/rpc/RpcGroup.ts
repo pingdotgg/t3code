@@ -1,35 +1,10 @@
 /**
- * Protocol composition for typed RPC definitions.
+ * Collects typed RPC definitions and server handlers.
  *
- * An {@link RpcGroup} collects RPC definitions under their tags and preserves
- * the payload, success, error, defect, middleware, and annotation metadata used
- * by clients, servers, tests, cluster entities, workflows, and other RPC
- * integrations.
- *
- * **Mental model**
- *
- * A group is a typed map from RPC tag to RPC definition. The `add`, `merge`,
- * `omit`, `prefix`, `middleware`, and `annotateRpcs` methods return new groups
- * whose type tracks the changed protocol. The final group can then be turned
- * into handler contexts or layers with `toHandlers`, `toLayer`, or
- * `toLayerHandler`.
- *
- * **Common tasks**
- *
- * Use {@link make} to define a service surface once, split large protocols into
- * feature groups that are merged later, prefix generated or proxied names, and
- * attach metadata for higher-level runtimes. Use {@link HandlersFrom} and
- * {@link HandlerFrom} when implementing handlers separately from the group
- * expression that declares them.
- *
- * **Gotchas**
- *
- * Composition order matters. `middleware` and `annotateRpcs` affect only the
- * RPCs already in the group, duplicate tags from `add` or `merge` replace the
- * existing definition, and handlers are keyed by tags after any prefixing.
- * Schema requirements still come from each RPC's payload, success, error,
- * defect, and middleware schemas; grouping preserves those requirements but
- * does not provide the services needed to encode, decode, or handle them.
+ * An `RpcGroup` stores RPC definitions by tag and keeps annotations shared by
+ * the group. This module provides helpers for composing groups, applying
+ * middleware or annotations, deriving handler types, and turning handler objects
+ * into `Context` or `Layer` values used by RPC servers.
  *
  * @since 4.0.0
  */
@@ -328,14 +303,13 @@ const RpcGroupProto = {
       const services = yield* Effect.context<never>()
       const handlers = Effect.isEffect(build) ? yield* build : build
       const contextMap = new Map<string, unknown>()
-      for (const [tag, handler] of Object.entries(handlers)) {
-        const rpc = self.requests.get(tag)!
+      self.requests.forEach((rpc, tag) => {
         contextMap.set(rpc.key, {
           tag: rpc._tag,
-          handler,
+          handler: handlers[tag],
           context: services
         })
-      }
+      })
       return Context.makeUnsafe(contextMap)
     })
   },

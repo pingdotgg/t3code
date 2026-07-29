@@ -9,13 +9,104 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
+  resolveBranchTriggerLabel,
+  resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
+  resolveLocalCheckoutBranchMismatch,
+  resolvePreviousWorktreeLabel,
+  resolvePreviousWorktreeSeed,
   shouldIncludeBranchPickerItem,
+  shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("resolvePreviousWorktreeSeed", () => {
+  it("picks the most recently updated worktree thread", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            branch: "t3/older",
+            worktreePath: "/repo/.t3/worktrees/older",
+            updatedAt: "2026-07-20T00:00:00.000Z",
+          },
+          {
+            branch: "t3/newer",
+            worktreePath: "/repo/.t3/worktrees/newer",
+            updatedAt: "2026-07-22T00:00:00.000Z",
+          },
+          { branch: "main", worktreePath: null, updatedAt: "2026-07-23T00:00:00.000Z" },
+        ],
+        currentWorktreePath: null,
+      }),
+    ).toEqual({ branch: "t3/newer", worktreePath: "/repo/.t3/worktrees/newer" });
+  });
+
+  it("skips the worktree the composer already points at", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            branch: "t3/current",
+            worktreePath: "/repo/.t3/worktrees/current",
+            updatedAt: "2026-07-22T00:00:00.000Z",
+          },
+        ],
+        currentWorktreePath: "/repo/.t3/worktrees/current",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when no thread has a worktree", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [{ branch: "main", worktreePath: null, updatedAt: "2026-07-22T00:00:00.000Z" }],
+        currentWorktreePath: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores archived threads and threads with unparseable timestamps", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            branch: "t3/archived",
+            worktreePath: "/repo/.t3/worktrees/archived",
+            updatedAt: "2026-07-23T00:00:00.000Z",
+            archivedAt: "2026-07-23T01:00:00.000Z",
+          },
+          {
+            branch: "t3/garbage-timestamp",
+            worktreePath: "/repo/.t3/worktrees/garbage",
+            updatedAt: "not-a-date",
+          },
+          {
+            branch: "t3/live",
+            worktreePath: "/repo/.t3/worktrees/live",
+            updatedAt: "2026-07-21T00:00:00.000Z",
+            archivedAt: null,
+          },
+        ],
+        currentWorktreePath: null,
+      }),
+    ).toEqual({ branch: "t3/live", worktreePath: "/repo/.t3/worktrees/live" });
+  });
+});
+
+describe("resolvePreviousWorktreeLabel", () => {
+  it("includes the branch when known", () => {
+    expect(resolvePreviousWorktreeLabel({ branch: "t3/fix-thing", worktreePath: "/wt" })).toBe(
+      "Previous worktree (t3/fix-thing)",
+    );
+    expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
+      "Previous worktree",
+    );
+  });
+});
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {
@@ -84,6 +175,179 @@ describe("resolveBranchToolbarValue", () => {
   });
 });
 
+describe("resolveBranchTriggerLabel", () => {
+  it("shows the origin ref when a new worktree will start from origin", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "main",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/main");
+  });
+
+  it("shows the origin ref for local branch names that contain slashes", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "feature/demo",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/feature/demo");
+  });
+
+  it("shows the local ref when start from origin is disabled", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "main",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: false,
+      }),
+    ).toBe("From main");
+  });
+
+  it("does not duplicate the origin prefix for an explicit remote ref", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "origin/feature/demo",
+        resolvedActiveBranchIsRemote: true,
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/feature/demo");
+  });
+
+  it("preserves an explicit ref from a non-origin remote", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "upstream/feature/demo",
+        resolvedActiveBranchIsRemote: true,
+        startFromOrigin: true,
+      }),
+    ).toBe("From upstream/feature/demo");
+  });
+
+  it("keeps current-checkout labels and empty state unchanged", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "local",
+        resolvedActiveBranch: "main",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+      }),
+    ).toBe("main");
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: null,
+        resolvedActiveBranchIsRemote: null,
+        startFromOrigin: true,
+      }),
+    ).toBe("Select ref");
+  });
+
+  it("does not fabricate an origin ref while branch metadata is loading", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "upstream/feature/demo",
+        resolvedActiveBranchIsRemote: null,
+        startFromOrigin: true,
+      }),
+    ).toBe("From upstream/feature/demo");
+  });
+});
+
+describe("resolveBranchToolbarPrBranch", () => {
+  it("uses the explicit thread branch when it matches the displayed branch", () => {
+    expect(
+      resolveBranchToolbarPrBranch({
+        activeThreadBranch: "feature/current",
+        resolvedActiveBranch: "feature/current",
+      }),
+    ).toBe("feature/current");
+  });
+
+  it("hides PR state while an optimistic branch switch is in flight", () => {
+    expect(
+      resolveBranchToolbarPrBranch({
+        activeThreadBranch: "feature/current",
+        resolvedActiveBranch: "feature/next",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not infer PR state without an explicit thread branch", () => {
+    expect(
+      resolveBranchToolbarPrBranch({
+        activeThreadBranch: null,
+        resolvedActiveBranch: "feature/current",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveLocalCheckoutBranchMismatch", () => {
+  it("detects when a local thread is associated with a different branch than the checkout", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/thread",
+        currentGitBranch: "feature/current",
+      }),
+    ).toEqual({
+      threadBranch: "feature/thread",
+      currentBranch: "feature/current",
+    });
+  });
+
+  it("ignores matching local checkout state", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/thread",
+        currentGitBranch: "feature/thread",
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores dedicated worktrees because their checkout is already thread-scoped", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: "/repo/.t3/worktrees/feature-thread",
+        activeThreadBranch: "feature/thread",
+        currentGitBranch: "feature/current",
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores new-worktree base selection before a worktree exists", () => {
+    expect(
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: null,
+        activeThreadBranch: "feature/base",
+        currentGitBranch: "main",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("resolveEnvironmentOptionLabel", () => {
   it("prefers the primary environment's machine label", () => {
     expect(
@@ -116,6 +380,44 @@ describe("resolveEnvironmentOptionLabel", () => {
         savedLabel: "Build box",
       }),
     ).toBe("Build box");
+  });
+});
+
+describe("shouldShowEnvironmentIndicator", () => {
+  it("shows the indicator whenever multiple environments are pickable", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("shows a sole remote environment so the user knows where the project runs", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: false },
+        canPickEnvironment: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides a sole primary (this-device) environment", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides the indicator when the active environment is unknown", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: null,
+        canPickEnvironment: false,
+      }),
+    ).toBe(false);
   });
 });
 

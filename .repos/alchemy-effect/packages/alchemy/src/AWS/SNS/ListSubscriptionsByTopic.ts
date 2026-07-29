@@ -1,8 +1,6 @@
 import * as sns from "@distilled.cloud/aws/sns";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Topic } from "./Topic.ts";
 
 export interface ListSubscriptionsByTopicRequest extends Omit<
@@ -10,8 +8,30 @@ export interface ListSubscriptionsByTopicRequest extends Omit<
   "TopicArn"
 > {}
 
-export class ListSubscriptionsByTopic extends Binding.Service<
+/**
+ * Runtime binding for `sns:ListSubscriptionsByTopic`.
+ *
+ * Bind this operation to a {@link Topic} inside a function runtime to page
+ * through that topic's subscriptions; the `TopicArn` is injected
+ * automatically. The binding grants the host function
+ * `sns:ListSubscriptionsByTopic` on the topic. Provide the
+ * `ListSubscriptionsByTopicHttp` layer on the Function to implement the
+ * binding.
+ * @binding
+ * @section Listing a Topic's Subscriptions
+ * @example List Subscriptions of a Topic
+ * ```typescript
+ * // init (provide SNS.ListSubscriptionsByTopicHttp on the Function)
+ * const listSubscriptionsByTopic = yield* SNS.ListSubscriptionsByTopic(topic);
+ *
+ * // runtime
+ * const response = yield* listSubscriptionsByTopic();
+ * const endpoints = (response.Subscriptions ?? []).map((s) => s.Endpoint);
+ * ```
+ */
+export interface ListSubscriptionsByTopic extends Binding.Service<
   ListSubscriptionsByTopic,
+  "AWS.SNS.ListSubscriptionsByTopic",
   (
     topic: Topic,
   ) => Effect.Effect<
@@ -22,51 +42,6 @@ export class ListSubscriptionsByTopic extends Binding.Service<
       sns.ListSubscriptionsByTopicError
     >
   >
->()("AWS.SNS.ListSubscriptionsByTopic") {}
-
-export const ListSubscriptionsByTopicLive = Layer.effect(
-  ListSubscriptionsByTopic,
-  Effect.gen(function* () {
-    const Policy = yield* ListSubscriptionsByTopicPolicy;
-    const listSubscriptionsByTopic = yield* sns.listSubscriptionsByTopic;
-
-    return Effect.fn(function* (topic: Topic) {
-      const TopicArn = yield* topic.topicArn;
-      yield* Policy(topic);
-      return Effect.fn(function* (request?: ListSubscriptionsByTopicRequest) {
-        return yield* listSubscriptionsByTopic({
-          ...request,
-          TopicArn: yield* TopicArn,
-        });
-      });
-    });
-  }),
-);
-
-export class ListSubscriptionsByTopicPolicy extends Binding.Policy<
-  ListSubscriptionsByTopicPolicy,
-  (topic: Topic) => Effect.Effect<void>
->()("AWS.SNS.ListSubscriptionsByTopic") {}
-
-export const ListSubscriptionsByTopicPolicyLive =
-  ListSubscriptionsByTopicPolicy.layer.succeed(
-    Effect.fn(function* (host, topic) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.SNS.ListSubscriptionsByTopic(${topic}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["sns:ListSubscriptionsByTopic"],
-                Resource: [topic.topicArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `ListSubscriptionsByTopicPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );
+> {}
+export const ListSubscriptionsByTopic =
+  Binding.Service<ListSubscriptionsByTopic>("AWS.SNS.ListSubscriptionsByTopic");

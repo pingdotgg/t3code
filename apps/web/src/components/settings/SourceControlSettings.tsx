@@ -48,6 +48,7 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -195,7 +196,7 @@ function itemSummary({
         <span>
           {item.label} is not authenticated on this server. Sign in or configure credentials using
           the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable pull request features.
+          tool on the server host to enable change request features.
         </span>
       );
     }
@@ -229,16 +230,16 @@ function DiscoveryItemRow({
   return (
     <div
       className={cn(
-        "border-t border-border/60 first:border-t-0",
+        "rounded-xl transition-colors hover:bg-muted/20",
         isVcsNotReady(item) && "opacity-80",
       )}
     >
-      <div className="px-4 py-3.5 sm:px-5">
+      <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
-              <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+              <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
                 {item.label}
               </span>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
@@ -253,7 +254,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
@@ -282,7 +283,7 @@ function DiscoveryItemRow({
       {hasDetails ? (
         <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
           <CollapsibleContent>
-            <div className="border-t border-border/60 px-4 py-3 sm:px-5">{children}</div>
+            <div className="px-3 pb-4 pt-1 sm:px-4">{children}</div>
           </CollapsibleContent>
         </Collapsible>
       ) : null}
@@ -368,7 +369,7 @@ function SourceControlSectionSkeleton({
   return (
     <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
-        <div key={row} className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
+        <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
@@ -513,6 +514,8 @@ export function SourceControlSettingsPanel() {
           onScan={handleScan}
         />
       )}
+
+      {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }
