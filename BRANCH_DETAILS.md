@@ -7,6 +7,7 @@ Expected behavior:
 - Archived conversations are grouped by project, and each project group is collapsed by default.
 - The Archive panel fetches archived thread snapshots from all configured environments, not only environments that currently have active projects, so archived-only workspaces remain visible, while active rows returned in those snapshots remain excluded from archive content and empty-state counts.
 - Web project headers show environment labels whenever multiple environments are configured and keep a sole remote environment labeled, while a sole primary environment remains implicit. Native project sections show environment labels and the header controls can filter the archive to all environments or one configured environment.
+- Native Settings exposes `Archived Threads` in both local-only and T3 Connect-configured modes through a shared `General`, `Appearance`, `Beta`, `Archive`, and `App` tail, preserving that order while each mode keeps its own account and configuration controls. The native settings contract also owns the `SettingsArchive` route name, link, and title while keeping the legacy `SettingsWaitlist` alias pointed at `SettingsAuth` as a distinct route.
 - The page includes a search box that filters archived thread titles across all projects case-insensitively. Multi-word searches match any term, rank exact phrase matches first, rank titles matching every term ahead of partial term matches, and auto-open matching project groups while search is active. Native incremental search updates the existing list without remounting it for every keystroke, preserving scroll position and transient row state.
 - Expanded project headers include sortable `Archived` and `Created` columns; clicking either header toggles ascending/descending order for the conversations inside each group, with `Archived` descending as the default.
 - Native project-section ordering follows the selected archive sort field and direction. Invalid archived timestamps fall back to the conversation's created timestamp for sorting and display on both surfaces.
@@ -23,6 +24,10 @@ Primary files:
 - `apps/web/src/components/settings/ArchiveSettings.tsx`
 - `apps/web/src/components/settings/SettingsPanels.tsx`
 - `apps/web/src/components/settings/SettingsPanels.logic.ts`
+- `apps/mobile/src/Stack.tsx`
+- `apps/mobile/src/features/settings/SettingsRouteScreen.tsx`
+- `apps/mobile/src/features/settings/settingsContract.ts`
+- `apps/mobile/src/features/settings/settingsContract.test.ts`
 - `apps/mobile/src/features/archive/ArchivedThreadsRouteScreen.tsx`
 - `apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx`
 - `apps/mobile/src/features/archive/archivedThreadList.ts`
