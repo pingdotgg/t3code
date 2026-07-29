@@ -6,14 +6,55 @@ import { render } from "vitest-browser-react";
 
 import { createInitialChatSplitLayout, replaceLeafTarget, splitLeaf } from "../chatSplitLayout";
 import { useChatSplitLayoutStore } from "../chatSplitLayoutStore";
+import { DesktopBrowserRuntime } from "../browser/DesktopBrowserRuntime";
 
-const { navigateSpy } = vi.hoisted(() => ({
+const { desktopHostLifecycle, navigateSpy } = vi.hoisted(() => ({
   navigateSpy: vi.fn(async () => undefined),
+  desktopHostLifecycle: {
+    automationMounts: 0,
+    automationUnmounts: 0,
+    browserMounts: 0,
+    browserUnmounts: 0,
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateSpy,
 }));
+
+vi.mock("~/env", () => ({
+  isElectron: true,
+}));
+
+vi.mock("~/browser/ElectronBrowserHost", async () => {
+  const { useEffect } = await import("react");
+  return {
+    ElectronBrowserHost: () => {
+      useEffect(() => {
+        desktopHostLifecycle.browserMounts += 1;
+        return () => {
+          desktopHostLifecycle.browserUnmounts += 1;
+        };
+      }, []);
+      return <div data-testid="electron-browser-host" />;
+    },
+  };
+});
+
+vi.mock("~/components/preview/PreviewAutomationHosts", async () => {
+  const { useEffect } = await import("react");
+  return {
+    PreviewAutomationHosts: () => {
+      useEffect(() => {
+        desktopHostLifecycle.automationMounts += 1;
+        return () => {
+          desktopHostLifecycle.automationUnmounts += 1;
+        };
+      }, []);
+      return <div data-testid="preview-automation-hosts" />;
+    },
+  };
+});
 
 vi.mock("./ChatView", () => ({
   default: (props: {
@@ -69,9 +110,63 @@ function clickLastButtonByText(text: string) {
 afterEach(() => {
   useChatSplitLayoutStore.setState(initialState, true);
   navigateSpy.mockClear();
+  desktopHostLifecycle.automationMounts = 0;
+  desktopHostLifecycle.automationUnmounts = 0;
+  desktopHostLifecycle.browserMounts = 0;
+  desktopHostLifecycle.browserUnmounts = 0;
 });
 
 describe("ChatSplitArea", () => {
+  it("keeps desktop hosts mounted across thread routes and layout branches", async () => {
+    const environmentId = EnvironmentId.make("env-local");
+    const targetA = serverTarget(environmentId, "thread-a");
+    const targetB = serverTarget(environmentId, "thread-b");
+    const screen = await render(
+      <>
+        <DesktopBrowserRuntime authenticated />
+        <ChatSplitArea routeTarget={targetA} routeDiffSearch={{}} />
+      </>,
+    );
+
+    await expect.poll(() => desktopHostLifecycle.browserMounts).toBe(1);
+    expect(desktopHostLifecycle.automationMounts).toBe(1);
+
+    await screen.rerender(
+      <>
+        <DesktopBrowserRuntime authenticated />
+        <ChatSplitArea routeTarget={targetB} routeDiffSearch={{}} />
+      </>,
+    );
+    await expect.poll(() => document.body.textContent?.includes("thread-b") ?? false).toBe(true);
+
+    useChatSplitLayoutStore.setState((state) => ({
+      ...state,
+      layout: state.layout ? { ...state.layout, maximizedLeafId: "root" } : state.layout,
+    }));
+
+    expect(desktopHostLifecycle.browserMounts).toBe(1);
+    expect(desktopHostLifecycle.automationMounts).toBe(1);
+    expect(desktopHostLifecycle.browserUnmounts).toBe(0);
+    expect(desktopHostLifecycle.automationUnmounts).toBe(0);
+
+    await screen.unmount();
+  });
+
+  it("does not mount desktop hosts before authentication", async () => {
+    const target = serverTarget(EnvironmentId.make("env-local"), "thread-a");
+    const screen = await render(
+      <>
+        <DesktopBrowserRuntime authenticated={false} />
+        <ChatSplitArea routeTarget={target} routeDiffSearch={{}} />
+      </>,
+    );
+
+    expect(desktopHostLifecycle.browserMounts).toBe(0);
+    expect(desktopHostLifecycle.automationMounts).toBe(0);
+
+    await screen.unmount();
+  });
+
   it("renders the next route target immediately when sidebar navigation changes threads", async () => {
     const environmentId = EnvironmentId.make("env-local");
     const targetA = serverTarget(environmentId, "thread-a");

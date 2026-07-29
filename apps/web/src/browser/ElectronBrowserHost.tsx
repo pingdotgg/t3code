@@ -13,6 +13,11 @@ import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 
 export function ElectronBrowserHost() {
+  if (!isElectron) return null;
+  return <ElectronBrowserHostContent />;
+}
+
+function ElectronBrowserHostContent() {
   const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
   const sessions = useMemo(
@@ -71,7 +76,6 @@ export function ElectronBrowserHost() {
     });
   }, []);
 
-  if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
       {sessions.map(({ threadRef, snapshot, zoomFactor }) => {

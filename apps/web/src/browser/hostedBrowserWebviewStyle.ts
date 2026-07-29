@@ -16,6 +16,9 @@ export interface HostedBrowserWebviewWrapperStyle {
 }
 
 export const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
+// The root-level native webview must remain below dialogs and command menus
+// (z-50) as well as toasts (z-100).
+export const HOSTED_BROWSER_WEBVIEW_Z_INDEX = 30;
 
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
@@ -29,7 +32,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
       top: rect.y,
       width: rect.width,
       height: rect.height,
-      zIndex: 30,
+      zIndex: HOSTED_BROWSER_WEBVIEW_Z_INDEX,
       pointerEvents: "auto",
     };
   }

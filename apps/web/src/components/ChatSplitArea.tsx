@@ -24,7 +24,6 @@ import { useShallow } from "zustand/react/shallow";
 
 import ChatView from "./ChatView";
 import { threadHasStarted } from "./ChatView.logic";
-import { ElectronBrowserHost } from "~/browser/ElectronBrowserHost";
 import { Button } from "./ui/button";
 import { scopeProjectRef } from "@t3tools/client-runtime";
 import { DraftId, useComposerDraftStore, type DraftThreadEnvMode } from "../composerDraftStore";
@@ -311,32 +310,26 @@ export function ChatSplitArea(props: ChatSplitAreaProps) {
 
   if (layoutFrame.maximizedLeafId) {
     return (
-      <>
-        <ChatSplitNodeRenderer
-          nodeId={layoutFrame.maximizedLeafId}
-          routeTarget={routeTarget}
-          routeDiffSearch={routeDiffSearch}
-          leafCount={layoutFrame.leafCount}
-          onDiffPanelOpen={onDiffPanelOpen}
-          reserveTitleBarControlInset={reserveTitleBarControlInset}
-        />
-        <ElectronBrowserHost />
-      </>
-    );
-  }
-
-  return (
-    <>
       <ChatSplitNodeRenderer
-        nodeId={layoutFrame.rootId}
+        nodeId={layoutFrame.maximizedLeafId}
         routeTarget={routeTarget}
         routeDiffSearch={routeDiffSearch}
         leafCount={layoutFrame.leafCount}
         onDiffPanelOpen={onDiffPanelOpen}
         reserveTitleBarControlInset={reserveTitleBarControlInset}
       />
-      <ElectronBrowserHost />
-    </>
+    );
+  }
+
+  return (
+    <ChatSplitNodeRenderer
+      nodeId={layoutFrame.rootId}
+      routeTarget={routeTarget}
+      routeDiffSearch={routeDiffSearch}
+      leafCount={layoutFrame.leafCount}
+      onDiffPanelOpen={onDiffPanelOpen}
+      reserveTitleBarControlInset={reserveTitleBarControlInset}
+    />
   );
 }
 

@@ -26,7 +26,7 @@ vi.mock("~/lib/previewAnnotation", () => ({
 }));
 
 vi.mock("~/localApi", () => ({
-  ensureLocalApi: vi.fn(),
+  readLocalApi: vi.fn(),
 }));
 
 vi.mock("~/previewStateStore", () => ({

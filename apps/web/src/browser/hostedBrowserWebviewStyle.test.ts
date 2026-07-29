@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   HIDDEN_BROWSER_WEBVIEW_OFFSET,
+  HOSTED_BROWSER_WEBVIEW_Z_INDEX,
   resolveHostedBrowserWebviewWrapperStyle,
 } from "./hostedBrowserWebviewStyle";
 
@@ -18,9 +19,13 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
       top: 34,
       width: 800,
       height: 600,
-      zIndex: 30,
+      zIndex: HOSTED_BROWSER_WEBVIEW_Z_INDEX,
       pointerEvents: "auto",
     });
+  });
+
+  it("stays below the global overlay layer after mounting at the app root", () => {
+    expect(HOSTED_BROWSER_WEBVIEW_Z_INDEX).toBeLessThan(50);
   });
 
   it("keeps an inactive webview paintable while moving it offscreen", () => {
