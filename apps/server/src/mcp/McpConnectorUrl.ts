@@ -55,7 +55,9 @@ export const buildConnectorUrl = (input: {
   } catch {
     return undefined;
   }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  // The credential is carried in the query string, so plaintext HTTP would
+  // expose it to network observers and make the workspace session replayable.
+  if (url.protocol !== "https:") return undefined;
 
   // Accept a base origin ("https://host"), the mount point ("…/mcp"), or a
   // previously-issued connector URL, and always land on exactly one "/mcp".

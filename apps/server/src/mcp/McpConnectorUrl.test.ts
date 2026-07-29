@@ -28,7 +28,7 @@ describe("buildConnectorUrl", () => {
     );
   });
 
-  it.each(["", "   ", "not a url", "ftp://host/mcp", "host.example"])(
+  it.each(["", "   ", "not a url", "ftp://host/mcp", "http://localhost:8787", "host.example"])(
     "returns undefined for unusable base URL %s",
     (publicBaseUrl) => {
       expect(buildConnectorUrl({ publicBaseUrl, token })).toBeUndefined();
