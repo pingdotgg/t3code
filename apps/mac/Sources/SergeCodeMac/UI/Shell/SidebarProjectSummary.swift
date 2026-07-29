@@ -17,19 +17,23 @@ struct SidebarProjectSummary: Equatable, Sendable {
     let idle: Int
     /// Threads behind the section's "Settled" disclosure.
     let settled: Int
+    /// Threads behind the section's "Snoozed" disclosure — suppressed until
+    /// their wake time passes, but still active on the wire.
+    let snoozed: Int
 
-    init(attention: Int, running: Int, idle: Int, settled: Int) {
+    init(attention: Int, running: Int, idle: Int, settled: Int, snoozed: Int = 0) {
         self.attention = attention
         self.running = running
         self.idle = idle
         self.settled = settled
+        self.snoozed = snoozed
     }
 
     static let empty = SidebarProjectSummary(attention: 0, running: 0, idle: 0, settled: 0)
 
-    /// Rows the section shows above its settled disclosure.
+    /// Rows the section shows above its snoozed/settled disclosures.
     var open: Int { attention + running + idle }
-    var total: Int { open + settled }
+    var total: Int { open + settled + snoozed }
     var isEmpty: Bool { total == 0 }
     /// Whether the project deserves the live treatment — a breathing tile and
     /// a lit rail. Attention alone does not: a thread parked on a question is
@@ -45,6 +49,7 @@ struct SidebarProjectSummary: Equatable, Sendable {
             case attention
             case running
             case idle
+            case snoozed
             case settled
         }
 
@@ -71,6 +76,7 @@ struct SidebarProjectSummary: Equatable, Sendable {
             (.attention, attention),
             (.running, running),
             (.idle, idle),
+            (.snoozed, snoozed),
             (.settled, settled),
         ].filter { $0.1 > 0 }
         guard !present.isEmpty else { return [] }
@@ -145,6 +151,9 @@ struct SidebarProjectSummary: Equatable, Sendable {
             if open > 0 {
                 parts.append("\(open) open")
             }
+            if snoozed > 0 {
+                parts.append("\(snoozed) snoozed")
+            }
             if settled > 0 {
                 parts.append("\(settled) settled")
             }
@@ -159,6 +168,7 @@ struct SidebarProjectSummary: Equatable, Sendable {
         if attention > 0 { parts.append("\(attention) needing attention") }
         if running > 0 { parts.append("\(running) running") }
         if idle > 0 { parts.append("\(idle) open") }
+        if snoozed > 0 { parts.append("\(snoozed) snoozed") }
         if settled > 0 { parts.append("\(settled) settled") }
         return parts.joined(separator: ", ")
     }
@@ -177,8 +187,13 @@ extension SidebarProjectSummary {
         var running = 0
         var idle = 0
         var settled = 0
+        var snoozed = 0
         for item in group.threads {
-            if ThreadInboxSemantics.effectiveSettled(
+            // Same classification order as `SidebarProjection.groupThreads`,
+            // so the header's numbers agree with the rows the section shows.
+            if ThreadInboxSemantics.isSnoozed(item.thread, now: now) {
+                snoozed += 1
+            } else if ThreadInboxSemantics.effectiveSettled(
                 item.thread,
                 now: now,
                 changeRequestState: item.vcs?.prState)
@@ -192,6 +207,7 @@ extension SidebarProjectSummary {
                 idle += 1
             }
         }
-        self.init(attention: attention, running: running, idle: idle, settled: settled)
+        self.init(
+            attention: attention, running: running, idle: idle, settled: settled, snoozed: snoozed)
     }
 }

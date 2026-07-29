@@ -25,6 +25,7 @@ extension SidebarProjectSummary.Segment.Kind {
         case .attention: AlpineTheme.clay
         case .running: AlpineTheme.accent
         case .idle: AlpineTheme.sky.opacity(0.55)
+        case .snoozed: AlpineTheme.sky.opacity(0.3)
         case .settled: Color.secondary.opacity(0.28)
         }
     }

@@ -96,6 +96,18 @@ struct SidebarThreadItem {
             base = member.location.connection.accessibilityLabel
         } else if thread.isStalled {
             base = "Stalled"
+        } else if !needsAttention, ThreadInboxSemantics.isSnoozed(thread) {
+            // Rows in the snoozed disclosure say when they come back rather
+            // than a stale "Idle". Attention states still win: a snoozed
+            // thread that errors reads as the error.
+            if let until = thread.snoozedUntil {
+                let sameDay = Calendar.current.isDate(until, inSameDayAs: Date())
+                base = sameDay
+                    ? "Snoozed until \(until.formatted(date: .omitted, time: .shortened))"
+                    : "Snoozed until \(until.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
+            } else {
+                base = "Snoozed"
+            }
         } else {
             base = switch thread.status {
             case .backgroundWork: "Background work"
@@ -147,6 +159,7 @@ struct SidebarProjectGroup: Identifiable {
 struct SidebarGroupThreads {
     let active: [SidebarThreadItem]
     let settled: [SidebarThreadItem]
+    let snoozed: [SidebarThreadItem]
 }
 
 @MainActor
@@ -274,21 +287,33 @@ enum SidebarProjection {
     ) -> SidebarGroupThreads {
         var active: [SidebarThreadItem] = []
         var settled: [SidebarThreadItem] = []
+        var snoozed: [SidebarThreadItem] = []
         for item in group.threads {
-            // Snoozed threads ride the settled disclosure: snooze is an
-            // overlay that suppresses a still-active thread from the inbox
-            // until snoozedUntil passes (timer wakes emit no event) or the
-            // server clears it on activity.
-            if ThreadInboxSemantics.effectiveSettled(
+            // Snoozed threads get their own disclosure: snooze is an overlay
+            // that suppresses a still-active thread from the inbox until
+            // snoozedUntil passes (timer wakes emit no event) or the server
+            // clears it on activity, and parking it among the settled rows
+            // misread as "done" what is really "waiting".
+            if ThreadInboxSemantics.isSnoozed(item.thread, now: now) {
+                snoozed.append(item)
+            } else if ThreadInboxSemantics.effectiveSettled(
                 item.thread,
                 now: now,
                 changeRequestState: item.vcs?.prState)
-                || ThreadInboxSemantics.isSnoozed(item.thread, now: now)
             {
                 settled.append(item)
             } else {
                 active.append(item)
             }
+        }
+
+        // Soonest wake first: the row about to return to the inbox is the one
+        // the user is most likely to be looking for.
+        snoozed.sort {
+            let left = $0.thread.snoozedUntil ?? .distantFuture
+            let right = $1.thread.snoozedUntil ?? .distantFuture
+            if left != right { return left < right }
+            return $0.thread.id < $1.thread.id
         }
 
         // Same duplicate-ID hazard as `activeThreads` above.
@@ -317,7 +342,8 @@ enum SidebarProjection {
                 return lhs.element.thread.updatedAt > rhs.element.thread.updatedAt
             }
         }
-        return SidebarGroupThreads(active: ranked.map(\.element), settled: settled)
+        return SidebarGroupThreads(
+            active: ranked.map(\.element), settled: settled, snoozed: snoozed)
     }
 
     /// 0 = pinned, 1 = needs attention, 2 = in progress, 3 = everything else.

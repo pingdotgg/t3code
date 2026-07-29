@@ -54,6 +54,10 @@ struct SidebarView: View {
     @UIState private var revealedSettled: Set<String> = []
     /// Project whose settled disclosure row is hovered (reveals archive-all).
     @UIState private var hoveredSettledGroup: String?
+    /// Projects whose snoozed-thread disclosure is open.
+    @UIState private var revealedSnoozed: Set<String> = []
+    /// Project whose snoozed disclosure row is hovered (reveals wake-all).
+    @UIState private var hoveredSnoozedGroup: String?
     /// Remembers what the list last rendered so a structural update can be
     /// animated or snapped. Reference type on purpose: it is read during an
     /// update, not rendered from, and must not invalidate the view when it
@@ -198,13 +202,16 @@ struct SidebarView: View {
             // "settled" opens every project's disclosure; "settled:<groupID>"
             // opens one, so a probe verifying a single section can drive that
             // section alone. Unknown ids are dropped rather than unioned in —
-            // see `UIProbeSettledKey.targets`.
-            let targets = UIProbeSettledKey.targets(
-                for: key, among: Set(allProjectGroups.map(\.id)))
-            guard !targets.isEmpty else { return }
+            // see `UIProbeSettledKey.targets`. "snoozed"/"snoozed:<groupID>"
+            // drive the snoozed disclosure the same way.
+            let known = Set(allProjectGroups.map(\.id))
+            let settledTargets = UIProbeSettledKey.targets(for: key, among: known)
+            let snoozedTargets = UIProbeSnoozedKey.targets(for: key, among: known)
+            guard !settledTargets.isEmpty || !snoozedTargets.isEmpty else { return }
             DispatchQueue.main.async {
                 withAnimation(Motion.structure) {
-                    revealedSettled.formUnion(targets)
+                    revealedSettled.formUnion(settledTargets)
+                    revealedSnoozed.formUnion(snoozedTargets)
                 }
             }
         }
@@ -338,6 +345,17 @@ struct SidebarView: View {
             if split.active.count > visible.count {
                 census.rows.insert("\(section.id)/more")
             }
+            if !split.snoozed.isEmpty {
+                census.rows.insert("\(section.id)/snoozed-toggle")
+            }
+            if revealedSnoozed.contains(section.id) {
+                // Ordered purely by wake time, so membership alone decides
+                // whether the disclosure animates.
+                for item in split.snoozed {
+                    census.standing.insert("\(section.id)/snoozed/\(rowKey(item))")
+                    census.rows.insert("\(section.id)/snoozed/\(rowKey(item))")
+                }
+            }
             if !split.settled.isEmpty {
                 census.rows.insert("\(section.id)/settled-toggle")
             }
@@ -444,9 +462,9 @@ struct SidebarView: View {
         let visible = visibleActive(split, sectionID: section.id)
         let hiddenCount = split.active.count - visible.count
         // The outline's guide has to know where it stops, and that is not
-        // "the last visible row": a "Show more" pill or a settled
+        // "the last visible row": a "Show more" pill or a snoozed/settled
         // disclosure keeps the section going below it.
-        let activeRunsOn = hiddenCount > 0 || !split.settled.isEmpty
+        let activeRunsOn = hiddenCount > 0 || !split.settled.isEmpty || !split.snoozed.isEmpty
         // A project with no sessions renders no rows at all. Its header already
         // says "No sessions" on the census line and carries the "+" that starts
         // one, so a placeholder row underneath repeated the same two words one
@@ -464,6 +482,13 @@ struct SidebarView: View {
         }
         if hiddenCount > 0 {
             showMoreRow(group: group, hiddenCount: hiddenCount, accent: accent)
+        }
+        if !split.snoozed.isEmpty {
+            snoozedDisclosure(
+                group: group,
+                snoozed: split.snoozed,
+                showMachine: showMachine,
+                accent: accent)
         }
         if !split.settled.isEmpty {
             settledDisclosure(
@@ -622,6 +647,135 @@ struct SidebarView: View {
                         index: index,
                         isLast: index == settled.count - 1),
                     index: index)
+            }
+        }
+    }
+
+    /// The snoozed counterpart of `settledDisclosure`: snoozed threads are
+    /// still active on the wire, so they get their own quiet shelf — soonest
+    /// wake first — instead of masquerading as settled work. The hover action
+    /// wakes everything at once, mirroring the settled row's archive-all.
+    @ViewBuilder
+    private func snoozedDisclosure(
+        group: SidebarProjectGroup,
+        snoozed: [SidebarThreadItem],
+        showMachine: Bool,
+        accent: Color
+    ) -> some View {
+        let isRevealed = revealedSnoozed.contains(group.id)
+        let isHovered = hoveredSnoozedGroup == group.id
+        HStack(spacing: 6) {
+            Button {
+                Haptics.play(.toggle)
+                withAnimation(Motion.structure) {
+                    // `_ =`: keep the Set.insert/remove results out of
+                    // `withAnimation`'s generic Result inference (see the
+                    // expandedProjects toggle above).
+                    if isRevealed {
+                        _ = revealedSnoozed.remove(group.id)
+                    } else {
+                        _ = revealedSnoozed.insert(group.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    SidebarRailStub(accent: accent)
+                    SidebarDisclosureChevron(isExpanded: isRevealed, size: 8)
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 10)
+                    SidebarPill {
+                        HStack(spacing: 4) {
+                            Image(systemName: "moon.zzz")
+                                .font(.system(size: 8, weight: .semibold))
+                            Text("Snoozed")
+                            Text("\(snoozed.count)")
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(SidebarPressStyle())
+            .accessibilityLabel(
+                isRevealed
+                    ? "Hide \(snoozed.count) snoozed sessions in \(group.name)"
+                    : "Show \(snoozed.count) snoozed sessions in \(group.name)")
+            Button {
+                Haptics.play(.commit)
+                Task { await wakeAllSnoozed(snoozed) }
+            } label: {
+                Image(systemName: "bell.and.waves.left.and.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .background { SidebarHoverSurface(isActive: isHovered, cornerRadius: 5) }
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(SidebarPressStyle())
+            .help("Wake \(snoozed.count) snoozed \(snoozed.count == 1 ? "session" : "sessions") in \(group.name)")
+            .accessibilityLabel("Wake all snoozed sessions in \(group.name)")
+            .opacity(isHovered ? 1 : 0)
+            .offset(x: isHovered || !Motion.profile.usesMovement ? 0 : 8)
+            .allowsHitTesting(isHovered)
+            .accessibilityHidden(!isHovered)
+        }
+        .padding(.vertical, 3)
+        .onHover { hovering in
+            hoveredSnoozedGroup = hovering ? group.id : nil
+        }
+        .animation(Motion.feedback, value: hoveredSnoozedGroup)
+        .alpineContextMenu(width: 280) { dismiss in
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "moon.zzz",
+                    title: "Snoozed sessions",
+                    subtitle: group.name,
+                    titleLineLimit: 1)
+                Divider().opacity(0.55)
+                AlpineMenuList {
+                    AlpineMenuRow(
+                        icon: "bell.and.waves.left.and.right",
+                        title: "Wake All Snoozed",
+                        detail: "\(snoozed.count) session\(snoozed.count == 1 ? "" : "s")"
+                    ) {
+                        dismiss()
+                        Task { await wakeAllSnoozed(snoozed) }
+                    }
+                }
+            }
+            .onAppear {
+                #if DEBUG
+                    UIProbeMenus.record("snoozed:\(group.id)")
+                #endif
+            }
+        }
+        if isRevealed {
+            ForEach(Array(snoozed.enumerated()), id: \.element.id) { index, item in
+                threadRow(
+                    item,
+                    context: .project(
+                        showMachine: showMachine,
+                        accent: accent,
+                        index: index,
+                        isLast: index == snoozed.count - 1),
+                    index: index)
+            }
+        }
+    }
+
+    /// Wakes every snoozed session of a project. A group can span machines,
+    /// so threads are bucketed by their owning model, like `archiveAllSettled`.
+    private func wakeAllSnoozed(_ items: [SidebarThreadItem]) async {
+        var byLocation: [ObjectIdentifier: (model: AppModel, threads: [ChatThread])] = [:]
+        for item in items {
+            let key = ObjectIdentifier(item.member.location.model)
+            byLocation[key, default: (item.member.location.model, [])].threads.append(item.thread)
+        }
+        for (_, entry) in byLocation {
+            for thread in entry.threads {
+                await entry.model.unsnoozeThread(thread)
             }
         }
     }
@@ -1201,6 +1355,33 @@ private struct SidebarThreadMenu: View {
         }
         .animation(Motion.structure, value: showingProviders)
         .animation(Motion.structure, value: showingSnooze)
+        // Probe hook (see UIProbeHooks): drives this menu's page swap and the
+        // snooze commit when the accessibility tree does not resolve for
+        // same-process clicks. Nothing posts it outside a probe run. Keys are
+        // scoped by thread id because a dismissed popover's content view can
+        // outlive its dismissal, and every mounted menu hears the post.
+        .onReceive(NotificationCenter.default.publisher(for: .uiProbeMenuAction)) { note in
+            guard let key = note.object as? String else { return }
+            switch key {
+            case "snooze-page:\(item.thread.id)":
+                showingSnooze = true
+            case "snooze-first-preset:\(item.thread.id)":
+                if let preset = SnoozePreset.presets(now: Date()).first {
+                    performSnooze(preset)
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    /// One definition of what picking a wake time does, shared by the preset
+    /// rows and the probe hook above so the probe exercises the same commit.
+    private func performSnooze(_ preset: SnoozePreset) {
+        Haptics.play(.commit)
+        dismiss()
+        let thread = item.thread
+        Task { await model.snoozeThread(thread, until: preset.until) }
     }
 
     private var actionPage: some View {
@@ -1316,14 +1497,16 @@ private struct SidebarThreadMenu: View {
             AlpineMenuList {
                 ForEach(SnoozePreset.presets(now: Date())) { preset in
                     AlpineMenuRow(icon: preset.icon, title: preset.title) {
-                        Haptics.play(.commit)
-                        dismiss()
-                        let thread = item.thread
-                        Task { await model.snoozeThread(thread, until: preset.until) }
+                        performSnooze(preset)
                     }
                     .disabled(!item.isSelectable)
                 }
             }
+        }
+        .onAppear {
+            #if DEBUG
+                UIProbeMenus.record("thread:\(item.thread.id):snooze-page")
+            #endif
         }
     }
 

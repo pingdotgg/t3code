@@ -229,5 +229,38 @@ struct AppModelRenderMemoizationTests {
         b = a
         b.title = "Other"
         #expect(!a.displayEquivalent(to: b))
+
+        // Snooze regression: the overlay fields were once missing here, so a
+        // snooze-only upsert was judged equivalent and never reached the
+        // sidebar — the menu action visibly did nothing.
+        b = a
+        b.snoozedUntil = Date(timeIntervalSince1970: 5000)
+        b.snoozedAt = Date(timeIntervalSince1970: 1000)
+        #expect(!a.displayEquivalent(to: b))
+    }
+
+    @Test("a snooze-only upsert lands in model.threads")
+    func snoozeOnlyUpsertLands() {
+        let model = AppModel(backend: MockBackend(), deviceID: .local)
+        let base = makeThread(updatedAt: Date(timeIntervalSince1970: 100))
+        model.enqueue(.threadUpserted(base))
+        model.flushPendingEvents()
+
+        var snoozed = base
+        snoozed.snoozedUntil = Date(timeIntervalSince1970: 10_000)
+        snoozed.snoozedAt = Date(timeIntervalSince1970: 150)
+        snoozed.updatedAt = Date(timeIntervalSince1970: 150)
+        model.enqueue(.threadUpserted(snoozed))
+        model.flushPendingEvents()
+
+        #expect(model.threads[0].snoozedUntil == Date(timeIntervalSince1970: 10_000))
+
+        var woken = snoozed
+        woken.snoozedUntil = nil
+        woken.snoozedAt = nil
+        model.enqueue(.threadUpserted(woken))
+        model.flushPendingEvents()
+
+        #expect(model.threads[0].snoozedUntil == nil)
     }
 }
