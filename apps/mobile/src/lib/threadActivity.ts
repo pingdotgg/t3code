@@ -69,7 +69,7 @@ interface WorkLogEntry {
   command?: string;
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
-  tone: "thinking" | "tool" | "info" | "error";
+  tone: "thinking" | "tool" | "info" | "error" | "subagent";
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
@@ -438,7 +438,12 @@ function normalizeCompactToolLabel(value: string): string {
 }
 
 function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
-  if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
+  if (
+    entry.tone === "tool" ||
+    entry.tone === "thinking" ||
+    entry.tone === "error" ||
+    entry.tone === "subagent"
+  ) {
     return true;
   }
   if (entry.command !== undefined && entry.command.trim().length > 0) {
@@ -529,7 +534,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
     return "hammer";
   }
   if (entry.tone === "error") return "alert";
-  if (entry.tone === "thinking") return "agent";
+  if (entry.tone === "thinking" || entry.tone === "subagent") return "agent";
   if (entry.tone === "info") return "check";
   return "zap";
 }

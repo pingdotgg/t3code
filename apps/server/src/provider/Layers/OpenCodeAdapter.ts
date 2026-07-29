@@ -672,7 +672,7 @@ export function makeOpenCodeAdapter(
       part: Extract<Part, { type: "subtask" }>,
       targetTurnId: TurnId | undefined,
       type: "item.started" | "item.completed",
-      status: "inProgress" | "completed" | "failed" | "stopped",
+      status: "inProgress" | "completed" | "failed" | "declined",
       raw: unknown,
     ) {
       const desc = trimText(part.description);
@@ -698,7 +698,7 @@ export function makeOpenCodeAdapter(
     const completeOpenSubtasks = Effect.fn("completeOpenSubtasks")(function* (
       context: OpenCodeSessionContext,
       targetTurnId: TurnId | undefined,
-      status: "completed" | "failed" | "stopped",
+      status: "completed" | "failed" | "declined",
       raw: unknown,
     ) {
       for (const [partId, part] of context.partById.entries()) {
@@ -949,7 +949,9 @@ export function makeOpenCodeAdapter(
                   ? trimText(String(part.state.input.description))
                   : undefined;
               const title =
-                part.state.title && part.state.title.toLowerCase() !== "task"
+                "title" in part.state &&
+                typeof part.state.title === "string" &&
+                part.state.title.toLowerCase() !== "task"
                   ? part.state.title
                   : (inputDesc ?? part.tool);
               const detail = detailFromToolPart(part);
@@ -1125,7 +1127,7 @@ export function makeOpenCodeAdapter(
 
           if (event.properties.status.type === "idle" && turnId) {
             context.activeTurnId = undefined;
-            yield* completeOpenSubtasks(turnId, "completed", event);
+            yield* completeOpenSubtasks(context, turnId, "completed", event);
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -1147,7 +1149,7 @@ export function makeOpenCodeAdapter(
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
 
-          yield* completeOpenSubtasks(activeTurnId, "failed", event);
+          yield* completeOpenSubtasks(context, activeTurnId, "failed", event);
 
           yield* updateProviderSession(
             context,
@@ -1680,7 +1682,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        yield* completeOpenSubtasks(context, context.activeTurnId, "stopped", null);
+        yield* completeOpenSubtasks(context, context.activeTurnId, "failed", null);
         const stopped = yield* stopOpenCodeContext(context);
         sessions.delete(threadId);
         if (!stopped) {

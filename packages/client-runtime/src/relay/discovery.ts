@@ -240,7 +240,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
           }));
           return;
         }
-        return yield* Effect.fail(failure);
+        return yield* failure;
       }
       const clerkToken = tokenResult.success;
       if ((yield* Ref.get(accountGeneration)) !== generation) {
