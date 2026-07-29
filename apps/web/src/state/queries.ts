@@ -7,6 +7,8 @@ import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   OrchestrationThread,
+  ProviderInstanceId,
+  ServerProviderSkill,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -21,6 +23,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
@@ -215,6 +218,35 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     isPending: normalizedTarget.query !== debouncedTarget.query || result.isPending,
     refresh: result.refresh,
   };
+}
+
+/**
+ * Provider skills resolved against the active workspace, for the `$` picker
+ * and inline skill rendering.
+ *
+ * The provider snapshot's `skills` are discovered against the server process
+ * cwd, which only matches the user's repository in the `npx t3`-inside-a-repo
+ * flow — in the desktop app that cwd is unrelated to the project open in the
+ * sidebar, so project-scoped skills never showed up there. This asks the
+ * server to re-run discovery against the workspace's own path and falls back
+ * to the snapshot list while loading, on error (older servers without the
+ * RPC), or when the driver has no workspace-scoped discovery (`skills: null`).
+ */
+export function useWorkspaceProviderSkills(input: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly cwd: string | null;
+  readonly snapshotSkills: ReadonlyArray<ServerProviderSkill>;
+}): ReadonlyArray<ServerProviderSkill> {
+  const result = useEnvironmentQuery(
+    input.instanceId !== null && input.cwd !== null
+      ? serverEnvironment.discoverProviderSkills({
+          environmentId: input.environmentId,
+          input: { instanceId: input.instanceId, cwd: input.cwd },
+        })
+      : null,
+  );
+  return result.data?.skills ?? input.snapshotSkills;
 }
 
 export function useCheckpointDiff(

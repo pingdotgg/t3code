@@ -84,6 +84,8 @@ import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
+import type { ProviderInstance } from "./provider/ProviderDriver.ts";
+import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -325,6 +327,9 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
+    providerInstanceRegistry?: Partial<
+      ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+    >;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -547,18 +552,27 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([]),
-          refresh: () => Effect.succeed([]),
-          refreshInstance: () => Effect.succeed([]),
-          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
-            Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
-            ),
-          setProviderMaintenanceActionState: () => Effect.succeed([]),
-          streamChanges: Stream.empty,
-          ...options?.layers?.providerRegistry,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            refresh: () => Effect.succeed([]),
+            refreshInstance: () => Effect.succeed([]),
+            getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
+              ),
+            setProviderMaintenanceActionState: () => Effect.succeed([]),
+            streamChanges: Stream.empty,
+            ...options?.layers?.providerRegistry,
+          }),
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(undefined),
+            listInstances: Effect.succeed([]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            ...options?.layers?.providerInstanceRegistry,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ServerSettings.ServerSettingsService)({
@@ -4562,6 +4576,68 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         truncated: false,
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect(
+    "routes websocket rpc server.discoverProviderSkills against the requested workspace",
+    () =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const requestedCwds: Array<string> = [];
+        // The handler only reaches for `discoverSkills`; the rest of the
+        // instance is irrelevant to this route.
+        const fakeInstance = {
+          discoverSkills: (cwd: string) => {
+            requestedCwds.push(cwd);
+            return Effect.succeed([
+              {
+                name: "deploy",
+                path: `${cwd}/.claude/skills/deploy/SKILL.md`,
+                enabled: true,
+                scope: "project",
+              },
+            ]);
+          },
+        } as unknown as ProviderInstance;
+
+        yield* buildAppUnderTest({
+          layers: {
+            providerInstanceRegistry: {
+              getInstance: (instanceId) =>
+                Effect.succeed(instanceId === claudeInstanceId ? fakeInstance : undefined),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.all({
+              discovered: client[WS_METHODS.serverDiscoverProviderSkills]({
+                instanceId: claudeInstanceId,
+                cwd: "/projects/alpha",
+              }),
+              // Instances without workspace discovery (or unknown ids) answer
+              // `skills: null` so clients keep the snapshot's skills.
+              unsupported: client[WS_METHODS.serverDiscoverProviderSkills]({
+                instanceId: ProviderInstanceId.make("codex"),
+                cwd: "/projects/alpha",
+              }),
+            }),
+          ),
+        );
+
+        assert.deepEqual(requestedCwds, ["/projects/alpha"]);
+        assert.deepEqual(response.discovered.skills, [
+          {
+            name: "deploy",
+            path: "/projects/alpha/.claude/skills/deploy/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+        ]);
+        assert.isNull(response.unsupported.skills);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>

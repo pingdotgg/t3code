@@ -156,6 +156,7 @@ import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { useWorkspaceProviderSkills } from "~/state/queries";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
@@ -2386,6 +2387,14 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  // Skills resolved against the active workspace (project path / worktree)
+  // rather than the server process cwd baked into the snapshot.
+  const workspaceProviderSkills = useWorkspaceProviderSkills({
+    environmentId,
+    instanceId: activeProviderStatus?.instanceId ?? null,
+    cwd: gitCwd,
+    snapshotSkills: activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS,
+  });
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -5730,7 +5739,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={workspaceProviderSkills}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}

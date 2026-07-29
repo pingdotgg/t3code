@@ -54,6 +54,7 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -216,6 +217,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        // Workspace-scoped discovery for the `$` picker: the snapshot scans
+        // against the server process cwd, which is unrelated to the active
+        // project in the desktop app. Transports call this with the
+        // project's own path instead.
+        discoverSkills: (projectCwd: string) =>
+          discoverClaudeSkills(effectiveConfig, projectCwd, processEnv).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
       } satisfies ProviderInstance;
     }),
 };

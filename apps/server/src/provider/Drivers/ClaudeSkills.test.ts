@@ -188,6 +188,54 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("scopes project skills to the workspace passed in, not the process cwd", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const projectAlpha = path.join(tempDir, "project-alpha");
+      const projectBeta = path.join(tempDir, "project-beta");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "shared",
+        ["---", "name: shared", "description: User-scoped.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectAlpha, ".claude", "skills"),
+        "alpha-deploy",
+        ["---", "name: alpha-deploy", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectBeta, ".claude", "skills"),
+        "beta-release",
+        ["---", "name: beta-release", "---"].join("\n"),
+      );
+
+      // The desktop app runs the server from a cwd unrelated to any project;
+      // discovery keyed by each project's own path must return that
+      // project's skills without leaking the other project's set.
+      const alphaSkills = yield* discoverClaudeSkills({ homePath: configDir }, projectAlpha);
+      const betaSkills = yield* discoverClaudeSkills({ homePath: configDir }, projectBeta);
+
+      assert.deepEqual(
+        alphaSkills.map((skill) => [skill.name, skill.scope]),
+        [
+          ["alpha-deploy", "project"],
+          ["shared", "user"],
+        ],
+      );
+      assert.deepEqual(
+        betaSkills.map((skill) => [skill.name, skill.scope]),
+        [
+          ["beta-release", "project"],
+          ["shared", "user"],
+        ],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
