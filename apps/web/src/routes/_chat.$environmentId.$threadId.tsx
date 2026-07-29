@@ -1,16 +1,14 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
-import { ThreadDetailLoadingState } from "../components/ThreadDetailLoadingState";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
+import { resolveThreadSyncPhase } from "../threadSync";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
-  useProject,
   useThreadDetail,
   useThreadShell,
   useThreadStatus,
@@ -27,11 +25,6 @@ function ChatThreadRouteView() {
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
   );
   const serverThreadShell = useThreadShell(threadRef);
-  const serverThreadProject = useProject(
-    serverThreadShell === null
-      ? null
-      : scopeProjectRef(serverThreadShell.environmentId, serverThreadShell.projectId),
-  );
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
@@ -55,6 +48,11 @@ function ChatThreadRouteView() {
     serverThreadDetailExists: serverThreadDetail !== null,
     serverThreadDetailDeleted: serverThreadStatus === "deleted",
     draftThreadExists,
+  });
+  const threadSyncPhase = resolveThreadSyncPhase({
+    detailExists: serverThreadDetail !== null,
+    shellExists: serverThreadShell !== null,
+    status: serverThreadStatus,
   });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
@@ -82,16 +80,12 @@ function ChatThreadRouteView() {
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      {renderState === "ready" ? (
+      {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
         <ChatView
           environmentId={threadRef.environmentId}
           threadId={threadRef.threadId}
           routeKind="server"
-        />
-      ) : renderState === "loading" ? (
-        <ThreadDetailLoadingState
-          projectTitle={serverThreadProject?.title ?? null}
-          threadTitle={serverThreadShell?.title ?? null}
+          threadSyncPhase={threadSyncPhase}
         />
       ) : null}
     </SidebarInset>
