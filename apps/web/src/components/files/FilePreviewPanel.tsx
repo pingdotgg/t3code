@@ -79,6 +79,7 @@ interface FilePreviewPanelProps {
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
+const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
@@ -645,6 +646,15 @@ function initialExplorerOpen(): boolean {
   }
 }
 
+function initialRenderMarkdown(): boolean {
+  try {
+    return getLocalStorageItem(RENDER_MARKDOWN_STORAGE_KEY, Schema.Boolean) ?? false;
+  } catch (error) {
+    console.error(error);
+    return false;
+  }
+}
+
 export default function FilePreviewPanel({
   environmentId,
   cwd,
@@ -672,16 +682,17 @@ export default function FilePreviewPanel({
   const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
   const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
-  const [markdownView, setMarkdownView] = useState<{
-    path: string | null;
-    revealRequestId: number | null;
-  }>({ path: null, revealRequestId: null });
+  // Reading markdown rendered is a preference, not a property of one file. Keeping
+  // it on the panel meant a thread switch dropped it and forced source back.
+  const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useState(initialRenderMarkdown);
+  const [revealHandledRequestId, setRevealHandledRequestId] = useState<number | null>(null);
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  // A reveal still wins over the preference: the line only exists in the source.
   const renderMarkdown =
     isMarkdown &&
-    markdownView.path === relativePath &&
-    (revealLine === null || markdownView.revealRequestId === revealRequestId);
+    renderMarkdownPreferred &&
+    (revealLine === null || revealHandledRequestId === revealRequestId);
   const canOpenInBrowser =
     relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
@@ -788,10 +799,13 @@ export default function FilePreviewPanel({
                     className="shrink-0"
                     pressed={renderMarkdown}
                     onPressedChange={(pressed) => {
-                      setMarkdownView({
-                        path: pressed ? relativePath : null,
-                        revealRequestId: pressed ? revealRequestId : null,
-                      });
+                      setRenderMarkdownPreferred(pressed);
+                      setRevealHandledRequestId(pressed ? revealRequestId : null);
+                      try {
+                        setLocalStorageItem(RENDER_MARKDOWN_STORAGE_KEY, pressed, Schema.Boolean);
+                      } catch (error) {
+                        console.error(error);
+                      }
                     }}
                     aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
                     variant="ghost"
