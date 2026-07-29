@@ -35,7 +35,6 @@ describe("serverSettings helpers", () => {
         profile: "balanced",
         overrides: {},
       },
-      automaticGitFetchInterval: Duration.seconds(30),
     });
 
     expect(resolved.profile).toBe("balanced");

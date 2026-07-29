@@ -78,6 +78,19 @@ describe("ServerSettings background activity defaults", () => {
       overrides: {},
     });
   });
+
+  it("preserves upstream's empty-object background activity defaults", () => {
+    const settings = decodeServerSettings({
+      backgroundActivity: {},
+    });
+
+    expect(settings.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "balanced",
+      overrides: {},
+    });
+    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(300_000);
+  });
 });
 
 describe("ClientSettings environment identification", () => {
