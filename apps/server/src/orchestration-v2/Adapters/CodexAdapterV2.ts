@@ -1167,7 +1167,26 @@ export function redactCodexProtocolValue(value: unknown): unknown {
     return value.map(redactCodexProtocolValue);
   }
   if (value === null || typeof value !== "object") {
-    return typeof value === "string" && /^Bearer\s+/i.test(value) ? "[REDACTED]" : value;
+    if (typeof value !== "string") {
+      return value;
+    }
+    if (/^Bearer\s+/i.test(value)) {
+      return "[REDACTED]";
+    }
+    const trimmed = value.trim();
+    if (
+      !(
+        (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+        (trimmed.startsWith("[") && trimmed.endsWith("]"))
+      )
+    ) {
+      return value;
+    }
+    try {
+      return JSON.stringify(redactCodexProtocolValue(JSON.parse(trimmed) as unknown));
+    } catch {
+      return value;
+    }
   }
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [
