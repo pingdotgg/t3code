@@ -357,6 +357,7 @@ describe("cached VCS refs", () => {
             [WS_METHODS.vcsPanelCreateBranchFromCommit]: () =>
               Effect.succeed({ refName: "feature/panel-cache" }),
             [WS_METHODS.vcsPanelFetchRemote]: () => Effect.fail(expectedError),
+            [WS_METHODS.vcsPanelFetchAllRemotes]: () => Effect.void,
             [WS_METHODS.vcsPanelStageFiles]: () => Effect.void,
             [WS_METHODS.vcsPanelCreateStash]: () => Effect.void,
           } as unknown as WsRpcProtocolClient;
@@ -419,6 +420,16 @@ describe("cached VCS refs", () => {
           expect(yield* Ref.get(clears)).toBe(2);
           expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
 
+          const fetchedAll = yield* Effect.promise(() =>
+            atoms.panelFetchAllRemotes.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo" },
+            }),
+          );
+          expect(AsyncResult.isSuccess(fetchedAll)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(3);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+
           const staged = yield* Effect.promise(() =>
             atoms.panelStageFiles.run(registry, {
               environmentId: TARGET.environmentId,
@@ -433,8 +444,8 @@ describe("cached VCS refs", () => {
           );
           expect(AsyncResult.isSuccess(staged)).toBe(true);
           expect(AsyncResult.isSuccess(stashed)).toBe(true);
-          expect(yield* Ref.get(clears)).toBe(2);
-          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+          expect(yield* Ref.get(clears)).toBe(3);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
         }),
       ),
   );

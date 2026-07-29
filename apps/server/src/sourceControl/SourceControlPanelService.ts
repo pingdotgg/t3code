@@ -333,7 +333,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         gitCommonDir,
         "fetch",
         "--all",
-      ]).pipe(Effect.asVoid);
+      ]).pipe(Effect.asVoid, Effect.ensuring(git.invalidateRefs(fetchCwd)));
     },
     {
       capacity: 128,
@@ -354,13 +354,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const fetchAllRemotes: SourceControlPanelService["Service"]["fetchAllRemotes"] = Effect.fn(
     "fetchAllRemotes",
   )(function* (input) {
-    yield* Effect.gen(function* () {
-      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
-      if (input.force === true) {
-        yield* Cache.invalidate(fetchAllRemotesCache, gitCommonDir);
-      }
-      yield* Cache.get(fetchAllRemotesCache, gitCommonDir);
-    }).pipe(Effect.ensuring(git.invalidateRefs(input.cwd)));
+    const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
+    if (input.force === true) {
+      yield* Cache.invalidate(fetchAllRemotesCache, gitCommonDir);
+    }
+    yield* Cache.get(fetchAllRemotesCache, gitCommonDir);
   });
 
   const withTemporaryIntentToAddIndex = <A, E>(

@@ -2761,12 +2761,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
+  const invalidateRefs: GitVcsDriver.GitVcsDriver["Service"]["invalidateRefs"] = (cwd) =>
+    invalidateListRefsSnapshot(cwd).pipe(Effect.ignore);
   const withListRefsInvalidation = <A, E>(
     cwd: string,
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<A, E> => effect.pipe(Effect.ensuring(invalidateRefs(cwd)));
-  const invalidateRefs: GitVcsDriver.GitVcsDriver["Service"]["invalidateRefs"] = (cwd) =>
-    invalidateListRefsSnapshot(cwd).pipe(Effect.ignore);
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
   ) =>

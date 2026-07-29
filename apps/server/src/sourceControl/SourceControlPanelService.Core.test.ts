@@ -1179,7 +1179,7 @@ describe("SourceControlPanelService", () => {
     ]);
   });
 
-  it.effect("invalidates shared refs after successful and failed ref mutations", () => {
+  it.effect("invalidates shared refs only after attempted ref mutations", () => {
     const invalidations: string[] = [];
     return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
@@ -1202,6 +1202,19 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(invalidations, ["/repo", "/repo"]);
 
       yield* service.fetchAllRemotes({ cwd: "/repo", force: true });
+      assert.deepStrictEqual(invalidations, ["/repo", "/repo", "/repo"]);
+
+      yield* service.fetchAllRemotes({ cwd: "/repo" });
+      assert.deepStrictEqual(invalidations, ["/repo", "/repo", "/repo"]);
+
+      const validationFailure = yield* Effect.exit(
+        service.addRemote({
+          cwd: "/repo",
+          name: "-invalid",
+          url: "https://example.com/repo.git",
+        }),
+      );
+      assert(Exit.isFailure(validationFailure));
       assert.deepStrictEqual(invalidations, ["/repo", "/repo", "/repo"]);
     }).pipe(
       Effect.provide(
