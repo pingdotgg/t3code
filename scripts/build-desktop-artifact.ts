@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
@@ -32,6 +33,21 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
+const ELECTRON_BUILDER_NETWORK_RETRY_LIMIT = 2;
+const ELECTRON_BUILDER_NETWORK_RETRY_DELAY = "2 seconds";
+const TRANSIENT_ELECTRON_BUILDER_NETWORK_PATTERNS = [
+  /client network socket disconnected before secure tls connection was established/iu,
+  /socket hang up/iu,
+  /tls handshake timeout/iu,
+  /\bEAI_AGAIN\b/u,
+  /\bECONNRESET\b/u,
+  /\bECONNREFUSED\b/u,
+  /\bENETUNREACH\b/u,
+  /\bEHOSTUNREACH\b/u,
+  /\bETIMEDOUT\b/u,
+  /\bESOCKETTIMEDOUT\b/u,
+  /\b(?:http|status(?: code)?)\s*(?:429|502|503|504)\b/iu,
+] as const;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
@@ -230,6 +246,24 @@ export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildComman
     const outputSuffix = outputSections.length > 0 ? `\n\n${outputSections.join("\n\n")}` : "";
     return `Command exited with non-zero exit code (${this.exitCode})${outputSuffix}`;
   }
+}
+
+const isBuildCommandFailedError = Schema.is(BuildCommandFailedError);
+
+export function isTransientElectronBuilderNetworkFailure(error: unknown): boolean {
+  if (!isBuildCommandFailedError(error)) return false;
+  const output = `${error.stdoutTail ?? ""}\n${error.stderrTail ?? ""}`;
+  return TRANSIENT_ELECTRON_BUILDER_NETWORK_PATTERNS.some((pattern) => pattern.test(output));
+}
+
+export function shouldRetryElectronBuilderFailure(
+  error: unknown,
+  retriesAttempted: number,
+): boolean {
+  return (
+    retriesAttempted < ELECTRON_BUILDER_NETWORK_RETRY_LIMIT &&
+    isTransientElectronBuilderNetworkFailure(error)
+  );
 }
 
 const desktopIconPlatformNames = {
@@ -1240,6 +1274,31 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
+const runElectronBuilderCommand = Effect.fn("runElectronBuilderCommand")(function* (
+  command: ChildProcess.Command,
+  options: {
+    readonly label: string;
+    readonly verbose: boolean;
+  },
+) {
+  let retriesAttempted = 0;
+  yield* runCommand(command, options).pipe(
+    Effect.retry({
+      schedule: Schedule.exponential(ELECTRON_BUILDER_NETWORK_RETRY_DELAY),
+      while: (error) => {
+        if (!shouldRetryElectronBuilderFailure(error, retriesAttempted)) return false;
+        retriesAttempted += 1;
+        return Effect.as(
+          Effect.logWarning(
+            `[desktop-artifact] electron-builder download failed due to a transient network error; retrying (${retriesAttempted}/${ELECTRON_BUILDER_NETWORK_RETRY_LIMIT})...`,
+          ),
+          true,
+        );
+      },
+    }),
+  );
+});
+
 function generateMacIconSet(
   sourcePng: string,
   targetIcns: string,
@@ -2012,7 +2071,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     "never",
   ];
   const builderCommand = yield* resolveSpawnCommand("vp", builderArgs, { env: buildEnv });
-  yield* runCommand(
+  yield* runElectronBuilderCommand(
     ChildProcess.make(builderCommand.command, builderCommand.args, {
       cwd: repoRoot,
       env: buildEnv,

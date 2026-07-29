@@ -20,6 +20,7 @@ import {
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
+  isTransientElectronBuilderNetworkFailure,
   isMacPasskeySigningConfigurationError,
   LinuxIconResizeError,
   MacPasskeySigningConfigurationResolutionError,
@@ -38,6 +39,7 @@ import {
   resolveMockUpdateServerUrl,
   resolveMidsceneSharpRuntimeModules,
   resolvePackageManagerUserAgent,
+  shouldRetryElectronBuilderFailure,
   stageLinuxIconSize,
   STAGE_FETCH_TIMEOUT_MS,
   STAGE_INSTALL_ARGS,
@@ -655,6 +657,35 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolvePackageManagerUserAgent("pnpm@11.10.0"), "pnpm/11.10.0");
     assert.equal(resolvePackageManagerUserAgent(" yarn@4.9.2 "), "yarn/4.9.2");
     assert.equal(resolvePackageManagerUserAgent("pnpm"), "pnpm");
+  });
+
+  it("retries only transient electron-builder network failures within the retry limit", () => {
+    const tlsFailure = new BuildCommandFailedError({
+      command: "electron-builder",
+      exitCode: 1,
+      stdoutTail:
+        "RequestError: Client network socket disconnected before secure TLS connection was established",
+    });
+    const timeoutFailure = new BuildCommandFailedError({
+      command: "electron-builder",
+      exitCode: 1,
+      stderrTail: "download failed: read ECONNRESET",
+    });
+    const packagingFailure = new BuildCommandFailedError({
+      command: "electron-builder",
+      exitCode: 1,
+      stdoutTail:
+        "Invalid configuration object. electron-builder has been initialized incorrectly.",
+    });
+
+    assert.isTrue(isTransientElectronBuilderNetworkFailure(tlsFailure));
+    assert.isTrue(isTransientElectronBuilderNetworkFailure(timeoutFailure));
+    assert.isFalse(isTransientElectronBuilderNetworkFailure(packagingFailure));
+    assert.isFalse(isTransientElectronBuilderNetworkFailure(new Error("ETIMEDOUT")));
+    assert.isTrue(shouldRetryElectronBuilderFailure(tlsFailure, 0));
+    assert.isTrue(shouldRetryElectronBuilderFailure(tlsFailure, 1));
+    assert.isFalse(shouldRetryElectronBuilderFailure(tlsFailure, 2));
+    assert.isFalse(shouldRetryElectronBuilderFailure(packagingFailure, 0));
   });
 
   it.effect("normalizes mock update server ports from env-style strings", () =>
