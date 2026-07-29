@@ -150,8 +150,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 ## Related Docs
 
 - [architecture.md][24]
-- [provider-architecture.md][16]
-- [runtime-modes.md][18]
+
 - [workspace-layout.md][2]
 
 [1]: ../packages/contracts/src/orchestration.ts
@@ -169,9 +168,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [13]: ../apps/server/src/orchestration/Services/RuntimeReceiptBus.ts
 [14]: ../apps/server/src/provider/Layers/ProviderService.ts
 [15]: ../apps/server/src/provider/Services/ProviderAdapter.ts
-[16]: ./provider-architecture.md
 [17]: ../apps/server/src/provider/Layers/CodexAdapter.ts
-[18]: ./runtime-modes.md
 [19]: ../apps/server/src/checkpointing/CheckpointStore.ts
 [20]: ../apps/server/src/checkpointing/CheckpointDiffQuery.ts
 [21]: ../apps/server/src/persistence/Services/ProjectionCheckpoints.ts
