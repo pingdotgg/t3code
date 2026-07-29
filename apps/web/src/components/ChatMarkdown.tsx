@@ -889,6 +889,8 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
   return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
+const MarkdownImageInsideLinkContext = React.createContext(false);
+
 function markdownImageName(src: string, alt: string | undefined): string {
   const trimmedAlt = alt?.trim();
   if (trimmedAlt) return trimmedAlt;
@@ -1028,6 +1030,8 @@ function MarkdownImage({
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
+  const insideLink = use(MarkdownImageInsideLinkContext);
+  const imageExpand = insideLink ? undefined : onExpand;
   if (!src) return null;
   const localFile = resolveMarkdownImageFile(src, cwd);
   const name = localFile?.name ?? markdownImageName(src, alt);
@@ -1039,11 +1043,11 @@ function MarkdownImage({
         name={alt?.trim() || name}
         alt={alt}
         imageProps={props}
-        onExpand={onExpand}
+        onExpand={imageExpand}
       />
     );
   }
-  return <MarkdownImagePreview {...props} src={src} alt={alt} name={name} onExpand={onExpand} />;
+  return <MarkdownImagePreview {...props} src={src} alt={alt} name={name} onExpand={imageExpand} />;
 }
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
@@ -1713,13 +1717,15 @@ function ChatMarkdown({
                 });
               }}
             >
-              {faviconHost ? (
-                <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
-                  {children}
-                </MarkdownExternalLinkContent>
-              ) : (
-                children
-              )}
+              <MarkdownImageInsideLinkContext value>
+                {faviconHost ? (
+                  <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
+                    {children}
+                  </MarkdownExternalLinkContent>
+                ) : (
+                  children
+                )}
+              </MarkdownImageInsideLinkContext>
             </a>
           );
           if (!faviconHost || !href) {
