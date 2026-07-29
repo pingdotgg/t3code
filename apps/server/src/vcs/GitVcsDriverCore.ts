@@ -296,9 +296,9 @@ export function splitNullSeparatedGitStdoutPaths(
 
 export function parsePorcelainWorktreePaths(stdout: string): string[] {
   const paths: string[] = [];
-  for (const line of stdout.split("\n")) {
-    if (line.startsWith("worktree ")) {
-      const worktreePath = line.slice("worktree ".length).trim();
+  for (const field of stdout.split("\0")) {
+    if (field.startsWith("worktree ")) {
+      const worktreePath = field.slice("worktree ".length);
       if (worktreePath.length > 0) {
         paths.push(worktreePath);
       }
@@ -3007,7 +3007,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const worktreeList = yield* executeGit(
         "GitVcsDriver.removeWorktree.list",
         input.cwd,
-        ["worktree", "list", "--porcelain"],
+        ["worktree", "list", "--porcelain", "-z"],
         {
           timeoutMs: 5_000,
           allowNonZeroExit: true,
