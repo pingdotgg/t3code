@@ -1,5 +1,4 @@
 import { assert, it } from "@effect/vitest";
-import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import {
@@ -7,10 +6,7 @@ import {
   findForkWorkflowPolicyViolations,
 } from "./fork-workflow-policy.ts";
 
-const repositoryRoot = NodePath.resolve(
-  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
-  "..",
-);
+const repositoryRoot = NodeURL.fileURLToPath(new URL("../", import.meta.url));
 
 it("keeps fork workflows on available runners and outside upstream production accounts", () => {
   assert.deepEqual(findForkWorkflowPolicyViolations(repositoryRoot), []);
