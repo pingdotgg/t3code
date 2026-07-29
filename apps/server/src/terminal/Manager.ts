@@ -323,6 +323,25 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
+/** Tracking modes plus the SGR encoding that reports arrive in. */
+const MOUSE_REPORTING_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l";
+const MOUSE_REPORTING_ENABLES = ["1000", "1001", "1002", "1003", "1015", "1016"].map(
+  (mode) => `\u001b[?${mode}h`,
+);
+
+/**
+ * Mouse reporting is terminal state, not text. Replaying a history whose TUI was
+ * killed before it could restore the mode re-arms reporting on the fresh terminal,
+ * and every pointer move then echoes into the shell as a literal `ESC[<…M`. A live
+ * child process may still legitimately want the mode, so only clear it for an
+ * idle shell, where nothing is left to read the reports.
+ */
+export function replaySafeTerminalHistory(history: string, hasRunningSubprocess: boolean): string {
+  if (hasRunningSubprocess) return history;
+  if (!MOUSE_REPORTING_ENABLES.some((sequence) => history.includes(sequence))) return history;
+  return `${history}${MOUSE_REPORTING_RESET}`;
+}
+
 function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
   return {
     threadId: session.threadId,
@@ -331,7 +350,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history,
+    history: replaySafeTerminalHistory(session.history, session.hasRunningSubprocess),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),

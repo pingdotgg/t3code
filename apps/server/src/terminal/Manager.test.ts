@@ -1702,3 +1702,27 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
+
+const MOUSE_ENABLED_HISTORY = "$ lazygit\r\n\u001b[?1002h\u001b[?1006h";
+
+it("clears mouse reporting from a replayed history once the shell is idle", () => {
+  const replayed = TerminalManager.replaySafeTerminalHistory(MOUSE_ENABLED_HISTORY, false);
+
+  expect(replayed.startsWith(MOUSE_ENABLED_HISTORY)).toBe(true);
+  expect(replayed.slice(MOUSE_ENABLED_HISTORY.length)).toBe(
+    "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l",
+  );
+});
+
+it("leaves mouse reporting alone while a child process can still consume it", () => {
+  assert.equal(
+    TerminalManager.replaySafeTerminalHistory(MOUSE_ENABLED_HISTORY, true),
+    MOUSE_ENABLED_HISTORY,
+  );
+});
+
+it("does not touch a history that never enabled mouse reporting", () => {
+  const history = "$ echo hello\r\nhello\r\n\u001b[?2004h";
+
+  assert.equal(TerminalManager.replaySafeTerminalHistory(history, false), history);
+});
