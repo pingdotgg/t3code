@@ -3,26 +3,33 @@ import { describe, expect, it } from "vite-plus/test";
 import { hostNeedsMacAppUpdate, parseLatestMacAppRelease } from "./macAppUpdate";
 
 describe("mac app update advisory", () => {
-  it("reads the newest Sparkle item", () => {
+  it("selects the highest valid Sparkle build regardless of item order", () => {
     expect(
       parseLatestMacAppRelease(`
         <rss><channel>
           <item>
-            <sparkle:version>25</sparkle:version>
-            <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
-          </item>
-          <item>
             <sparkle:version>24</sparkle:version>
             <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+          </item>
+          <item>
+            <sparkle:version>25</sparkle:version>
+            <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
           </item>
         </channel></rss>`),
     ).toEqual({ version: "0.7.0", buildNumber: 25 });
   });
 
-  it("rejects malformed feeds", () => {
+  it("ignores malformed items and rejects feeds without valid items", () => {
     expect(
-      parseLatestMacAppRelease("<rss><item><sparkle:version>x</sparkle:version></item></rss>"),
-    ).toBeNull();
+      parseLatestMacAppRelease(`
+        <rss>
+          <item><sparkle:version>x</sparkle:version></item>
+          <item>
+            <sparkle:version>25</sparkle:version>
+            <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
+          </item>
+        </rss>`),
+    ).toEqual({ version: "0.7.0", buildNumber: 25 });
     expect(
       parseLatestMacAppRelease(`
         <item>

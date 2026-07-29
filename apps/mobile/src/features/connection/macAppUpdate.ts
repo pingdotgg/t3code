@@ -10,19 +10,25 @@ export interface MacAppRelease {
 }
 
 export function parseLatestMacAppRelease(xml: string): MacAppRelease | null {
-  const item = /<item\b[^>]*>([\s\S]*?)<\/item>/i.exec(xml)?.[1];
-  if (!item) return null;
-
-  const version = /<sparkle:shortVersionString>([^<]+)<\/sparkle:shortVersionString>/i
-    .exec(item)?.[1]
-    ?.trim();
-  const rawBuild = /<sparkle:version>([^<]+)<\/sparkle:version>/i.exec(item)?.[1]?.trim();
-  const buildNumber =
-    rawBuild === undefined || !/^\d+$/.test(rawBuild) ? Number.NaN : Number.parseInt(rawBuild, 10);
-  if (!version || !Number.isSafeInteger(buildNumber) || buildNumber < 0) {
-    return null;
+  let latest: MacAppRelease | null = null;
+  for (const match of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)) {
+    const item = match[1];
+    const version = /<sparkle:shortVersionString>([^<]+)<\/sparkle:shortVersionString>/i
+      .exec(item)?.[1]
+      ?.trim();
+    const rawBuild = /<sparkle:version>([^<]+)<\/sparkle:version>/i.exec(item)?.[1]?.trim();
+    const buildNumber =
+      rawBuild === undefined || !/^\d+$/.test(rawBuild)
+        ? Number.NaN
+        : Number.parseInt(rawBuild, 10);
+    if (!version || !Number.isSafeInteger(buildNumber) || buildNumber < 0) {
+      continue;
+    }
+    if (latest === null || buildNumber > latest.buildNumber) {
+      latest = { version, buildNumber };
+    }
   }
-  return { version, buildNumber };
+  return latest;
 }
 
 export function hostNeedsMacAppUpdate(
