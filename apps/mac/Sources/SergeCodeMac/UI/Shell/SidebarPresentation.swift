@@ -269,7 +269,12 @@ enum SidebarProjection {
                 members: sortedMembers,
                 threads: pinnedFirst,
                 autoReviewChildrenByParent: children,
-                lastActivityAt: pinnedFirst.lazy.map(\.thread.updatedAt).max())
+                // Lifecycle commands such as settle and snooze also stamp
+                // updatedAt. Project sections should move only for actual
+                // thread activity, not sidebar housekeeping.
+                lastActivityAt: pinnedFirst.lazy.map {
+                    ThreadInboxSemantics.lastActivityAt($0.thread) ?? $0.thread.createdAt
+                }.max())
         }
         .sorted { lhs, rhs in
             let left = lhs.lastActivityAt ?? .distantPast

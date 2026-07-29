@@ -39,17 +39,55 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         case .connection: "network"
         }
     }
+
+    /// One-line blurb under the hero title — what lives on this tab, in the
+    /// app's voice rather than a restatement of the title.
+    var subtitle: String {
+        switch self {
+        case .general: "Behaviour, feedback, and notifications."
+        case .providers: "Installed agent CLIs and their health."
+        case .workflows: "Model routing for delegated Ultra work."
+        case .dictation: "On-device speech to text, fully local."
+        case .autoReview: "Automatic review passes over open PRs."
+        case .archive: "Auto-archive policy and archived threads."
+        case .scenery: "The photography and glass behind your sessions."
+        case .devices: "Pair an iPhone or another Mac with this one."
+        case .remoteMacs: "Drive SurgeCode running on other Macs."
+        case .connection: "The local server and its endpoints."
+        }
+    }
 }
 
-// Settings window content: `Settings { SettingsScene(...) }` in App.swift.
-// Alpine-skinned custom chrome (see SettingsChrome.swift) — glass is not
-// used here (this is a utility window, not a chrome surface over long-form
-// content), so surfaces are plain dark fills and materials.
+/// Full-window takeover hosting the settings surface inside the main window.
+/// The thin wrapper exists so RootView can hand the presentation's tab in as
+/// a `@Bindable` binding and route close back through the deferred setter.
+struct SettingsHostView: View {
+    let multi: MultiDeviceModel
+    let scenery: SceneryStore
+    @Bindable var presentation: SettingsPresentation
+
+    var body: some View {
+        SettingsScene(
+            model: multi.local,
+            scenery: scenery,
+            multi: multi,
+            selection: $presentation.tab,
+            onClose: { presentation.close() })
+    }
+}
+
+// The settings surface: Alpine-skinned custom chrome (see
+// SettingsChrome.swift) hosted as an in-window takeover by SettingsHostView
+// (and standalone by the DEBUG UIProbe). Glass is not used here — settings
+// are a utility surface, not chrome over long-form content — so surfaces are
+// plain dark fills and materials.
 public struct SettingsScene: View {
     private let model: AppModel
     private let multi: MultiDeviceModel
     private let scenery: SceneryStore
-    @UIState private var selectedTab: SettingsTab
+    private let externalSelection: Binding<SettingsTab>?
+    private let onClose: (() -> Void)?
+    @UIState private var internalTab: SettingsTab
 
     public init(
         model: AppModel,
@@ -57,21 +95,40 @@ public struct SettingsScene: View {
         multi: MultiDeviceModel? = nil,
         initialTab: SettingsTab = .general
     ) {
+        self.init(
+            model: model, scenery: scenery, multi: multi,
+            initialTab: initialTab, selection: nil, onClose: nil)
+    }
+
+    init(
+        model: AppModel,
+        scenery: SceneryStore,
+        multi: MultiDeviceModel? = nil,
+        initialTab: SettingsTab = .general,
+        selection: Binding<SettingsTab>?,
+        onClose: (() -> Void)?
+    ) {
         self.model = model
         self.multi = multi ?? MultiDeviceModel(local: model)
         self.scenery = scenery
-        _selectedTab = UIState(initialValue: initialTab)
+        self.externalSelection = selection
+        self.onClose = onClose
+        _internalTab = UIState(initialValue: initialTab)
+    }
+
+    private var selectedTab: SettingsTab {
+        externalSelection?.wrappedValue ?? internalTab
     }
 
     public var body: some View {
         HStack(spacing: 0) {
-            SettingsSidebar(selection: sidebarSelection)
+            SettingsSidebar(selection: sidebarSelection, inset: onClose != nil)
             Rectangle()
                 .fill(Color.white.opacity(0.09))
                 .frame(width: 1)
             settingsDetailPane
         }
-        .frame(width: 780, height: 560)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Settings")
         .background {
             // Same dark base as the main window's solid plate, plus the
@@ -87,14 +144,16 @@ public struct SettingsScene: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing)
             }
+            .ignoresSafeArea()
         }
     }
 
     /// Selection is never nil: the sidebar binding only ever writes a tab.
     private var sidebarSelection: Binding<SettingsTab> {
-        Binding(
-            get: { selectedTab },
-            set: { selectedTab = $0 })
+        externalSelection
+            ?? Binding(
+                get: { internalTab },
+                set: { internalTab = $0 })
     }
 
     private var settingsDetailPane: some View {
@@ -110,9 +169,10 @@ public struct SettingsScene: View {
                 settingsDetail
             }
             .animation(Motion.reveal, value: model.lastError)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 20)
-            .frame(maxWidth: 560, alignment: .leading)
+            .padding(.horizontal, 26)
+            .padding(.top, onClose != nil ? 28 : 20)
+            .padding(.bottom, 24)
+            .frame(maxWidth: 580, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -153,20 +213,52 @@ public struct SettingsScene: View {
         .transition(Motion.rise)
     }
 
-    /// Accent-tile icon + tab title, mirroring the composer picker header.
+    /// Tab hero: gradient accent tile, title, and one-line blurb — larger
+    /// than the composer picker header because it opens a whole surface, not
+    /// a popover. Hosts the close control when presented in-window, so the
+    /// way back sits on the same line the eye lands on first.
     private var paneHeader: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: selectedTab.symbolName)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(AlpineTheme.forest)
-                .frame(width: 30, height: 30)
+                .frame(width: 38, height: 38)
                 .background(
-                    AlpineTheme.accent.opacity(0.9),
+                    LinearGradient(
+                        colors: [
+                            AlpineTheme.accent.opacity(0.95),
+                            AlpineTheme.accent.opacity(0.7),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing),
                     in: RoundedRectangle(
-                        cornerRadius: AlpineTheme.Corners.control, style: .continuous))
-            Text(selectedTab.title)
-                .font(.title3.bold())
+                        cornerRadius: AlpineTheme.Corners.control + 2, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selectedTab.title)
+                    .font(.title2.bold())
+                Text(selectedTab.subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
             Spacer(minLength: 0)
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Color.white.opacity(0.07),
+                            in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                // Esc leaves settings; the two dialogs on these tabs
+                // (delete/forget confirmations) capture it first while up.
+                .keyboardShortcut(.cancelAction)
+                .help("Close Settings (esc)")
+                .accessibilityLabel("Close Settings")
+            }
         }
     }
 
@@ -218,7 +310,7 @@ private struct GeneralSettingsTab: View {
     var body: some View {
         VStack(spacing: 18) {
             if let settings = draft {
-                SettingsSection(header: "Behaviour") {
+                SettingsSection(header: "Behaviour", icon: "slider.horizontal.3") {
                     SettingsToggleRow(
                         title: "Stream assistant replies",
                         isOn: binding(settings, \.assistantStreaming))
@@ -228,7 +320,7 @@ private struct GeneralSettingsTab: View {
                         isOn: binding(settings, \.providerUpdateChecks))
                 }
 
-                SettingsSection(header: "New threads") {
+                SettingsSection(header: "New threads", icon: "plus.square.on.square") {
                     SettingsPickerRow(
                         "Run threads in",
                         selection: binding(settings, \.defaultEnvMode)
@@ -284,7 +376,7 @@ private struct GeneralSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "Feedback") {
+            SettingsSection(header: "Feedback", icon: "hand.tap") {
                 SettingsToggleRow(
                     title: "Haptic feedback",
                     description:
@@ -307,7 +399,7 @@ private struct GeneralSettingsTab: View {
                     }
             }
 
-            SettingsSection(header: "Notifications") {
+            SettingsSection(header: "Notifications", icon: "bell.badge") {
                 // Every toggle below is a no-op while macOS is refusing to
                 // deliver, and the toggles keep reading ON — say so, and offer
                 // the one place that can change it.
@@ -385,7 +477,7 @@ private struct GeneralSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "About") {
+            SettingsSection(header: "About", icon: "info.circle") {
                 SettingsValueRow(title: "Appearance", value: "Dark")
                     .help(
                         "SurgeCode uses its dark appearance independently of macOS system appearance."
@@ -492,7 +584,7 @@ struct DictationSettingsTab: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingsSection(header: "Speech model") {
+            SettingsSection(header: "Speech model", icon: "waveform") {
                 SettingsCardRow {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -529,7 +621,7 @@ struct DictationSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "Transcript cleanup") {
+            SettingsSection(header: "Transcript cleanup", icon: "wand.and.stars") {
                 SettingsToggleRow(
                     title: "Clean up transcript with on-device AI",
                     description:
@@ -542,6 +634,7 @@ struct DictationSettingsTab: View {
 
             SettingsSection(
                 header: "Language",
+                icon: "globe",
                 footer: "Dictation is fully local: audio and transcripts never leave this Mac."
             ) {
                 SettingsPickerRow("Spoken language", selection: $dictation.languageCode) {
@@ -604,7 +697,7 @@ private struct ArchiveSettingsTab: View {
     var body: some View {
         VStack(spacing: 18) {
             if let settings = draft {
-                SettingsSection(header: "Auto-archive") {
+                SettingsSection(header: "Auto-archive", icon: "clock.arrow.circlepath") {
                     SettingsToggleRow(
                         title: "Auto-archive settled threads",
                         description:
@@ -631,7 +724,7 @@ private struct ArchiveSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "Archived threads") {
+            SettingsSection(header: "Archived threads", icon: "archivebox") {
                 if model.archivedThreadsLoading && model.archivedThreads.isEmpty {
                     SettingsCardRow {
                         ProgressView("Loading archived threads…")
@@ -872,6 +965,7 @@ private struct ProvidersSettingsTab: View {
         VStack(spacing: 18) {
             SettingsSection(
                 header: "Installed Providers",
+                icon: "puzzlepiece.extension",
                 headerTrailing: {
                     Button {
                         refresh()
@@ -1076,7 +1170,7 @@ private struct PhoneSettingsTab: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingsSection(header: "Remote access") {
+            SettingsSection(header: "Remote access", icon: "cloud") {
                 SettingsValueRow(title: "Internet endpoint") {
                     Text(remoteAddressText)
                         .font(SurgeTypography.technicalMetadata)
@@ -1095,7 +1189,7 @@ private struct PhoneSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "Local network") {
+            SettingsSection(header: "Local network", icon: "wifi") {
                 SettingsToggleRow(
                     title: "Allow iPhone and Mac connections on your local network",
                     description:
@@ -1123,7 +1217,7 @@ private struct PhoneSettingsTab: View {
             }
 
             if pairingAvailable {
-                SettingsSection(header: "Pair a device") {
+                SettingsSection(header: "Pair a device", icon: "qrcode") {
                     SettingsCardRow {
                         pairingContent
                     }
@@ -1330,6 +1424,7 @@ struct RemoteMacsSettingsTab: View {
         VStack(spacing: 18) {
             SettingsSection(
                 header: "Add a Mac",
+                icon: "plus.circle",
                 footer:
                     "On the other Mac, open Settings ▸ Devices and copy its pairing link or scan its QR code."
             ) {
@@ -1368,7 +1463,7 @@ struct RemoteMacsSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "Paired Macs") {
+            SettingsSection(header: "Paired Macs", icon: "desktopcomputer") {
                 if multi.remoteSessions.isEmpty {
                     SettingsCardRow {
                         Text("No Macs paired yet.")
@@ -1568,7 +1663,7 @@ private struct ConnectionSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "Server", footer: serverCaption) {
+            SettingsSection(header: "Server", icon: "server.rack", footer: serverCaption) {
                 SettingsValueRow(
                     title: "Host",
                     value: access.lanReachable

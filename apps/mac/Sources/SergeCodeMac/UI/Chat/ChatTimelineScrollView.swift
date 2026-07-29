@@ -119,6 +119,12 @@ struct ChatTimelineScrollView: View {
     /// `ChatTimelineScrollPolicy.suppressesLayoutAnimation`.
     @UIState private var hasSettledInitialLayout = false
 
+    /// Diffs running-tool ids between renders to catch a tool's promotion out
+    /// of the activity dock. A reference box like `ScrollCoalescer`, and for
+    /// the same reason: it is written on every streaming body evaluation and
+    /// must not invalidate the body again itself.
+    @UIState private var handoffTracker = ToolHandoffTracker()
+
     private static let bottomAnchorID = "chat-timeline-bottom-anchor"
 
     /// How long after mount the timeline holds its layout still. Covers the
@@ -167,14 +173,22 @@ struct ChatTimelineScrollView: View {
         // must never stack repeated status items into the transcript. Covers
         // both gaps a live turn leaves at the tail — silent reasoning and an
         // in-flight tool call that intentionally has no transcript row yet.
+        // The scan is taken once here and shared with the handoff diff below,
+        // so the timeline is still walked a single time per render.
+        let activityScan = TimelineActivityScan.scan(items: items)
         let activity = AgentActivityPresentation.activity(
             threadStatus: thread?.status,
             isStalled: thread?.isStalled ?? false,
-            items: items)
+            scan: activityScan)
         // Parsed once here, not inside the dock: the dock re-renders on its
         // own 30fps clock and must never re-enter the parse cache from a
         // decorative frame.
         let activitySubject = activity.flatMap(Self.subject(for:))
+        // The tool row currently flying out of the dock into history, if any.
+        // Sticky for the flight window so mid-flight streaming re-renders
+        // keep the row in its handoff role (see ToolHandoffTracker).
+        let handoffToolID = handoffTracker.activeFlightID(
+            runningToolIDs: activityScan.turn.runningToolIDs, now: Date())
 
         // Cold load: spinner instead of an empty LazyVStack, which bypasses
         // the autoscroll machinery and avoids a blank flash before the first
@@ -197,8 +211,10 @@ struct ChatTimelineScrollView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(displayItems) { item in
+                            let isHandoff = item.id == handoffToolID
                             ChatTimelineRowView(
-                                item: item, threadID: threadID, context: rowContext, model: model)
+                                item: item, threadID: threadID, context: rowContext, model: model,
+                                playsHandoffFlight: isHandoff)
                                 .equatable()
                                 .id(item.id)
                                 // Deliberately no `.transition` and no ambient
@@ -226,6 +242,17 @@ struct ChatTimelineScrollView: View {
                                 // rebuilding an enumerated array on every
                                 // streaming tick.
                                 .entrance(.row)
+                                // A promoted tool row plays the richer handoff
+                                // flight instead; running both would fade the
+                                // row in twice. Suppression only matters on
+                                // the row's first render, which is exactly
+                                // when `isHandoff` is true.
+                                .entranceSuppressed(isHandoff)
+                                // The flight starts over the dock, and the
+                                // dock is a later sibling that would paint
+                                // over it. Elevated for the flight window
+                                // only; settled rows never overlap.
+                                .zIndex(isHandoff ? 1 : 0)
                         }
                         if let activity {
                             AgentActivityDock(activity: activity, subject: activitySubject)

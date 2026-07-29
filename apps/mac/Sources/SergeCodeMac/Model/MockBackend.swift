@@ -95,6 +95,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
             await state.appendRunningToolEvent(
                 threadID: threadID, name: name, detail: detail, kind: kind)
         }
+
+        /// Probe hook: close the newest running tool's lifecycle in place, as
+        /// the provider's terminal update would. Drives the dock → transcript
+        /// handoff flight (ToolHandoff.swift). Returns false when the thread
+        /// has no running tool to complete.
+        public func probeCompleteRunningToolEvent(threadID: String) async -> Bool {
+            await state.completeRunningToolEvent(threadID: threadID)
+        }
     #endif
 
     public func providers() async throws -> [ProviderInstance] {
@@ -1041,6 +1049,29 @@ private actor MockState {
             status: .succeeded, at: now, output: nil, outputIsError: false)
         timelinesByThread[threadID, default: []].append(item)
         emit(.timelineAppended(threadID: threadID, item: item))
+    }
+
+    /// Closes the newest running tool row's lifecycle in place: same stable
+    /// id, status flipped to succeeded, emitted as the upsert a real provider
+    /// sends. The row leaves the activity dock for transcript history, which
+    /// is exactly the promotion the handoff flight animates.
+    func completeRunningToolEvent(threadID: String) -> Bool {
+        guard var items = timelinesByThread[threadID],
+            let index = items.lastIndex(where: { item in
+                if case .toolEvent(_, _, _, _, .running, _, _, _) = item { return true }
+                return false
+            }),
+            case .toolEvent(
+                let id, let name, let detail, let kind, _, let at, let output,
+                let outputIsError) = items[index]
+        else { return false }
+        let completed = TimelineItem.toolEvent(
+            id: id, name: name, detail: detail, kind: kind, status: .succeeded,
+            at: at, output: output, outputIsError: outputIsError)
+        items[index] = completed
+        timelinesByThread[threadID] = items
+        emit(.timelineAppended(threadID: threadID, item: completed))
+        return true
     }
 
     func models() -> [ModelOption] {

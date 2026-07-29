@@ -131,7 +131,7 @@ struct PlanProgressStrip: View {
         .frame(height: Self.railHeight)
         .frame(maxWidth: .infinity)
         .background { track(fraction: fraction, total: total, done: done) }
-        .alpineGlassSurface(in: Capsule())
+        .glassEffect(.regular, in: Capsule())
         // One-shot ring when the last step lands — the same celebration the
         // timeline's activity rows use.
         .successRipple(fire: done, cornerRadius: Self.railHeight / 2)

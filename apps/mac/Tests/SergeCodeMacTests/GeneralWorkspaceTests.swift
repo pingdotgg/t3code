@@ -32,6 +32,36 @@ struct GeneralWorkspaceTests {
 @Suite("AppModel Quick Chat")
 @MainActor
 struct AppModelQuickChatTests {
+    @Test("General threads suppress repository workflow chrome")
+    func generalThreadsSuppressRepositoryWorkflow() {
+        let model = AppModel(backend: MockBackend())
+        let general = Project(
+            id: "general", name: "General", path: GeneralWorkspace.resolvedPath + "/")
+        let coding = Project(id: "coding", name: "SergeCode", path: "/tmp/SergeCode")
+        model.enqueue(.projectsChanged([general, coding]))
+        model.flushPendingEvents()
+
+        let quickChat = ChatThread(
+            id: "quick-chat", projectID: general.id, title: "Quick Chat", provider: .codex,
+            status: .idle, updatedAt: Date())
+        let codingThread = ChatThread(
+            id: "coding-thread", projectID: coding.id, title: "Build feature", provider: .codex,
+            status: .idle, updatedAt: Date())
+
+        #expect(!model.supportsRepositoryWorkflow(for: quickChat))
+        #expect(model.supportsRepositoryWorkflow(for: codingThread))
+    }
+
+    @Test("Unknown projects retain repository workflow chrome")
+    func unknownProjectsRetainRepositoryWorkflow() {
+        let model = AppModel(backend: MockBackend())
+        let thread = ChatThread(
+            id: "hydrating", projectID: "not-loaded", title: "Loading", provider: .codex,
+            status: .idle, updatedAt: Date())
+
+        #expect(model.supportsRepositoryWorkflow(for: thread))
+    }
+
     @Test("ensureGeneralProject reuses an existing project at the General path")
     func ensureReusesExisting() async {
         let backend = MockBackend()

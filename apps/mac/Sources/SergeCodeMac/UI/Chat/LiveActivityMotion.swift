@@ -1,14 +1,11 @@
 import SwiftUI
 
-// Decorative, ongoing motion for live activity rows. Everything here is
-// gated on `Motion.reduceMotion` and renders nothing while inactive, so
-// settled rows pay no animation cost — only the handful of running rows on
-// screen ever host a `TimelineView` or a live multi-phase animator (the
-// pulse glow stays mounted when settled, parked on its static 1.0 phase).
-// None of these modifiers affect layout: they are overlays and render
-// transforms, which is what keeps them safe to run inside the streaming
-// timeline (the same rule `Entrance` follows — sibling layout is never
-// re-measured).
+// Decorative state for live activity rows. Keep these effects static while a
+// row is running: a busy workspace can show dozens of live rows at once, so a
+// display clock or phase animator here multiplies into persistent AttributeGraph
+// work. More importantly, macOS 27 can dereference a stale Swift executor from
+// `phaseAnimator` while one of those rows is removed during layout. One-shot
+// state transitions remain animated by each row's existing ambient animation.
 
 // MARK: - Shimmer border
 
@@ -20,34 +17,16 @@ private struct ShimmerBorderModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay {
             if isActive {
-                Group {
-                    if Motion.reduceMotion {
-                        // No movement, but the running state must stay visible.
+                ZStack {
+                    if !Motion.reduceMotion {
                         RoundedRectangle(cornerRadius: cornerRadius)
-                            .strokeBorder(color.opacity(0.45), lineWidth: 1)
-                    } else {
-                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-                            let angle = Angle.degrees(
-                                context.date.timeIntervalSinceReferenceDate * 120)
-                            ZStack {
-                                RoundedRectangle(cornerRadius: cornerRadius)
-                                    .strokeBorder(color.opacity(0.25), lineWidth: 3)
-                                    .blur(radius: 3)
-                                RoundedRectangle(cornerRadius: cornerRadius)
-                                    .strokeBorder(
-                                        AngularGradient(
-                                            colors: [
-                                                color.opacity(0.05),
-                                                color.opacity(0.8),
-                                                color.opacity(0.05),
-                                            ],
-                                            center: .center,
-                                            startAngle: angle,
-                                            endAngle: angle + .degrees(360)),
-                                        lineWidth: 1.5)
-                            }
-                        }
+                            .strokeBorder(color.opacity(0.22), lineWidth: 3)
+                            .blur(radius: 3)
                     }
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .strokeBorder(
+                            color.opacity(Motion.reduceMotion ? 0.45 : 0.72),
+                            lineWidth: Motion.reduceMotion ? 1 : 1.5)
                 }
                 // Fade out on completion instead of hard-cutting; rides the
                 // row's `.animation(Motion.ambient, value: displayState)`.
@@ -99,38 +78,14 @@ private struct OutcomeRippleModifier: ViewModifier {
 private struct PulseGlowModifier: ViewModifier {
     let isActive: Bool
 
-    /// Latched, never cleared. Once a row has pulsed, the animator stays
-    /// mounted so deactivation eases from the current dip back to 1.0 —
-    /// structurally swapping back to plain `content` made a chip caught
-    /// mid-dip jump in opacity. A row that has *never* pulsed has no dip to
-    /// preserve, so it renders as plain content and mounts no animator at
-    /// all: a restored transcript and the settled body of a long tool burst
-    /// are almost entirely such rows, and each one used to host a
-    /// `phaseAnimator` parked forever on a single static phase.
-    @UIState private var hasPulsed = false
-
     func body(content: Content) -> some View {
-        let animates = !Motion.reduceMotion && (isActive || hasPulsed)
-        return Group {
-            if animates {
-                content.phaseAnimator(isActive ? [0.55, 1.0] : [1.0]) { view, opacity in
-                    view.opacity(opacity)
-                }
-            } else {
-                content
-            }
-        }
-        .onChange(of: isActive, initial: true) { _, active in
-            guard active, !hasPulsed else { return }
-            hasPulsed = true
-        }
+        content.opacity(isActive && !Motion.reduceMotion ? 0.78 : 1)
     }
 }
 
 extension View {
-    /// Animated rotating-gradient stroke + soft glow marking a card as live.
-    /// Reduce Motion falls back to a static tint stroke so the running state
-    /// is still readable.
+    /// Static tint stroke + soft glow marking a card as live.
+    /// Reduce Motion keeps the stroke and drops the blur.
     func shimmerBorder(color: Color, isActive: Bool, cornerRadius: CGFloat) -> some View {
         modifier(ShimmerBorderModifier(
             color: color, isActive: isActive, cornerRadius: cornerRadius))
@@ -149,7 +104,8 @@ extension View {
             fire: fire, cornerRadius: cornerRadius, color: .red))
     }
 
-    /// Gentle breathing opacity while a row is live.
+    /// Static opacity cue while a row is live. The surrounding row animates
+    /// state changes once; no per-row animation remains mounted while work runs.
     func pulseGlow(isActive: Bool) -> some View {
         modifier(PulseGlowModifier(isActive: isActive))
     }

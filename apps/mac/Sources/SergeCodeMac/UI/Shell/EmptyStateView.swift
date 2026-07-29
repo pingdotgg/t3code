@@ -168,26 +168,15 @@ struct EmptyStateView: View {
     }
 }
 
-/// Slow breathing drift for the welcome brand mark: a small vertical float
-/// plus a soft sky glow that deepens at the top of the breath. Purely
-/// decorative and render-only, so it never re-measures the hub. Reduce Motion
-/// keeps the glow but drops the movement.
+/// A static sky glow for the welcome mark. This used to host a permanent
+/// `phaseAnimator`; keeping the mark still removes another macOS 27
+/// AttributeGraph crash surface and costs no work while the hub is idle.
 private struct WelcomeFloatModifier: ViewModifier {
     func body(content: Content) -> some View {
-        if Motion.reduceMotion {
-            content.shadow(color: AlpineTheme.sky.opacity(0.35), radius: 14, y: 5)
-        } else {
-            content.phaseAnimator([false, true]) { view, floating in
-                view
-                    .offset(y: floating ? -3.5 : 0)
-                    .shadow(
-                        color: AlpineTheme.sky.opacity(floating ? 0.5 : 0.28),
-                        radius: floating ? 20 : 12,
-                        y: floating ? 8 : 4)
-            } animation: { _ in
-                .easeInOut(duration: 1.8)
-            }
-        }
+        content.shadow(
+            color: AlpineTheme.sky.opacity(Motion.reduceMotion ? 0.35 : 0.4),
+            radius: Motion.reduceMotion ? 14 : 16,
+            y: Motion.reduceMotion ? 5 : 6)
     }
 }
 

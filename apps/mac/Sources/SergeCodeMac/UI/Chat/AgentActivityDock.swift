@@ -96,6 +96,29 @@ struct AgentActivityDock: View {
         .shimmerBorder(
             color: tint, isActive: animated, cornerRadius: TranscriptMetrics.cardRadius)
         .animation(Motion.ambient, value: activity.phase)
+        // A tiny downward recoil each time a tool leaves for the transcript,
+        // timed against the promoted row's handoff flight above: the card
+        // launches up, the dock dips as if it just let go. Keyframe-driven
+        // for the same reason as the flight — the timeline's mid-run
+        // suppressor would flatten a state-driven pulse. Render transforms
+        // only; the dock's layout never moves.
+        .keyframeAnimator(
+            initialValue: DockReleaseFrame(),
+            trigger: activity.completedToolCount
+        ) { view, frame in
+            view
+                .scaleEffect(frame.scale, anchor: .bottom)
+                .offset(y: frame.y)
+        } keyframes: { _ in
+            KeyframeTrack(\.y) {
+                LinearKeyframe(animated && Motion.profile.usesMovement ? 2.5 : 0, duration: 0.10)
+                SpringKeyframe(0, duration: 0.32, spring: .snappy)
+            }
+            KeyframeTrack(\.scale) {
+                LinearKeyframe(animated && Motion.profile.usesMovement ? 0.99 : 1, duration: 0.10)
+                SpringKeyframe(1, duration: 0.32, spring: .snappy)
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
     }
@@ -157,11 +180,19 @@ struct AgentActivityDock: View {
     }
 }
 
+/// Animated state of the dock's release recoil: the small dip it plays when
+/// a completed tool leaves it for the transcript.
+private struct DockReleaseFrame {
+    var y: CGFloat = 0
+    var scale: CGFloat = 1
+}
+
 // MARK: - Activity flow
 
 /// A quiet directional current across the bottom of the live card. It gives
 /// continuous work a sense of travel without changing layout; the completed
-/// row's own upward entrance carries the handoff into transcript history.
+/// row's handoff flight (see ToolHandoff.swift) carries the promotion into
+/// transcript history.
 private struct ActivityFlowLine: View {
     let tint: Color
     let animated: Bool

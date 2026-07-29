@@ -41,6 +41,10 @@ struct TimelineActivityScan: Equatable, Sendable {
         /// Latest-started running tool. Providers can have several in flight;
         /// the newest is the one a person reading the tail is waiting on.
         var runningTool: RunningTool?
+        /// Ids of every tool still running this turn, in timeline order. The
+        /// handoff tracker diffs consecutive scans of this to catch the exact
+        /// render where a tool left the live dock for transcript history.
+        var runningToolIDs: [String] = []
         /// Kinds of the last few tool calls, oldest first. Drives the dock's
         /// tape of what just happened.
         var recentToolKinds: [ToolEventKind] = []
@@ -88,6 +92,7 @@ struct TimelineActivityScan: Equatable, Sendable {
                 }
                 if status == .running {
                     scan.turn.hasActiveToolActivity = true
+                    scan.turn.runningToolIDs.append(id)
                     if scan.turn.runningTool.map({ at >= $0.startedAt }) ?? true {
                         scan.turn.runningTool = RunningTool(
                             id: id, name: name, detail: detail, kind: kind, startedAt: at)

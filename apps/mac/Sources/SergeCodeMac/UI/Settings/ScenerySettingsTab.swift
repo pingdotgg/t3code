@@ -77,6 +77,7 @@ struct ScenerySettingsTab: View {
     private var appearanceSection: some View {
         SettingsSection(
             header: "Window glass",
+            icon: "circle.lefthalf.filled",
             footer:
                 "How much of the window the app paints over the blurred desktop. 100% is a fully solid window; at 50% the scene is half transparent and the desktop reads through it. Every new session gets a random photo from the built-in World collection."
         ) {
@@ -134,6 +135,7 @@ struct ScenerySettingsTab: View {
     private var projectsSection: some View {
         SettingsSection(
             header: "Per project",
+            icon: "paintpalette",
             footer: "Accent and symbol appear as subtle badges in the sidebar and chat header."
         ) {
             if model.projects.isEmpty {

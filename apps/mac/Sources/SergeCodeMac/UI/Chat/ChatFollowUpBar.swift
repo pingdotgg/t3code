@@ -10,6 +10,7 @@ struct ChatFollowUpBar: View {
     var body: some View {
         Group {
             if let thread = model.selectedThread, thread.status != .archived,
+                model.supportsRepositoryWorkflow(for: thread),
                 let vcs = model.selectedVcsStatus(),
                 vcs.prState != .merged,
                 shouldOfferPR(thread: thread, vcs: vcs)
@@ -43,6 +44,7 @@ struct ChatFollowUpBar: View {
 
     private var visibleStrip: VisibleStrip {
         guard let thread = model.selectedThread, thread.status != .archived,
+            model.supportsRepositoryWorkflow(for: thread),
             let vcs = model.selectedVcsStatus()
         else { return .none }
         if vcs.prState == .merged { return .archive }

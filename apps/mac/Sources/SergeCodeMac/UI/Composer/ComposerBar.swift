@@ -52,7 +52,8 @@ public struct ComposerBar: View {
     /// Composer-level "create PR when done" toggle (see `AutoPRToggle` in
     /// ComposerControls.swift). When on, a fresh thread's first message gets
     /// `CreatePRPrompt.messageSuffix` appended before dispatch; the toggle is
-    /// hidden and the suffix skipped once the thread has started.
+    /// hidden and the suffix skipped once the thread has started, and omitted
+    /// entirely for General Quick Chat threads.
     @AppStorage(CreatePRPrompt.autoCreateDefaultsKey) private var autoCreatePR = false
 
     // `nonisolated` so the background encode helpers (which run off the main
@@ -761,9 +762,15 @@ public struct ComposerBar: View {
     /// the auto-PR toggle is on and the thread hasn't started yet, the
     /// instruction to open a PR once the work is finished. Never appended to
     /// an empty (attachment-only) message or to follow-ups on a thread that
-    /// already has messages.
+    /// already has messages. General Quick Chat threads do not participate in
+    /// repository workflows even if the global toggle is on for other projects.
     private func outgoingText(for trimmedDraft: String) -> String {
-        guard autoCreatePR, !trimmedDraft.isEmpty, model.selectedThread?.hasStarted == false
+        guard
+            autoCreatePR,
+            !trimmedDraft.isEmpty,
+            let thread = model.selectedThread,
+            !thread.hasStarted,
+            model.supportsRepositoryWorkflow(for: thread)
         else { return trimmedDraft }
         return trimmedDraft + CreatePRPrompt.messageSuffix
     }

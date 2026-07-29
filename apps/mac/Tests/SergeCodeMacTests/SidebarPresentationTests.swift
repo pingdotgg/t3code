@@ -173,6 +173,67 @@ struct SidebarPresentationTests {
             ]?.map(\.thread.id) == ["fixer"])
     }
 
+    @Test("opening a nested auto-fixer selects its dedicated thread")
+    func nestedAutoFixerSelection() {
+        let projectID = "project-nest-selection"
+        let parent = makeThread(
+            id: "parent", projectID: projectID, title: "Main session", status: .fixing, at: 10)
+        let fixer = makeThread(
+            id: "fixer", projectID: projectID, title: "Auto-review fixer · PR #42",
+            status: .running, at: 11, parentThreadId: parent.id)
+        let model = makeModel(
+            projects: [Project(id: projectID, name: "Nest", path: "/nest")],
+            threads: [parent, fixer])
+        let multi = MultiDeviceModel(local: model)
+
+        let child = SidebarProjection.projectGroups(in: multi, scope: .all)[0]
+            .autoReviewChildrenByParent[ThreadSelection(deviceID: .local, threadID: parent.id)]![0]
+        multi.selection = child.id
+
+        #expect(multi.selection == ThreadSelection(deviceID: .local, threadID: fixer.id))
+        #expect(model.selectedThreadID == fixer.id)
+    }
+
+    @Test("active fixer selection prefers live work, then newest update")
+    func activeFixerSelectionIsDeterministic() {
+        let parentID = "parent"
+        let oldLive = makeThread(
+            id: "old-live", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .running, at: 10, parentThreadId: parentID)
+        let newerIdle = makeThread(
+            id: "new-idle", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .idle, at: 20, parentThreadId: parentID)
+        let newestLive = makeThread(
+            id: "newest-live", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .backgroundWork, at: 15, parentThreadId: parentID)
+
+        #expect(
+            AutoReviewThreadPresentation.activeFixer(
+                for: parentID, in: [newerIdle, oldLive, newestLive])?.id == newestLive.id)
+    }
+
+    @Test("active fixer selection keeps a fixer waiting on a person")
+    func activeFixerSelectionIncludesWaitingStates() {
+        let parentID = "parent"
+        let newerIdle = makeThread(
+            id: "new-idle", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .idle, at: 20, parentThreadId: parentID)
+        let waitingApproval = makeThread(
+            id: "waiting-approval", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .waitingApproval, at: 10, parentThreadId: parentID)
+        let waitingInput = makeThread(
+            id: "waiting-input", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .waitingInput, at: 11, parentThreadId: parentID)
+        let waiting = makeThread(
+            id: "waiting", projectID: "project", title: "Auto-review fixer · PR #1",
+            status: .waiting, at: 12, parentThreadId: parentID)
+
+        #expect(
+            AutoReviewThreadPresentation.activeFixer(
+                for: parentID, in: [newerIdle, waitingApproval, waitingInput, waiting])?.id
+                == waiting.id)
+    }
+
     @Test("isDelegatedAgentThread matches parent links and Agent: titles")
     func delegatedAgentThreadDetection() {
         #expect(
@@ -246,6 +307,33 @@ struct SidebarPresentationTests {
             in: MultiDeviceModel(local: local), scope: .all)
 
         #expect(groups.map(\.name) == ["Fresh", "Stale", "Empty"])
+    }
+
+    @Test("settling a thread does not promote its project")
+    func settlingThreadDoesNotPromoteProject() {
+        let olderActivity = Date(timeIntervalSince1970: 10)
+        let newerActivity = Date(timeIntervalSince1970: 20)
+        let settlement = Date(timeIntervalSince1970: 30)
+        var settledThread = makeThread(
+            id: "settled-thread", projectID: "older", status: .settled, at: 30,
+            settledOverride: "settled", settledAt: settlement)
+        settledThread.createdAt = Date(timeIntervalSince1970: 1)
+        settledThread.latestTurnCompletedAt = olderActivity
+        var newerThread = makeThread(id: "newer-thread", projectID: "newer", at: 20)
+        newerThread.createdAt = Date(timeIntervalSince1970: 2)
+        newerThread.latestTurnCompletedAt = newerActivity
+        let local = makeModel(
+            projects: [
+                Project(id: "older", name: "Older", path: "/older"),
+                Project(id: "newer", name: "Newer", path: "/newer"),
+            ],
+            threads: [settledThread, newerThread])
+
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        #expect(groups.map(\.name) == ["Newer", "Older"])
+        #expect(groups.map(\.lastActivityAt) == [newerActivity, olderActivity])
     }
 
     @Test("group threads rank pinned then attention then running then recent")

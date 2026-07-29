@@ -22,7 +22,7 @@ struct AutoReviewSettingsTab: View {
                         isOn: binding(settings, \.autoReview.enabled))
                 }
 
-                SettingsSection(header: "When to run") {
+                SettingsSection(header: "When to run", icon: "clock") {
                     SettingsCardRow {
                         HStack {
                             Text("Mode")
@@ -69,7 +69,7 @@ struct AutoReviewSettingsTab: View {
                         )
                 }
 
-                SettingsSection(header: "Who fixes") {
+                SettingsSection(header: "Who fixes", icon: "person.2") {
                     SettingsToggleRow(
                         title: "Use a different model for fixes",
                         description:
@@ -94,7 +94,7 @@ struct AutoReviewSettingsTab: View {
                     }
                 }
 
-                SettingsSection(header: "Model") {
+                SettingsSection(header: "Model", icon: "cpu") {
                     if model.models.isEmpty {
                         SettingsCardRow {
                             HStack {
@@ -114,7 +114,7 @@ struct AutoReviewSettingsTab: View {
                     }
                 }
 
-                SettingsSection(header: "Polling") {
+                SettingsSection(header: "Polling", icon: "arrow.triangle.2.circlepath") {
                     SettingsCardRow {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
@@ -163,7 +163,7 @@ struct AutoReviewSettingsTab: View {
                     }
                 }
 
-                SettingsSection(header: "Parallelism") {
+                SettingsSection(header: "Parallelism", icon: "square.stack.3d.up") {
                     concurrencySlider(
                         settings,
                         title: "Parallel reviews",
@@ -185,7 +185,7 @@ struct AutoReviewSettingsTab: View {
                 }
 
                 if !settings.autoReview.projectOverrides.isEmpty {
-                    SettingsSection(header: "Projects") {
+                    SettingsSection(header: "Projects", icon: "folder") {
                         ForEach(
                             Array(settings.autoReview.projectOverrides.enumerated()),
                             id: \.element.id
@@ -196,7 +196,7 @@ struct AutoReviewSettingsTab: View {
                     }
                 }
 
-                SettingsSection(header: "Recent jobs") {
+                SettingsSection(header: "Recent jobs", icon: "list.bullet.rectangle") {
                     if isRefreshingJobs && jobs.isEmpty {
                         SettingsCardRow {
                             ProgressView()

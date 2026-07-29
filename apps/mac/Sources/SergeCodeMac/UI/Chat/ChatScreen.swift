@@ -52,11 +52,7 @@ public struct ChatScreen: View {
     /// destination while a real fixer thread is active.
     private func activeAutoReviewFixer(for thread: ChatThread) -> ChatThread? {
         guard thread.status == .fixing else { return nil }
-        return model.threads.first {
-            $0.parentThreadId == thread.id
-                && $0.status != .archived
-                && AutoReviewThreadPresentation.isDedicatedFixer($0)
-        }
+        return AutoReviewThreadPresentation.activeFixer(for: thread.id, in: model.threads)
     }
 
     /// Identity + status of the thread on screen, so switching to an already
