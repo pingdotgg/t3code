@@ -382,18 +382,8 @@ export const layerWithOptions = (
                   }),
                 ),
               );
-      const recoverClaimAfterExecutionStarted = (
-        effect: OrchestrationEffectV2,
-        cause: Cause.Cause<unknown>,
-      ) => {
+      const terminalizeClaim = (effect: OrchestrationEffectV2, cause: Cause.Cause<unknown>) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.void;
-        if (
-          REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
-            (effectType) => effectType === effect.request.type,
-          )
-        ) {
-          return requeueClaim(effect, cause);
-        }
         return outbox
           .fail({
             effectId: effect.id,
@@ -427,6 +417,15 @@ export const layerWithOptions = (
             ),
           );
       };
+      const recoverPostSuccessSettlement = (
+        effect: OrchestrationEffectV2,
+        cause: Cause.Cause<unknown>,
+      ) =>
+        REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
+          (effectType) => effectType === effect.request.type,
+        )
+          ? requeueClaim(effect, cause)
+          : terminalizeClaim(effect, cause);
 
       const runOnce = Effect.gen(function* () {
         const claimExit = yield* Effect.exit(outbox.claimNext({ workerId, leaseDurationMs }));
@@ -490,7 +489,7 @@ export const layerWithOptions = (
               });
             }
             return true;
-          }).pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)));
+          }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
         }
 
         const error = Cause.pretty(exit.cause);
@@ -507,11 +506,11 @@ export const layerWithOptions = (
         const updated = nonRetryable
           ? yield* outbox
               .succeed({ effectId: effect.id, workerId })
-              .pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)))
+              .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
           : effect.attemptCount >= maxAttempts
             ? yield* outbox
                 .fail({ effectId: effect.id, workerId, error })
-                .pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)))
+                .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : yield* outbox
                 .retry({
                   effectId: effect.id,
