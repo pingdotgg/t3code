@@ -1463,24 +1463,26 @@ function claudeNativeToolOutputText(output: ClaudeNativeToolOutput): string {
 
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
-  if (typeof value === "object" && value !== null && "content" in value) {
-    const content = value.content;
-    if (Array.isArray(content)) {
-      const text = content
-        .flatMap((part) =>
-          typeof part === "object" &&
-          part !== null &&
-          "type" in part &&
-          part.type === "text" &&
-          "text" in part &&
-          typeof part.text === "string"
-            ? [part.text]
-            : [],
-        )
-        .join("\n");
-      if (text.length > 0) {
-        return text;
-      }
+  const content = Array.isArray(value)
+    ? value
+    : typeof value === "object" && value !== null && "content" in value
+      ? value.content
+      : undefined;
+  if (Array.isArray(content)) {
+    const text = content
+      .flatMap((part) =>
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        part.type === "text" &&
+        "text" in part &&
+        typeof part.text === "string"
+          ? [part.text]
+          : [],
+      )
+      .join("\n");
+    if (text.length > 0) {
+      return text;
     }
   }
   return claudeNativeToolOutputText(output);
