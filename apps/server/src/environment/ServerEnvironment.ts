@@ -137,6 +137,16 @@ export const make = Effect.gen(function* () {
       repositoryIdentity: true,
       threadSnooze: true,
     },
+    ...(serverConfig.hostAppVersion && serverConfig.hostAppBuild
+      ? {
+          hostApplication: {
+            name: "SurgeCode",
+            version: serverConfig.hostAppVersion,
+            buildNumber: serverConfig.hostAppBuild,
+            updateCapability: "sparkle" as const,
+          },
+        }
+      : {}),
   };
 
   return ServerEnvironment.of({

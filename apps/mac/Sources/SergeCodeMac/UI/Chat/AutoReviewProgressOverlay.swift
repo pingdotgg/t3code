@@ -6,6 +6,8 @@ import SwiftUI
 struct AutoReviewProgressOverlay: View {
     let status: ThreadStatus
     let threadID: String
+    let activeThreadID: String?
+    let onOpenThread: (String) -> Void
 
     @UIState private var isVisible = false
 
@@ -20,14 +22,18 @@ struct AutoReviewProgressOverlay: View {
     var body: some View {
         Group {
             if let phase, isVisible {
-                AutoReviewProgressCard(phase: phase)
+                AutoReviewProgressCard(
+                    phase: phase,
+                    canOpenThread: activeThreadID != nil,
+                    onOpenThread: {
+                        guard let activeThreadID else { return }
+                        Haptics.play(.selection)
+                        onOpenThread(activeThreadID)
+                    })
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .bottom)),
                             removal: .opacity))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        AutoReviewProgressPresentation.accessibilityLabel(for: phase))
                     #if DEBUG
                         .probeSurface(
                             UIProbeSurfaces.autoReviewProgress,
@@ -56,8 +62,34 @@ struct AutoReviewProgressOverlay: View {
 
 private struct AutoReviewProgressCard: View {
     let phase: AutoReviewProgressPhase
+    let canOpenThread: Bool
+    let onOpenThread: () -> Void
+
+    @UIState private var isHovering = false
 
     var body: some View {
+        Group {
+            if canOpenThread {
+                Button(action: onOpenThread) {
+                    cardContent
+                }
+                .buttonStyle(.plain)
+                .help("Open the auto-fixer thread")
+                .accessibilityLabel(
+                    AutoReviewProgressPresentation.accessibilityLabel(for: phase))
+                .accessibilityHint("Opens the active auto-fixer thread")
+            } else {
+                cardContent
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        AutoReviewProgressPresentation.accessibilityLabel(for: phase))
+            }
+        }
+        .onHover { isHovering = $0 }
+        .animation(Motion.feedback, value: isHovering)
+    }
+
+    private var cardContent: some View {
         HStack(spacing: 11) {
             stageIcon
 
@@ -76,13 +108,30 @@ private struct AutoReviewProgressCard: View {
                     .foregroundStyle(.secondary)
             }
 
-            stageRail
+            VStack(alignment: .trailing, spacing: 5) {
+                stageRail
+                if canOpenThread,
+                    let action = AutoReviewProgressPresentation.actionLabel(for: phase)
+                {
+                    HStack(spacing: 3) {
+                        Text(action)
+                        Image(systemName: "arrow.up.right")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(phase.tint)
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .alpineGlassSurface(
             in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+        .shadow(
+            color: .black.opacity(isHovering && canOpenThread ? 0.14 : 0.08),
+            radius: isHovering && canOpenThread ? 13 : 10,
+            y: 4)
+        .scaleEffect(isHovering && canOpenThread ? 1.012 : 1)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var stageIcon: some View {

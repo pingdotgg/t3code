@@ -169,6 +169,7 @@ public actor LiveBackend: BackendService {
     /// before reading its replay baseline, so a resumed subscription can see
     /// the same event in both.
     private var lastShellSequence: Int?
+    private var lastHostUpdateRequestSequence: Int?
     /// Last authoritative orchestration sequence observed by each thread-detail
     /// subscription. The server attaches the live tail before loading the
     /// snapshot, so an event already folded into `snapshot.thread` can also be
@@ -383,6 +384,8 @@ public actor LiveBackend: BackendService {
                 nodePath: nodePath, entryPath: entryPath,
                 host: mode.allowLanAccess ? "0.0.0.0" : "127.0.0.1",
                 baseDir: localBaseDirectory,
+                hostAppVersion: AppVersion.version,
+                hostAppBuild: AppVersion.buildNumber,
                 tailscaleServeEnabled: mode.tailscaleServeEnabled)
         } catch {
             emit(.connection(.failed("Could not configure the server sidecar: \(error)")))
@@ -580,6 +583,10 @@ public actor LiveBackend: BackendService {
                 }
                 group.addTask { [weak self] in
                     guard let self else { return }
+                    try await self.consumeServerLifecycle(client)
+                }
+                group.addTask { [weak self] in
+                    guard let self else { return }
                     try await self.watchConnection(conn)
                 }
                 // First child to finish/throw ends the session; cancel the rest.
@@ -604,6 +611,19 @@ public actor LiveBackend: BackendService {
         let stream = await client.subscribeServerConfig()
         for try await event in stream {
             handleServerConfigEvent(event)
+        }
+    }
+
+    private func consumeServerLifecycle(_ client: T3Client) async throws {
+        let stream = await client.subscribeServerLifecycle()
+        for try await event in stream {
+            guard !mode.isRemote else { continue }
+            guard case .hostUpdateRequested(let sequence, _) = event else { continue }
+            if let previous = lastHostUpdateRequestSequence, sequence <= previous {
+                continue
+            }
+            lastHostUpdateRequestSequence = sequence
+            emit(.hostUpdateRequested)
         }
     }
 

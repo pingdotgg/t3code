@@ -786,6 +786,8 @@ public final class AppModel {
             if phase == .ready {
                 Task { await refreshAll() }
             }
+        case .hostUpdateRequested:
+            NotificationCenter.default.post(name: .sergeCodeHostUpdateRequested, object: nil)
         case .projectsChanged(let list):
             projects = list
             rebuildProjectPathIndex()
