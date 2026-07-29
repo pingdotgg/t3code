@@ -28,6 +28,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 const URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/g;
+const URL_SCAN_TAIL_LENGTH = 256;
 const URL_WAIT_TIMEOUT = Duration.seconds(45);
 
 /**
@@ -39,6 +40,20 @@ export const parseCloudflaredUrl = (text: string): string | undefined => {
     if (!match[0].startsWith("https://api.")) return match[0];
   }
   return undefined;
+};
+
+/**
+ * Keeps enough recent output to find a URL split across process stream chunks.
+ * The suffix is bounded because cloudflared output is untrusted process output.
+ */
+export const makeCloudflaredUrlScanner = () => {
+  let tail = "";
+
+  return (chunk: string): string | undefined => {
+    const url = parseCloudflaredUrl(tail + chunk);
+    tail = (tail + chunk).slice(-URL_SCAN_TAIL_LENGTH);
+    return url;
+  };
 };
 
 export interface CloudflaredTunnelHandle {
@@ -75,11 +90,12 @@ export const startCloudflaredTunnel = (input: {
 
     // cloudflared prints the assigned hostname on stderr. Watch both streams
     // anyway — log routing has moved between releases.
+    const scanCloudflaredOutput = makeCloudflaredUrlScanner();
     const watchOutput = child.all.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
         Effect.gen(function* () {
-          const url = parseCloudflaredUrl(chunk);
+          const url = scanCloudflaredOutput(chunk);
           if (url !== undefined) {
             yield* Ref.set(urlRef, url);
             yield* Deferred.succeed(firstUrl, url);

@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 
-import { parseCloudflaredUrl } from "./CloudflaredTunnel.ts";
+import { makeCloudflaredUrlScanner, parseCloudflaredUrl } from "./CloudflaredTunnel.ts";
 
 it("scrapes the quick-tunnel hostname from cloudflared output", () => {
   const banner = [
@@ -22,4 +22,11 @@ it("skips the api control-plane host that shares the banner", () => {
 it("returns undefined for output with no tunnel URL", () => {
   expect(parseCloudflaredUrl("INF Starting tunnel")).toBeUndefined();
   expect(parseCloudflaredUrl("")).toBeUndefined();
+});
+
+it("finds a tunnel URL split across output chunks", () => {
+  const scan = makeCloudflaredUrlScanner();
+
+  expect(scan("INF Your quick Tunnel is https://split-host.trycloud")).toBeUndefined();
+  expect(scan("flare.com\n")).toBe("https://split-host.trycloudflare.com");
 });
