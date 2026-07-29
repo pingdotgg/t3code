@@ -25,6 +25,20 @@ const T3_MCP_TOOL_DISPLAY_NAMES: Record<string, string> = {
   t3_thread_interrupt: "Interrupt a T3 thread",
   t3_worktree_handoff: "Hand off thread to a git worktree",
   t3_worktree_status: "Get thread worktree status",
+  preview_status: "Get preview browser status",
+  preview_open: "Open a page in the preview browser",
+  preview_navigate: "Navigate the preview browser",
+  preview_snapshot: "Snapshot the preview page",
+  preview_click: "Click in the preview browser",
+  preview_press: "Press a key in the preview browser",
+  preview_type: "Type in the preview browser",
+  preview_scroll: "Scroll the preview browser",
+  preview_resize: "Resize the preview browser",
+  preview_evaluate: "Evaluate script in the preview browser",
+  preview_wait_for: "Wait for the preview page",
+  preview_set_appearance: "Set preview browser appearance",
+  preview_recording_start: "Start recording the preview browser",
+  preview_recording_stop: "Stop recording the preview browser",
 };
 
 function normalizeT3McpToolLabel(value: string): string {
@@ -36,12 +50,14 @@ function resolveT3McpToolName(value: string): string | null {
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/.exec(label);
   if (mcpMatch?.groups) {
     const { server, tool } = mcpMatch.groups;
-    return server !== undefined && tool !== undefined && T3_MCP_SERVER_ALIASES.has(server)
+    return server !== undefined &&
+      tool !== undefined &&
+      T3_MCP_SERVER_ALIASES.has(server.toLowerCase())
       ? tool
       : null;
   }
 
-  const namespaceMatch = /^(?<server>t3-code|t3_code|t3code)[.:/](?<tool>.+)$/.exec(label);
+  const namespaceMatch = /^(?<server>t3-code|t3_code|t3code)[.:/](?<tool>.+)$/i.exec(label);
   if (namespaceMatch?.groups) {
     return namespaceMatch.groups.tool ?? null;
   }

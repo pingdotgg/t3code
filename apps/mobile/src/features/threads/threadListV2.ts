@@ -121,6 +121,27 @@ export function resolveThreadListV2Enabled(input: {
   return input.preference ?? true;
 }
 
+/**
+ * Completed-but-not-yet-seen, mirroring the web sidebar's
+ * hasUnseenCompletion. The visited watermark is server state
+ * (thread.lastVisitedAt), so the marker agrees across web and mobile.
+ * Never-visited threads count as read — a fresh environment must not light
+ * up its whole history — and pre-tracking servers (field absent) never
+ * report unread.
+ */
+export function threadHasUnseenCompletion(
+  thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+): boolean {
+  const completedAt = thread.latestRun?.completedAt;
+  if (!completedAt) return false;
+  const completedAtMs = Date.parse(completedAt);
+  if (Number.isNaN(completedAtMs)) return false;
+  if (!thread.lastVisitedAt) return false;
+  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(lastVisitedAtMs)) return true;
+  return completedAtMs > lastVisitedAtMs;
+}
+
 export function resolveThreadListV2Status(
   thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
 ): ThreadListV2Status {

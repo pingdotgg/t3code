@@ -72,6 +72,13 @@ export type DeleteThreadInput = ThreadCommandInput;
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
 
+export interface VisitThreadInput extends ThreadCommandInput {
+  /** Watermark of the thread state the viewer has seen (ISO timestamp). */
+  readonly visitedAt: string;
+}
+
+export type MarkThreadUnreadInput = ThreadCommandInput;
+
 export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly title?: string;
   readonly modelSelection?: ModelSelection;
@@ -168,6 +175,15 @@ export interface ReorderQueuedRunInput extends ThreadCommandInput {
 export interface PromoteQueuedRunInput extends ThreadCommandInput {
   readonly queuedRunId: RunId;
   readonly targetRunId: RunId;
+}
+
+export interface CancelQueuedRunInput extends ThreadCommandInput {
+  readonly runId: RunId;
+}
+
+export interface EditQueuedRunInput extends ThreadCommandInput {
+  readonly runId: RunId;
+  readonly text: string;
 }
 
 const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(function* (
@@ -333,6 +349,66 @@ export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(
   input: UnarchiveThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.unarchive", input);
+});
+
+export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
+  input: SettleThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.settle", input);
+});
+
+export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (
+  input: UnsettleThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.unsettle",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: input.reason,
+  });
+});
+
+export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(function* (
+  input: SnoozeThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.snooze",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    snoozedUntil: input.snoozedUntil,
+  });
+});
+
+export const unsnoozeThread = Effect.fn("EnvironmentCommands.unsnoozeThread")(function* (
+  input: UnsnoozeThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.unsnooze",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: input.reason,
+  });
+});
+
+export const visitThread = Effect.fn("EnvironmentCommands.visitThread")(function* (
+  input: VisitThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.visit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    visitedAt: input.visitedAt,
+  });
+});
+
+export const markThreadUnread = Effect.fn("EnvironmentCommands.markThreadUnread")(function* (
+  input: MarkThreadUnreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.mark-unread",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
 });
 
 export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadMetadata")(
@@ -647,5 +723,28 @@ export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun"
     threadId: input.threadId,
     queuedRunId: input.queuedRunId,
     targetRunId: input.targetRunId,
+  });
+});
+
+export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(function* (
+  input: CancelQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-run.cancel",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+  });
+});
+
+export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(function* (
+  input: EditQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-run.edit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+    text: input.text,
   });
 });

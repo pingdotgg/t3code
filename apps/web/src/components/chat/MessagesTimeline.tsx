@@ -1,9 +1,11 @@
 import {
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ScopedThreadRef,
+  type ServerProvider,
   type ServerProviderSkill,
   type RunId,
   type ThreadId,
@@ -30,6 +32,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   type TimelineEntry,
+  providerErrorPresentation,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
@@ -138,6 +141,10 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  /** Provider snapshots for resolving handoff endpoints to icons + model names. */
+  providerStatuses: ReadonlyArray<ServerProvider>;
+  /** Projection runs, for recovering handoff models on legacy items. */
+  runs: ReadonlyArray<OrchestrationV2Run>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -168,6 +175,8 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_TIMELINE_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const EMPTY_TIMELINE_RUNS: ReadonlyArray<OrchestrationV2Run> = [];
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -206,6 +215,8 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  providerStatuses?: ReadonlyArray<ServerProvider>;
+  runs?: ReadonlyArray<OrchestrationV2Run>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -244,6 +255,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
+  providerStatuses = EMPTY_TIMELINE_PROVIDERS,
+  runs = EMPTY_TIMELINE_RUNS,
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
@@ -470,6 +483,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      providerStatuses,
+      runs,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -487,6 +502,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      providerStatuses,
+      runs,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -1299,13 +1316,19 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
   readonly icon: LucideIcon;
 } {
   switch (item.type) {
-    case "error":
+    case "error": {
+      const presentation = providerErrorPresentation(item);
       return {
-        label: item.title?.trim() || "Provider error",
-        detail: item.failure.message,
-        tone: "danger",
+        ...presentation,
+        tone:
+          item.status === "completed"
+            ? "success"
+            : item.status === "running"
+              ? "warning"
+              : "danger",
         icon: CircleAlertIcon,
       };
+    }
     case "run_interrupt_request":
       return {
         label: "Interrupt requested",
@@ -1390,6 +1413,8 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
         item={item}
         createdAt={row.createdAt}
         timestampFormat={ctx.timestampFormat}
+        providerStatuses={ctx.providerStatuses}
+        runs={ctx.runs}
         onOpenThread={ctx.onOpenThread}
       />
     );

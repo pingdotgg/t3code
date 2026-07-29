@@ -40,6 +40,8 @@ import {
   createProject,
   forkThreadFromRun,
   mergeThreadBack,
+  cancelQueuedRun,
+  editQueuedRun,
   promoteQueuedRun,
   reorderQueuedRun,
   revertThreadCheckpoint,
@@ -419,6 +421,17 @@ describe("V2 environment commands", () => {
           queuedRunId: RunId.make("run-3"),
           targetRunId: RunId.make("run-active"),
         }).pipe(provide);
+        yield* cancelQueuedRun({
+          commandId: CommandId.make("cancel"),
+          threadId: v2ThreadId,
+          runId: RunId.make("run-3"),
+        }).pipe(provide);
+        yield* editQueuedRun({
+          commandId: CommandId.make("edit"),
+          threadId: v2ThreadId,
+          runId: RunId.make("run-3"),
+          text: "updated queued text",
+        }).pipe(provide);
 
         expect(commands).toMatchObject([
           { type: "thread.fork", sourcePoint: { type: "run", runId: "run-1" } },
@@ -429,6 +442,8 @@ describe("V2 environment commands", () => {
             queuedRunId: "run-3",
             targetRunId: "run-active",
           },
+          { type: "queued-run.cancel", runId: "run-3" },
+          { type: "queued-run.edit", runId: "run-3", text: "updated queued text" },
         ]);
       }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );

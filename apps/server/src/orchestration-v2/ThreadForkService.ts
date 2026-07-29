@@ -86,6 +86,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          lastVisitedAt: null,
           deletedAt: null,
         };
         const transfer: OrchestrationV2ContextTransfer = {

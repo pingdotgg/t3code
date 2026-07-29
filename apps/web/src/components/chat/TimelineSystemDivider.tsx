@@ -1,10 +1,11 @@
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
 export function TimelineSystemDivider(props: {
   readonly label: string;
-  readonly detail?: string | null;
+  readonly detail?: ReactNode | null;
   readonly tone?: "neutral" | "danger";
   readonly icon?: LucideIcon;
   readonly actionLabel?: string;

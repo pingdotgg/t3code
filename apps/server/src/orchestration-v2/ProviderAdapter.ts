@@ -11,6 +11,7 @@ import {
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderFailure,
+  OrchestrationV2ProviderRetry,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2RuntimeRequest,
@@ -143,6 +144,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     failureItemOrdinal: PositiveInt,
     status: Schema.Literal("failed"),
     failure: OrchestrationV2ProviderFailure,
+    retry: Schema.optional(OrchestrationV2ProviderRetry),
+    retryStartedAt: Schema.optional(Schema.DateTimeUtc),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
   }),
 ]);

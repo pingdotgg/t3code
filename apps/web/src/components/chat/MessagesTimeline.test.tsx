@@ -756,6 +756,147 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Structured details");
   });
 
+  it("renders context handoffs as from → to model endpoints instead of the summary", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const providerStatuses = [
+      {
+        instanceId: "codex_personal",
+        driver: "codex",
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: {},
+        checkedAt: MESSAGE_CREATED_AT,
+        models: [{ slug: "gpt-5.6-sol", name: "GPT 5.6 Sol", isCustom: false, capabilities: null }],
+        slashCommands: [],
+        skills: [],
+      },
+      {
+        instanceId: "claudeAgent",
+        driver: "claudeAgent",
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: {},
+        checkedAt: MESSAGE_CREATED_AT,
+        models: [
+          { slug: "claude-fable-5", name: "Claude Fable 5", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ] as never;
+    const buildHandoffEntry = (item: Record<string, unknown>) => ({
+      id: "handoff-1",
+      kind: "event" as const,
+      createdAt: MESSAGE_CREATED_AT,
+      projectedItem: {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: "thread-1",
+        sourceItemId: "handoff-1",
+        item: {
+          id: "handoff-1",
+          threadId: "thread-1",
+          runId: "run-2",
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed",
+          title: "Provider handoff",
+          startedAt: null,
+          completedAt: null,
+          updatedAt: {},
+          type: "handoff",
+          contextHandoffId: "handoff-1",
+          fromProviderThreadIds: ["provider-thread-1"],
+          toProviderThreadId: "provider-thread-2",
+          strategy: "full_thread_summary",
+          summary: "Full conversation context for provider handoff.",
+          ...item,
+        },
+      } as never,
+    });
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        providerStatuses={providerStatuses}
+        timelineEntries={[
+          buildHandoffEntry({
+            fromProviderInstanceIds: ["codex_personal"],
+            toProviderInstanceId: "claudeAgent",
+            fromModelSelections: [{ instanceId: "codex_personal", model: "gpt-5.6-sol" }],
+            toModel: "claude-fable-5",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Context handoff");
+    expect(markup).toContain("GPT 5.6 Sol");
+    expect(markup).toContain("Claude Fable 5");
+    expect(markup).not.toContain("Full conversation context");
+
+    // Items persisted before models were stamped recover them from the
+    // projection runs: the handoff's run is the target, the newest earlier
+    // run per source instance is the origin.
+    const legacyRuns = [
+      {
+        id: "run-1",
+        ordinal: 1,
+        providerInstanceId: "codex_personal",
+        modelSelection: { instanceId: "codex_personal", model: "gpt-5.6-sol" },
+      },
+      {
+        id: "run-2",
+        ordinal: 2,
+        providerInstanceId: "claudeAgent",
+        modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5" },
+      },
+    ] as never;
+    const legacyMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        providerStatuses={providerStatuses}
+        runs={legacyRuns}
+        timelineEntries={[
+          buildHandoffEntry({
+            fromProviderInstanceIds: ["codex_personal"],
+            toProviderInstanceId: "claudeAgent",
+          }),
+        ]}
+      />,
+    );
+
+    expect(legacyMarkup).toContain("GPT 5.6 Sol");
+    expect(legacyMarkup).toContain("Claude Fable 5");
+    expect(legacyMarkup).not.toContain("Full conversation context");
+
+    // Without run data either (e.g. cross-thread items) it falls back to
+    // provider names.
+    const bareMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        providerStatuses={providerStatuses}
+        timelineEntries={[
+          buildHandoffEntry({
+            fromProviderInstanceIds: ["codex_personal"],
+            toProviderInstanceId: "claudeAgent",
+          }),
+        ]}
+      />,
+    );
+
+    expect(bareMarkup).toContain("Codex Personal");
+    expect(bareMarkup).not.toContain("Full conversation context");
+  });
+
   it("renders created threads as linked cards outside the work log", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

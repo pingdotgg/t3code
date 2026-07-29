@@ -174,6 +174,7 @@ import {
   BotIcon,
   CircleAlertIcon,
   ListTodoIcon,
+  LoaderCircleIcon,
   PencilRulerIcon,
   type LucideIcon,
   LockIcon,
@@ -189,6 +190,7 @@ import {
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
   resolveProviderDriverKindForInstanceSelection,
+  resolveProviderCatalogAvailability,
   resolveSelectableProviderInstanceEntry,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
@@ -576,6 +578,7 @@ export interface ChatComposerProps {
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
+  providerCatalogLoaded: boolean;
   providerStatuses: ServerProvider[];
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
@@ -675,6 +678,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     runtimeMode,
     interactionMode,
     lockedProvider,
+    providerCatalogLoaded,
     providerStatuses,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
@@ -869,7 +873,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
     [providerInstanceEntries, selectedInstanceId],
   );
-  const noProviderAvailable = selectedProviderEntry === undefined;
+  const providerCatalogAvailability = resolveProviderCatalogAvailability({
+    catalogLoaded: providerCatalogLoaded,
+    entries: providerInstanceEntries,
+    selectedEntry: selectedProviderEntry,
+  });
+  const noProviderAvailable = providerCatalogAvailability !== "ready";
+  const providerAvailabilityCopy =
+    providerCatalogAvailability === "loading"
+      ? {
+          label: "Loading providers…",
+          placeholder: "Providers are still loading",
+        }
+      : providerCatalogAvailability === "unconfigured"
+        ? {
+            label: "No providers configured",
+            placeholder: "Enable a provider in Settings to send a message",
+          }
+        : {
+            label: "Providers unavailable",
+            placeholder: "No configured provider is currently available",
+          };
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -2852,7 +2876,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ? activePendingProgress.customAnswer ||
                     "Type your own answer, or leave this blank to use the selected option"
                   : prompt.trim() ||
-                    (noProviderAvailable ? "Enable a provider in Settings" : "Ask anything...")}
+                    (noProviderAvailable
+                      ? providerAvailabilityCopy.placeholder
+                      : "Ask anything...")}
               </button>
               <button
                 type="button"
@@ -3078,7 +3104,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : projectSelectionRequired
                           ? "Choose a project above to start a thread"
                           : noProviderAvailable
-                            ? "Enable a provider in Settings to send a message"
+                            ? providerAvailabilityCopy.placeholder
                             : phase === "disconnected"
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, $use skills, or / for commands"
@@ -3145,10 +3171,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     variant="ghost"
                     disabled
                     data-chat-provider-unavailable="true"
+                    data-chat-provider-availability={providerCatalogAvailability}
                     className="shrink-0 gap-2 px-2 text-muted-foreground/70 sm:px-3"
                   >
-                    <CircleAlertIcon className="size-4" />
-                    No provider available
+                    {providerCatalogAvailability === "loading" ? (
+                      <LoaderCircleIcon className="size-4" />
+                    ) : (
+                      <CircleAlertIcon className="size-4" />
+                    )}
+                    {providerAvailabilityCopy.label}
                   </Button>
                 ) : (
                   <ProviderModelPicker

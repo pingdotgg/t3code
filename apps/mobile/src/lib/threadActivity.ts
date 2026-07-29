@@ -586,12 +586,13 @@ export function buildPendingUserInputAnswers(
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): ThreadFeedEntry[] {
-  const entries = visibleTurnItems.map((row): RawThreadFeedEntry => {
+  const entries: RawThreadFeedEntry[] = [];
+  for (const row of visibleTurnItems) {
     const item = row.item;
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
     if (item.type === "user_message" || item.type === "assistant_message") {
       const updatedAt = DateTime.formatIso(item.updatedAt);
-      return {
+      entries.push({
         type: "message",
         id: item.messageId,
         createdAt,
@@ -615,16 +616,17 @@ export function buildThreadFeed(
           updatedAt,
           projectedItem: row,
         },
-      };
+      });
+      continue;
     }
     const activity = toFeedActivity(row);
-    return {
+    entries.push({
       type: "activity",
       id: activity.id,
       createdAt,
       runId: item.runId,
       activity,
-    };
-  });
+    });
+  }
   return groupAdjacentActivities(entries);
 }

@@ -315,6 +315,17 @@ export const OrchestrationV2AppThread = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
+  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  settledAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -728,6 +739,18 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 
+/**
+ * Provider-reported retry progress. Some providers expose all fields (Claude),
+ * while others only expose `willRetry` and encode counters in display text
+ * (Codex), so the protocol-specific values remain nullable.
+ */
+export const OrchestrationV2ProviderRetry = Schema.Struct({
+  attempt: PositiveInt,
+  maxAttempts: Schema.NullOr(PositiveInt),
+  retryDelayMs: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestrationV2ProviderRetry = typeof OrchestrationV2ProviderRetry.Type;
+
 export const OrchestrationV2ProviderThreadDisposition = Schema.Literals(["reusable", "broken"]);
 export type OrchestrationV2ProviderThreadDisposition =
   typeof OrchestrationV2ProviderThreadDisposition.Type;
@@ -873,6 +896,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("error"),
     failure: OrchestrationV2ProviderFailure,
+    retry: Schema.optional(OrchestrationV2ProviderRetry),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -890,6 +914,11 @@ export const OrchestrationV2TurnItem = Schema.Union([
     toProviderThreadId: ProviderThreadId,
     fromProviderInstanceIds: Schema.Array(ProviderInstanceId),
     toProviderInstanceId: ProviderInstanceId,
+    // Model selections active on the covered source runs and the target
+    // model, so timelines can label the handoff by model rather than by
+    // provider instance id. Absent on items persisted before these fields.
+    fromModelSelections: Schema.optional(Schema.Array(ModelSelection)),
+    toModel: Schema.optional(Schema.String),
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
       "fork_delta_summary",
@@ -991,6 +1020,12 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.archived",
       "thread.unarchived",
       "thread.deleted",
+      "thread.settled",
+      "thread.unsettled",
+      "thread.snoozed",
+      "thread.unsnoozed",
+      "thread.visited",
+      "thread.marked-unread",
       "thread.metadata-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
@@ -1163,6 +1198,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   latestRunId: Schema.NullOr(RunId),
+  latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   activeRunId: Schema.NullOr(RunId),
   status: OrchestrationV2ShellThreadStatus,
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
@@ -1175,6 +1213,15 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
+  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
+  settledAt: Schema.NullOr(Schema.DateTimeUtc),
+  snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /**
+   * Omitted by servers that predate server-side visited tracking; clients fall
+   * back to their local visited state when the field is absent.
+   */
+  lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -1241,6 +1288,14 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  settledAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
@@ -1475,6 +1530,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("error"),
     failure: OrchestrationV2ProviderFailure,
+    retry: Schema.optional(OrchestrationV2ProviderRetry),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -1492,6 +1548,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     toProviderThreadId: ProviderThreadId,
     fromProviderInstanceIds: Schema.Array(ProviderInstanceId),
     toProviderInstanceId: ProviderInstanceId,
+    fromModelSelections: Schema.optional(Schema.Array(ModelSelection)),
+    toModel: Schema.optional(Schema.String),
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
       "fork_delta_summary",
@@ -1597,6 +1655,9 @@ export type OrchestrationV2LatestVisibleMessageSummaryJson =
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
   ...fields,
+  latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -1604,6 +1665,9 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   settledAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2ThreadShellJson = typeof OrchestrationV2ThreadShellJson.Type;
@@ -1642,6 +1706,12 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.archived",
       "thread.unarchived",
       "thread.deleted",
+      "thread.settled",
+      "thread.unsettled",
+      "thread.snoozed",
+      "thread.unsnoozed",
+      "thread.visited",
+      "thread.marked-unread",
       "thread.metadata-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
@@ -1790,6 +1860,45 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unsettle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("user"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.snooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snoozedUntil: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unsnooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("user"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.visit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /**
+     * Watermark of the thread state the viewer has seen (typically the shell's
+     * updatedAt). The server keeps the maximum of the stored and supplied
+     * values, so replays and out-of-order deliveries cannot move it backwards.
+     */
+    visitedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.mark-unread"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -1881,6 +1990,19 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     beforeRunId: Schema.NullOr(RunId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.edit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    text: Schema.String,
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

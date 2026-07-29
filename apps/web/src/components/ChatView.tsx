@@ -23,10 +23,12 @@ import {
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
+  deriveThreadActivityRun,
   deriveLatestThreadRun,
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveThreadProviderSession } from "@t3tools/client-runtime/state/thread-workflows";
+import { resolveThreadLastVisitedAt } from "./Sidebar.logic";
 import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import {
   parseScopedThreadKey,
@@ -310,6 +312,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+const EMPTY_PROJECTION_RUNS: OrchestrationV2ThreadProjection["runs"] = [];
 const EMPTY_ATTACHMENT_IDS: string[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
@@ -1221,9 +1224,11 @@ function ChatViewContent(props: ChatViewProps) {
     [serverVisibleTurnItems],
   );
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
-  const activeThreadLastVisitedAt = useUiStateStore(
+  const activeThreadLocalLastVisitedAt = useUiStateStore(
     (store) => store.threadLastVisitedAtById[routeThreadKey],
   );
+  const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  const lastDispatchedVisitRef = useRef<string | null>(null);
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1458,6 +1463,10 @@ function ChatViewContent(props: ChatViewProps) {
     () => (serverProjection === null ? null : deriveLatestThreadRun(serverProjection)),
     [serverProjection],
   );
+  const serverActivityRun = useMemo(
+    () => (serverProjection === null ? null : deriveThreadActivityRun(serverProjection)),
+    [serverProjection],
+  );
   const serverRuntime = useMemo(
     () => (serverProjection === null ? null : deriveThreadRuntime(serverProjection)),
     [serverProjection],
@@ -1469,6 +1478,7 @@ function ChatViewContent(props: ChatViewProps) {
   const supportsProviderSwitchingViaHandoff =
     activeProviderSession?.capabilities.sessions.supportsProviderSwitchingViaHandoff === true;
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
+  const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
@@ -1899,19 +1909,40 @@ function ChatViewContent(props: ChatViewProps) {
     if (!serverThread?.id) return;
     const threadUpdatedAt = Date.parse(serverThread.updatedAt);
     if (Number.isNaN(threadUpdatedAt)) return;
-    const lastVisitedAt = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
+    const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
+      serverThread.lastVisitedAt,
+      activeThreadLocalLastVisitedAt,
+    );
+    const lastVisitedAt = effectiveLastVisitedAt ? Date.parse(effectiveLastVisitedAt) : NaN;
     if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
+
+    if (serverThread.lastVisitedAt !== undefined) {
+      // Server-tracked visited state: record the watermark server-side so it
+      // syncs across every device connected to the environment. Dedupe per
+      // watermark — the effect re-runs before the command's echo lands.
+      const dispatchKey = `${routeThreadKey}:${serverThread.updatedAt}`;
+      if (lastDispatchedVisitRef.current === dispatchKey) return;
+      lastDispatchedVisitRef.current = dispatchKey;
+      void visitThreadMutation({
+        environmentId: serverThread.environmentId,
+        input: { threadId: serverThread.id, visitedAt: serverThread.updatedAt },
+      });
+      return;
+    }
 
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
       serverThread.updatedAt,
     );
   }, [
-    activeThreadLastVisitedAt,
+    activeThreadLocalLastVisitedAt,
     markThreadVisited,
+    routeThreadKey,
     serverThread?.environmentId,
     serverThread?.id,
+    serverThread?.lastVisitedAt,
     serverThread?.updatedAt,
+    visitThreadMutation,
   ]);
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;
@@ -2060,7 +2091,7 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
-    activeLatestRun,
+    activeActivityRun,
     activeRuntime,
     localDispatchStartedAt,
   );
@@ -3401,6 +3432,13 @@ function ChatViewContent(props: ChatViewProps) {
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
   const activeTimelineAnchorIndexRef = useRef<number | null>(null);
+  const observedTimelineActivityRef = useRef<{
+    readonly threadKey: string | null;
+    readonly runId: RunId | null;
+  }>({
+    threadKey: activeThreadKey,
+    runId: activeActivityRun?.runId ?? null,
+  });
   const anchorUserScrollGenerationRef = useRef(0);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
   const pendingAnchorScrollRestoreRef = useRef<{
@@ -3430,6 +3468,49 @@ function ChatViewContent(props: ChatViewProps) {
     cancelTimelineLiveFollowForUserNavigationRef.current =
       cancelTimelineLiveFollowForUserNavigation;
   }, [cancelTimelineLiveFollowForUserNavigation]);
+  useEffect(() => {
+    const observed = observedTimelineActivityRef.current;
+    if (observed.threadKey !== activeThreadKey) {
+      observedTimelineActivityRef.current = {
+        threadKey: activeThreadKey,
+        runId: activeActivityRun?.runId ?? null,
+      };
+      return;
+    }
+    if (
+      activeActivityRun === null ||
+      activeActivityRun.status === "queued" ||
+      observed.runId === activeActivityRun.runId
+    ) {
+      return;
+    }
+    const dispatchedUserItem = serverProjection?.visibleTurnItems.find(
+      (row) => row.item.type === "user_message" && row.item.runId === activeActivityRun.runId,
+    );
+    if (dispatchedUserItem?.item.type !== "user_message") {
+      return;
+    }
+    observedTimelineActivityRef.current = {
+      threadKey: activeThreadKey,
+      runId: activeActivityRun.runId,
+    };
+    if (
+      pendingTimelineAnchorRef.current !== null ||
+      timelineScrollModeRef.current === "free-scrolling"
+    ) {
+      return;
+    }
+
+    const messageId = dispatchedUserItem.item.messageId;
+    isAtEndRef.current = true;
+    timelineScrollModeRef.current = "anchoring-new-turn";
+    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+    pendingTimelineAnchorRef.current = messageId;
+    activeTimelineAnchorIndexRef.current = null;
+    showScrollDebouncer.current.cancel();
+    setShowScrollToBottom(false);
+    setTimelineAnchor({ threadKey: activeThreadKey, messageId });
+  }, [activeActivityRun, activeThreadKey, serverProjection]);
   const getActiveTimelineTurnMetrics = useCallback(
     (list?: LegendListRef | null) => {
       const resolvedList = list ?? legendListRef.current;
@@ -4731,6 +4812,7 @@ function ChatViewContent(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    const shouldQueueBehindActiveRun = phase === "running" && dispatchMode === "queue";
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
@@ -4755,20 +4837,22 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Sending always returns to the live edge. The new row becomes the
-    // anchored end-space target so it lands near the top while the response
-    // streams into the reserved space below it.
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "anchoring-new-turn";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    pendingTimelineAnchorRef.current = messageIdForSend;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor({
-      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-      messageId: messageIdForSend,
-    });
+    if (!shouldQueueBehindActiveRun) {
+      // A sent turn returns to the live edge and anchors its new transcript
+      // row. Queued input stays in the composer queue and must not move the
+      // timeline away from the provider work already in flight.
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "anchoring-new-turn";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      pendingTimelineAnchorRef.current = messageIdForSend;
+      activeTimelineAnchorIndexRef.current = null;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      setTimelineAnchor({
+        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        messageId: messageIdForSend,
+      });
+    }
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -4780,7 +4864,7 @@ function ChatViewContent(props: ChatViewProps) {
         createdAt: messageCreatedAt,
         updatedAt: messageCreatedAt,
         streaming: false,
-        ...(phase === "running" && dispatchMode === "queue"
+        ...(shouldQueueBehindActiveRun
           ? { inputIntent: "queued_turn" as const }
           : phase === "running" && dispatchMode === "steer"
             ? { inputIntent: "steer" as const }
@@ -5896,7 +5980,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
-                latestRun={activeLatestRun}
+                latestRun={activeActivityRun}
                 turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
@@ -5914,6 +5998,8 @@ function ChatViewContent(props: ChatViewProps) {
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                providerStatuses={providerStatuses}
+                runs={serverProjection?.runs ?? EMPTY_PROJECTION_RUNS}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
@@ -5968,6 +6054,7 @@ function ChatViewContent(props: ChatViewProps) {
                     <QueuedRunsControl
                       environmentId={activeThread.environmentId}
                       threadId={activeThread.id}
+                      optimisticMessages={optimisticUserMessages}
                     />
                   ) : null}
                   <div
@@ -6024,6 +6111,7 @@ function ChatViewContent(props: ChatViewProps) {
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={modelPickerLockedProvider}
+                            providerCatalogLoaded={serverConfig !== null}
                             providerStatuses={providerStatuses as ServerProvider[]}
                             activeProjectDefaultModelSelection={
                               activeProject?.defaultModelSelection

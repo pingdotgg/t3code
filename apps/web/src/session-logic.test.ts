@@ -21,6 +21,7 @@ import {
   deriveRevertTurnCountByUserMessageId,
   findLatestProposedPlan,
   isLatestRunSettled,
+  providerErrorPresentation,
   type TimelineEntry,
 } from "./session-logic";
 import { makeThreadProjectionFixture } from "./test-fixtures";
@@ -46,6 +47,64 @@ describe("V2 session presentation", () => {
         { status: "running", activeRunId: runId },
       ),
     ).toBe(false);
+    expect(
+      isLatestRunSettled(
+        { runId, status: "queued", startedAt: null, completedAt: null },
+        { status: "running", activeRunId: RunId.make("run-active") },
+      ),
+    ).toBe(false);
+  });
+
+  it("labels provider retry progress, delay, recovery, and exhaustion", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const retryItem = {
+      id: TurnItemId.make("item-provider-retry"),
+      threadId: ThreadId.make("thread-provider-retry"),
+      runId: RunId.make("run-provider-retry"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running" as const,
+      title: "Provider retry",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "error" as const,
+      failure: {
+        class: "provider_error" as const,
+        message: "Claude API overloaded.",
+        code: "api_error_529",
+        retryable: true,
+      },
+      retry: {
+        attempt: 2,
+        maxAttempts: 10,
+        retryDelayMs: 1_500,
+      },
+    } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+
+    expect(providerErrorPresentation(retryItem)).toEqual({
+      label: "Retrying provider (2/10)",
+      detail: "Claude API overloaded. Retrying in 1.5s.",
+    });
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "completed",
+        completedAt: now,
+      }),
+    ).toMatchObject({ label: "Provider recovered (2/10 retries)" });
+    expect(
+      providerErrorPresentation({
+        ...retryItem,
+        status: "failed",
+        retry: { ...retryItem.retry, attempt: 10 },
+        completedAt: now,
+      }),
+    ).toMatchObject({ label: "Provider error after 10/10 retries" });
   });
 
   it("selects the latest proposed plan for a run", () => {
@@ -301,6 +360,71 @@ describe("V2 session presentation", () => {
     expect(threadCreatedEntry?.kind).toBe("event");
     if (threadCreatedEntry?.kind === "event") {
       expect(threadCreatedEntry.projectedItem.item.type).toBe("thread_created");
+    }
+  });
+
+  it("waits for a dispatched turn item before adding queued input to the timeline", () => {
+    const projection = makeThreadProjectionFixture();
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const runId = RunId.make("run-dispatched-queued");
+    const messageId = MessageId.make("message-dispatched-queued");
+    const optimisticMessage = {
+      id: messageId,
+      role: "user" as const,
+      text: "Queued input",
+      runId: null,
+      inputIntent: "queued_turn" as const,
+      streaming: false,
+      createdAt: DateTime.formatIso(now),
+      updatedAt: DateTime.formatIso(now),
+    };
+
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [],
+        optimisticMessages: [optimisticMessage],
+      }),
+    ).toEqual([]);
+
+    const dispatchedItem = {
+      id: TurnItemId.make("item-dispatched-queued"),
+      threadId: projection.thread.id,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 200,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "user_message" as const,
+      messageId,
+      inputIntent: "turn_start" as const,
+      text: "Queued input",
+      attachments: [],
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+    } satisfies OrchestrationV2TurnItem;
+    const promotedEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: projection.thread.id,
+          sourceItemId: dispatchedItem.id,
+          item: dispatchedItem,
+        },
+      ],
+      optimisticMessages: [optimisticMessage],
+    });
+    expect(promotedEntries.map((entry) => entry.id)).toEqual([messageId]);
+    expect(promotedEntries[0]?.kind).toBe("message");
+    if (promotedEntries[0]?.kind === "message") {
+      expect(promotedEntries[0].message.inputIntent).toBe("turn_start");
     }
   });
 

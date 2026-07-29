@@ -104,6 +104,9 @@ function makeThread(threadId: ThreadId, now: DateTime.Utc): OrchestrationV2AppTh
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
     deletedAt: null,
   };
 }
