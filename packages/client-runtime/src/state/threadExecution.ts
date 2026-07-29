@@ -62,6 +62,7 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
+  const activityRun = deriveThreadActivityRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
   );
@@ -69,7 +70,10 @@ export function deriveThreadRuntime(
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
   return {
-    status: latestRun?.status ?? "idle",
+    // Queueing creates a newer run, but does not replace the provider work
+    // already in flight. Present the executing run's status until it reaches
+    // a terminal state so clients do not flash from "running" to "queued".
+    status: activityRun?.status ?? "idle",
     activeRunId,
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
