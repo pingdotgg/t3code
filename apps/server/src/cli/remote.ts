@@ -3,7 +3,9 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   CommandId,
+  EnvironmentConflictError,
   EnvironmentId,
+  EnvironmentInternalError,
   type ExecutionEnvironmentDescriptor,
   ORCHESTRATION_CLI_API_VERSION,
   OrchestrationCliCreateIdempotencyKey,
@@ -139,10 +141,45 @@ export class RemoteCliError extends Schema.TaggedErrorClass<RemoteCliError>()("R
 }
 
 const isRemoteCliError = Schema.is(RemoteCliError);
+const isEnvironmentConflictError = Schema.is(EnvironmentConflictError);
+const isEnvironmentInternalError = Schema.is(EnvironmentInternalError);
+
+const REMOTE_DIAGNOSTIC_MAX_CHARS = 512;
+const REMOTE_DIAGNOSTIC_CONTROL_PATTERN =
+  // eslint-disable-next-line no-control-regex -- remote error text is an untrusted boundary
+  /\u001b\[[0-?]*[ -/]*[@-~]|[\u0000-\u001f\u007f]/g;
+const REMOTE_DIAGNOSTIC_CREDENTIAL_PATTERN =
+  /\b(?:authorization\s*:\s*bearer|bearer|token|password|passwd|secret|api[_-]?key|credential)\s*[:=]?\s*[^\s,;]+/gi;
+const REMOTE_DIAGNOSTIC_URL_PATTERN = /\b(?:https?|ssh|git):\/\/[^\s]+/gi;
+
+function sanitizeRemoteServerDiagnostic(value: string, fallback: string): string {
+  const sanitized = value
+    .replace(REMOTE_DIAGNOSTIC_CONTROL_PATTERN, " ")
+    .replace(REMOTE_DIAGNOSTIC_CREDENTIAL_PATTERN, "[redacted]")
+    .replace(REMOTE_DIAGNOSTIC_URL_PATTERN, "[redacted-url]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, REMOTE_DIAGNOSTIC_MAX_CHARS)
+    .trim();
+  return sanitized.length > 0 ? sanitized : fallback;
+}
+
+function formatRemoteTraceId(traceId: string): string {
+  return /^[A-Fa-f0-9]{32}$/.test(traceId) ? traceId : "unavailable";
+}
 
 export function formatRemoteCliDiagnostic(error: unknown): string {
   if (isRemoteCliError(error)) {
     return `Remote request failed: ${error.message}`;
+  }
+  if (isEnvironmentConflictError(error)) {
+    return `Remote dispatch failed: ${sanitizeRemoteServerDiagnostic(
+      error.message,
+      "The requested worktree conflicts with existing local Git state.",
+    )} No success was assumed. (trace: ${formatRemoteTraceId(error.traceId)})`;
+  }
+  if (isEnvironmentInternalError(error)) {
+    return `Remote dispatch failed because the server reported an internal error. No success was assumed. (trace: ${formatRemoteTraceId(error.traceId)})`;
   }
   if (
     typeof error === "object" &&

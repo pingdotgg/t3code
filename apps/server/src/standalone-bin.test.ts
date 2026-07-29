@@ -6,6 +6,7 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
 import * as NetService from "@t3tools/shared/Net";
+import { EnvironmentConflictError } from "@t3tools/contracts";
 import { RemoteCliError } from "./cli/remote.ts";
 import { makeCli } from "./cli/root.ts";
 import { reportRemoteCliFailure } from "./standalone-bin.ts";
@@ -139,5 +140,49 @@ it.effect("sanitizes standalone remote failures and preserves their exit code", 
     assert.deepEqual(yield* TestConsole.errorLines, [
       "Remote request failed: The remote environment request failed.",
     ]);
+  }).pipe(Effect.provide(TestConsole.layer)),
+);
+
+it.effect("renders the sanitized server conflict reason and preserves no-success semantics", () =>
+  Effect.gen(function* () {
+    let exitCode: number | undefined;
+    const traceId = "0123456789abcdef0123456789abcdef";
+    yield* reportRemoteCliFailure(
+      new EnvironmentConflictError({
+        code: "conflict",
+        reason: "worktree_ref_in_use",
+        message:
+          "The requested branch is already checked out in another worktree. Archive or remove that worktree, or choose a different branch.",
+        traceId,
+      }),
+      (code) => {
+        exitCode = code;
+      },
+    );
+
+    assert.equal(exitCode, 1);
+    assert.deepEqual(yield* TestConsole.errorLines, [
+      `Remote dispatch failed: The requested branch is already checked out in another worktree. Archive or remove that worktree, or choose a different branch. No success was assumed. (trace: ${traceId})`,
+    ]);
+  }).pipe(Effect.provide(TestConsole.layer)),
+);
+
+it.effect("redacts and bounds an untrusted typed server conflict before rendering", () =>
+  Effect.gen(function* () {
+    const secret = "server-secret-value";
+    yield* reportRemoteCliFailure(
+      new EnvironmentConflictError({
+        code: "conflict",
+        reason: "worktree_path_exists",
+        message: `token=${secret} ${"x".repeat(2_000)}`,
+        traceId: `trace-${secret}`,
+      }),
+    );
+
+    const output = (yield* TestConsole.errorLines).join("\n");
+    assert.notInclude(output, secret);
+    assert.notInclude(output, "x".repeat(513));
+    assert.include(output, "No success was assumed.");
+    assert.include(output, "(trace: unavailable)");
   }).pipe(Effect.provide(TestConsole.layer)),
 );

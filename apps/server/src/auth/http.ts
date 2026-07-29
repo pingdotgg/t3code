@@ -10,6 +10,8 @@ import {
   AuthTerminalOperateScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
+  EnvironmentConflictError,
+  type EnvironmentConflictReason,
   EnvironmentHttpApi,
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
@@ -154,6 +156,29 @@ export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReaso
       Effect.fail(new EnvironmentResourceNotFoundError({ code: "not_found", reason, traceId })),
     ),
   );
+}
+
+export function failEnvironmentConflict(
+  reason: EnvironmentConflictReason,
+  message: string,
+  error?: unknown,
+) {
+  return Effect.gen(function* () {
+    const traceId = yield* currentEnvironmentTraceId;
+    if (error !== undefined) {
+      yield* Effect.logWarning("environment api request conflicted", {
+        reason,
+        traceId,
+        cause: error,
+      });
+    }
+    return yield* new EnvironmentConflictError({
+      code: "conflict",
+      reason,
+      message,
+      traceId,
+    });
+  });
 }
 
 export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, error?: unknown) {

@@ -7208,6 +7208,138 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("returns sanitized 409 conflicts from both REST worktree creation paths", () =>
+    Effect.gen(function* () {
+      const secret = "branch-secret-value";
+      const createWorktree = vi.fn(() =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "GitVcsDriver.createWorktree",
+            command: "git",
+            cwd: `/tmp/private-${secret}`,
+            argumentCount: 6,
+            exitCode: 255,
+            stdoutLength: 0,
+            stderrLength: 161,
+            detail: "git worktree add failed",
+            failureKind: "worktree_branch_exists",
+            safeDiagnostic: "A local branch with the requested name already exists.",
+          }),
+        ),
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: { createWorktree },
+          orchestrationEngine: {
+            getCommandReceipt: () => Effect.succeed(Option.none()),
+          },
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              newWorktreesStartFromOrigin: false,
+            }),
+          },
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 0,
+                projects: [
+                  {
+                    id: defaultProjectId,
+                    title: "Default Project",
+                    workspaceRoot: "/tmp/project",
+                    defaultModelSelection,
+                    scripts: [],
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                    updatedAt: "2026-01-01T00:00:00.000Z",
+                  },
+                ],
+                threads: [],
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              }),
+          },
+        },
+      });
+      const token = yield* getAuthenticatedBearerSessionToken();
+      const headers = { authorization: `Bearer ${token}` };
+      const createResponse = yield* HttpClient.post("/api/orchestration/create", {
+        headers,
+        body: HttpBody.text(
+          jsonRequestBody({
+            project: defaultProjectId,
+            message: "Create this safely",
+            idempotencyKey: "create-conflict",
+            branch: "t3code/conflict",
+            baseBranch: "main",
+          }),
+          "application/json",
+        ),
+      });
+      const dispatchResponse = yield* HttpClient.post("/api/orchestration/dispatch", {
+        headers,
+        body: HttpBody.text(
+          jsonRequestBody({
+            type: "thread.turn.start",
+            commandId: CommandId.make("dispatch-conflict"),
+            threadId: ThreadId.make("thread-conflict"),
+            message: {
+              messageId: MessageId.make("message-conflict"),
+              role: "user",
+              text: "Create this safely",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Conflict thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "t3code/conflict",
+              },
+              runSetupScript: false,
+            },
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+          "application/json",
+        ),
+      });
+
+      assert.equal(
+        createWorktree.mock.calls.length,
+        2,
+        `create=${createResponse.status} dispatch=${dispatchResponse.status}`,
+      );
+      for (const response of [createResponse, dispatchResponse]) {
+        const body = (yield* response.json) as {
+          readonly _tag: string;
+          readonly code: string;
+          readonly reason: string;
+          readonly message: string;
+          readonly traceId: string;
+        };
+        assert.equal(response.status, 409, JSON.stringify(body));
+        assert.equal(body._tag, "EnvironmentConflictError");
+        assert.equal(body.code, "conflict");
+        assert.equal(body.reason, "worktree_branch_exists");
+        assert.include(body.message, "different branch");
+        assert.isAbove(body.traceId.length, 0);
+        assert.notInclude(JSON.stringify(body), secret);
+        assert.notInclude(JSON.stringify(body), "/tmp/private");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "bootstraps first-send worktree turns on the server before dispatching turn start",
     () =>

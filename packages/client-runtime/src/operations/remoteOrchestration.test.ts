@@ -39,6 +39,75 @@ const emptySnapshot = {
 };
 
 describe("remote orchestration HTTP operations", () => {
+  it.effect(
+    "decodes declared worktree conflicts from create and dispatch instead of replacing them with status",
+    () =>
+      Effect.gen(function* () {
+        const conflictBody = {
+          _tag: "EnvironmentConflictError",
+          code: "conflict",
+          reason: "worktree_branch_exists",
+          message:
+            "The requested branch already exists locally. Choose a different branch or remove the existing branch and its worktree.",
+          traceId: "trace-conflict",
+        };
+        const fetch = recordedFetch(
+          Response.json(conflictBody, { status: 409 }),
+          Response.json(conflictBody, { status: 409 }),
+        );
+        const command = {
+          type: "thread.turn.start",
+          commandId: CommandId.make("command-conflict"),
+          threadId: ThreadId.make("thread-conflict"),
+          message: {
+            messageId: MessageId.make("command-conflict"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-07-21T00:00:00.000Z",
+        } as ClientOrchestrationCommand;
+
+        const authorization = { accessToken: "secret-token" };
+        const results = yield* Effect.all([
+          Effect.result(
+            createRemoteOrchestrationThread({
+              httpBaseUrl: "https://remote.example",
+              authorization,
+              payload: {
+                project: "project-conflict",
+                message: "create this",
+                idempotencyKey: "create-conflict",
+              },
+            }),
+          ),
+          Effect.result(
+            dispatchRemoteOrchestrationCommand({
+              httpBaseUrl: "https://remote.example",
+              authorization,
+              command,
+            }),
+          ),
+        ]).pipe(Effect.provide(remoteHttpClientLayer(fetch.fetchFn)));
+
+        for (const result of results) {
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") {
+            expect(result.failure).toEqual(
+              expect.objectContaining({
+                _tag: "EnvironmentConflictError",
+                code: "conflict",
+                reason: "worktree_branch_exists",
+                traceId: "trace-conflict",
+              }),
+            );
+          }
+        }
+      }),
+  );
+
   it.effect("uses only bearer headers for shell, snapshot, thread, create, and dispatch", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-http");

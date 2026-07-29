@@ -81,6 +81,14 @@ export const EnvironmentOperationForbiddenReason = Schema.Literals([
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
+export const EnvironmentConflictReason = Schema.Literals([
+  "worktree_branch_exists",
+  "worktree_ref_in_use",
+  "worktree_path_exists",
+  "worktree_registration_conflict",
+]);
+export type EnvironmentConflictReason = typeof EnvironmentConflictReason.Type;
+
 export const EnvironmentInternalErrorReason = Schema.Literals([
   "bootstrap_validation_failed",
   "browser_session_issuance_failed",
@@ -157,6 +165,21 @@ export class EnvironmentOperationForbiddenError extends Schema.TaggedErrorClass<
   }
 }
 
+export class EnvironmentConflictError extends Schema.TaggedErrorClass<EnvironmentConflictError>()(
+  "EnvironmentConflictError",
+  {
+    code: Schema.Literal("conflict"),
+    reason: EnvironmentConflictReason,
+    message: TrimmedNonEmptyString,
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentConflictError)(this, { status: 409 });
+  }
+}
+
 export class EnvironmentInternalError extends Schema.TaggedErrorClass<EnvironmentInternalError>()(
   "EnvironmentInternalError",
   {
@@ -196,6 +219,7 @@ export const EnvironmentHttpCommonError = Schema.Union([
   EnvironmentAuthInvalidError,
   EnvironmentScopeRequiredError,
   EnvironmentOperationForbiddenError,
+  EnvironmentConflictError,
   EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
 ]);
@@ -314,6 +338,7 @@ const EnvironmentOrchestrationThreadSnapshotErrors = [
 const EnvironmentOrchestrationDispatchErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
+  EnvironmentConflictError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentPendingInteractionsReadErrors = [

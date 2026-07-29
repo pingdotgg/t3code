@@ -4,7 +4,9 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  EnvironmentConflictError,
   EnvironmentHttpApi,
+  GitCommandError,
   MessageId,
   ProjectId,
   ThreadId,
@@ -17,6 +19,7 @@ import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -25,6 +28,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import {
   annotateEnvironmentRequest,
+  failEnvironmentConflict,
   failEnvironmentInternal,
   failEnvironmentInvalidRequest,
   failEnvironmentNotFound,
@@ -40,12 +44,75 @@ import {
   respondToRemotePendingInteraction,
 } from "./PendingInteractionService.ts";
 
-const failEnvironmentDispatch = (
+const isGitCommandError = Schema.is(GitCommandError);
+
+function findGitCommandError(cause: unknown, seen = new Set<unknown>()): GitCommandError | null {
+  if (isGitCommandError(cause)) {
+    return cause;
+  }
+  if (typeof cause !== "object" || cause === null || seen.has(cause)) {
+    return null;
+  }
+  seen.add(cause);
+  if ("cause" in cause) {
+    const nestedCause = findGitCommandError(cause.cause, seen);
+    if (nestedCause !== null) {
+      return nestedCause;
+    }
+  }
+  if ("error" in cause) {
+    const nestedError = findGitCommandError(cause.error, seen);
+    if (nestedError !== null) {
+      return nestedError;
+    }
+  }
+  if ("errors" in cause && Array.isArray(cause.errors)) {
+    for (const nested of cause.errors) {
+      const nestedError = findGitCommandError(nested, seen);
+      if (nestedError !== null) {
+        return nestedError;
+      }
+    }
+  }
+  if ("reasons" in cause && Array.isArray(cause.reasons)) {
+    for (const reason of cause.reasons) {
+      const nestedError = findGitCommandError(reason, seen);
+      if (nestedError !== null) {
+        return nestedError;
+      }
+    }
+  }
+  return null;
+}
+
+const WORKTREE_CONFLICT_MESSAGES = {
+  worktree_branch_exists:
+    "The requested branch already exists locally. Remove its existing worktree and branch, or choose a different branch.",
+  worktree_ref_in_use:
+    "The requested branch is already checked out in another worktree. Archive or remove that worktree, or choose a different branch.",
+  worktree_path_exists:
+    "The requested worktree path already exists. Remove or archive the existing worktree, or choose a different branch.",
+  worktree_registration_conflict:
+    "Git has a stale or locked worktree registration for the requested path. Inspect the registered worktrees, then unlock, remove, or prune the stale registration before retrying.",
+} as const;
+
+export const failEnvironmentDispatch = (
   cause: unknown,
-): Effect.Effect<never, EnvironmentInternalError | EnvironmentRequestInvalidError, never> =>
-  isExpectedClientDispatchError(cause)
-    ? failEnvironmentInvalidRequest("invalid_command", cause)
-    : failEnvironmentInternal("orchestration_dispatch_failed", cause);
+): Effect.Effect<
+  never,
+  EnvironmentConflictError | EnvironmentInternalError | EnvironmentRequestInvalidError,
+  never
+> => {
+  if (isExpectedClientDispatchError(cause)) {
+    return failEnvironmentInvalidRequest("invalid_command", cause);
+  }
+  const gitError = findGitCommandError(cause);
+  const failureKind = gitError?.failureKind;
+  if (failureKind !== undefined && failureKind !== "unknown") {
+    return failEnvironmentConflict(failureKind, WORKTREE_CONFLICT_MESSAGES[failureKind], cause);
+  }
+  return failEnvironmentInternal("orchestration_dispatch_failed", cause);
+};
 
 const failPendingInteractionResponse = (
   cause: unknown,

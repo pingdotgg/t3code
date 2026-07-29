@@ -661,6 +661,75 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("classifies an existing branch without retaining branch or path secrets", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-worktrees-conflict-");
+        const existingPath = pathService.join(worktreesRoot, "existing");
+        const retryPath = pathService.join(worktreesRoot, "retry-secret-path");
+        const branch = "feature/existing-secret-branch";
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createWorktree({
+          cwd,
+          path: existingPath,
+          refName: initialBranch,
+          newRefName: branch,
+        });
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            path: retryPath,
+            refName: initialBranch,
+            newRefName: branch,
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.failureKind, "worktree_branch_exists");
+        assert.equal(
+          error.safeDiagnostic,
+          "A local branch with the requested name already exists.",
+        );
+        assert.notInclude(error.safeDiagnostic ?? "", branch);
+        assert.notInclude(error.safeDiagnostic ?? "", retryPath);
+      }),
+    );
+
+    it.effect("classifies a branch attached to a sibling worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-worktrees-attached-");
+        const existingPath = pathService.join(worktreesRoot, "existing");
+        const retryPath = pathService.join(worktreesRoot, "retry");
+        const branch = "feature/already-attached";
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createWorktree({
+          cwd,
+          path: existingPath,
+          refName: initialBranch,
+          newRefName: branch,
+        });
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            path: retryPath,
+            refName: branch,
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.failureKind, "worktree_ref_in_use");
+        assert.equal(
+          error.safeDiagnostic,
+          "The requested branch is already checked out in another worktree.",
+        );
+      }),
+    );
+
     it.effect("removes a worktree branch so the same creation can be retried", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

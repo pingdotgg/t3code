@@ -320,6 +320,15 @@ export const VcsPullResult = Schema.Struct({
 export type VcsPullResult = typeof VcsPullResult.Type;
 
 // RPC / domain errors
+export const GitFailureKind = Schema.Literals([
+  "unknown",
+  "worktree_branch_exists",
+  "worktree_ref_in_use",
+  "worktree_path_exists",
+  "worktree_registration_conflict",
+]);
+export type GitFailureKind = typeof GitFailureKind.Type;
+
 export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()("GitCommandError", {
   operation: Schema.String,
   command: Schema.String,
@@ -330,6 +339,8 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   stderrLength: Schema.optional(Schema.Number),
   outputLength: Schema.optional(Schema.Number),
   detail: Schema.String,
+  failureKind: Schema.optional(GitFailureKind),
+  safeDiagnostic: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {

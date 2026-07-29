@@ -2,6 +2,7 @@ import {
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
+  type EnvironmentConflictError,
   type EnvironmentInternalError,
   type EnvironmentOperationForbiddenError,
   type EnvironmentRequestInvalidError,
@@ -77,6 +78,7 @@ export type RemoteEnvironmentRequestError =
   | EnvironmentAuthInvalidError
   | EnvironmentScopeRequiredError
   | EnvironmentOperationForbiddenError
+  | EnvironmentConflictError
   | EnvironmentResourceNotFoundError
   | EnvironmentInternalError
   | RemoteEnvironmentAuthFetchError

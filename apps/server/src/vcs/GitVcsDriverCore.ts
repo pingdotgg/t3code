@@ -36,6 +36,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { classifyWorktreeCreateFailure, type GitFailureDiagnostic } from "./gitErrorDiagnostics.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -104,6 +105,7 @@ interface ExecuteGitOptions {
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
   progress?: GitVcsDriver.ExecuteGitProgress | undefined;
+  failureDiagnostic?: ((stderr: string) => GitFailureDiagnostic) | undefined;
 }
 
 function parseBranchAb(value: string): { ahead: number; behind: number } {
@@ -810,15 +812,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
         }
-        return Effect.fail(
-          new GitCommandError({
-            ...gitCommandContext({ operation, cwd, args }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
-            ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
-        );
+        const diagnostic = options.failureDiagnostic?.(result.stderr);
+        const diagnosticFields = diagnostic === undefined ? {} : diagnostic;
+        const error = new GitCommandError({
+          ...gitCommandContext({ operation, cwd, args }),
+          detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+          ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+          ...diagnosticFields,
+        });
+        const traceAttributes =
+          diagnostic === undefined
+            ? {}
+            : {
+                "git.failure.kind": diagnostic.failureKind,
+                "git.failure.diagnostic": diagnostic.safeDiagnostic,
+              };
+        return Effect.annotateCurrentSpan(traceAttributes).pipe(Effect.andThen(Effect.fail(error)));
       }),
     );
 
@@ -2272,8 +2283,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
 
-    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
+    yield* executeGitWithStableDiagnostics("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
+      failureDiagnostic: classifyWorktreeCreateFailure,
     });
 
     const newRefName = input.newRefName;

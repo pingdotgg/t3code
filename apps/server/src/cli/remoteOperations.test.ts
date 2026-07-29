@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentConflictError,
   EnvironmentScopeRequiredError,
   type AuthSessionState,
   type ModelSelection,
@@ -239,6 +240,41 @@ describe("remote orchestration commands", () => {
 
       expect(error).toBeInstanceOf(EnvironmentScopeRequiredError);
       expect(read).toBe(false);
+    }),
+  );
+
+  it.effect("does not retry a definitive worktree conflict", () =>
+    Effect.gen(function* () {
+      const command = makeRemoteSendCommand({
+        snapshot: threadSnapshot(),
+        commandId: CommandId.make("command-conflict"),
+        message: "continue",
+        createdAt: "2026-07-21T00:01:00.000Z",
+      });
+      let read = false;
+      let retried = false;
+      const conflict = new EnvironmentConflictError({
+        code: "conflict",
+        reason: "worktree_branch_exists",
+        message: "The requested branch already exists locally. Choose a different branch.",
+        traceId: "0123456789abcdef0123456789abcdef",
+      });
+      const error = yield* dispatchRemoteCommandSafely({
+        command,
+        dispatch: Effect.fail(conflict),
+        readThread: Effect.sync(() => {
+          read = true;
+          return Option.none();
+        }),
+        retryDispatch: Effect.sync(() => {
+          retried = true;
+          return { sequence: 99 };
+        }),
+      }).pipe(Effect.flip);
+
+      expect(error).toBe(conflict);
+      expect(read).toBe(false);
+      expect(retried).toBe(false);
     }),
   );
 });
