@@ -1,0 +1,1 @@
+export const HOME_HORIZONTAL_INSET = 20;
