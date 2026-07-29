@@ -120,30 +120,6 @@ export function makeProviderMaintenanceCapabilities(input: {
   };
 }
 
-export function makeSelfUpdatingProviderMaintenanceResolver(input: {
-  readonly provider: ProviderDriverKind;
-  readonly packageName: string | null;
-  readonly executable: string;
-  readonly args: ReadonlyArray<string>;
-  readonly lockKey: string;
-  readonly minimumVersion?: string;
-}): ProviderMaintenanceCapabilitiesResolver {
-  return {
-    resolve: (options) =>
-      makeProviderMaintenanceCapabilities({
-        provider: input.provider,
-        packageName: input.packageName,
-        updateExecutable:
-          nonEmptyString(options?.resolvedCommandPath) ??
-          nonEmptyString(options?.binaryPath) ??
-          input.executable,
-        updateArgs: input.args,
-        updateLockKey: input.lockKey,
-        ...(input.minimumVersion ? { updateMinimumVersion: input.minimumVersion } : {}),
-      }),
-  };
-}
-
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;

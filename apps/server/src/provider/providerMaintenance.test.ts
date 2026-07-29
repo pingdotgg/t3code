@@ -14,7 +14,6 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
-  makeSelfUpdatingProviderMaintenanceResolver,
   makeStaticProviderMaintenanceResolver,
   normalizeCommandPath,
   ProviderVersionCache,
@@ -69,14 +68,16 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateLockKey: "static-tool",
   }),
 );
-const selfUpdatingTool = makeSelfUpdatingProviderMaintenanceResolver({
-  provider: driver("selfUpdatingTool"),
-  packageName: "@example/self-updating-tool",
-  executable: "self-updating-tool",
-  args: ["update"],
-  lockKey: "self-updating-tool",
-  minimumVersion: "2.0.0",
-});
+const selfUpdatingTool = makeStaticProviderMaintenanceResolver(
+  makeProviderMaintenanceCapabilities({
+    provider: driver("selfUpdatingTool"),
+    packageName: "@example/self-updating-tool",
+    updateExecutable: "self-updating-tool",
+    updateArgs: ["update"],
+    updateLockKey: "self-updating-tool",
+    updateMinimumVersion: "2.0.0",
+  }),
+);
 const installedPackageToolProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("packageTool"),
   driver: driver("packageTool"),
@@ -203,25 +204,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         args: ["update"],
 
         lockKey: "static-tool",
-      },
-    });
-  });
-
-  it("uses the resolved provider binary for self-updates", () => {
-    expect(
-      selfUpdatingTool.resolve({
-        binaryPath: "self-updating-tool",
-        resolvedCommandPath: "/opt/tools/self-updating-tool",
-      }),
-    ).toEqual({
-      provider: driver("selfUpdatingTool"),
-      packageName: "@example/self-updating-tool",
-      update: {
-        command: "/opt/tools/self-updating-tool update",
-        executable: "/opt/tools/self-updating-tool",
-        args: ["update"],
-        lockKey: "self-updating-tool",
-        minimumVersion: "2.0.0",
       },
     });
   });

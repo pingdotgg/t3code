@@ -44,7 +44,8 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  makeSelfUpdatingProviderMaintenanceResolver,
+  makeProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilitiesResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -60,14 +61,17 @@ import {
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
-const UPDATE = makeSelfUpdatingProviderMaintenanceResolver({
-  provider: DRIVER_KIND,
-  packageName: "@openai/codex",
-  executable: "codex",
-  args: ["update"],
-  lockKey: "codex-self-update",
-  minimumVersion: "0.126.0",
-});
+const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
+  resolve: (options) =>
+    makeProviderMaintenanceCapabilities({
+      provider: DRIVER_KIND,
+      packageName: "@openai/codex",
+      updateExecutable: options?.binaryPath?.trim() || "codex",
+      updateArgs: ["update"],
+      updateLockKey: "codex-self-update",
+      updateMinimumVersion: "0.126.0",
+    }),
+};
 
 /**
  * Services the driver needs to materialize an instance. Surfaced as the
