@@ -79,12 +79,17 @@ unaffected.
 
 ### Scenery
 
-Scenery is a single built-in World set: 24 curated locations (Santorini,
-Kyoto, Moraine Lake, …) fetched once from Unsplash into
+Scenery is a single built-in World set: 224 curated locations across every
+inhabited continent (Santorini, Kyoto, Moraine Lake, …) fetched from Unsplash into
 `~/Library/Application Support/SergeCode/scenery/sets/world/`. Every new
 thread draws one uniformly random photo from that pool and is titled after
 the location ("Location, Country"); the assignment then stays pinned to the
-thread. There are no custom, per-project, or AI-generated sets — the
+thread. Each location search contributes up to two distinct landscape photos.
+The catalog fills in batches of at most 48 searches: app updates
+immediately add a batch, incomplete pools add another daily, and a complete
+pool refreshes one rolling batch every 14 days. This stays inside Unsplash's
+demo request allowance instead of issuing hundreds of requests at launch.
+There are no custom, per-project, or AI-generated sets — the
 earlier customizable-set system (and the `server.generateScenerySet` RPC
 client) was removed. Set directories left behind by that system still load,
 so legacy thread assignments keep rendering their photos.

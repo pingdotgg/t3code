@@ -51,7 +51,7 @@ struct SceneryAssignmentDecodingTests {
 
 @Suite("Scenery builtin world set")
 struct SceneryWorldSetTests {
-    @Test("world set curates 24 locations with verbatim names and no queries")
+    @Test("world set curates 224 unique locations with verbatim names and no queries")
     func worldSetShape() {
         let set = ScenerySet.makeBuiltinWorldSet()
         #expect(set.id == "world")
@@ -61,14 +61,15 @@ struct SceneryWorldSetTests {
         #expect(set.sceneNames.isEmpty)
 
         let locations = try? #require(set.locations)
-        #expect(locations?.count == 24)
+        #expect(locations?.count == 224)
         #expect(locations?.first?.name == "Santorini, Greece")
         #expect(locations?.first?.query == "santorini greece caldera")
-        #expect(locations?.last?.name == "Arenal, Costa Rica")
-        #expect(locations?.last?.query == "arenal volcano costa rica")
+        #expect(locations?.last?.name == "Norfolk Island, Australia")
+        #expect(locations?.last?.query == "norfolk island australia coast")
         // Every curated entry carries both a display name and a search query.
         #expect(locations?.allSatisfy { !$0.name.isEmpty && !$0.query.isEmpty } == true)
-        #expect(Set(locations?.map(\.name) ?? []).count == 24)
+        #expect(Set(locations?.map(\.name) ?? []).count == 224)
+        #expect(Set(locations?.map(\.query) ?? []).count == 224)
     }
 }
 
@@ -189,6 +190,32 @@ struct SceneryStoreWorldPoolTests {
             samplePhoto(id: "w2", name: "Petra, Jordan"),
             samplePhoto(id: "w3", name: "Lake Bled, Slovenia"),
         ]
+    }
+
+    @Test("persisted builtin manifest upgrades to the current catalog")
+    func upgradesPersistedBuiltinManifest() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let worldDirectory = root.appendingPathComponent("sets/world", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: worldDirectory, withIntermediateDirectories: true)
+        var oldManifest = ScenerySet.makeBuiltinWorldSet()
+        oldManifest.locations = Array(oldManifest.locations?.prefix(24) ?? [])
+        oldManifest.palette = SceneryPalette(
+            accentHex: "#112233",
+            washes: [["#010203", "#040506"]])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(oldManifest)
+            .write(to: worldDirectory.appendingPathComponent("manifest.json"))
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+
+        let upgraded = try #require(store.set(id: ScenerySet.worldID))
+        #expect(upgraded.locations == WorldSceneryCatalog.locations)
+        #expect(upgraded.palette == oldManifest.palette)
     }
 
     @Test("peekNextScene returns the pending pick until assign commits, then re-samples")
