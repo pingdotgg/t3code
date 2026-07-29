@@ -19,7 +19,8 @@ Use the code-review skill's systematic review workflow.`;
 
 export const DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE = `Review each issue below and verify whether it is valid and needs to be fixed.
 For every valid issue, make the necessary code changes. If an issue is not valid, explain why.
-After addressing all valid issues, run the repository's required validation and create a pull request with the completed fixes.`;
+After addressing all valid issues, run the repository's required validation.
+Keep the fixes on the current branch. If that branch already has a pull request, commit and push the fixes to update that pull request; do not create a new pull request. If the branch has no pull request, create one with the completed fixes.`;
 
 export const ReviewChangesWorkflowSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),

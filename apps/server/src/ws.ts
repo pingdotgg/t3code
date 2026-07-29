@@ -636,6 +636,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
             const title = input.title ?? "Fix review issues";
             const nodeId = WorkflowNodeId.make(FIX_REVIEW_ISSUES_WORKFLOW_ID);
+            const threadDetailOption = yield* projectionSnapshotQuery.getThreadDetailById(
+              input.threadId,
+            );
+            const reviewScope = Option.isSome(threadDetailOption)
+              ? threadDetailOption.value.reviewResult?.snapshot.scope
+              : undefined;
+            const workerWorkspace =
+              reviewScope?.kind === "pull-request"
+                ? yield* gitManager.preparePullRequestThread({
+                    cwd: project.workspaceRoot,
+                    reference: reviewScope.url,
+                    mode: "worktree",
+                    threadId: ThreadId.make(`workflow:${runId}:node:${nodeId}:worker`),
+                  })
+                : {
+                    branch: thread.branch,
+                    worktreePath: cwd === project.workspaceRoot ? null : cwd,
+                  };
             return yield* dispatchSingleNodeWorkflow({
               request: input,
               runId,
@@ -643,6 +661,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               title,
               prompt: buildFixReviewIssuesPrompt({
                 issues,
+                ...(thread.reviewResult?.snapshot.scope.kind === "pull-request"
+                  ? { pullRequestNumber: thread.reviewResult.snapshot.scope.number }
+                  : {}),
                 settings: {
                   promptTemplate: override?.promptTemplate ?? fixSettings.promptTemplate,
                 },
@@ -656,8 +677,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   thread.modelSelection,
                 runtimeMode: input.runtimeMode ?? thread.runtimeMode,
                 interactionMode: input.interactionMode ?? thread.interactionMode,
-                branch: thread.branch,
-                worktreePath: cwd === project.workspaceRoot ? null : cwd,
+                branch: workerWorkspace.branch,
+                worktreePath: workerWorkspace.worktreePath,
               },
               createdAt,
             });

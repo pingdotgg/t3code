@@ -31,6 +31,7 @@ import {
   WsRpcGroup,
   EditorId,
 } from "@t3tools/contracts";
+import { FIX_REVIEW_ISSUES_WORKFLOW_ID } from "@t3tools/shared/workflows/fixReviewIssues";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import {
@@ -3129,6 +3130,101 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertInclude(contents, "Export this prompt.");
       assertInclude(contents, "Exported response.");
       assert.deepEqual(openedInput, { cwd: result.path, editor: "cursor" });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("runs pull request review fixes in the pull request worktree", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: OrchestrationCommand[] = [];
+      let preparedInput: Parameters<GitManagerShape["preparePullRequestThread"]>[0] | undefined;
+      const project = makeDefaultOrchestrationReadModel().projects[0]!;
+      const reviewResult = {
+        status: "parsed",
+        snapshot: {
+          scope: {
+            kind: "pull-request",
+            number: 42,
+            title: "Fork contribution",
+            url: "https://github.com/example/repo/pull/42",
+            baseBranch: "main",
+            headBranch: "feature/fork-fix",
+          },
+          diff: "diff --git a/file.ts b/file.ts",
+          diffHash: "review-diff-hash",
+        },
+        findings: [],
+        verdict: "comment",
+        summary: "A review finding needs attention.",
+      } satisfies NonNullable<OrchestrationThread["reviewResult"]>;
+      const reviewThread = makeDefaultOrchestrationThreadShell({ branch: "main" });
+      const reviewThreadDetail: OrchestrationThread = {
+        ...makeDefaultOrchestrationReadModel().threads[0]!,
+        branch: "main",
+        reviewResult,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitManager: {
+            preparePullRequestThread: (input) =>
+              Effect.sync(() => {
+                preparedInput = input;
+                return {
+                  pullRequest: {
+                    number: 42,
+                    title: "Fork contribution",
+                    url: "https://github.com/example/repo/pull/42",
+                    baseBranch: "main",
+                    headBranch: "feature/fork-fix",
+                    state: "open" as const,
+                  },
+                  branch: "contributor/feature/fork-fix",
+                  worktreePath: "/tmp/pr-42-worktree",
+                };
+              }),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+            getThreadShellById: () => Effect.succeed(Option.some(reviewThread)),
+            getThreadDetailById: () => Effect.succeed(Option.some(reviewThreadDetail)),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.workflowRun]({
+            workflowId: FIX_REVIEW_ISSUES_WORKFLOW_ID,
+            threadId: defaultThreadId,
+            destinationMode: "child-chat",
+            input: { issues: "Fix the finding." },
+            trigger: "manual",
+            idempotencyKey: "fix-pr-42",
+          }),
+        ),
+      );
+
+      assert.equal(result.status, "started");
+      assert.deepEqual(preparedInput, {
+        cwd: project.workspaceRoot,
+        reference: "https://github.com/example/repo/pull/42",
+        mode: "worktree",
+        threadId: ThreadId.make(`workflow:fix-pr-42:node:${FIX_REVIEW_ISSUES_WORKFLOW_ID}:worker`),
+      });
+      const workflowCommand = dispatchedCommands.find(
+        (command) => command.type === "workflow.run.request",
+      );
+      assertTrue(workflowCommand?.type === "workflow.run.request");
+      assert.equal(workflowCommand.workerConfig.branch, "contributor/feature/fork-fix");
+      assert.equal(workflowCommand.workerConfig.worktreePath, "/tmp/pr-42-worktree");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

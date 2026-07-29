@@ -30,5 +30,18 @@ Second issue details.`;
     });
 
     expect(prompt).toContain(DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE);
+    expect(prompt).toContain("commit and push the fixes to update that pull request");
+    expect(prompt).toContain("do not create a new pull request");
+  });
+
+  it("identifies the pull request that must be updated", () => {
+    const prompt = buildFixReviewIssuesPrompt({
+      issues: "[P1] An issue",
+      pullRequestNumber: 42,
+      settings: { promptTemplate: DEFAULT_FIX_REVIEW_ISSUES_PROMPT_TEMPLATE },
+    });
+
+    expect(prompt).toContain("Update pull request #42 with the completed fixes.");
+    expect(prompt).toContain("Do not create a new pull request.");
   });
 });
