@@ -100,12 +100,25 @@ function checkAntigravityAccountAuth(settings: AntigravitySettings): {
 
       for (const logFile of files.slice(0, 5)) {
         const content = NodeFS.readFileSync(logFile, "utf8");
-        const authMatch = /applyAuthResult:\s*email=([^\s,]+),\s*authMethod=([^\s,]+)/.exec(
-          content,
-        );
-        if (authMatch) {
-          discoveredEmail = authMatch[1]!.trim();
-          const rawMethod = authMatch[2]!.trim().toLowerCase();
+        const authMatches = [...content.matchAll(/applyAuthResult:\s*email=([^\s,]+),\s*authMethod=([^\s,]+)/g)];
+        const emailMatches = [...content.matchAll(/authenticated successfully as ([^\s\n,]+)/g)];
+        const authMatch = authMatches.pop();
+        const emailMatch = emailMatches.pop();
+
+        let latestMatch: { type: "auth"; match: RegExpMatchArray } | { type: "email"; match: RegExpMatchArray } | undefined;
+        if (authMatch && emailMatch) {
+          latestMatch = (authMatch.index ?? 0) > (emailMatch.index ?? 0)
+            ? { type: "auth", match: authMatch }
+            : { type: "email", match: emailMatch };
+        } else if (authMatch) {
+          latestMatch = { type: "auth", match: authMatch };
+        } else if (emailMatch) {
+          latestMatch = { type: "email", match: emailMatch };
+        }
+
+        if (latestMatch?.type === "auth") {
+          discoveredEmail = latestMatch.match[1]!.trim();
+          const rawMethod = latestMatch.match[2]!.trim().toLowerCase();
           if (rawMethod.includes("plus")) discoveredPlanType = "plus";
           else if (rawMethod.includes("ultra")) discoveredPlanType = "ultra";
           else if (rawMethod.includes("enterprise")) discoveredPlanType = "enterprise";
@@ -116,10 +129,8 @@ function checkAntigravityAccountAuth(settings: AntigravitySettings): {
             discoveredPlanType = "pro";
           else discoveredPlanType = "consumer";
           break;
-        }
-        const emailMatch = /authenticated successfully as ([^\s\n,]+)/.exec(content);
-        if (emailMatch) {
-          discoveredEmail = emailMatch[1]!.trim();
+        } else if (latestMatch?.type === "email") {
+          discoveredEmail = latestMatch.match[1]!.trim();
           discoveredPlanType = "pro";
           break;
         }

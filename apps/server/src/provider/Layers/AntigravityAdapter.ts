@@ -163,7 +163,7 @@ function resolveEffortSelection(
 ): string | undefined {
   // Option values are a string/boolean union across providers; only a string
   // effort is meaningful here.
-  const raw = options?.find((option) => option.id === "effort")?.value;
+  const raw = options?.find((option) => option.id === "reasoningEffort")?.value;
   const effort = typeof raw === "string" ? raw.trim().toLowerCase() : undefined;
   return effort === "low" || effort === "medium" || effort === "high" ? effort : undefined;
 }
@@ -613,7 +613,7 @@ export function makeAntigravityAdapter(
               }),
             ),
           ).pipe(
-            Effect.catch((cause) =>
+            Effect.catchCause((cause) =>
               Effect.logError("Failed to process Antigravity runtime notification.", { cause }),
             ),
             Effect.forkChild,
@@ -775,7 +775,7 @@ export function makeAntigravityAdapter(
           // Rechecked here rather than only at accept time: everything above
           // yields, and an interrupt during any of it means this prompt must
           // not reach the agent.
-          if (ctx.cancelEpoch !== acceptedEpoch) {
+          if (ctx.cancelEpoch !== acceptedEpoch || ctx.stopped) {
             stopReason = "cancelled";
             return {
               threadId: input.threadId,

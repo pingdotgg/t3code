@@ -120,19 +120,21 @@ function transcriptDirFor(conversationId: string): string {
  * output as live. Returns 0 when the file cannot be measured, which falls back
  * to the marker heuristic rather than skipping the turn's own output.
  */
-function transcriptBaseline(conversationId: string | undefined): number {
-  if (!conversationId) {
-    return 0;
-  }
+interface TranscriptBaselines {
+  readonly transcript: number;
+  readonly transcriptFull: number;
+}
+function transcriptBaselines(conversationId: string | undefined): TranscriptBaselines {
+  const result = { transcript: 0, transcriptFull: 0 };
+  if (!conversationId) return result;
   const dir = transcriptDirFor(conversationId);
-  for (const name of ["transcript.jsonl", "transcript_full.jsonl"]) {
-    try {
-      return NodeFS.statSync(NodePath.join(dir, name)).size;
-    } catch {
-      // Try the sibling, then give up.
-    }
-  }
-  return 0;
+  try {
+    result.transcript = NodeFS.statSync(NodePath.join(dir, "transcript.jsonl")).size;
+  } catch {}
+  try {
+    result.transcriptFull = NodeFS.statSync(NodePath.join(dir, "transcript_full.jsonl")).size;
+  } catch {}
+  return result;
 }
 
 function stateDirPath(): string {
@@ -242,11 +244,21 @@ function sendRequest(method: string, params: unknown, timeoutMs?: number): Promi
   const id = nextOutboundId;
   nextOutboundId += 1;
   return new Promise((resolve, reject) => {
-    pendingOutbound.set(id, { resolve, reject });
+    let timer: NodeJS.Timeout | undefined;
+    pendingOutbound.set(id, {
+      resolve: (value) => {
+        if (timer) clearTimeout(timer);
+        resolve(value);
+      },
+      reject: (error) => {
+        if (timer) clearTimeout(timer);
+        reject(error);
+      },
+    });
     if (timeoutMs !== undefined) {
       // A client that never answers would otherwise pin this entry for the
       // life of the bridge process.
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         if (pendingOutbound.delete(id)) {
           reject(new Error(`${method} timed out`));
         }
@@ -822,6 +834,7 @@ function drain(input: {
   readonly state: AgyTurnState;
   readonly cursor: AgyTranscriptCursor;
   readonly decoder: NodeStringDecoder.StringDecoder;
+  readonly transcriptBaselines: TranscriptBaselines;
   readonly transcriptOffset: { value: number };
   readonly assistantText: { emitted: boolean };
   readonly final: boolean;
@@ -871,6 +884,11 @@ function drain(input: {
 
   const transcriptPath = resolveTranscriptPath(input.state);
   if (transcriptPath) {
+    if (input.transcriptOffset.value === -1) {
+      input.transcriptOffset.value = transcriptPath.endsWith("transcript_full.jsonl")
+        ? input.transcriptBaselines.transcriptFull
+        : input.transcriptBaselines.transcript;
+    }
     let chunk = "";
     try {
       const stats = NodeFS.statSync(transcriptPath);
@@ -990,7 +1008,7 @@ async function runTurn(
   activeTurnSessionId = sessionId;
   // Measured before `agy` starts: whatever the transcript already holds
   // belongs to earlier turns of the conversation being resumed.
-  const baseline = transcriptBaseline(session.conversationId);
+  const baselines = transcriptBaselines(session.conversationId);
   let hookDir: string | undefined;
   let hookWorkspace: string | undefined;
   let attachmentDir: string | undefined;
@@ -1000,7 +1018,8 @@ async function runTurn(
     hookWorkspace = createHookWorkspace();
     const attachments = stageAttachments(prompt.attachments);
     attachmentDir = attachments.dir;
-    const command = process.env["T3_AGY_COMMAND"]?.trim() || "agy";
+    const rawCommand = process.env["T3_AGY_COMMAND"]?.trim() || "agy";
+    const { command, shell } = resolveAgyCommand(rawCommand);
     child = NodeChildProcess.spawn(
       command,
       buildAgyArgs({
@@ -1013,6 +1032,7 @@ async function runTurn(
         cwd: session.cwd,
         env: { ...process.env, [HOOK_DIR_ENV]: hookDir },
         stdio: ["ignore", "pipe", "pipe"],
+        shell,
       },
     );
   } catch (error) {
@@ -1029,8 +1049,8 @@ async function runTurn(
   const seenHooks = new Set<string>();
   const cursor = new AgyTranscriptCursor();
   const decoder = new NodeStringDecoder.StringDecoder("utf8");
-  const transcriptOffset = { value: baseline };
-  if (baseline > 0) {
+  const transcriptOffset = { value: -1 };
+  if (baselines.transcript > 0 || baselines.transcriptFull > 0) {
     // Reading starts past every earlier turn, so there is no prior-turn
     // content left for the `USER_INPUT` heuristic to guess at.
     state.transcriptPrimed = true;
@@ -1061,6 +1081,7 @@ async function runTurn(
       state,
       cursor,
       decoder,
+      transcriptBaselines: baselines,
       transcriptOffset,
       assistantText,
       final: false,
@@ -1082,6 +1103,7 @@ async function runTurn(
     state,
     cursor,
     decoder,
+    transcriptBaselines: baselines,
     transcriptOffset,
     assistantText,
     final: true,
