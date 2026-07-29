@@ -12,6 +12,27 @@ describe("formatWorkspaceRelativePath", () => {
     ).toBe("t3code/apps/web/src/session-logic.ts:501");
   });
 
+  it("preserves windows drive roots in display paths", () => {
+    expect(formatWorkspaceRelativePath("C:/Users/mike/file.ts", "C:/")).toBe(
+      "C:/Users/mike/file.ts",
+    );
+    expect(formatWorkspaceRelativePath("C:\\Users\\mike\\file.ts", "C:\\")).toBe(
+      "C:/Users/mike/file.ts",
+    );
+  });
+
+  it("preserves filesystem roots when formatting the root itself", () => {
+    expect(formatWorkspaceRelativePath("C:/", "C:/")).toBe("C:/");
+    expect(formatWorkspaceRelativePath("/", "/")).toBe("/");
+    expect(formatWorkspaceRelativePath("/usr/bin/tool", "/")).toBe("/usr/bin/tool");
+  });
+
+  it("formats files from a UNC share root", () => {
+    expect(formatWorkspaceRelativePath("\\\\SERVER\\Share\\file.ts", "\\\\server\\share\\")).toBe(
+      "share/file.ts",
+    );
+  });
+
   it("prefixes relative paths with the workspace root label", () => {
     expect(
       formatWorkspaceRelativePath(

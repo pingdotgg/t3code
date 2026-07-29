@@ -16,6 +16,7 @@ function canonicalizeWindowsDrivePath(path: string): string {
 }
 
 function basenameOfPath(path: string): string {
+  if (/^[A-Za-z]:[\\/]?$/.test(path)) return path.slice(0, 2);
   const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
@@ -71,7 +72,10 @@ export function formatWorkspaceRelativePath(
     const workspaceLabelWithSeparator = `${workspaceLabelForCompare}/`;
 
     if (workspaceRelativePath === "") {
-      displayPath = workspaceLabel;
+      displayPath =
+        normalizedWorkspaceRoot === "/" || /^[A-Za-z]:\/$/.test(normalizedWorkspaceRoot)
+          ? normalizedWorkspaceRoot
+          : workspaceLabel;
     } else if (workspaceRelativePath !== null) {
       displayPath = `${workspaceLabel}/${workspaceRelativePath}`;
     } else if (!normalizedPath.startsWith("/")) {
