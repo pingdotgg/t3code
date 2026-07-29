@@ -23,6 +23,13 @@ describe("mac app update advisory", () => {
     expect(
       parseLatestMacAppRelease("<rss><item><sparkle:version>x</sparkle:version></item></rss>"),
     ).toBeNull();
+    expect(
+      parseLatestMacAppRelease(`
+        <item>
+          <sparkle:version>25-not-a-build</sparkle:version>
+          <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
+        </item>`),
+    ).toBeNull();
   });
 
   it("uses the monotonic Sparkle build number", () => {
@@ -34,5 +41,11 @@ describe("mac app update advisory", () => {
     };
     expect(hostNeedsMacAppUpdate(host, { version: "0.7.0", buildNumber: 25 })).toBe(true);
     expect(hostNeedsMacAppUpdate(host, { version: "0.6.0", buildNumber: 24 })).toBe(false);
+    expect(
+      hostNeedsMacAppUpdate(
+        { ...host, buildNumber: "24-old" },
+        { version: "0.7.0", buildNumber: 25 },
+      ),
+    ).toBe(false);
   });
 });

@@ -17,7 +17,8 @@ export function parseLatestMacAppRelease(xml: string): MacAppRelease | null {
     .exec(item)?.[1]
     ?.trim();
   const rawBuild = /<sparkle:version>([^<]+)<\/sparkle:version>/i.exec(item)?.[1]?.trim();
-  const buildNumber = rawBuild === undefined ? Number.NaN : Number.parseInt(rawBuild, 10);
+  const buildNumber =
+    rawBuild === undefined || !/^\d+$/.test(rawBuild) ? Number.NaN : Number.parseInt(rawBuild, 10);
   if (!version || !Number.isSafeInteger(buildNumber) || buildNumber < 0) {
     return null;
   }
@@ -28,7 +29,9 @@ export function hostNeedsMacAppUpdate(
   host: HostApplicationDescriptor,
   latest: MacAppRelease,
 ): boolean {
-  const hostBuild = Number.parseInt(host.buildNumber, 10);
+  const hostBuild = /^\d+$/.test(host.buildNumber)
+    ? Number.parseInt(host.buildNumber, 10)
+    : Number.NaN;
   return Number.isSafeInteger(hostBuild) && hostBuild < latest.buildNumber;
 }
 
@@ -37,11 +40,18 @@ let latestReleasePromise: Promise<MacAppRelease | null> | null = null;
 let latestReleaseLoadedAt = 0;
 
 async function fetchLatestMacAppRelease(): Promise<MacAppRelease | null> {
-  const response = await fetch(MAC_APPCAST_URL, {
-    headers: { Accept: "application/xml, text/xml;q=0.9, */*;q=0.1" },
-  });
-  if (!response.ok) return null;
-  return parseLatestMacAppRelease(await response.text());
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(MAC_APPCAST_URL, {
+      headers: { Accept: "application/xml, text/xml;q=0.9, */*;q=0.1" },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    return parseLatestMacAppRelease(await response.text());
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function loadLatestMacAppRelease(): Promise<MacAppRelease | null> {
