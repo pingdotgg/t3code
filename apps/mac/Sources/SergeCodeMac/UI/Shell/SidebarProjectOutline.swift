@@ -90,32 +90,21 @@ struct SidebarProjectTile: View {
     }
 }
 
-/// A soft halo that breathes behind a small mark. Mounted only while the state
-/// it reports is live, so the sidebar hosts one animator per busy project
-/// rather than one per row.
+/// A soft halo behind a small mark. It stays static because each busy project
+/// can already contain many animated live surfaces.
 private struct SidebarPulseHalo: View {
     let color: Color
     let cornerRadius: CGFloat
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius + 2, style: .continuous)
-        Group {
-            if Motion.profile.allowsDecorativeEffects {
-                shape
-                    .fill(color)
-                    .blur(radius: 4)
-                    .phaseAnimator([0.18, 0.5]) { view, level in
-                        view.opacity(level).scaleEffect(0.94 + level * 0.24)
-                    } animation: { _ in
-                        .easeInOut(duration: 1.5)
-                    }
-            } else {
-                // Reduce Motion keeps the signal, drops the breath.
-                shape.fill(color).blur(radius: 4).opacity(0.3)
-            }
-        }
-        .padding(-2)
-        .allowsHitTesting(false)
+        shape
+            .fill(color)
+            .blur(radius: 4)
+            .opacity(Motion.reduceMotion ? 0.3 : 0.42)
+            .scaleEffect(Motion.reduceMotion ? 1 : 1.04)
+            .padding(-2)
+            .allowsHitTesting(false)
     }
 }
 

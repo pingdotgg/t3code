@@ -316,16 +316,12 @@ struct ModelPickerPopoverContent: View {
                 shortcutLegend
             }
         }
-        .task {
-            // Do not install AppKit's remote completion view while SwiftUI is
-            // still ordering the containing NSPopover window. On macOS 27
-            // that race raises NSInternalInconsistencyException from
-            // NSRemoteView and terminates the app. The view-bound task is
-            // cancelled if the popover closes before it becomes stable.
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-            searchFocused = true
-            highlightedKey = initialHighlightKey
+        .background {
+            WindowPresentationReadyProbe {
+                searchFocused = true
+                highlightedKey = initialHighlightKey
+            }
+            .frame(width: 0, height: 0)
         }
         .onChange(of: searchText) { _, _ in resetHighlightToFirstRow() }
         .onChange(of: scope) { _, _ in resetHighlightToFirstRow() }
