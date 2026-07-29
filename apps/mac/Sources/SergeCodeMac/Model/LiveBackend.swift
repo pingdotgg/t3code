@@ -160,6 +160,15 @@ public actor LiveBackend: BackendService {
 
     /// Threads the UI has opened; re-subscribed on every reconnect.
     private var activeThreadIDs: Set<String> = []
+    /// Latest shell sequence observed (snapshot or event). Passed as the
+    /// resume cursor on reconnect so the server replays only the missed shell
+    /// events instead of re-sending the whole projects/threads list; a gap
+    /// past the server's cap falls back to a fresh snapshot, which the
+    /// `.snapshot` branch of `handleShellItem` reconciles as before. Also the
+    /// dedup gate for live shell events: the server attaches the live tail
+    /// before reading its replay baseline, so a resumed subscription can see
+    /// the same event in both.
+    private var lastShellSequence: Int?
     /// Last authoritative orchestration sequence observed by each thread-detail
     /// subscription. The server attaches the live tail before loading the
     /// snapshot, so an event already folded into `snapshot.thread` can also be
@@ -585,7 +594,7 @@ public actor LiveBackend: BackendService {
     }
 
     private func consumeShell(_ client: T3Client) async throws {
-        let stream = await client.subscribeShell()
+        let stream = await client.subscribeShell(afterSequence: lastShellSequence)
         for try await item in stream {
             handleShellItem(item)
         }
@@ -615,9 +624,12 @@ public actor LiveBackend: BackendService {
             // `requestCompletionMarker`, so this is a forward-compat no-op.
             break
         case .snapshot(let snapshot):
+            lastShellSequence = snapshot.snapshotSequence
             // The snapshot is the authoritative current state, so reconcile
             // rather than merge: anything deleted while the socket was down
-            // gets no replayed removal event and must be dropped here.
+            // gets no replayed removal event and must be dropped here. (On the
+            // afterSequence resume path removals ARE replayed as events, so
+            // the reconcile is only needed here.)
             projectsByID = Dictionary(
                 snapshot.projects.map { ($0.id, mapProject($0)) },
                 uniquingKeysWith: { _, new in new })
@@ -644,6 +656,12 @@ public actor LiveBackend: BackendService {
                 reconcileRunningLiveness(for: shell)
             }
         case .event(let event):
+            // Sequence-gate replay/live overlap on the resume path; shell
+            // events always arrive in ascending sequence within one stream.
+            if let lastSequence = lastShellSequence, event.sequence <= lastSequence {
+                return
+            }
+            lastShellSequence = event.sequence
             switch event {
             case .projectUpserted(_, let shell):
                 projectsByID[shell.id] = mapProject(shell)
@@ -698,12 +716,23 @@ public actor LiveBackend: BackendService {
 
     // MARK: - Per-thread subscription (timeline / approvals / checkpoints)
 
+    /// Resume without a snapshot frame only when the in-memory detail state
+    /// the cursor describes is still intact (`latestTimeline` present). A
+    /// fresh open — or a reopen after eviction dropped the caches — must
+    /// take the full snapshot; `timeline()`'s snapshot waiters also only
+    /// resolve from the snapshot path.
+    private func threadResumeCursor(threadID: String) -> Int? {
+        latestTimeline[threadID] != nil ? lastThreadSequence[threadID] : nil
+    }
+
     private func startThreadSubscription(_ threadID: String, client: T3Client) {
         threadSubscriptions[threadID]?.cancel()
+        let afterSequence = threadResumeCursor(threadID: threadID)
         let task = Task { [weak self] in
             guard let self else { return }
             do {
-                let stream = await client.subscribeThread(threadId: threadID)
+                let stream = await client.subscribeThread(
+                    threadId: threadID, afterSequence: afterSequence)
                 for try await item in stream {
                     await self.handleThreadItem(threadID: threadID, item: item)
                 }
@@ -3742,6 +3771,22 @@ public actor LiveBackend: BackendService {
 
         func debugAssistantText(threadID: String, messageID: String) -> String? {
             assistantTextByMessage[threadID]?[messageID]
+        }
+
+        func debugHandleShellItem(_ item: OrchestrationShellStreamItem) {
+            handleShellItem(item)
+        }
+
+        func debugLastShellSequence() -> Int? {
+            lastShellSequence
+        }
+
+        func debugThreadIDs() -> Set<String> {
+            Set(threadsByID.keys)
+        }
+
+        func debugThreadResumeCursor(threadID: String) -> Int? {
+            threadResumeCursor(threadID: threadID)
         }
     #endif
 }

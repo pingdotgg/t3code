@@ -820,6 +820,16 @@ public enum OrchestrationShellStreamEvent: Sendable {
     case projectRemoved(sequence: Int, projectId: String)
     case threadUpserted(sequence: Int, thread: OrchestrationThreadShell)
     case threadRemoved(sequence: Int, threadId: String)
+
+    /// The orchestration sequence this shell event was derived from. Used as
+    /// the resume cursor for `subscribeShell(afterSequence:)`.
+    public var sequence: Int {
+        switch self {
+        case .projectUpserted(let sequence, _), .projectRemoved(let sequence, _),
+            .threadUpserted(let sequence, _), .threadRemoved(let sequence, _):
+            return sequence
+        }
+    }
 }
 
 extension OrchestrationShellStreamEvent: Codable {
