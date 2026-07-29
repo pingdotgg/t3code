@@ -83,6 +83,7 @@ export class LegacyV1ThreadImportError extends Schema.TaggedErrorClass<LegacyV1T
 }
 
 export interface LegacyV1ThreadImporterShape {
+  readonly pendingThreadCount: Effect.Effect<number, LegacyV1ThreadImportError>;
   readonly reconcileShells: Effect.Effect<LegacyV1ImportSummary, LegacyV1ThreadImportError>;
   readonly ensureTranscript: (
     threadId: ThreadId,
@@ -461,6 +462,31 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new LegacyV1ThreadImportError({ operation: "import", cause })),
   );
 
+  const pendingThreadCount = sql<{ readonly count: number }>`
+    SELECT COUNT(*) AS count
+    FROM (
+      SELECT thread.thread_id
+      FROM projection_threads AS thread
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM orchestration_events AS event
+        WHERE event.application_event_version = 2
+          AND event.aggregate_kind = 'thread'
+          AND event.stream_id = thread.thread_id
+          AND event.event_type = 'thread.created'
+      )
+      UNION
+      SELECT legacy_import.thread_id
+      FROM orchestration_v2_legacy_imports AS legacy_import
+      WHERE legacy_import.transcript_imported_at IS NULL
+    )
+  `.pipe(
+    Effect.map((rows) => rows[0]?.count ?? 0),
+    Effect.mapError(
+      (cause) => new LegacyV1ThreadImportError({ operation: "inspect pending", cause }),
+    ),
+  );
+
   const ensureTranscriptBase = (threadId: ThreadId) =>
     transcriptImports.withLock(
       threadId,
@@ -583,6 +609,7 @@ const make = Effect.gen(function* () {
   );
 
   return LegacyV1ThreadImporter.of({
+    pendingThreadCount,
     reconcileShells,
     ensureTranscript,
     importPendingTranscripts,
