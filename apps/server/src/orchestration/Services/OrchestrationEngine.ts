@@ -54,6 +54,13 @@ export interface OrchestrationEngineShape {
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
 
   /**
+   * The latest sequence reflected in the engine's authoritative command read
+   * model (0 if none). Used to gauge how far behind a resuming client is before
+   * choosing between an incremental replay and a fresh projected snapshot.
+   */
+  readonly latestSequence: Effect.Effect<number, never, never>;
+
+  /**
    * Stream domain events for a single thread aggregate.
    *
    * Lazily allocates a per-thread PubSub on first subscriber and tears it down
