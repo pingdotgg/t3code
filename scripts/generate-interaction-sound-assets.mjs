@@ -28,7 +28,6 @@ const recipes = {
       { frequency: 1108.73, offset: 0.06, attack: 0.004, decay: 0.1, peak: 0.06 },
       { frequency: 1318.51, offset: 0.12, attack: 0.004, decay: 0.18, peak: 0.07 },
     ],
-    shimmer: { delay: 0.1, feedback: 0.22, wet: 0.16 },
   },
 };
 
@@ -58,16 +57,18 @@ function renderRecipe(recipe) {
   }
 
   const output = Float64Array.from(dry);
-  const delaySamples = Math.round(recipe.shimmer.delay * SAMPLE_RATE);
-  let repeat = 1;
-  let repeatGain = recipe.shimmer.wet;
-  while (repeatGain >= 0.001) {
-    const offset = delaySamples * repeat;
-    for (let index = 0; index + offset < sampleCount; index += 1) {
-      output[index + offset] += dry[index] * repeatGain;
+  if (recipe.shimmer) {
+    const delaySamples = Math.round(recipe.shimmer.delay * SAMPLE_RATE);
+    let repeat = 1;
+    let repeatGain = recipe.shimmer.wet;
+    while (repeatGain >= 0.001) {
+      const offset = delaySamples * repeat;
+      for (let index = 0; index + offset < sampleCount; index += 1) {
+        output[index + offset] += dry[index] * repeatGain;
+      }
+      repeat += 1;
+      repeatGain *= recipe.shimmer.feedback;
     }
-    repeat += 1;
-    repeatGain *= recipe.shimmer.feedback;
   }
 
   let peak = 0;
