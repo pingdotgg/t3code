@@ -33,7 +33,13 @@ describe("thread workflows", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },
       runs: [
-        { id: "active", status: "running", providerThreadId: "provider-thread", ordinal: 1 },
+        {
+          id: "active",
+          status: "running",
+          providerThreadId: "provider-thread",
+          activeAttemptId: "attempt-active",
+          ordinal: 1,
+        },
         { id: "later", status: "queued", userMessageId: "message-later", ordinal: 3 },
         {
           id: "first",
@@ -46,6 +52,13 @@ describe("thread workflows", () => {
       messages: [
         { id: "message-first", text: "First" },
         { id: "message-later", text: "Later" },
+      ],
+      providerTurns: [
+        {
+          id: "provider-turn-active",
+          runAttemptId: "attempt-active",
+          status: "running",
+        },
       ],
       providerThreads: [
         {
@@ -70,6 +83,83 @@ describe("thread workflows", () => {
     expect(state.activeRun?.id).toBe("active");
     expect(state.canReorder).toBe(true);
     expect(state.canPromoteToSteer).toBe(true);
+  });
+
+  it.each(["preparing", "starting", "waiting"] as const)(
+    "does not promote queued work into a %s run",
+    (status) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        runs: [
+          {
+            id: "active",
+            status,
+            providerThreadId: "provider-thread",
+            activeAttemptId: "attempt-active",
+            ordinal: 1,
+          },
+          { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+        ],
+        messages: [{ id: "message", text: "Queued" }],
+        providerTurns: [
+          {
+            id: "provider-turn-active",
+            runAttemptId: "attempt-active",
+            status: status === "waiting" ? "completed" : "starting",
+          },
+        ],
+        providerThreads: [
+          {
+            id: "provider-thread",
+            appThreadId: "thread",
+            providerSessionId: "provider-session",
+          },
+        ],
+        providerSessions: [
+          {
+            id: "provider-session",
+            status: "running",
+            capabilities: capabilities({ queued: true, steer: true }),
+          },
+        ],
+      } as never);
+
+      expect(state.canPromoteToSteer).toBe(false);
+    },
+  );
+
+  it("does not promote queued work until the running provider turn is projected", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      runs: [
+        {
+          id: "active",
+          status: "running",
+          providerThreadId: "provider-thread",
+          activeAttemptId: "attempt-active",
+          ordinal: 1,
+        },
+        { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+      ],
+      messages: [{ id: "message", text: "Queued" }],
+      providerTurns: [],
+      providerThreads: [
+        {
+          id: "provider-thread",
+          appThreadId: "thread",
+          providerSessionId: "provider-session",
+        },
+      ],
+      providerSessions: [
+        {
+          id: "provider-session",
+          status: "running",
+          capabilities: capabilities({ queued: true, steer: true }),
+        },
+      ],
+    } as never);
+
+    expect(state.canPromoteToSteer).toBe(false);
   });
 
   it("does not expose known unsupported queue or fork actions", () => {
