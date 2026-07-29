@@ -21,6 +21,22 @@ export const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
 export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX = 31;
 export const BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY = 0.001;
 
+export function resolveHostedBrowserWebviewPresentation(input: {
+  readonly backgroundCaptureRequested: boolean;
+  readonly hasRect: boolean;
+  readonly selected: boolean;
+  readonly surfaceVisible: boolean;
+}): {
+  readonly active: boolean;
+  readonly backgroundCapture: boolean;
+} {
+  const active = input.selected && input.surfaceVisible && input.hasRect;
+  return {
+    active,
+    backgroundCapture: !active && input.backgroundCaptureRequested && input.hasRect,
+  };
+}
+
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
   readonly backgroundCapture: boolean;

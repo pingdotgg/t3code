@@ -7,6 +7,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
 import {
   resolveBrowserSurfaceBackgroundCaptureRect,
@@ -21,7 +23,10 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
-import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import {
+  resolveHostedBrowserWebviewPresentation,
+  resolveHostedBrowserWebviewWrapperStyle,
+} from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -63,6 +68,13 @@ export function HostedBrowserWebview(props: {
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
   const surface = useBrowserSurfaceStore(
     useShallow((state) => selectBrowserSurfaceRenderState(state, runtimeTabId)),
+  );
+  const selectedInRightPanel = useRightPanelStore((state) => {
+    const panel = selectThreadRightPanelState(state.byThreadKey, threadRef);
+    return panel.isOpen && panel.activeSurfaceId === `browser:${tabId}`;
+  });
+  const selectedInMiniPlayer = usePreviewMiniPlayerStore(
+    (state) => selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef)?.tabId === tabId,
   );
   const presentation = {
     backgroundCapture: surface.backgroundCapture,
@@ -154,8 +166,12 @@ export function HostedBrowserWebview(props: {
     };
   }, [config, initialSrc, runtimeTabId, webviewGeneration]);
 
-  const active = presentation.visible && presentation.rect !== null;
-  const backgroundCapture = !active && presentation.backgroundCapture && presentation.rect !== null;
+  const { active, backgroundCapture } = resolveHostedBrowserWebviewPresentation({
+    backgroundCaptureRequested: presentation.backgroundCapture,
+    hasRect: presentation.rect !== null,
+    selected: selectedInRightPanel || selectedInMiniPlayer,
+    surfaceVisible: presentation.visible,
+  });
   const lastRect = presentation.rect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;

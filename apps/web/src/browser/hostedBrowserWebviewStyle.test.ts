@@ -4,8 +4,39 @@ import {
   BACKGROUND_CAPTURE_BROWSER_WEBVIEW_OPACITY,
   BACKGROUND_CAPTURE_BROWSER_WEBVIEW_Z_INDEX,
   HIDDEN_BROWSER_WEBVIEW_OFFSET,
+  resolveHostedBrowserWebviewPresentation,
   resolveHostedBrowserWebviewWrapperStyle,
 } from "./hostedBrowserWebviewStyle";
+
+describe("resolveHostedBrowserWebviewPresentation", () => {
+  it("stages a background capture when visibility is stale after selection changes", () => {
+    expect(
+      resolveHostedBrowserWebviewPresentation({
+        backgroundCaptureRequested: true,
+        hasRect: true,
+        selected: false,
+        surfaceVisible: true,
+      }),
+    ).toEqual({
+      active: false,
+      backgroundCapture: true,
+    });
+  });
+
+  it("keeps the selected visible surface in the foreground during a capture request", () => {
+    expect(
+      resolveHostedBrowserWebviewPresentation({
+        backgroundCaptureRequested: true,
+        hasRect: true,
+        selected: true,
+        surfaceVisible: true,
+      }),
+    ).toEqual({
+      active: true,
+      backgroundCapture: false,
+    });
+  });
+});
 
 describe("resolveHostedBrowserWebviewWrapperStyle", () => {
   it("places an active webview on its presented surface", () => {
