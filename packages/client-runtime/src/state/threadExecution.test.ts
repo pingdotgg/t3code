@@ -46,7 +46,7 @@ describe("thread execution presentation", () => {
 
     const runtime = deriveThreadRuntime(projection);
     expect(runtime).toMatchObject({
-      status: "queued",
+      status: "running",
       activeRunId: runningRun.id,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);

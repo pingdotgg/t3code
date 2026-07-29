@@ -40,6 +40,30 @@ describe("V2 client presentation", () => {
     });
   });
 
+  it("preserves shell run timestamps for sidebar activity clocks", () => {
+    const runId = RunId.make("run-working-clock");
+    const requestedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const startedAt = DateTime.makeUnsafe("2026-06-20T01:00:02.000Z");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      latestRunRequestedAt: requestedAt,
+      latestRunStartedAt: startedAt,
+      latestRunCompletedAt: null,
+      activeRunId: runId,
+      status: "running",
+      updatedAt: DateTime.makeUnsafe("2026-06-20T01:04:45.000Z"),
+    });
+
+    expect(shell.latestRun).toMatchObject({
+      runId,
+      status: "running",
+      requestedAt: "2026-06-20T01:00:00.000Z",
+      startedAt: "2026-06-20T01:00:02.000Z",
+      completedAt: null,
+    });
+  });
+
   it("derives execution summaries without wrapping or copying the projection", () => {
     const runId = RunId.make("run-1");
     const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
