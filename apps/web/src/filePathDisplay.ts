@@ -1,7 +1,6 @@
 import {
   isWindowsAbsolutePath,
   normalizePathCaseForComparison,
-  normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
 } from "@t3tools/shared/path";
 
@@ -13,6 +12,19 @@ function normalizePathSeparators(path: string): string {
 
 function canonicalizeWindowsDrivePath(path: string): string {
   return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
+}
+
+function isForwardSlashUncPath(path: string): boolean {
+  return /^\/\/[^/]/.test(path);
+}
+
+function isCaseInsensitiveWorkspacePath(path: string): boolean {
+  return isWindowsAbsolutePath(path) || isForwardSlashUncPath(path);
+}
+
+function normalizeWorkspacePathForComparison(path: string): string {
+  const canonicalPath = isForwardSlashUncPath(path) ? path.replaceAll("/", "\\") : path;
+  return normalizePathCaseForComparison(canonicalPath);
 }
 
 function basenameOfPath(path: string): string {
@@ -30,12 +42,12 @@ export function resolveWorkspaceRelativePath(path: string, workspaceRoot: string
   const normalizedRoot = canonicalizeWindowsDrivePath(
     normalizeProjectPathForDispatch(workspaceRoot),
   );
-  const pathForCompare = normalizePathCaseForComparison(normalizedPath);
-  const rootForCompare = normalizeProjectPathForComparison(normalizedRoot);
+  const pathForCompare = normalizeWorkspacePathForComparison(normalizedPath);
+  const rootForCompare = normalizeWorkspacePathForComparison(normalizedRoot);
 
   if (pathForCompare === rootForCompare) return "";
 
-  const separator = isWindowsAbsolutePath(normalizedRoot) ? "\\" : "/";
+  const separator = isCaseInsensitiveWorkspacePath(normalizedRoot) ? "\\" : "/";
   const rootPrefix = rootForCompare.endsWith(separator)
     ? rootForCompare
     : `${rootForCompare}${separator}`;
@@ -64,7 +76,7 @@ export function formatWorkspaceRelativePath(
     const normalizedWorkspaceRoot = normalizePathSeparators(canonicalWorkspaceRoot);
     const workspaceLabel = basenameOfPath(normalizedWorkspaceRoot);
     const workspaceRelativePath = resolveWorkspaceRelativePath(path, workspaceRoot);
-    const caseInsensitive = isWindowsAbsolutePath(canonicalWorkspaceRoot);
+    const caseInsensitive = isCaseInsensitiveWorkspacePath(canonicalWorkspaceRoot);
     const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
     const workspaceLabelForCompare = caseInsensitive
       ? workspaceLabel.toLowerCase()

@@ -164,6 +164,18 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("keeps forward-slash UNC workspace containment case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "//SERVER/Share/Project/src/session-logic.ts",
+        "//server/share/project",
+      ),
+    ).toMatchObject({
+      displayPath: "project/src/session-logic.ts",
+      workspaceRelativePath: "src/session-logic.ts",
+    });
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(
