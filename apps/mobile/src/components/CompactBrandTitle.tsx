@@ -29,13 +29,13 @@ export function CompactBrandTitle() {
         marginLeft: Platform.OS === "ios" && Platform.isPad ? IPAD_HOME_TITLE_OFFSET : 0,
       }}
     >
-      <T3Wordmark color={iconColor} height={11} />
+      <T3Wordmark color={iconColor} height={15} />
       <Text
         style={{
           color: mutedColor,
           fontFamily: "DMSans-Medium",
-          fontSize: 14,
-          letterSpacing: -0.35,
+          fontSize: 18,
+          letterSpacing: -0.45,
         }}
       >
         Code
