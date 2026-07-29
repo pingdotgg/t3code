@@ -56,7 +56,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 ### UX Changes
 
-- Desktop context-menu style is configurable.
+- Desktop context-menu style is configurable from Appearance settings.
 - The sidebar follows the active thread when it appears or when navigation originates elsewhere.
 - Sidebar environments can be hidden or shown dynamically from the project toolbar.
 - Threads can be archived with middle click.

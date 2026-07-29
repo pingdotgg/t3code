@@ -632,6 +632,48 @@ export function AppearanceSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          title="Context menus"
+          description="Default uses native desktop menus on macOS and custom menus elsewhere."
+          resetAction={
+            settings.contextMenuStyle !== DEFAULT_UNIFIED_SETTINGS.contextMenuStyle ? (
+              <SettingResetButton
+                label="context menu style"
+                onClick={() =>
+                  updateSettings({
+                    contextMenuStyle: DEFAULT_UNIFIED_SETTINGS.contextMenuStyle,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.contextMenuStyle}
+              onValueChange={(value) => {
+                if (value === "default" || value === "native" || value === "custom") {
+                  updateSettings({ contextMenuStyle: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Context menu style">
+                <SelectValue>{CONTEXT_MENU_STYLE_LABELS[settings.contextMenuStyle]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="default">
+                  {CONTEXT_MENU_STYLE_LABELS.default}
+                </SelectItem>
+                <SelectItem hideIndicator value="native">
+                  {CONTEXT_MENU_STYLE_LABELS.native}
+                </SelectItem>
+                <SelectItem hideIndicator value="custom">
+                  {CONTEXT_MENU_STYLE_LABELS.custom}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
         {showEnvironmentIdentification ? (
           <SettingsRow
             title="Environment identification"
@@ -816,48 +858,6 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Context menus"
-          description="Default uses native desktop menus on macOS and custom menus elsewhere."
-          resetAction={
-            settings.contextMenuStyle !== DEFAULT_UNIFIED_SETTINGS.contextMenuStyle ? (
-              <SettingResetButton
-                label="context menu style"
-                onClick={() =>
-                  updateSettings({
-                    contextMenuStyle: DEFAULT_UNIFIED_SETTINGS.contextMenuStyle,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.contextMenuStyle}
-              onValueChange={(value) => {
-                if (value === "default" || value === "native" || value === "custom") {
-                  updateSettings({ contextMenuStyle: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Context menu style">
-                <SelectValue>{CONTEXT_MENU_STYLE_LABELS[settings.contextMenuStyle]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="default">
-                  {CONTEXT_MENU_STYLE_LABELS.default}
-                </SelectItem>
-                <SelectItem hideIndicator value="native">
-                  {CONTEXT_MENU_STYLE_LABELS.native}
-                </SelectItem>
-                <SelectItem hideIndicator value="custom">
-                  {CONTEXT_MENU_STYLE_LABELS.custom}
                 </SelectItem>
               </SelectPopup>
             </Select>
