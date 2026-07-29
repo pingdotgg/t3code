@@ -884,42 +884,6 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("treats ultrathink as a prompt keyword instead of a session effort", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
-          "claude-sonnet-4-6",
-          [{ id: "effort", value: "ultrathink" }],
-        ),
-        runtimeMode: "full-access",
-      });
-
-      yield* adapter.sendTurn({
-        threadId: session.threadId,
-        input: "Investigate the edge cases",
-        attachments: [],
-        modelSelection: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
-          "claude-sonnet-4-6",
-          [{ id: "effort", value: "ultrathink" }],
-        ),
-      });
-
-      const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "high");
-      const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
-      assert.equal(promptText, "Ultrathink:\nInvestigate the edge cases");
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
-
   it.effect("embeds image attachments in Claude user messages", () => {
     const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
     const harness = makeHarness({

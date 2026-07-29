@@ -139,7 +139,7 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
 /// One selectable reasoning-effort level of a model (from the wire's
 /// select-type provider option descriptor, e.g. `effort`/`reasoningEffort`).
 public struct EffortChoice: Identifiable, Hashable, Sendable {
-    /// Wire choice id, e.g. "high", "max", "ultrathink".
+    /// Wire choice id, e.g. "high", "max", "ultracode".
     public var id: String
     public var label: String
     public var isDefault: Bool

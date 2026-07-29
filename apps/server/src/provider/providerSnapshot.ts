@@ -181,7 +181,6 @@ export function buildSelectOptionDescriptor(input: {
     | ReadonlyArray<{ value: string; label: string; isDefault?: boolean | undefined }>
     | undefined;
   readonly description?: string;
-  readonly promptInjectedValues?: ReadonlyArray<string>;
 }) {
   const options = (input.options ?? []).map((option) =>
     option.isDefault
@@ -196,9 +195,6 @@ export function buildSelectOptionDescriptor(input: {
     options,
     ...(currentValue ? { currentValue } : {}),
     ...(input.description ? { description: input.description } : {}),
-    ...(input.promptInjectedValues && input.promptInjectedValues.length > 0
-      ? { promptInjectedValues: [...input.promptInjectedValues] }
-      : {}),
   };
 }
 
