@@ -32,6 +32,18 @@ import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
+/**
+ * `VcsListRefsInput` plus an internal-only `refresh` flag used to bypass the
+ * `listRefs` snapshot cache (see `GitVcsDriverCore.ts`). This is kept local
+ * to the server rather than added to `@t3tools/contracts` because no caller
+ * outside the server needs to force a refresh yet; `GitManager` is the only
+ * caller that sets it today, right after a mutation it needs to observe
+ * immediately.
+ */
+export type GitVcsDriverListRefsInput = VcsListRefsInput & {
+  readonly refresh?: boolean;
+};
+
 export interface ExecuteGitInput {
   readonly operation: string;
   readonly cwd: string;
@@ -226,7 +238,7 @@ export class GitVcsDriver extends Context.Service<
       key: string,
     ) => Effect.Effect<string | null, GitCommandError>;
     readonly listRefs: (
-      input: VcsListRefsInput,
+      input: GitVcsDriverListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (

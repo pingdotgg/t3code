@@ -47,6 +47,8 @@ function makeThread(
     ...input,
     settledOverride: input.settledOverride ?? null,
     settledAt: input.settledAt ?? null,
+    snoozedUntil: input.snoozedUntil ?? null,
+    snoozedAt: input.snoozedAt ?? null,
   };
 }
 
@@ -316,6 +318,87 @@ describe("buildHomeThreadGroups", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.threads).toEqual([]);
     expect(groups[0]?.settledThreads).toHaveLength(1);
+  });
+
+  it("moves a snoozed thread out of the inbox while its wake time is in the future", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const threads = [
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-active"),
+        projectId: project.id,
+        title: "Active thread",
+        updatedAt: "2026-06-09T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-snoozed"),
+        projectId: project.id,
+        title: "Snoozed thread",
+        updatedAt: "2026-06-09T00:00:00.000Z",
+        snoozedUntil: "2026-06-11T09:00:00.000Z",
+        snoozedAt: "2026-06-09T00:00:00.000Z",
+      }),
+    ];
+
+    const groups = buildGroups([project], threads, { now: "2026-06-10T00:00:00.000Z" });
+
+    expect(groups[0]?.threads.map((thread) => thread.id)).toEqual(["thread-active"]);
+    expect(groups[0]?.settledThreads.map((thread) => thread.id)).toEqual(["thread-snoozed"]);
+  });
+
+  it("reappears in the active list once the snooze wake time has passed", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const woken = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-woken"),
+      projectId: project.id,
+      title: "Woken thread",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+      snoozedUntil: "2026-06-09T09:00:00.000Z",
+      snoozedAt: "2026-06-08T00:00:00.000Z",
+    });
+
+    // `now` is past the wake time — no unsnooze event required, the stale
+    // snoozedUntil simply stops classifying the thread as snoozed.
+    const groups = buildGroups([project], [woken], { now: "2026-06-10T00:00:00.000Z" });
+
+    expect(groups[0]?.threads.map((thread) => thread.id)).toEqual(["thread-woken"]);
+    expect(groups[0]?.settledThreads).toEqual([]);
+  });
+
+  it("keeps a raised-hand snoozed thread (pending approval) in the active list", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const blocked = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-blocked"),
+      projectId: project.id,
+      title: "Blocked thread",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+      hasPendingApprovals: true,
+      snoozedUntil: "2026-06-11T09:00:00.000Z",
+      snoozedAt: "2026-06-09T00:00:00.000Z",
+    });
+
+    const groups = buildGroups([project], [blocked], { now: "2026-06-10T00:00:00.000Z" });
+
+    expect(groups[0]?.threads.map((thread) => thread.id)).toEqual(["thread-blocked"]);
+    expect(groups[0]?.settledThreads).toEqual([]);
   });
 
   it("applies the search query to settled threads as well", () => {

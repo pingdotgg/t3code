@@ -214,6 +214,11 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     public var updatedAt: Date
     public var settledOverride: String?
     public var settledAt: Date?
+    /// Snooze overlay: suppressed from the inbox until `snoozedUntil` passes
+    /// (no wake event — a passed time simply stops classifying as snoozed) or
+    /// the server clears the snooze on real activity.
+    public var snoozedUntil: Date?
+    public var snoozedAt: Date?
     public var latestUserMessageAt: Date?
     public var latestTurnRequestedAt: Date?
     public var latestTurnStartedAt: Date?
@@ -264,6 +269,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         id: String, projectID: String, title: String, provider: ProviderKind,
         status: ThreadStatus, createdAt: Date? = nil, updatedAt: Date,
         settledOverride: String? = nil, settledAt: Date? = nil,
+        snoozedUntil: Date? = nil, snoozedAt: Date? = nil,
         latestUserMessageAt: Date? = nil, latestTurnRequestedAt: Date? = nil,
         latestTurnStartedAt: Date? = nil, latestTurnCompletedAt: Date? = nil,
         sessionStatus: String? = nil, hasPendingApproval: Bool = false,
@@ -286,6 +292,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.settledOverride = settledOverride
         self.settledAt = settledAt
+        self.snoozedUntil = snoozedUntil
+        self.snoozedAt = snoozedAt
         self.latestUserMessageAt = latestUserMessageAt
         self.latestTurnRequestedAt = latestTurnRequestedAt
         self.latestTurnStartedAt = latestTurnStartedAt

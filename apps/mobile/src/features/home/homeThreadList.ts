@@ -17,7 +17,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import { isThreadSettled, sortSettledThreads } from "../../lib/threadInbox";
+import { isThreadOutOfInbox, sortSettledThreads } from "../../lib/threadInbox";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
@@ -30,9 +30,11 @@ export interface HomeThreadGroup {
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   /**
-   * Settled threads leave the inbox (mac ThreadInboxSemantics) but stay
-   * reachable behind the group's "Settled" disclosure, most recently settled
-   * first.
+   * Settled and snoozed threads leave the inbox (mac ThreadInboxSemantics;
+   * isThreadOutOfInbox) but stay reachable behind the group's "Settled"
+   * disclosure, most recently settled first. A snoozed thread rejoins
+   * `threads` on its own once the wake time passes or it raises its hand —
+   * no event required.
    */
   readonly settledThreads: ReadonlyArray<EnvironmentThreadShell>;
 }
@@ -151,7 +153,10 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
     const group = groups.get(groupKey);
-    if (isThreadSettled(thread, now)) {
+    // Snoozed threads leave the active list the same way settled ones do:
+    // they join the settled disclosure until the snooze wakes (timer or a
+    // raised hand) or the thread genuinely settles. See isThreadOutOfInbox.
+    if (isThreadOutOfInbox(thread, now)) {
       group?.settledThreads.push(thread);
     } else {
       group?.threads.push(thread);

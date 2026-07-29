@@ -38,6 +38,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  type ProjectId,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -47,7 +48,6 @@ import {
   ProjectWriteFileError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
-  OrchestrationReplayEventsError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -61,7 +61,6 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
-import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -100,7 +99,6 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as AutoReviewJobStore from "./autoReview/AutoReviewJobStore.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
-import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -283,12 +281,18 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+// When a resuming client's cursor is more than this many events behind the
+// current head, skip the per-event catch-up replay and send a fresh shell
+// snapshot instead. Replaying each intervening event costs a shell refetch;
+// past this gap a single O(active-threads) snapshot is cheaper and bounded.
+// Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
+const SHELL_RESUME_MAX_GAP = 1_000;
+
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getThreadLiveness, AuthOrchestrationReadScope],
-  [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
@@ -390,6 +394,99 @@ function toAuthAccessStreamEvent(
   }
 }
 
+// Coalescing makes each projection read represent every event for that
+// aggregate in the current window. Retry a typed persistence failure once
+// so a brief read failure cannot strand the shell at its previous state.
+// If both attempts fail, log and drop the stream item; treating an error as
+// a missing row would incorrectly remove a still-active aggregate.
+const retryShellProjectionRead = <A, E>(
+  aggregateKind: "project" | "thread",
+  aggregateId: string,
+  read: Effect.Effect<A, E>,
+): Effect.Effect<Option.Option<A>, never, never> =>
+  read.pipe(
+    Effect.retry({ times: 1 }),
+    Effect.map(Option.some),
+    Effect.tapError((error) =>
+      Effect.logWarning("orchestration shell projection refetch failed", {
+        aggregateKind,
+        aggregateId,
+        error,
+      }),
+    ),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+
+const projectUpsertOrRemove = (
+  projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"],
+  projectId: ProjectId,
+  sequence: number,
+): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+  retryShellProjectionRead(
+    "project",
+    projectId,
+    projectionSnapshotQuery.getProjectShellById(projectId),
+  ).pipe(
+    Effect.map(
+      Option.flatMap((project) =>
+        Option.match(project, {
+          onNone: () =>
+            Option.some<OrchestrationShellStreamEvent>({
+              kind: "project-removed" as const,
+              sequence,
+              projectId,
+            }),
+          onSome: (nextProject) =>
+            Option.some<OrchestrationShellStreamEvent>({
+              kind: "project-upserted" as const,
+              sequence,
+              project: nextProject,
+            }),
+        }),
+      ),
+    ),
+  );
+
+// Refetch a thread's shell and emit an upsert if it is still active, or a
+// `thread-removed` if the projection has no active row for it. Emitting a
+// removal on a `none` (rather than dropping the event) is what keeps
+// coalescing correct: when a burst collapses a `thread.deleted`/`archived`
+// into a later refetchable event for the same thread, the refetch returns
+// `none` for the now-inactive row and this still tells the sidebar to drop
+// it. A `thread-removed` the client does not have is a harmless no-op. The
+// projection commits in the same transaction before the event publishes,
+// so a `none` reliably means the thread is deleted or archived, not
+// not-yet-persisted.
+const threadUpsertOrRemove = (
+  projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"],
+  threadId: ThreadId,
+  sequence: number,
+): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+  retryShellProjectionRead(
+    "thread",
+    threadId,
+    projectionSnapshotQuery.getThreadShellById(threadId),
+  ).pipe(
+    Effect.map(
+      Option.flatMap((thread) =>
+        Option.match(thread, {
+          onNone: () =>
+            Option.some<OrchestrationShellStreamEvent>({
+              kind: "thread-removed" as const,
+              sequence,
+              threadId,
+            }),
+          onSome: (nextThread) =>
+            Option.some<OrchestrationShellStreamEvent>({
+              kind: "thread-upserted" as const,
+              sequence,
+              thread: nextThread,
+            }),
+        }),
+      ),
+    ),
+  );
+
 /**
  * Map a domain event to an optional shell stream event.
  *
@@ -404,15 +501,10 @@ const toShellStreamEvent = (
   switch (event.type) {
     case "project.created":
     case "project.meta-updated":
-      return projectionSnapshotQuery.getProjectShellById(event.payload.projectId).pipe(
-        Effect.map((project) =>
-          Option.map(project, (nextProject) => ({
-            kind: "project-upserted" as const,
-            sequence: event.sequence,
-            project: nextProject,
-          })),
-        ),
-        Effect.orElseSucceed(() => Option.none()),
+      return projectUpsertOrRemove(
+        projectionSnapshotQuery,
+        event.payload.projectId,
+        event.sequence,
       );
     case "project.deleted":
       return Effect.succeed(
@@ -432,32 +524,70 @@ const toShellStreamEvent = (
         }),
       );
     case "thread.unarchived":
-      return projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
-        Effect.map((thread) =>
-          Option.map(thread, (nextThread) => ({
-            kind: "thread-upserted" as const,
-            sequence: event.sequence,
-            thread: nextThread,
-          })),
-        ),
-        Effect.orElseSucceed(() => Option.none()),
-      );
+      return threadUpsertOrRemove(projectionSnapshotQuery, event.payload.threadId, event.sequence);
     default:
       if (event.aggregateKind !== "thread") {
         return Effect.succeed(Option.none());
       }
-      return projectionSnapshotQuery.getThreadShellById(ThreadId.make(event.aggregateId)).pipe(
-        Effect.map((thread) =>
-          Option.map(thread, (nextThread) => ({
-            kind: "thread-upserted" as const,
-            sequence: event.sequence,
-            thread: nextThread,
-          })),
-        ),
-        Effect.orElseSucceed(() => Option.none()),
+      return threadUpsertOrRemove(
+        projectionSnapshotQuery,
+        ThreadId.make(event.aggregateId),
+        event.sequence,
       );
   }
 };
+
+// Turn a batch of domain events into shell stream events, coalescing by
+// aggregate first. `toShellStreamEvent` re-reads the *current* projected
+// shell for an aggregate, so within a batch only the latest event per
+// aggregate matters: a burst of streaming `thread.message-sent` deltas for
+// one thread collapses into a single shell refetch, and an unrelated
+// `thread.created` in the same batch is never stuck behind those DB reads.
+//
+// Input events arrive in ascending sequence; we keep the last (highest
+// sequence) event per aggregate, then re-sort ascending before emitting so
+// the client — which applies shell items strictly by increasing sequence
+// and drops any `sequence <= snapshotSequence` — never skips a coalesced
+// item. The refetch runs with bounded concurrency (order-preserving).
+const SHELL_REFETCH_CONCURRENCY = 8;
+const coalesceShellEvents = (
+  projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"],
+  events: ReadonlyArray<OrchestrationEvent>,
+): Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>, never, never> =>
+  Effect.gen(function* () {
+    if (events.length === 0) {
+      return [];
+    }
+    const latestByAggregate = new Map<string, OrchestrationEvent>();
+    for (const event of events) {
+      latestByAggregate.set(`${event.aggregateKind}:${event.aggregateId}`, event);
+    }
+    const survivors = Array.from(latestByAggregate.values()).sort(
+      (left, right) => left.sequence - right.sequence,
+    );
+    const shellEvents = yield* Effect.forEach(
+      survivors,
+      (event) => toShellStreamEvent(projectionSnapshotQuery, event),
+      { concurrency: SHELL_REFETCH_CONCURRENCY },
+    );
+    return shellEvents.flatMap((option) => (Option.isSome(option) ? [option.value] : []));
+  });
+
+// Small time/size window over which to coalesce shell events. The window
+// bounds the worst-case added latency for a brand-new thread to appear in
+// the sidebar (imperceptible), while collapsing high-frequency streaming
+// traffic so it can't serialize the shell stream behind per-event DB reads.
+const SHELL_COALESCE_WINDOW = Duration.millis(50);
+const SHELL_COALESCE_MAX_CHUNK = 512;
+const coalesceShellStream = <E, R>(
+  projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"],
+  stream: Stream.Stream<OrchestrationEvent, E, R>,
+): Stream.Stream<OrchestrationShellStreamEvent, E, R> =>
+  stream.pipe(
+    Stream.groupedWithin(SHELL_COALESCE_MAX_CHUNK, SHELL_COALESCE_WINDOW),
+    Stream.mapEffect((events) => coalesceShellEvents(projectionSnapshotQuery, events)),
+    Stream.flatMap((items) => Stream.fromIterable(items)),
+  );
 
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
@@ -501,8 +631,6 @@ const makeWsRpcLayer = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-      const repositoryIdentityResolver =
-        yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
@@ -651,53 +779,6 @@ const makeWsRpcLayer = (
               cause,
             });
       };
-
-      const enrichProjectEvent = (
-        event: OrchestrationEvent,
-      ): Effect.Effect<OrchestrationEvent, never, never> => {
-        switch (event.type) {
-          case "project.created":
-            return repositoryIdentityResolver.resolve(event.payload.workspaceRoot).pipe(
-              Effect.map((repositoryIdentity) => ({
-                ...event,
-                payload: {
-                  ...event.payload,
-                  repositoryIdentity,
-                },
-              })),
-            );
-          case "project.meta-updated":
-            return Effect.gen(function* () {
-              const workspaceRoot =
-                event.payload.workspaceRoot ??
-                Option.match(
-                  yield* projectionSnapshotQuery.getProjectShellById(event.payload.projectId),
-                  {
-                    onNone: () => null,
-                    onSome: (project) => project.workspaceRoot,
-                  },
-                ) ??
-                null;
-              if (workspaceRoot === null) {
-                return event;
-              }
-
-              const repositoryIdentity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
-              return {
-                ...event,
-                payload: {
-                  ...event.payload,
-                  repositoryIdentity,
-                },
-              } satisfies OrchestrationEvent;
-            }).pipe(Effect.orElseSucceed(() => event));
-          default:
-            return Effect.succeed(event);
-        }
-      };
-
-      const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
-        Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
 
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
@@ -1068,71 +1149,21 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.replayEvents]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.replayEvents,
-            Stream.runCollect(
-              orchestrationEngine.readEvents(
-                clamp(input.fromSequenceExclusive, {
-                  maximum: Number.MAX_SAFE_INTEGER,
-                  minimum: 0,
-                }),
-              ),
-            ).pipe(
-              Effect.map((events) => Array.from(events)),
-              Effect.flatMap(enrichOrchestrationEvents),
-              Effect.map((events) => events.map(projectActivityEvent)),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationReplayEventsError({
-                    message: "Failed to replay orchestration events",
-                    cause,
-                  }),
-              ),
-            ),
-            { "rpc.aggregate": "orchestration" },
-          ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
-              if (input.afterSequence !== undefined) {
-                const liveBuffer = yield* Queue.unbounded<OrchestrationShellStreamItem>();
-                yield* Effect.forkScoped(
-                  shellLiveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
-                );
-                const catchUpStream = orchestrationEngine
-                  .readEvents(input.afterSequence, Number.MAX_SAFE_INTEGER)
-                  .pipe(
-                    Stream.mapEffect((event) => toShellStreamEvent(projectionSnapshotQuery, event)),
-                    Stream.flatMap((event) =>
-                      Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
-                    ),
-                    Stream.mapError(
-                      (cause) =>
-                        new OrchestrationGetSnapshotError({
-                          message: "Failed to replay orchestration shell events",
-                          cause,
-                        }),
-                    ),
-                  );
-                const afterCatchUp =
-                  input.requestCompletionMarker === true
-                    ? Stream.concat(
-                        Stream.succeed({ kind: "synchronized" as const }),
-                        Stream.fromQueue(liveBuffer),
-                      )
-                    : Stream.fromQueue(liveBuffer);
-                return Stream.concat(catchUpStream, afterCatchUp);
-              }
-
-              // Subscribe to the shared live feed before reading the snapshot.
+              // Subscribe to the shared live feed (into a scope-bound buffer)
+              // BEFORE loading any snapshot or draining catch-up, otherwise an
+              // event published while the read is in flight is lost. Every path
+              // below emits from this same buffered live tail. Overlapping
+              // events are deduped by sequence on the client.
               const liveBuffer = yield* Queue.unbounded<OrchestrationShellStreamItem>();
               yield* Effect.forkScoped(
                 shellLiveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
               );
-              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
-              const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+
+              const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
                 Effect.tapError((cause) =>
                   Effect.logError("orchestration shell snapshot load failed", { cause }),
                 ),
@@ -1145,16 +1176,67 @@ const makeWsRpcLayer = (
                 ),
               );
 
-              const afterSnapshot =
+              // Offer the completion marker into the same queue as live items,
+              // so anything buffered while snapshot/replay work was in flight
+              // is delivered before the client is told it is synchronized.
+              // Items still inside the shared coalescing window arrive after
+              // the marker; they carry sequences the client applies normally.
+              const synchronizedThenLive =
                 input.requestCompletionMarker === true
                   ? Stream.concat(
-                      Stream.succeed({ kind: "synchronized" as const }),
-                      bufferedLiveStream,
+                      Stream.fromEffect(
+                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                      ).pipe(Stream.drain),
+                      Stream.fromQueue(liveBuffer),
                     )
-                  : bufferedLiveStream;
+                  : Stream.fromQueue(liveBuffer);
+
+              // When the client already holds a shell snapshot (cached, or
+              // loaded over HTTP) it passes that snapshot's sequence, and we
+              // resume by replaying shell events after it instead of re-sending
+              // the whole projects/threads list over the socket. If the client
+              // is too far behind, fall back to a fresh snapshot instead of an
+              // unbounded replay (see below).
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                const headSequence = yield* orchestrationEngine.latestSequence;
+                const replayGap = headSequence - afterSequence;
+                // Gap too large: replaying every intervening event (each a
+                // shell refetch) is far more expensive than a single
+                // O(active-threads) snapshot. A cursor ahead of this engine's
+                // authoritative state is also invalid, so reset it with a
+                // snapshot. Send the snapshot followed by the buffered live
+                // tail, exactly as the no-afterSequence path does.
+                if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
+                  const snapshot = yield* loadSnapshot;
+                  return Stream.concat(
+                    Stream.make({ kind: "snapshot" as const, snapshot }),
+                    synchronizedThenLive,
+                  );
+                }
+                const catchUpStream = coalesceShellStream(
+                  projectionSnapshotQuery,
+                  // Replay only through the head captured above. Newer events
+                  // are already covered by the live subscription, so this bound
+                  // cannot chase a moving event-store head or grow the live
+                  // buffer indefinitely while waiting for an empty page.
+                  orchestrationEngine.readEvents(afterSequence, replayGap),
+                ).pipe(
+                  Stream.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to replay orchestration shell events",
+                        cause,
+                      }),
+                  ),
+                );
+                return Stream.concat(catchUpStream, synchronizedThenLive);
+              }
+
+              const snapshot = yield* loadSnapshot;
               return Stream.concat(
                 Stream.make({ kind: "snapshot" as const, snapshot }),
-                afterSnapshot,
+                synchronizedThenLive,
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1877,20 +1959,19 @@ export const websocketRpcRouteLayer = Layer.unwrap(
 
     // One server-scoped domain-event → shell-stream broadcast. toShellStreamEvent
     // is connection-pure (projection lookups only), so all subscribeShell clients
-    // share this single mapped firehose instead of remapping independently.
+    // share this single mapped firehose instead of remapping independently. The
+    // firehose coalesces per aggregate over a small window so bursts of
+    // high-frequency events (streaming message deltas, activity appends)
+    // collapse into a single shell refetch and never serialize a brand-new
+    // thread's `thread.created` behind hundreds of per-event DB reads.
     const shellEventsPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<OrchestrationShellStreamEvent>(),
       (pubsub) => PubSub.shutdown(pubsub),
     );
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-        toShellStreamEvent(projectionSnapshotQuery, event).pipe(
-          Effect.flatMap((maybeShellEvent) =>
-            Option.isSome(maybeShellEvent)
-              ? PubSub.publish(shellEventsPubSub, maybeShellEvent.value).pipe(Effect.asVoid)
-              : Effect.void,
-          ),
-        ),
+      Stream.runForEach(
+        coalesceShellStream(projectionSnapshotQuery, orchestrationEngine.streamDomainEvents),
+        (shellEvent) => PubSub.publish(shellEventsPubSub, shellEvent).pipe(Effect.asVoid),
       ).pipe(
         Effect.catchCause((cause) => Effect.logError("shell event broadcaster crashed", { cause })),
         Effect.forever,

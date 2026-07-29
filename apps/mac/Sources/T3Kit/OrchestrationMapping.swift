@@ -35,6 +35,12 @@ public enum WireDate {
     public static func parse(_ iso: String) -> Date? {
         withFractional.date(from: iso) ?? whole.date(from: iso)
     }
+
+    /// Formats a `Date` as the `IsoDateTime` wire form (fractional seconds,
+    /// UTC) — the inverse of `parse` for commands that carry timestamps.
+    public static func format(_ date: Date) -> String {
+        withFractional.string(from: date)
+    }
 }
 
 /// A single, chronologically-ordered entry in a thread's UI timeline,

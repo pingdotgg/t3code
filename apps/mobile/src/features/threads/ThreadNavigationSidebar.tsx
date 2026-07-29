@@ -35,6 +35,7 @@ import {
   DEFAULT_GROUP_DISPLAY_STATE,
   homeListItemsAreEqual,
   nextGroupDisplayState,
+  resetSettledVisibleCounts,
   type HomeGroupDisplayAction,
   type HomeGroupDisplayState,
   type HomeListItem,
@@ -53,6 +54,7 @@ import {
   PendingTaskListRow,
   ThreadListGroupHeader,
   ThreadListRow,
+  ThreadListSettledShowMoreRow,
   ThreadListSettledToggleRow,
   ThreadListShowMoreRow,
 } from "./thread-list-items";
@@ -173,6 +175,8 @@ function ThreadNavigationSidebarPane(
     archiveThread,
     settleThread,
     unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     confirmDeleteThread,
     confirmArchiveThreads,
   } = useThreadListActions();
@@ -227,6 +231,15 @@ function ThreadNavigationSidebarPane(
       return next;
     });
   }, []);
+  // The settled tail pages independently per group; a deep page must not
+  // survive a scope or search change, so it resets whenever the environment
+  // filter or search query changes (HomeScreen.tsx mirrors this).
+  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${props.searchQuery.trim()}`;
+  const lastSettledResetKeyRef = useRef(settledResetKey);
+  if (lastSettledResetKeyRef.current !== settledResetKey) {
+    lastSettledResetKeyRef.current = settledResetKey;
+    setGroupDisplayStates((previous) => resetSettledVisibleCounts(previous));
+  }
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const listLayout = useMemo(
     () =>
@@ -461,6 +474,8 @@ function ThreadNavigationSidebarPane(
               onArchiveThread={archiveThread}
               onSettleThread={settleThread}
               onUnsettleThread={unsettleThread}
+              onSnoozeThread={snoozeThread}
+              onUnsnoozeThread={unsnoozeThread}
               onDeleteThread={confirmDeleteThread}
               onSelectThread={handleSelectThread}
               onSwipeableClose={handleSwipeableClose}
@@ -490,6 +505,15 @@ function ThreadNavigationSidebarPane(
               onGroupAction={updateGroupDisplay}
             />
           );
+        case "settled-show-more":
+          return (
+            <ThreadListSettledShowMoreRow
+              variant="sidebar"
+              hiddenCount={item.hiddenCount}
+              groupKey={item.groupKey}
+              onGroupAction={updateGroupDisplay}
+            />
+          );
       }
     },
     [
@@ -507,7 +531,9 @@ function ThreadNavigationSidebarPane(
       savedConnectionsById,
       settleThread,
       sidebarScrollGesture,
+      snoozeThread,
       unsettleThread,
+      unsnoozeThread,
       updateGroupDisplay,
     ],
   );

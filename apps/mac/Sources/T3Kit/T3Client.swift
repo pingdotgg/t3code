@@ -48,9 +48,32 @@ public struct EmptyPayload: Encodable, Sendable {
 }
 
 /// `orchestration.subscribeThread` input (`OrchestrationSubscribeThreadInput`).
+/// `afterSequence` resumes from a held snapshot/tail: the server replays only
+/// persisted events after that sequence instead of a full snapshot frame.
+/// `requestCompletionMarker` asks for a `synchronized` item once the catch-up
+/// replay has drained.
 public struct OrchestrationSubscribeThreadInput: Encodable, Sendable {
     public var threadId: String
-    public init(threadId: String) { self.threadId = threadId }
+    public var afterSequence: Int?
+    public var requestCompletionMarker: Bool?
+    public init(
+        threadId: String, afterSequence: Int? = nil, requestCompletionMarker: Bool? = nil
+    ) {
+        self.threadId = threadId
+        self.afterSequence = afterSequence
+        self.requestCompletionMarker = requestCompletionMarker
+    }
+}
+
+/// `orchestration.subscribeShell` input. Same resume semantics as the thread
+/// input; a resume gap past the server's cap falls back to a fresh snapshot.
+public struct OrchestrationSubscribeShellInput: Encodable, Sendable {
+    public var afterSequence: Int?
+    public var requestCompletionMarker: Bool?
+    public init(afterSequence: Int? = nil, requestCompletionMarker: Bool? = nil) {
+        self.afterSequence = afterSequence
+        self.requestCompletionMarker = requestCompletionMarker
+    }
 }
 
 /// `orchestration.getArchivedShellSnapshot` input. Both fields optional:
@@ -212,12 +235,6 @@ public actor T3Client {
             OrchestrationGetThreadLivenessInput(threadId: threadId))
     }
 
-    public func replayEvents(fromSequenceExclusive: Int) async throws -> [OrchestrationEvent] {
-        try await call(
-            "orchestration.replayEvents",
-            OrchestrationReplayEventsInput(fromSequenceExclusive: fromSequenceExclusive))
-    }
-
     public func getArchivedShellSnapshot(
         cursor: Int? = nil, limit: Int? = nil
     ) async throws -> OrchestrationShellSnapshot {
@@ -228,15 +245,32 @@ public actor T3Client {
 
     /// Snapshot-then-live-tail (§4.2): first item is `.snapshot`, then
     /// `.event(...)` deltas for every project/thread. Re-issue after every
-    /// reconnect (§4.3) — there is no resume token.
-    public func subscribeShell() -> AsyncThrowingStream<OrchestrationShellStreamItem, Error> {
-        streamCall("orchestration.subscribeShell", EmptyPayload())
+    /// reconnect (§4.3). Passing `afterSequence` resumes from a held tail:
+    /// the server replays only shell events after that sequence (or falls
+    /// back to a fresh snapshot when the gap is past its cap), instead of
+    /// re-sending the whole projects/threads list.
+    public func subscribeShell(
+        afterSequence: Int? = nil, requestCompletionMarker: Bool? = nil
+    ) -> AsyncThrowingStream<OrchestrationShellStreamItem, Error> {
+        streamCall(
+            "orchestration.subscribeShell",
+            OrchestrationSubscribeShellInput(
+                afterSequence: afterSequence, requestCompletionMarker: requestCompletionMarker))
     }
 
     /// Snapshot-then-live-tail for one thread's detail (messages, activities,
-    /// proposed plans, checkpoints, session).
-    public func subscribeThread(threadId: String) -> AsyncThrowingStream<OrchestrationThreadStreamItem, Error> {
-        streamCall("orchestration.subscribeThread", OrchestrationSubscribeThreadInput(threadId: threadId))
+    /// proposed plans, checkpoints, session). Passing `afterSequence` resumes
+    /// an interrupted subscription without a snapshot frame: the server
+    /// replays only persisted events after that sequence — the caller must
+    /// still hold the detail state that sequence describes.
+    public func subscribeThread(
+        threadId: String, afterSequence: Int? = nil, requestCompletionMarker: Bool? = nil
+    ) -> AsyncThrowingStream<OrchestrationThreadStreamItem, Error> {
+        streamCall(
+            "orchestration.subscribeThread",
+            OrchestrationSubscribeThreadInput(
+                threadId: threadId, afterSequence: afterSequence,
+                requestCompletionMarker: requestCompletionMarker))
     }
 
     // MARK: - Command convenience wrappers
@@ -334,6 +368,21 @@ public actor T3Client {
     public func unsettleThread(threadId: String) async throws -> DispatchResult {
         try await dispatch(
             .threadUnsettle(ThreadUnsettleCommand(commandId: T3Ids.newCommandId(), threadId: threadId, reason: "user")))
+    }
+
+    /// `snoozedUntil` is the ISO-8601 wake time (`T3Clock.nowISO8601()` format).
+    @discardableResult
+    public func snoozeThread(threadId: String, snoozedUntil: String) async throws -> DispatchResult {
+        try await dispatch(
+            .threadSnooze(
+                ThreadSnoozeCommand(
+                    commandId: T3Ids.newCommandId(), threadId: threadId, snoozedUntil: snoozedUntil)))
+    }
+
+    @discardableResult
+    public func unsnoozeThread(threadId: String) async throws -> DispatchResult {
+        try await dispatch(
+            .threadUnsnooze(ThreadUnsnoozeCommand(commandId: T3Ids.newCommandId(), threadId: threadId)))
     }
 
     @discardableResult

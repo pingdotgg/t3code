@@ -31,6 +31,7 @@ import {
   PendingTaskListRow,
   ThreadListGroupHeader,
   ThreadListRow,
+  ThreadListSettledShowMoreRow,
   ThreadListSettledToggleRow,
   ThreadListShowMoreRow,
 } from "../threads/thread-list-items";
@@ -40,6 +41,7 @@ import {
   DEFAULT_GROUP_DISPLAY_STATE,
   homeListItemsAreEqual,
   nextGroupDisplayState,
+  resetSettledVisibleCounts,
   type HomeGroupDisplayAction,
   type HomeGroupDisplayState,
   type HomeListItem,
@@ -79,6 +81,8 @@ interface HomeScreenProps {
   readonly onArchiveSettledThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
+  readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -179,6 +183,16 @@ export function HomeScreen(props: HomeScreenProps) {
       return next;
     });
   }, []);
+
+  // The settled tail pages independently per group; a deep page must not
+  // survive a scope or search change, so it resets whenever the environment
+  // filter or search query changes.
+  const settledResetKey = `${props.selectedEnvironmentId ?? "all"}:${props.searchQuery.trim()}`;
+  const lastSettledResetKeyRef = useRef(settledResetKey);
+  if (lastSettledResetKeyRef.current !== settledResetKey) {
+    lastSettledResetKeyRef.current = settledResetKey;
+    setGroupDisplayStates((previous) => resetSettledVisibleCounts(previous));
+  }
 
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
     if (openSwipeableRef.current !== methods) {
@@ -297,6 +311,8 @@ export function HomeScreen(props: HomeScreenProps) {
               onArchiveThread={props.onArchiveThread}
               onSettleThread={props.onSettleThread}
               onUnsettleThread={props.onUnsettleThread}
+              onSnoozeThread={props.onSnoozeThread}
+              onUnsnoozeThread={props.onUnsnoozeThread}
               onDeleteThread={props.onDeleteThread}
               onSelectThread={props.onSelectThread}
               onSwipeableClose={handleSwipeableClose}
@@ -325,6 +341,15 @@ export function HomeScreen(props: HomeScreenProps) {
               onGroupAction={updateGroupDisplay}
             />
           );
+        case "settled-show-more":
+          return (
+            <ThreadListSettledShowMoreRow
+              variant="compact"
+              hiddenCount={item.hiddenCount}
+              groupKey={item.groupKey}
+              onGroupAction={updateGroupDisplay}
+            />
+          );
       }
     },
     [
@@ -339,6 +364,8 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectThread,
       props.onSettleThread,
       props.onUnsettleThread,
+      props.onSnoozeThread,
+      props.onUnsnoozeThread,
       props.savedConnectionsById,
       updateGroupDisplay,
     ],

@@ -418,6 +418,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     get streamDomainEvents(): OrchestrationEngineShape["streamDomainEvents"] {
       return Stream.fromPubSub(eventPubSub);
     },
+    // The command read model's snapshotSequence tracks the latest committed
+    // event sequence (updated on the worker fiber). A plain property read is a
+    // consistent, committed value — reassignment of `commandReadModel` is
+    // atomic on the single-threaded event loop.
+    latestSequence: Effect.sync(() => commandReadModel.snapshotSequence),
     streamThreadEvents,
     /** @internal Test-only: number of live per-thread event buses. */
     threadEventBusCount: () => SynchronizedRef.getUnsafe(threadEventBuses).size,

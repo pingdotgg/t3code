@@ -14,14 +14,19 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
-import { resolveThreadListPrimaryAction } from "../../lib/threadInbox";
+import {
+  canSnoozeThread,
+  isThreadSnoozed,
+  resolveThreadListPrimaryAction,
+} from "../../lib/threadInbox";
+import { resolveSnoozePresets, snoozeWakeDescription } from "../../lib/threadSnooze";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { SceneryImage } from "../scenery/SceneryImage";
 import { useSceneryPhoto, useThreadDisplayNames } from "../scenery/use-scenery";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useThreadHealth } from "../../state/use-thread-health";
-import type { HomeGroupDisplayAction } from "../home/homeListItems";
+import { HOME_SETTLED_PAGE_COUNT, type HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
 
@@ -299,6 +304,76 @@ export const ThreadListSettledToggleRow = memo(function ThreadListSettledToggleR
   );
 });
 
+/* ─── Settled tail "Show more" row ───────────────────────────────────── */
+
+/**
+ * Pages the revealed settled tail (upstream Thread List v2 parity): the
+ * disclosure opens onto `HOME_SETTLED_INITIAL_COUNT` rows, and this row reveals
+ * `HOME_SETTLED_PAGE_COUNT` more per tap. Unlike `ThreadListShowMoreRow` there
+ * is no "show less" — the settled tail only grows once opened, matching
+ * upstream's one-directional paging.
+ */
+export const ThreadListSettledShowMoreRow = memo(function ThreadListSettledShowMoreRow(props: {
+  readonly variant: ThreadListVariant;
+  readonly hiddenCount: number;
+  readonly groupKey: string;
+  readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
+}) {
+  const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const compact = props.variant === "compact";
+  const { groupKey, onGroupAction } = props;
+  const handleShowMore = useCallback(
+    () => onGroupAction(groupKey, "show-more-settled"),
+    [groupKey, onGroupAction],
+  );
+
+  return (
+    <View
+      className={
+        compact ? "flex-row items-center gap-2.5 bg-screen" : "flex-row items-center gap-2"
+      }
+      style={{
+        paddingLeft: compact ? THREAD_LIST_COMPACT_INSET : 12,
+        paddingRight: compact ? 18 : 12,
+        paddingVertical: compact ? 12 : 8,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Show ${Math.min(props.hiddenCount, HOME_SETTLED_PAGE_COUNT)} more settled threads`}
+        className="rounded-full bg-subtle"
+        hitSlop={6}
+        onPress={handleShowMore}
+        style={({ pressed }) => ({
+          opacity: pressed ? 0.6 : 1,
+          paddingHorizontal: compact ? 14 : 12,
+          paddingVertical: compact ? 7 : 6,
+          borderCurve: "continuous",
+        })}
+      >
+        <View className="flex-row items-center gap-1.5">
+          <SymbolView
+            name="chevron.down"
+            size={10}
+            tintColor={iconSubtleColor}
+            type="monochrome"
+            weight="semibold"
+          />
+          <Text
+            className={
+              compact
+                ? "text-sm font-t3-medium text-foreground-muted"
+                : "text-xs font-t3-medium text-foreground-muted"
+            }
+          >
+            Show more ({props.hiddenCount} settled hidden)
+          </Text>
+        </View>
+      </Pressable>
+    </View>
+  );
+});
+
 /* ─── Pending task row ───────────────────────────────────────────────── */
 
 const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
@@ -521,6 +596,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread?: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread?: (thread: EnvironmentThreadShell) => void;
+  readonly onSnoozeThread?: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
+  readonly onUnsnoozeThread?: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
@@ -552,6 +629,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     onArchiveThread,
     onSettleThread,
     onUnsettleThread,
+    onSnoozeThread,
+    onUnsnoozeThread,
     onDeleteThread,
   } = props;
   const threadKey = scopedThreadKey(thread.environmentId, thread.id);
@@ -577,6 +656,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const rowAccessibilityLabel = [
     names.description !== null ? `${names.primary}, ${names.description}` : names.primary,
     status?.kind === "stalled" ? "Stalled — no recent activity" : null,
+    isThreadSnoozed(thread) ? "Snoozed" : null,
   ]
     .filter((part): part is string => part !== null)
     .join(", ");
@@ -587,6 +667,15 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
     Boolean(part),
   );
+  // Snoozed rows only ever render in the settled disclosure (homeThreadList's
+  // isThreadOutOfInbox partition) but the row itself doesn't know that — it
+  // derives the hint straight from the thread the same way it derives status.
+  const isSnoozed = isThreadSnoozed(thread);
+  const snoozedUntil = thread.snoozedUntil ?? null;
+  const snoozedHint =
+    isSnoozed && snoozedUntil !== null
+      ? `Snoozed until ${snoozeWakeDescription(snoozedUntil, new Date())}`
+      : null;
 
   const backgroundColor = compact ? screenColor : drawerColor;
   const effectiveForeground = selected ? selectedForegroundColor : foregroundColor;
@@ -601,6 +690,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
   const handleSettle = useCallback(() => onSettleThread?.(thread), [onSettleThread, thread]);
   const handleUnsettle = useCallback(() => onUnsettleThread?.(thread), [onUnsettleThread, thread]);
+  const handleUnsnooze = useCallback(() => onUnsnoozeThread?.(thread), [onUnsnoozeThread, thread]);
+  const handleSnoozePreset = useCallback(
+    (snoozedUntilIso: string) => onSnoozeThread?.(thread, snoozedUntilIso),
+    [onSnoozeThread, thread],
+  );
   // Swipe primary by lifecycle state (mac context-menu parity): settled rows
   // offer "Mark as Active", settleable active rows offer "Settle", and rows
   // the inbox semantics refuse to settle (running, pending approval/input)
@@ -654,17 +748,52 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         attributes: primaryActionKind === "settle" ? undefined : { disabled: true },
       });
     }
+    // Wake mirrors Unsettle/Settle's pairing: a snoozed row offers "Wake",
+    // everything else offers "Snooze" with preset wake times as a sub-menu
+    // (disabled — not hidden — when the inbox semantics refuse it, same
+    // convention as the disabled "Settle Thread" above).
+    if (isSnoozed && onUnsnoozeThread) {
+      actions.push({ id: "unsnooze", title: "Wake", image: "sun.max" });
+    } else if (onSnoozeThread) {
+      actions.push({
+        id: "snooze",
+        title: "Snooze",
+        image: "moon",
+        attributes: canSnoozeThread(thread) ? undefined : { disabled: true },
+        subactions: resolveSnoozePresets(new Date()).map((preset) => ({
+          id: `snooze:${preset.id}`,
+          title: preset.label,
+          subtitle: preset.whenLabel,
+        })),
+      });
+    }
     actions.push(THREAD_ROW_MENU_ARCHIVE_ACTION, THREAD_ROW_MENU_DELETE_ACTION);
     return actions;
-  }, [onSettleThread, onUnsettleThread, primaryActionKind]);
+  }, [
+    isSnoozed,
+    onSettleThread,
+    onSnoozeThread,
+    onUnsettleThread,
+    onUnsnoozeThread,
+    primaryActionKind,
+    thread,
+  ]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
+      if (nativeEvent.event === "unsnooze") handleUnsnooze();
+      if (nativeEvent.event.startsWith("snooze:")) {
+        const presetId = nativeEvent.event.slice("snooze:".length);
+        const preset = resolveSnoozePresets(new Date()).find(
+          (candidate) => candidate.id === presetId,
+        );
+        if (preset) handleSnoozePreset(preset.snoozedUntil);
+      }
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleArchive, handleDelete, handleSettle, handleUnsettle],
+    [handleArchive, handleDelete, handleSettle, handleSnoozePreset, handleUnsettle, handleUnsnooze],
   );
 
   const statusPill = effectiveStatus ? (
@@ -727,6 +856,27 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       </Text>
     ) : null;
 
+  // Snoozed rows only ever appear in the settled disclosure — a minimal
+  // moon + wake-time hint, styled like subtitleRow, so the row still reads
+  // as "why is this here" without a second status pill.
+  const snoozedRow = snoozedHint ? (
+    <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
+      <SymbolView
+        name="moon.fill"
+        size={10}
+        tintColor={compact ? iconSubtleColor : effectiveMuted}
+        type="monochrome"
+      />
+      <Text
+        className={compact ? "text-sm text-foreground-muted" : "text-xs"}
+        numberOfLines={1}
+        style={compact ? undefined : { color: effectiveMuted }}
+      >
+        {snoozedHint}
+      </Text>
+    </View>
+  ) : null;
+
   const rowContent = (close: () => void) =>
     compact ? (
       <Pressable
@@ -785,6 +935,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 </View>
               </View>
               {descriptionRow}
+              {snoozedRow}
               {subtitleRow}
             </View>
           </View>
@@ -844,6 +995,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               </View>
             </View>
             {descriptionRow}
+            {snoozedRow}
             {subtitleRow}
           </View>
         </View>

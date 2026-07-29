@@ -87,6 +87,10 @@ public protocol BackendService: Sendable {
     func unarchiveThread(id: String) async throws
     func settleThread(id: String) async throws
     func unsettleThread(id: String) async throws
+    /// Suppress the thread from the inbox until `until`; the server clears the
+    /// snooze early when real activity arrives.
+    func snoozeThread(id: String, until: Date) async throws
+    func unsnoozeThread(id: String) async throws
     func deleteThread(id: String) async throws
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     /// Short-lived HTTP URL for a persisted chat attachment image

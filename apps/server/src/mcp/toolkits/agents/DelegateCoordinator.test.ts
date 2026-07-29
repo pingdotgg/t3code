@@ -183,6 +183,7 @@ const makeCoordinator = (options?: {
         return { sequence: dispatched.length };
       }),
     streamDomainEvents: Stream.never,
+    latestSequence: Effect.succeed(0),
     streamThreadEvents: () => Stream.never,
   });
 

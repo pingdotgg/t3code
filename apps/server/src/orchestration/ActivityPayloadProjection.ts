@@ -104,6 +104,31 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
 }
 
+/**
+ * Image view items carry the on-disk path both clients need to render the
+ * output gallery. The generated image itself also rides along in `result` as
+ * base64 — that stays pruned, since it is megabytes per activity and no client
+ * reads it.
+ */
+function projectImageViewData(data: Record<string, unknown>): Record<string, unknown> | undefined {
+  const item = asRecord(data.item);
+  if (!item) {
+    return undefined;
+  }
+  if (item.type !== "imageView" && item.type !== "imageGeneration") {
+    return undefined;
+  }
+
+  const projectedItem: Record<string, unknown> = { type: item.type };
+  if (asTrimmedString(item.path)) {
+    projectedItem.path = item.path;
+  }
+  if (asTrimmedString(item.savedPath)) {
+    projectedItem.savedPath = item.savedPath;
+  }
+  return Object.keys(projectedItem).length > 1 ? projectedItem : undefined;
+}
+
 function summarizeToolTextOutput(value: string): string | null {
   const lines: string[] = [];
   for (const rawLine of value.split(/\r?\n/u)) {
@@ -165,7 +190,7 @@ export function projectActivityPayload(
   }
 
   const projectedData: Record<string, unknown> = {};
-  const item = projectCommandData(data);
+  const item = projectCommandData(data) ?? projectImageViewData(data);
   if (item) {
     projectedData.item = item;
   }
@@ -200,6 +225,52 @@ export function projectActivityPayload(
   };
 }
 
+/**
+ * Matches the validity rule in the web client's
+ * `deriveLatestContextWindowSnapshot`: rows without a finite, non-negative
+ * `usedTokens` are skipped during its backward walk, so they must not shadow
+ * an earlier resolvable row here.
+ */
+function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "context-window.updated") {
+    return false;
+  }
+  const payload = asRecord(activity.payload);
+  const usedTokens = payload?.usedTokens;
+  return typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0;
+}
+
+/**
+ * Drops all but the last resolvable context-window activity per turn from a
+ * snapshot. Clients only ever read the latest usage value (walking the array
+ * backwards), so shipping the full history — often thousands of rows on long
+ * threads — buys nothing. Retention is per turn rather than per thread because
+ * a live `thread.reverted` makes the client discard whole turns; keeping each
+ * turn's latest row means the meter can still resolve a value from the turns
+ * that survive. Malformed rows pass through untouched rather than shadowing a
+ * valid earlier row. Live `thread.activity-appended` events are untouched:
+ * newer updates still stream through and supersede the retained rows on the
+ * client.
+ */
+function dropStaleContextWindowActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  const latestIndexByTurn = new Map<string | null, number>();
+  for (let index = 0; index < activities.length; index += 1) {
+    if (isResolvableContextWindowActivity(activities[index]!)) {
+      latestIndexByTurn.set(activities[index]!.turnId, index);
+    }
+  }
+  if (latestIndexByTurn.size === 0) {
+    return activities;
+  }
+  return activities.filter(
+    (activity, index) =>
+      !isResolvableContextWindowActivity(activity) ||
+      latestIndexByTurn.get(activity.turnId) === index,
+  );
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
 ): OrchestrationThreadDetailSnapshot {
@@ -207,7 +278,9 @@ export function projectThreadDetailSnapshot(
     ...snapshot,
     thread: {
       ...snapshot.thread,
-      activities: snapshot.thread.activities.map(projectActivityPayload),
+      activities: dropStaleContextWindowActivities(snapshot.thread.activities).map(
+        projectActivityPayload,
+      ),
     },
   };
 }

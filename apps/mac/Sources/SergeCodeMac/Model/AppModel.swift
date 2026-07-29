@@ -2445,6 +2445,22 @@ public final class AppModel {
         }
     }
 
+    public func snoozeThread(_ thread: ChatThread, until: Date) async {
+        do {
+            try await backend.snoozeThread(id: thread.id, until: until)
+        } catch {
+            report(error)
+        }
+    }
+
+    public func unsnoozeThread(_ thread: ChatThread) async {
+        do {
+            try await backend.unsnoozeThread(id: thread.id)
+        } catch {
+            report(error)
+        }
+    }
+
     public func deleteThread(_ thread: ChatThread) async {
         do {
             try await backend.deleteThread(id: thread.id)

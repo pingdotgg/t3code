@@ -55,6 +55,15 @@ enum ThreadInboxSemantics {
         return activity < now.addingTimeInterval(-TimeInterval(days) * 86_400)
     }
 
+    /// Snooze is an overlay on the active lifecycle: a snoozed thread stays
+    /// "active" on the wire and is only suppressed until `snoozedUntil`
+    /// passes. Timer wakes emit no event — a passed wake time simply stops
+    /// classifying as snoozed on the next evaluation.
+    static func isSnoozed(_ thread: ChatThread, now: Date = Date()) -> Bool {
+        guard let until = thread.snoozedUntil else { return false }
+        return until > now
+    }
+
     static func settledTimestamp(_ thread: ChatThread) -> Date {
         thread.settledAt ?? lastActivityAt(thread) ?? thread.updatedAt
     }
@@ -73,5 +82,35 @@ enum ThreadInboxSemantics {
             if left != right { return left > right }
             return $0.id < $1.id
         }
+    }
+}
+
+/// Preset wake times for the sidebar's Snooze submenu. Pure computation from
+/// `now` so tests can pin the clock.
+struct SnoozePreset: Identifiable {
+    let id: String
+    let title: String
+    let icon: String
+    let until: Date
+
+    static func presets(now: Date, calendar: Calendar = .current) -> [SnoozePreset] {
+        var result: [SnoozePreset] = [
+            SnoozePreset(id: "hour", title: "In 1 Hour", icon: "clock", until: now.addingTimeInterval(3600)),
+            SnoozePreset(
+                id: "evening", title: "In 3 Hours", icon: "clock.badge",
+                until: now.addingTimeInterval(3 * 3600)),
+        ]
+        if let tomorrowStart = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)),
+            let tomorrowMorning = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrowStart)
+        {
+            result.append(
+                SnoozePreset(
+                    id: "tomorrow", title: "Tomorrow 9 AM", icon: "sunrise", until: tomorrowMorning))
+            if let nextWeek = calendar.date(byAdding: .day, value: 7, to: tomorrowMorning) {
+                result.append(
+                    SnoozePreset(id: "week", title: "In a Week", icon: "calendar", until: nextWeek))
+            }
+        }
+        return result
     }
 }

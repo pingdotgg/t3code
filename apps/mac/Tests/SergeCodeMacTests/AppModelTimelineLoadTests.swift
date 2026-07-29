@@ -220,6 +220,8 @@ private final class BlockingTimelineBackend: BackendService, @unchecked Sendable
     func unarchiveThread(id: String) async throws {}
     func settleThread(id: String) async throws {}
     func unsettleThread(id: String) async throws {}
+    func snoozeThread(id: String, until: Date) async throws {}
+    func unsnoozeThread(id: String) async throws {}
     func deleteThread(id: String) async throws {}
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     {}

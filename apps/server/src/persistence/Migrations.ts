@@ -52,6 +52,7 @@ import Migration0036 from "./Migrations/036_ProjectionThreadsParentThreadId.ts";
 import Migration0037 from "./Migrations/037_ProjectionThreadsSettled.ts";
 import Migration0038 from "./Migrations/038_ProjectionThreadsAutoReviewPhase.ts";
 import Migration0039 from "./Migrations/039_ProjectionThreadsExecutorMaxSubAgents.ts";
+import Migration0040 from "./Migrations/040_ProjectionThreadsSnoozed.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -103,6 +104,7 @@ export const migrationEntries = [
   [37, "ProjectionThreadsSettled", Migration0037],
   [38, "ProjectionThreadsAutoReviewPhase", Migration0038],
   [39, "ProjectionThreadsExecutorMaxSubAgents", Migration0039],
+  [40, "ProjectionThreadsSnoozed", Migration0040],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

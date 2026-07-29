@@ -10,13 +10,22 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { HomeThreadGroup } from "./homeThreadList";
 
-type ThreadListAction = "archive" | "unarchive" | "settle" | "unsettle" | "delete";
+type ThreadListAction =
+  | "archive"
+  | "unarchive"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze"
+  | "delete";
 
 const ACTION_PAST_TENSE: Record<ThreadListAction, string> = {
   archive: "archived",
   unarchive: "unarchived",
   settle: "settled",
   unsettle: "marked as active",
+  snooze: "snoozed",
+  unsnooze: "woken",
   delete: "deleted",
 };
 
@@ -39,6 +48,8 @@ function actionFailureTitle(action: ThreadListAction): string {
   if (action === "unarchive") return "Could not unarchive thread";
   if (action === "settle") return "Could not settle thread";
   if (action === "unsettle") return "Could not mark thread as active";
+  if (action === "snooze") return "Could not snooze thread";
+  if (action === "unsnooze") return "Could not wake thread";
   return "Could not delete thread";
 }
 
@@ -64,10 +75,17 @@ function useThreadActionExecutor(
   const unarchiveMutation = useAtomCommand(threadEnvironment.unarchive, { reportFailure: false });
   const settleMutation = useAtomCommand(threadEnvironment.settle, { reportFailure: false });
   const unsettleMutation = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
+  const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
+  const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
 
   const executeAction = useCallback(
-    async (action: ThreadListAction, thread: EnvironmentThreadShell) => {
+    async (
+      action: ThreadListAction,
+      thread: EnvironmentThreadShell,
+      /** Wake time for "snooze"; ignored by every other action. */
+      snoozedUntil?: string,
+    ) => {
       const key = scopedThreadKey(thread.environmentId, thread.id);
       if (inFlightThreadKeys.current.has(key)) {
         return;
@@ -87,16 +105,29 @@ function useThreadActionExecutor(
                   environmentId: thread.environmentId,
                   input: { threadId: thread.id, reason: "user" },
                 })
-              : await (
-                  action === "archive"
-                    ? archiveMutation
-                    : action === "unarchive"
-                      ? unarchiveMutation
-                      : deleteMutation
-                )({
-                  environmentId: thread.environmentId,
-                  input: { threadId: thread.id },
-                });
+              : action === "snooze"
+                ? await snoozeMutation({
+                    environmentId: thread.environmentId,
+                    input: {
+                      threadId: thread.id,
+                      snoozedUntil: snoozedUntil ?? new Date().toISOString(),
+                    },
+                  })
+                : action === "unsnooze"
+                  ? await unsnoozeMutation({
+                      environmentId: thread.environmentId,
+                      input: { threadId: thread.id, reason: "user" },
+                    })
+                  : await (
+                      action === "archive"
+                        ? archiveMutation
+                        : action === "unarchive"
+                          ? unarchiveMutation
+                          : deleteMutation
+                    )({
+                      environmentId: thread.environmentId,
+                      input: { threadId: thread.id },
+                    });
         if (result._tag === "Failure") {
           Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return;
@@ -112,8 +143,10 @@ function useThreadActionExecutor(
       inFlightThreadKeys,
       onCompleted,
       settleMutation,
+      snoozeMutation,
       unarchiveMutation,
       unsettleMutation,
+      unsnoozeMutation,
     ],
   );
 
@@ -216,6 +249,8 @@ export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => void;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => void;
+  readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
+  readonly unsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmArchiveThreads: (threads: ReadonlyArray<EnvironmentThreadShell>) => void;
 } {
@@ -245,6 +280,20 @@ export function useThreadListActions(): {
     [executeAction],
   );
 
+  const snoozeThread = useCallback(
+    (thread: EnvironmentThreadShell, snoozedUntil: string) => {
+      void executeAction("snooze", thread, snoozedUntil);
+    },
+    [executeAction],
+  );
+
+  const unsnoozeThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      void executeAction("unsnooze", thread);
+    },
+    [executeAction],
+  );
+
   const confirmDeleteThread = useConfirmDeleteThread(executeAction);
   const confirmArchiveThreads = useConfirmArchiveThreads(inFlightThreadKeys);
 
@@ -252,6 +301,8 @@ export function useThreadListActions(): {
     archiveThread,
     settleThread,
     unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     confirmDeleteThread,
     confirmArchiveThreads,
   };

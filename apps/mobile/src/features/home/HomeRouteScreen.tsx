@@ -31,6 +31,8 @@ export function HomeRouteScreen() {
     archiveThread,
     settleThread,
     unsettleThread,
+    snoozeThread,
+    unsnoozeThread,
     confirmDeleteThread,
     confirmArchiveThreads,
   } = useThreadListActions();
@@ -115,6 +117,8 @@ export function HomeRouteScreen() {
         onDeleteThread={confirmDeleteThread}
         onSettleThread={settleThread}
         onUnsettleThread={unsettleThread}
+        onSnoozeThread={snoozeThread}
+        onUnsnoozeThread={unsnoozeThread}
         onEnvironmentChange={setSelectedEnvironmentId}
         onOpenEnvironments={() =>
           navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })

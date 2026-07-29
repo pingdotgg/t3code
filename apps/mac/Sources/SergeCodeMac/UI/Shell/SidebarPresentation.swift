@@ -254,6 +254,7 @@ enum SidebarProjection {
                 $0.thread,
                 now: now,
                 changeRequestState: $0.vcs?.prState)
+                && !ThreadInboxSemantics.isSnoozed($0.thread, now: now)
         }
         // Duplicate thread IDs can appear when the same backend is paired as
         // both the local server and a remote device; keep the first offset.
@@ -274,10 +275,15 @@ enum SidebarProjection {
         var active: [SidebarThreadItem] = []
         var settled: [SidebarThreadItem] = []
         for item in group.threads {
+            // Snoozed threads ride the settled disclosure: snooze is an
+            // overlay that suppresses a still-active thread from the inbox
+            // until snoozedUntil passes (timer wakes emit no event) or the
+            // server clears it on activity.
             if ThreadInboxSemantics.effectiveSettled(
                 item.thread,
                 now: now,
                 changeRequestState: item.vcs?.prState)
+                || ThreadInboxSemantics.isSnoozed(item.thread, now: now)
             {
                 settled.append(item)
             } else {
