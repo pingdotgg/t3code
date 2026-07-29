@@ -78,31 +78,20 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     if (!content) {
       return;
     }
-    const selectedButton = Array.from(
+    const selectedItem = Array.from(
       content.querySelectorAll<HTMLElement>("[data-model-picker-provider]"),
-    ).find((button) => button.dataset.modelPickerProvider === props.selectedInstanceId);
-    if (!selectedButton) {
+    ).find((item) => item.dataset.modelPickerProvider === props.selectedInstanceId);
+    if (!selectedItem) {
       setSelectedIndicatorTop(null);
       return;
     }
-    const contentRect = content.getBoundingClientRect();
-    const selectedButtonRect = selectedButton.getBoundingClientRect();
-    setSelectedIndicatorTop(
-      selectedButtonRect.top -
-        contentRect.top +
-        content.scrollTop +
-        selectedButtonRect.height / 2 -
-        10,
-    );
+    setSelectedIndicatorTop(selectedItem.offsetTop + selectedItem.offsetHeight / 2 - 10);
   }, [props.instanceEntries, props.selectedInstanceId, showFavorites]);
 
   return (
-    <div className="w-12 shrink-0 overflow-hidden bg-muted/60" data-model-picker-sidebar="true">
+    <div className="w-11 shrink-0 overflow-hidden bg-muted/30" data-model-picker-sidebar="true">
       <div className="h-full overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div
-          ref={sidebarContentRef}
-          className="relative flex min-h-full flex-col gap-1 px-1 pb-1 pt-0.5"
-        >
+        <div ref={sidebarContentRef} className="relative flex min-h-full flex-col gap-1 p-1">
           {selectedIndicatorTop !== null ? (
             <div
               data-model-picker-selected-indicator="true"
@@ -115,18 +104,17 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           ) : null}
           {/* Favorites section */}
           {showFavorites ? (
-            <div className="mb-1 pb-1">
-              <div className="relative w-full">
+            <>
+              <div className="relative w-full" data-model-picker-provider="favorites">
                 <Tooltip>
                   <TooltipTrigger
                     render={
                       <button
                         className={cn(
-                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-muted",
+                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:outline-none",
                         )}
                         onClick={() => handleSelect("favorites")}
                         type="button"
-                        data-model-picker-provider="favorites"
                         aria-label="Favorites"
                       >
                         <StarIcon className="size-5 fill-current shrink-0" aria-hidden />
@@ -143,7 +131,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   </TooltipPopup>
                 </Tooltip>
               </div>
-            </div>
+              <div className="border-b border-border/70" aria-hidden="true" />
+            </>
           ) : null}
 
           {/* Instance buttons (one per configured instance — built-in + custom) */}
@@ -167,9 +156,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
 
             const button = (
               <button
-                data-model-picker-provider={entry.instanceId}
                 className={cn(
-                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-muted",
+                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:outline-none",
                   isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                 )}
                 data-provider-accent-color={entry.accentColor}
@@ -225,7 +213,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             );
 
             return (
-              <div key={entry.instanceId} className="relative w-full">
+              <div
+                key={entry.instanceId}
+                className="relative w-full"
+                data-model-picker-provider={entry.instanceId}
+              >
                 <Tooltip>
                   <TooltipTrigger render={trigger} />
                   <TooltipPopup

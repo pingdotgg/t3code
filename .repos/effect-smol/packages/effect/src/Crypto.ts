@@ -1,55 +1,11 @@
 /**
- * The `Crypto` module provides a platform-agnostic service for cryptographic
- * operations. Runtime packages such as `@effect/platform-node`,
- * `@effect/platform-bun`, and `@effect/platform-browser` provide concrete
- * implementations backed by the host platform's cryptography APIs.
+ * Defines a platform-independent service for cryptographic operations.
  *
- * Use `Crypto` for cryptographic randomness, UUID generation, random values,
- * and message digests. The base `Random` service is not cryptographically
- * secure unless you replace it with a cryptographically secure implementation.
- *
- * **Example** (Providing a test Crypto service)
- *
- * ```ts
- * import { Console, Crypto, Effect, Layer } from "effect"
- *
- * const TestCrypto = Layer.succeed(
- *   Crypto.Crypto,
- *   Crypto.make({
- *     randomBytes: (size) => new Uint8Array(size),
- *     digest: (_algorithm, data) => Effect.succeed(data)
- *   })
- * )
- *
- * const program = Effect.gen(function*() {
- *   const crypto = yield* Crypto.Crypto
- *   const id = yield* crypto.randomUUIDv4
- *   yield* Console.log(`Created id: ${id}`)
- * })
- *
- * Effect.runPromise(Effect.provide(program, TestCrypto))
- * ```
- *
- * **Example** (Generating random bytes)
- *
- * ```ts
- * import { Crypto, Effect, Layer } from "effect"
- *
- * const TestCrypto = Layer.succeed(
- *   Crypto.Crypto,
- *   Crypto.make({
- *     randomBytes: (size) => new Uint8Array(size),
- *     digest: (_algorithm, data) => Effect.succeed(data)
- *   })
- * )
- *
- * const program = Effect.gen(function*() {
- *   const crypto = yield* Crypto.Crypto
- *   return yield* crypto.randomBytes(32)
- * })
- *
- * Effect.runPromise(Effect.provide(program, TestCrypto))
- * ```
+ * Runtime packages provide concrete implementations backed by the host
+ * platform's cryptography APIs. This module defines the service interface and a
+ * constructor from random-byte and digest primitives. The service provides
+ * secure random bytes and numbers, UUIDv4 and UUIDv7 generation, shuffling, and
+ * SHA message digests.
  *
  * @since 4.0.0
  */
@@ -202,13 +158,13 @@ export interface Crypto {
  *
  * **When to use**
  *
- * Use when you need to provide or retrieve the full platform Crypto service
- * from an effect's context.
+ * Use when you need to provide or retrieve the full platform cryptography
+ * service from an effect's context.
  *
  * **Details**
  *
- * Providing this service supplies the cryptographic operations described by the
- * `Crypto` interface.
+ * Providing this service supplies platform-agnostic cryptographic operations
+ * such as hashing, UUID generation, and secure random values.
  *
  * @see {@link make} for constructing a Crypto service from primitive operations
  *

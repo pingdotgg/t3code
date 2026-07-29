@@ -8,7 +8,8 @@ import {
 import { Stack } from "@/Stack.ts";
 import { Stage } from "@/Stage.ts";
 import { PlatformServices } from "@/Util/PlatformServices.ts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "alchemy-test";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -48,20 +49,23 @@ describe("Local.RpcServerEnvironment", () => {
 
   it.effect("fromEnv() roundtrips a serialized RpcServerEnvironment", () =>
     Effect.gen(function* () {
-      // We can't safely mutate `process.env[RPC_SERVER_ENVIRONMENT_KEY]`
-      // from inside a concurrent test, so we install a private layer in
-      // front of `fromEnv()` instead and verify it produces the same
-      // Stack service that `layer()` does.
-      process.env[RPC_SERVER_ENVIRONMENT_KEY] = JSON.stringify(sampleEnv);
-      try {
-        const stack = yield* Stack.pipe(
-          Effect.provide(Layer.provide(fromEnv(), PlatformServices)),
-        );
-        expect(stack.name).toBe(sampleEnv.stack.name);
-        expect(stack.stage).toBe(sampleEnv.stack.stage);
-      } finally {
-        delete process.env[RPC_SERVER_ENVIRONMENT_KEY];
-      }
+      const environment = ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: {
+            [RPC_SERVER_ENVIRONMENT_KEY]: JSON.stringify(sampleEnv),
+          },
+        }),
+      );
+      const stack = yield* Stack.pipe(
+        Effect.provide(
+          Layer.provide(
+            fromEnv(),
+            Layer.mergeAll(PlatformServices, environment),
+          ),
+        ),
+      );
+      expect(stack.name).toBe(sampleEnv.stack.name);
+      expect(stack.stage).toBe(sampleEnv.stack.stage);
     }),
   );
 

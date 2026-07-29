@@ -26,6 +26,10 @@ layer("NodeSqliteClient", (it) => {
       assert.equal(values.length, 2);
       assert.equal(values[0]?.[1], "alpha");
       assert.equal(values[1]?.[1], "beta");
+
+      const unpreparedValues = yield* sql`SELECT id, name FROM entries ORDER BY id`
+        .valuesUnprepared;
+      assert.deepEqual(unpreparedValues, values);
     }),
   );
 

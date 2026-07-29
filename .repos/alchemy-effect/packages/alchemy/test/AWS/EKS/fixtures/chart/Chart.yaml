@@ -1,0 +1,6 @@
+apiVersion: v2
+name: alchemy-test-chart
+description: Minimal fixture chart for AWS.EKS.HelmChart tests
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

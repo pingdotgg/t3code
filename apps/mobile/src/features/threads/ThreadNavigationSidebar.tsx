@@ -6,7 +6,6 @@ import type {
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
@@ -25,9 +24,9 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { usePendingNewTasks, type PendingNewTask } from "../../state/use-pending-new-tasks";
+import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
@@ -63,26 +62,21 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "./thread-list-items";
-import { ThreadListV2Row } from "./thread-list-v2-items";
+import { ThreadListV2PendingRow, ThreadListV2Row } from "./thread-list-v2-items";
 import {
   buildThreadListV2Items,
+  buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2Item,
+  type ThreadListV2ListItem,
 } from "./threadListV2";
 
 /** The sidebar list serves both lists: v1 grouped items or, when the Thread
-    List v2 beta is on, queued offline tasks, flat v2 rows, and a settled
+    List v2 beta is on, flat v2 rows with queued tasks spliced in, and a settled
     "Show more" pager. */
 type SidebarListItem =
   | HomeListItem
-  | {
-      readonly type: "v2-pending-task";
-      readonly key: string;
-      readonly pendingTask: PendingNewTask;
-      readonly isLast: boolean;
-    }
-  | { readonly type: "v2-thread"; readonly key: string; readonly item: ThreadListV2Item }
+  | ThreadListV2ListItem
   | { readonly type: "v2-show-more"; readonly key: string; readonly hiddenCount: number };
 
 /**
@@ -196,10 +190,7 @@ function ThreadNavigationSidebarPane(
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
   const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
     useThreadListActions();
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const threadListV2Enabled =
-    AsyncResult.isSuccess(preferencesResult) &&
-    preferencesResult.value.threadListV2Enabled === true;
+  const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -399,6 +390,10 @@ function ThreadNavigationSidebarPane(
   // crossed while the pane stays open; without a clock dependency the
   // partition memoizes a frozen "now".
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
+  // Snooze wake times are second-precise; a counter bumped exactly at the
+  // next wake boundary re-runs the partition with a fresh clock so a woken
+  // thread reappears immediately instead of on the next minute tick.
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
     if (!threadListV2Enabled) return;
     // Refresh immediately on enable: the mount-time value can be hours old
@@ -420,8 +415,18 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const snoozeEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadSnooze === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled) return { items: [], hiddenSettledCount: 0 };
+    if (!threadListV2Enabled)
+      return { items: [], hiddenSettledCount: 0, snoozedCount: 0, nextSnoozeWakeAt: null };
     return buildThreadListV2Items({
       threads: threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
@@ -429,27 +434,45 @@ function ThreadNavigationSidebarPane(
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
+      snoozeNow: new Date().toISOString(),
     });
   }, [
     changeRequestStateByKey,
     nowMinute,
+    snoozeWakeTick,
     options.selectedEnvironmentId,
     props.searchQuery,
     settledVisibleCount,
     settlementEnvironmentIds,
+    snoozeEnvironmentIds,
     threadListV2Enabled,
     threads,
     selectedProjectScope,
   ]);
+  // Re-partition the moment the earliest snooze expires (clamped to the
+  // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
+  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
+  useEffect(() => {
+    if (nextSnoozeWakeAt === null) return;
+    const wakeAtMs = Date.parse(nextSnoozeWakeAt);
+    if (Number.isNaN(wakeAtMs)) return;
+    const delayMs = Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647);
+    const id = setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => clearTimeout(id);
+    // snoozeWakeTick must re-arm the timer even when nextSnoozeWakeAt is
+    // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
+    // range) the boundary string is identical and the chain would die.
+  }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
     if (!threadListV2Enabled) return listLayout.items;
-    // Queued offline tasks render above the thread rows (mirrors the
-    // compact Home v2 list): they are not thread shells, so the v2 item
-    // builder never sees them, but they must stay visible and deletable
-    // while their environment is offline. Same environment scope and
-    // search filter as the list.
+    // Queued offline tasks are not thread shells, so the v2 item builder
+    // never sees them; the shared splice puts them below the active block
+    // (mirrors the compact Home v2 list) where they stay visible and
+    // deletable while their environment is offline. Same environment scope
+    // and search filter as the list.
     const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
     const v2PendingTasks = pendingTasks.filter(
       (pendingTask) =>
@@ -462,19 +485,10 @@ function ThreadNavigationSidebarPane(
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
-    const items: SidebarListItem[] = v2PendingTasks.map((pendingTask, index) => ({
-      type: "v2-pending-task" as const,
-      key: `v2-pending:${pendingTask.message.messageId}`,
-      pendingTask,
-      isLast: index === v2PendingTasks.length - 1,
-    }));
-    for (const item of threadListV2Layout.items) {
-      items.push({
-        type: "v2-thread" as const,
-        key: scopedThreadKey(item.thread.environmentId, item.thread.id),
-        item,
-      });
-    }
+    const items: SidebarListItem[] = buildThreadListV2ListItems({
+      items: threadListV2Layout.items,
+      pendingTasks: v2PendingTasks,
+    });
     if (threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
         type: "v2-show-more",
@@ -662,13 +676,26 @@ function ThreadNavigationSidebarPane(
     onScroll: handleScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
+  // Project shells load after the first rows draw, so the maps they feed have
+  // to bust the recycler's memoization — otherwise a row keeps the blank
+  // favicon and fallback title it was first rendered with.
   const listExtraData = useMemo(
     () => ({
       selectedThreadKey: props.selectedThreadKey ?? "",
+      projectByKey,
+      projectCwdByKey,
+      projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
     }),
-    [props.selectedThreadKey, savedConnectionsById, serverConfigs],
+    [
+      props.selectedThreadKey,
+      projectByKey,
+      projectCwdByKey,
+      projectTitleByProjectKey,
+      savedConnectionsById,
+      serverConfigs,
+    ],
   );
   const sidebarItemsAreEqual = useCallback(
     (previous: SidebarListItem, item: SidebarListItem): boolean => {
@@ -683,16 +710,19 @@ function ThreadNavigationSidebarPane(
       if (previous.type === "v2-show-more" && item.type === "v2-show-more") {
         return previous.hiddenCount === item.hiddenCount;
       }
-      if (previous.type === "v2-pending-task" && item.type === "v2-pending-task") {
-        return previous.pendingTask === item.pendingTask && previous.isLast === item.isLast;
+      if (previous.type === "v2-pending" && item.type === "v2-pending") {
+        return (
+          previous.pendingTask === item.pendingTask &&
+          previous.showPendingDivider === item.showPendingDivider
+        );
       }
       if (
         previous.type === "v2-thread" ||
         previous.type === "v2-show-more" ||
-        previous.type === "v2-pending-task" ||
+        previous.type === "v2-pending" ||
         item.type === "v2-thread" ||
         item.type === "v2-show-more" ||
-        item.type === "v2-pending-task"
+        item.type === "v2-pending"
       ) {
         return false;
       }
@@ -720,20 +750,29 @@ function ThreadNavigationSidebarPane(
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
-        case "v2-pending-task":
+        case "v2-pending": {
+          const pendingScopeKey = scopedProjectKey(
+            item.pendingTask.message.environmentId,
+            item.pendingTask.creation.projectId,
+          );
           return (
-            <PendingTaskListRow
-              variant="sidebar"
+            <ThreadListV2PendingRow
               pendingTask={item.pendingTask}
+              project={projectByKey.get(pendingScopeKey) ?? null}
+              projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
               environmentLabel={
-                savedConnectionsById[item.pendingTask.message.environmentId]?.environmentLabel ??
-                null
+                Object.keys(savedConnectionsById).length > 1
+                  ? (savedConnectionsById[item.pendingTask.message.environmentId]
+                      ?.environmentLabel ?? null)
+                  : null
               }
-              isLast={item.isLast}
+              pane="sidebar"
+              showPendingDivider={item.showPendingDivider}
               onSelectPendingTask={openPendingTask}
               onDeletePendingTask={confirmDeletePendingTask}
             />
           );
+        }
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
@@ -930,15 +969,28 @@ function ThreadNavigationSidebarPane(
       }),
     [filterIcon, filterMenu, props.onOpenSettings],
   );
+  // "No threads yet" over an inbox that is merely all-snoozed reads as
+  // data loss; name the snoozed threads instead.
+  const snoozedCount = threadListV2Layout.snoozedCount;
   const listEmpty = (
     <Text className="px-2 py-4 text-sm text-foreground-muted">
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
-          ? "No matching threads"
-          : selectedProjectScope !== null
-            ? `No threads in ${selectedProjectScope.title}`
-            : "No threads yet"}
+          ? snoozedCount > 0
+            ? // Snoozed matches passed this same search filter — "No
+              // matching threads" would misreport them as nonexistent.
+              snoozedCount === 1
+              ? "1 matching thread snoozed"
+              : "All matching threads snoozed"
+            : "No matching threads"
+          : snoozedCount > 0
+            ? snoozedCount === 1
+              ? "1 thread snoozed"
+              : `${snoozedCount} threads snoozed`
+            : selectedProjectScope !== null
+              ? `No threads in ${selectedProjectScope.title}`
+              : "No threads yet"}
     </Text>
   );
 

@@ -1,7 +1,11 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
+import {
+  prStatusIndicator,
+  resolveThreadPr,
+  settledPrHoverColorClass,
+} from "./ThreadStatusIndicators";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -32,31 +36,35 @@ describe("resolveThreadPr", () => {
       resolveThreadPr({
         threadBranch: "feature/other",
         gitStatus: status(),
-        hasDedicatedWorktree: false,
       }),
     ).toBeNull();
   });
 
-  it("shows PR indicators for dedicated worktree threads even when branch metadata is stale", () => {
-    const gitStatus = status();
-
+  it("hides PR indicators when a dedicated worktree has switched away from the thread branch", () => {
     expect(
       resolveThreadPr({
-        threadBranch: "feature/old-name",
-        gitStatus,
-        hasDedicatedWorktree: true,
+        threadBranch: "stack/base",
+        gitStatus: status(),
       }),
-    ).toBe(gitStatus.pr);
+    ).toBeNull();
   });
 
-  it("shows PR indicators for dedicated worktree threads even when branch metadata is missing", () => {
-    const gitStatus = status();
-
+  it("hides PR indicators when thread branch metadata is missing", () => {
     expect(
       resolveThreadPr({
         threadBranch: null,
+        gitStatus: status(),
+      }),
+    ).toBeNull();
+  });
+
+  it("shows the PR when the live checkout matches the stored thread branch", () => {
+    const gitStatus = status();
+
+    expect(
+      resolveThreadPr({
+        threadBranch: "feature/current",
         gitStatus,
-        hasDedicatedWorktree: true,
       }),
     ).toBe(gitStatus.pr);
   });
@@ -69,5 +77,24 @@ describe("prStatusIndicator", () => {
       tooltipLead: "PR #42 - Open",
       tooltipTitle: "PR branch",
     });
+  });
+
+  it("uses red for closed pull requests", () => {
+    const closedPr = status().pr;
+    if (!closedPr) throw new Error("Expected pull request fixture");
+
+    expect(prStatusIndicator({ ...closedPr, state: "closed" }, undefined)?.colorClass).toContain(
+      "text-red-600",
+    );
+  });
+});
+
+describe("settledPrHoverColorClass", () => {
+  it.each([
+    ["open", "text-emerald-600"],
+    ["merged", "text-violet-600"],
+    ["closed", "text-red-600"],
+  ] as const)("restores the %s pull request color on row hover", (state, colorClass) => {
+    expect(settledPrHoverColorClass(state)).toContain(`group-hover/v2-row:${colorClass}`);
   });
 });

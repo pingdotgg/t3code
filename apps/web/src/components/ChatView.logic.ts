@@ -5,11 +5,12 @@ import {
   type ModelSelection,
   type ProviderDriverKind,
   type ServerProvider,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { type ChatMessage, type SessionPhase, type Thread } from "../types";
+import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -26,6 +27,16 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export function startNewThreadForProject(
+  projectRef: ScopedProjectRef | null,
+  handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>,
+): boolean {
+  if (projectRef === null) return false;
+  void handleNewThread(projectRef);
+
+  return true;
+}
 
 export function resolveThreadMetadataUpdateForNextTurn(input: {
   currentModelSelection: ModelSelection;
@@ -84,8 +95,19 @@ export function buildLocalDraftThread(
   };
 }
 
+export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
+  return {
+    ...shell,
+    messages: [],
+    proposedPlans: [],
+    activities: [],
+    checkpoints: [],
+    deletedAt: null,
+  };
+}
+
 export function shouldWriteThreadErrorToCurrentServerThread(input: {
-  serverThread:
+  activeServerThread:
     | {
         environmentId: EnvironmentId;
         id: ThreadId;
@@ -96,10 +118,10 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   targetThreadId: ThreadId;
 }): boolean {
   return Boolean(
-    input.serverThread &&
+    input.activeServerThread &&
     input.targetThreadId === input.routeThreadRef.threadId &&
-    input.serverThread.environmentId === input.routeThreadRef.environmentId &&
-    input.serverThread.id === input.targetThreadId,
+    input.activeServerThread.environmentId === input.routeThreadRef.environmentId &&
+    input.activeServerThread.id === input.targetThreadId,
   );
 }
 
@@ -287,6 +309,46 @@ export function buildExpiredTerminalContextToastCopy(
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
   };
+}
+
+export function branchMismatchKey(
+  threadId: string | null,
+  mismatch: { threadBranch: string; currentBranch: string } | null,
+): string | null {
+  if (!threadId || !mismatch) {
+    return null;
+  }
+  return `${threadId}:${mismatch.threadBranch}:${mismatch.currentBranch}`;
+}
+
+// The mismatch banner only matters when the user is about to send: passive
+// reading of an old thread carries no risk (the branch picker tint already
+// covers ambient awareness). Draft content is the intent signal — composer
+// focus is useless here because ChatView autofocuses the composer on every
+// thread open. `wasShownForCurrentMismatch` keeps the banner mounted once
+// revealed so it doesn't flicker away when the draft is cleared.
+export function shouldShowBranchMismatchBanner(input: {
+  hasMismatch: boolean;
+  isDismissed: boolean;
+  composerHasContent: boolean;
+  wasShownForCurrentMismatch: boolean;
+}): boolean {
+  if (!input.hasMismatch || input.isDismissed) {
+    return false;
+  }
+  return input.composerHasContent || input.wasShownForCurrentMismatch;
+}
+
+// Session-scoped (module-level so it survives ChatView remounts, e.g. route
+// changes). Durable cross-device dismissal is planned as a server-side ack.
+const sessionDismissedBranchMismatchKeys = new Set<string>();
+
+export function dismissBranchMismatchForSession(key: string): void {
+  sessionDismissedBranchMismatchKeys.add(key);
+}
+
+export function isBranchMismatchDismissedForSession(key: string | null): boolean {
+  return key !== null && sessionDismissedBranchMismatchKeys.has(key);
 }
 
 export function threadHasStarted(thread: Thread | null | undefined): boolean {

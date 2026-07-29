@@ -35,6 +35,17 @@ export interface TerminalStatusIndicator {
 
 export type ThreadPr = VcsStatusResult["pr"];
 
+export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]): string {
+  switch (state) {
+    case "open":
+      return "group-hover/v2-row:text-emerald-600 dark:group-hover/v2-row:text-emerald-300/90";
+    case "merged":
+      return "group-hover/v2-row:text-violet-600 dark:group-hover/v2-row:text-violet-300/90";
+    case "closed":
+      return "group-hover/v2-row:text-red-600 dark:group-hover/v2-row:text-red-300/90";
+  }
+}
+
 export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
@@ -65,7 +76,7 @@ export function prStatusIndicator(
   if (pr.state === "closed") {
     return {
       label: `${presentation.shortName} closed`,
-      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      colorClass: "text-red-600 dark:text-red-300/90",
       tooltip,
       tooltipLead,
       tooltipTitle: pr.title,
@@ -102,15 +113,10 @@ export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }
 export function resolveThreadPr(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
-  hasDedicatedWorktree: boolean;
 }): ThreadPr | null {
-  const { threadBranch, gitStatus, hasDedicatedWorktree } = input;
+  const { threadBranch, gitStatus } = input;
   if (gitStatus === null) {
     return null;
-  }
-
-  if (hasDedicatedWorktree) {
-    return gitStatus.pr ?? null;
   }
 
   if (threadBranch === null || gitStatus.refName !== threadBranch) {
@@ -247,7 +253,6 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const pr = resolveThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
-    hasDedicatedWorktree: thread.worktreePath !== null,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({

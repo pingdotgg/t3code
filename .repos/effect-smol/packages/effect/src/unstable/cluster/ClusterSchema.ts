@@ -4,44 +4,6 @@
  * requests are persisted, handled in transactions, interrupted, traced, and
  * routed to shard groups without changing the request or response schema.
  *
- * **Mental model**
- *
- * - An annotation is protocol metadata read by the cluster runtime.
- * - Static annotations apply to every request covered by the annotated RPC or
- *   entity.
- * - {@link Dynamic} can adjust server-side annotations from the decoded request
- *   that is already part of the protocol.
- *
- * **Common tasks**
- *
- * - Mark requests for durable mailbox storage with {@link Persisted}.
- * - Wrap server handling and storage work in the configured storage transaction
- *   with {@link WithTransaction}.
- * - Decide whether client sending, server handling, or both ignore interruption
- *   with {@link Uninterruptible}.
- * - Route entity ids into shard groups with {@link ShardGroup}.
- * - Disable client tracing for internal or high-volume protocols with
- *   {@link ClientTracingEnabled}.
- * - Derive request annotations from the request value with {@link Dynamic}.
- *
- * **Gotchas**
- *
- * - Persisted requests require message storage that can save mailbox messages
- *   and replies.
- * - {@link WithTransaction} only has transactional behavior when the configured
- *   storage layer implements transactions.
- * - Shard group functions must be deterministic for the same entity id across
- *   all runners that share a cluster.
- * - {@link Dynamic} affects entity-side request handling, not the generated
- *   client.
- *
- * **See also**
- *
- * - {@link Persisted}, {@link WithTransaction}, and {@link Uninterruptible} for
- *   delivery and handling behavior.
- * - {@link ShardGroup} for shard-group selection.
- * - {@link Dynamic} for deriving annotations from a request.
- *
  * @since 4.0.0
  */
 import * as Context from "../../Context.ts"
@@ -71,7 +33,7 @@ export const Persisted = Context.Reference<boolean>("effect/cluster/ClusterSchem
  *
  * **When to use**
  *
- * Use when a request needs server-side handling or storage work wrapped in the
+ * Use when you need server-side request handling or storage work wrapped in the
  * storage transaction.
  *
  * **Details**
@@ -135,8 +97,8 @@ export const isUninterruptibleForServer = (context: Context.Context<never>): boo
  *
  * **When to use**
  *
- * Use when client-side cluster request handling needs to decide whether an
- * interrupt should be ignored.
+ * Use when you need client-side cluster request handling to decide whether to
+ * ignore an interrupt.
  *
  * **Details**
  *
