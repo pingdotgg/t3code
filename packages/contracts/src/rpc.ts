@@ -133,6 +133,8 @@ import {
   ServerListClaudeResumableSessionsResult,
   ServerGetClaudeResumableSessionTranscriptInput,
   ServerGetClaudeResumableSessionTranscriptResult,
+  ServerGetClaudeThreadImportedHistoryInput,
+  ServerGetClaudeThreadImportedHistoryResult,
   ServerSetClaudeThreadRemoteControlInput,
   ServerSetClaudeThreadRemoteControlResult,
   ServerSignalProcessInput,
@@ -225,6 +227,7 @@ export const WS_METHODS = {
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverListClaudeResumableSessions: "server.listClaudeResumableSessions",
   serverGetClaudeResumableSessionTranscript: "server.getClaudeResumableSessionTranscript",
+  serverGetClaudeThreadImportedHistory: "server.getClaudeThreadImportedHistory",
   serverSetClaudeThreadRemoteControl: "server.setClaudeThreadRemoteControl",
   serverSignalProcess: "server.signalProcess",
 
@@ -351,6 +354,15 @@ export const WsServerGetClaudeResumableSessionTranscriptRpc = Rpc.make(
   {
     payload: ServerGetClaudeResumableSessionTranscriptInput,
     success: ServerGetClaudeResumableSessionTranscriptResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+export const WsServerGetClaudeThreadImportedHistoryRpc = Rpc.make(
+  WS_METHODS.serverGetClaudeThreadImportedHistory,
+  {
+    payload: ServerGetClaudeThreadImportedHistoryInput,
+    success: ServerGetClaudeThreadImportedHistoryResult,
     error: EnvironmentAuthorizationError,
   },
 );
@@ -750,6 +762,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessResourceHistoryRpc,
   WsServerListClaudeResumableSessionsRpc,
   WsServerGetClaudeResumableSessionTranscriptRpc,
+  WsServerGetClaudeThreadImportedHistoryRpc,
   WsServerSetClaudeThreadRemoteControlRpc,
   WsServerSignalProcessRpc,
   WsCloudGetRelayClientStatusRpc,

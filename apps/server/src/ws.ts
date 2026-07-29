@@ -309,6 +309,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverListClaudeResumableSessions, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetClaudeResumableSessionTranscript, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetClaudeThreadImportedHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSetClaudeThreadRemoteControl, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
@@ -1580,6 +1581,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.serverGetClaudeResumableSessionTranscript,
             claudeSessionHistory.getTranscript(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetClaudeThreadImportedHistory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetClaudeThreadImportedHistory,
+            claudeSessionHistory.getImportedHistoryForThread(input),
             {
               "rpc.aggregate": "server",
             },

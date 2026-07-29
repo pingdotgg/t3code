@@ -613,6 +613,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ClaudeSessionHistory.ClaudeSessionHistory)({
             list: () => Effect.succeed({ sessions: [] }),
             getTranscript: () => Effect.succeed({ messages: [] }),
+            getImportedHistoryForThread: () => Effect.succeed({ messages: [] }),
             bindSessionLaunchOptions: () => Effect.void,
             setThreadRemoteControl: () => Effect.succeed({ applied: true }),
           }),

@@ -456,6 +456,31 @@ export type ServerGetClaudeResumableSessionTranscriptResult =
   typeof ServerGetClaudeResumableSessionTranscriptResult.Type;
 
 /**
+ * Re-reads a resumed thread's bound on-disk Claude session transcript, for
+ * threads created via the "resume a previous session" flow. The thread may
+ * have gained messages since it was first imported — e.g. the user
+ * continued the same underlying Claude session directly in a terminal
+ * (`claude --resume <id>`) — so this is called again each time the thread
+ * is opened. Resolves the thread's bound session id server-side (from its
+ * `ProviderSessionDirectory` binding); returns `{messages: []}` if the
+ * thread was never resumed (no bound session) rather than an error, since
+ * that's the common case for most threads.
+ */
+export const ServerGetClaudeThreadImportedHistoryInput = Schema.Struct({
+  threadId: ThreadId,
+  workspaceRoot: TrimmedNonEmptyString,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+});
+export type ServerGetClaudeThreadImportedHistoryInput =
+  typeof ServerGetClaudeThreadImportedHistoryInput.Type;
+
+export const ServerGetClaudeThreadImportedHistoryResult = Schema.Struct({
+  messages: Schema.Array(ServerClaudeResumableSessionMessage),
+});
+export type ServerGetClaudeThreadImportedHistoryResult =
+  typeof ServerGetClaudeThreadImportedHistoryResult.Type;
+
+/**
  * Turns Remote Control on/off for an already-created Claude Code thread
  * (as opposed to `ThreadTurnStartBootstrapCreateThread.remoteControl`,
  * which only applies at thread-creation time). Since Remote Control is a

@@ -1145,6 +1145,10 @@ function ChatViewContent(props: ChatViewProps) {
     serverEnvironment.setClaudeThreadRemoteControl,
     { reportFailure: false },
   );
+  const getClaudeThreadImportedHistory = useAtomCommand(
+    serverEnvironment.getClaudeThreadImportedHistory,
+    { reportFailure: false },
+  );
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -2279,6 +2283,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  const timelineMessagesRef = useRef(timelineMessages);
+  timelineMessagesRef.current = timelineMessages;
   const importedResumeHistoryMessages = useResumeSessionHistoryStore((store) =>
     activeThread
       ? (store.historyByThreadId[activeThread.id] ?? EMPTY_RESUME_HISTORY)
@@ -2301,6 +2307,53 @@ function ChatViewContent(props: ChatViewProps) {
     }));
     return [...importedChatMessages, ...timelineMessages];
   }, [importedResumeHistoryMessages, timelineMessages]);
+  useEffect(() => {
+    if (!activeThread || isLocalDraftThread || !activeProject) return;
+    if (selectedProvider !== ProviderDriverKind.make("claudeAgent")) return;
+    const threadId = activeThread.id;
+    const instanceId = activeThread.modelSelection.instanceId;
+    const workspaceRoot = activeProject.workspaceRoot;
+    let cancelled = false;
+    void (async () => {
+      const result = await getClaudeThreadImportedHistory({
+        environmentId,
+        input: { threadId, workspaceRoot, providerInstanceId: instanceId },
+      });
+      if (cancelled || result._tag === "Failure") return;
+      const fetchedMessages = result.value.messages;
+      if (fetchedMessages.length === 0) return;
+      const { historyByThreadId, setResumeSessionHistory } =
+        useResumeSessionHistoryStore.getState();
+      const existingImported = historyByThreadId[threadId] ?? EMPTY_RESUME_HISTORY;
+      // Re-fetching returns the on-disk transcript's FULL current state, so
+      // it also includes every turn T3 itself has already driven for this
+      // thread (they're all written to the same file by the same `claude`
+      // process) — only messages newer than everything T3 already knows
+      // about (either from the original import, or its own live timeline)
+      // are actually new content from a session continued directly in the
+      // CLI. Anything at/before that point would otherwise show up twice.
+      const latestKnownCreatedAt = [...existingImported, ...timelineMessagesRef.current].reduce(
+        (max, message) => (message.createdAt > max ? message.createdAt : max),
+        "",
+      );
+      const newMessages = fetchedMessages.filter(
+        (message) => message.createdAt > latestKnownCreatedAt,
+      );
+      if (newMessages.length === 0) return;
+      const merged = [...existingImported, ...newMessages].sort((a, b) =>
+        a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+      );
+      setResumeSessionHistory(threadId, merged);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately keyed on activeThread.id (not on timelineMessages, which
+    // changes constantly while streaming) — this is a refresh-on-open, not
+    // a live poll. Current timeline/imported state is read fresh via
+    // `timelineMessagesRef`/`getState()` when the fetch resolves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThread?.id, isLocalDraftThread, activeProject, selectedProvider, environmentId]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(

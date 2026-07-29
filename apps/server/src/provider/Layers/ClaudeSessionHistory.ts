@@ -35,6 +35,8 @@ import {
   type ServerClaudeResumableSessionMessage,
   type ServerGetClaudeResumableSessionTranscriptInput,
   type ServerGetClaudeResumableSessionTranscriptResult,
+  type ServerGetClaudeThreadImportedHistoryInput,
+  type ServerGetClaudeThreadImportedHistoryResult,
   type ServerListClaudeResumableSessionsInput,
   type ServerListClaudeResumableSessionsResult,
   type ServerSetClaudeThreadRemoteControlInput,
@@ -263,6 +265,18 @@ export class ClaudeSessionHistory extends Context.Service<
       input: ServerGetClaudeResumableSessionTranscriptInput,
     ) => Effect.Effect<ServerGetClaudeResumableSessionTranscriptResult>;
     /**
+     * Re-reads a resumed thread's bound on-disk transcript, resolving the
+     * bound session id from the thread's `ProviderSessionDirectory`
+     * binding server-side (the caller only needs to know the thread, not
+     * which session it's bound to). Returns `{messages: []}` — not an
+     * error — when the thread has no bound `resume` session (never
+     * resumed) or the binding can't be read, matching `getTranscript`'s
+     * best-effort behavior.
+     */
+    readonly getImportedHistoryForThread: (
+      input: ServerGetClaudeThreadImportedHistoryInput,
+    ) => Effect.Effect<ServerGetClaudeThreadImportedHistoryResult>;
+    /**
      * Binds thread-creation-time Claude launch choices (resume a picked
      * on-disk session, and/or start with Remote Control enabled) onto a
      * thread's provider session directory entry, so they take effect on the
@@ -420,6 +434,26 @@ export const make = Effect.gen(function* () {
     return { messages: trimmedMessages };
   });
 
+  const getImportedHistoryForThread: ClaudeSessionHistory["Service"]["getImportedHistoryForThread"] =
+    Effect.fn("ClaudeSessionHistory.getImportedHistoryForThread")(function* (input) {
+      const binding = yield* providerSessionDirectory
+        .getBinding(input.threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const resumeCursor = Option.getOrUndefined(binding)?.resumeCursor;
+      const resumeSessionId =
+        resumeCursor !== null && typeof resumeCursor === "object" && resumeCursor !== undefined
+          ? (resumeCursor as Record<string, unknown>).resume
+          : undefined;
+      if (typeof resumeSessionId !== "string") {
+        return { messages: [] };
+      }
+      return yield* getTranscript({
+        workspaceRoot: input.workspaceRoot,
+        providerInstanceId: input.providerInstanceId,
+        sessionId: resumeSessionId,
+      });
+    });
+
   const bindSessionLaunchOptions: ClaudeSessionHistory["Service"]["bindSessionLaunchOptions"] =
     Effect.fn("ClaudeSessionHistory.bindSessionLaunchOptions")(function* (input) {
       if (input.resumeExternalSessionId === undefined && input.remoteControl === undefined) {
@@ -493,6 +527,7 @@ export const make = Effect.gen(function* () {
   return ClaudeSessionHistory.of({
     list,
     getTranscript,
+    getImportedHistoryForThread,
     bindSessionLaunchOptions,
     setThreadRemoteControl,
   });
