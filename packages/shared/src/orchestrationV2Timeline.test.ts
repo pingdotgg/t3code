@@ -57,6 +57,39 @@ describe("isOrchestrationV2TurnItemVisible", () => {
     ).toBe(true);
   });
 
+  it("hides queued user messages once their run is cancelled", () => {
+    expect(
+      isOrchestrationV2TurnItemVisible({
+        item: { type: "user_message", inputIntent: "queued_turn", runId, nodeId },
+        runs: [{ id: runId, status: "cancelled" }],
+        attempts: [],
+        items: [{ type: "user_message", inputIntent: "queued_turn", runId, nodeId }],
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps queued user messages while their run is queued", () => {
+    expect(
+      isOrchestrationV2TurnItemVisible({
+        item: { type: "user_message", inputIntent: "queued_turn", runId, nodeId },
+        runs: [{ id: runId, status: "queued" }],
+        attempts: [],
+        items: [{ type: "user_message", inputIntent: "queued_turn", runId, nodeId }],
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps non-queued user messages on cancelled runs", () => {
+    expect(
+      isOrchestrationV2TurnItemVisible({
+        item: { type: "user_message", inputIntent: "turn_start", runId, nodeId },
+        runs: [{ id: runId, status: "cancelled" }],
+        attempts: [],
+        items: [{ type: "user_message", inputIntent: "turn_start", runId, nodeId }],
+      }),
+    ).toBe(true);
+  });
+
   it("does not hide an interruption because another attempt was superseded", () => {
     expect(
       isOrchestrationV2TurnItemVisible({

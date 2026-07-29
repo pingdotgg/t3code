@@ -75,6 +75,7 @@ export function makeSubagentChildThread(input: {
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    lastVisitedAt: null,
     deletedAt: null,
   };
 }

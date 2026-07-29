@@ -90,6 +90,9 @@ function threadCreatedEvent(
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
       deletedAt: null,
     };
 
@@ -233,6 +236,7 @@ layer("ProviderEventIngestorV2", (it) => {
   it.effect("persists a failed provider terminal as one expected error item", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
+      const retryStartedAt = DateTime.makeUnsafe(DateTime.toEpochMillis(now) - 5_000);
       const eventSink = yield* EventSinkV2;
       const projectionStore = yield* ProjectionStoreV2;
       const ingestor = yield* ProviderEventIngestorV2;
@@ -269,6 +273,12 @@ layer("ProviderEventIngestorV2", (it) => {
             code: "invalid_request",
             class: "validation_error",
           }),
+          retry: {
+            attempt: 3,
+            maxAttempts: 3,
+            retryDelayMs: 2_000,
+          },
+          retryStartedAt,
           threadDisposition: "reusable",
         },
       });
@@ -286,6 +296,15 @@ layer("ProviderEventIngestorV2", (it) => {
       if (errorItem?.type !== "error") return;
       assert.equal(errorItem.failure.message, "Invalid reasoning effort.");
       assert.equal(errorItem.failure.code, "invalid_request");
+      assert.deepEqual(errorItem.retry, {
+        attempt: 3,
+        maxAttempts: 3,
+        retryDelayMs: 2_000,
+      });
+      assert.equal(
+        DateTime.toEpochMillis(errorItem.startedAt),
+        DateTime.toEpochMillis(retryStartedAt),
+      );
       assert.equal(errorItem.providerThreadId, providerThreadId);
       assert.equal(errorItem.providerTurnId, providerTurnId);
     }),

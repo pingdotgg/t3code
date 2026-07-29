@@ -10,6 +10,7 @@ import {
   type Query as ClaudeQuery,
   type Settings as ClaudeSdkSettings,
   type SDKAssistantMessage,
+  type SDKAPIRetryMessage,
   type SDKMessage,
   type SDKResultMessage,
   type SDKUserMessage,
@@ -27,6 +28,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -70,7 +72,7 @@ import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanc
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -1802,6 +1804,19 @@ function providerFailureFromResult(
   });
 }
 
+function providerFailureFromApiRetry(message: SDKAPIRetryMessage): OrchestrationV2ProviderFailure {
+  const errorName = message.error.replaceAll("_", " ");
+  return makeProviderFailure({
+    message: `Claude API ${errorName}.`,
+    code:
+      message.error_status === null
+        ? message.error
+        : `api_error_${Math.trunc(message.error_status)}`,
+    class: message.error_status === null ? "transport_error" : "provider_error",
+    retryable: true,
+  });
+}
+
 function buildAssistantArtifacts(input: {
   readonly idAllocator: IdAllocatorV2Shape;
   readonly turnInput: ProviderAdapterV2TurnInput;
@@ -1908,6 +1923,13 @@ interface ActiveClaudeTurnContext {
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
 }
 
+interface ActiveClaudeProviderRetry {
+  readonly retry: OrchestrationV2ProviderRetry;
+  readonly failure: OrchestrationV2ProviderFailure;
+  readonly startedAt: DateTime.Utc;
+  readonly itemOrdinal: number;
+}
+
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
   readonly childThreadId: ThreadId;
@@ -1993,6 +2015,9 @@ export function makeClaudeAdapterV2(
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
         const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
+        const providerRetries = yield* Ref.make(
+          new Map<OrchestrationV2ProviderTurn["id"], ActiveClaudeProviderRetry>(),
+        );
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingClaudeRuntimeRequest>(),
         );
@@ -2840,6 +2865,37 @@ export function makeClaudeAdapterV2(
             );
           }
 
+          const providerRetry = yield* Ref.modify(providerRetries, (current) => {
+            const retry = current.get(input.context.providerTurnId);
+            if (retry === undefined) {
+              return [undefined, current] as const;
+            }
+            const updated = new Map(current);
+            updated.delete(input.context.providerTurnId);
+            return [retry, updated] as const;
+          });
+          if (providerRetry !== undefined && input.status !== "failed") {
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: makeProviderRetryTurnItem({
+                idAllocator,
+                driver: CLAUDE_PROVIDER,
+                threadId: input.context.input.threadId,
+                runId: input.context.input.runId,
+                nodeId: input.context.input.rootNodeId,
+                providerThreadId: input.context.input.providerThread.id,
+                providerTurnId: input.context.providerTurnId,
+                itemOrdinal: providerRetry.itemOrdinal,
+                failure: providerRetry.failure,
+                retry: providerRetry.retry,
+                status: input.status,
+                startedAt: providerRetry.startedAt,
+                updatedAt: input.completedAt,
+              }),
+            });
+          }
+
           const threadDisposition = input.threadDisposition ?? "reusable";
           const terminalEvent: ProviderAdapterV2Event =
             input.status === "failed"
@@ -2855,6 +2911,12 @@ export function makeClaudeAdapterV2(
                   ),
                   status: input.status,
                   failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
+                  ...(providerRetry === undefined
+                    ? {}
+                    : {
+                        retry: providerRetry.retry,
+                        retryStartedAt: providerRetry.startedAt,
+                      }),
                   threadDisposition,
                 }
               : {
@@ -3142,6 +3204,51 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "assistant") {
             context.nativeMessageCursor = message.uuid;
+          }
+
+          if (message.type === "system" && message.subtype === "api_retry") {
+            const updatedAt = yield* DateTime.now;
+            const previous = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+            const retry: OrchestrationV2ProviderRetry = {
+              attempt: Math.max(1, Math.trunc(message.attempt)),
+              maxAttempts: Math.max(1, Math.trunc(message.max_retries)),
+              retryDelayMs: Math.max(0, Math.trunc(message.retry_delay_ms)),
+            };
+            const failure = providerFailureFromApiRetry(message);
+            const itemOrdinal =
+              previous?.itemOrdinal ??
+              (yield* resolveItemOrdinal(context, `terminal-failure:${context.providerTurnId}`));
+            const state: ActiveClaudeProviderRetry = {
+              retry,
+              failure,
+              startedAt: previous?.startedAt ?? updatedAt,
+              itemOrdinal,
+            };
+            yield* Ref.update(providerRetries, (current) => {
+              const updated = new Map(current);
+              updated.set(context.providerTurnId, state);
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: makeProviderRetryTurnItem({
+                idAllocator,
+                driver: CLAUDE_PROVIDER,
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                itemOrdinal,
+                failure,
+                retry,
+                status: "running",
+                startedAt: state.startedAt,
+                updatedAt,
+              }),
+            });
+            return;
           }
 
           if (message.type === "system" && message.subtype === "task_started") {

@@ -35,6 +35,17 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("pretty prints preview T3 MCP tool names", () => {
+    expect(resolveT3McpToolPresentation("T3-code.preview_open")).toEqual({
+      displayName: "Open a page in the preview browser",
+      logo: "t3-code",
+    });
+    expect(resolveT3McpToolPresentation("mcp__t3-code__preview_status")).toEqual({
+      displayName: "Get preview browser status",
+      logo: "t3-code",
+    });
+  });
+
   it("keeps unknown MCP tools on the generic renderer path", () => {
     expect(resolveT3McpToolPresentation("mcp__github__search_issues")).toBeNull();
   });
