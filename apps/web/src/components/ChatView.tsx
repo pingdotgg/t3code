@@ -5243,13 +5243,22 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (failure === null) {
+        const currentRightPanelState = activeThreadRef
+          ? selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, activeThreadRef)
+          : null;
+
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
         if (
           nextInteractionMode === "default" &&
           autoOpenPlanSidebar &&
-          !rightPanelState.planSidebarAutoOpenDisabled
+          !currentRightPanelState?.planSidebarAutoOpenDisabled &&
+          !(
+            currentRightPanelState &&
+            currentRightPanelState.surfaces.length > 0 &&
+            !currentRightPanelState.isOpen
+          )
         ) {
           planSidebarDismissedForTurnRef.current = null;
           if (activeThreadRef) {
@@ -5290,7 +5299,6 @@ function ChatViewContent(props: ChatViewProps) {
       autoOpenPlanSidebar,
       environmentId,
       composerRef,
-      rightPanelState.planSidebarAutoOpenDisabled,
     ],
   );
 

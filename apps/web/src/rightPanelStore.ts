@@ -449,7 +449,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return current.surfaces.some((entry) => entry.kind === "plan") &&
               surface.kind !== "plan"
               ? withPlanAutoOpenDisabled(next)
-              : next;
+              : surface.kind === "plan"
+                ? withPlanAutoOpenEnabled(next)
+                : next;
           }),
         })),
       closeSurfacesToRight: (ref, surfaceId) =>
