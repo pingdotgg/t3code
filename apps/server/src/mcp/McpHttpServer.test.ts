@@ -7,6 +7,49 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 
 import * as McpHttpServer from "./McpHttpServer.ts";
 
+it("reads the credential from the Authorization header, then the URL", () => {
+  const bearer = "header-token";
+  const query = "query-token";
+
+  expect(McpHttpServer.readRequestToken({ authorization: `Bearer ${bearer}`, url: "/mcp" })).toBe(
+    bearer,
+  );
+
+  // ChatGPT Developer Mode connectors cannot send a custom header, so the
+  // credential arrives in the URL instead.
+  expect(McpHttpServer.readRequestToken({ authorization: undefined, url: `/mcp?k=${query}` })).toBe(
+    query,
+  );
+
+  // The header wins when both are present; a stale URL cannot downgrade a
+  // caller that authenticated properly.
+  expect(
+    McpHttpServer.readRequestToken({
+      authorization: `Bearer ${bearer}`,
+      url: `/mcp?k=${query}`,
+    }),
+  ).toBe(bearer);
+});
+
+it("treats missing, malformed, and empty credentials as no credential", () => {
+  for (const input of [
+    { authorization: undefined, url: "/mcp" },
+    { authorization: "", url: "/mcp" },
+    { authorization: "Basic abc", url: "/mcp" },
+    { authorization: "Bearer    ", url: "/mcp" },
+    { authorization: undefined, url: "/mcp?k=" },
+    { authorization: undefined, url: "/mcp?other=token" },
+  ]) {
+    expect(McpHttpServer.readRequestToken(input)).toBe("");
+  }
+});
+
+it("falls back to the URL when the Authorization header is present but empty", () => {
+  expect(
+    McpHttpServer.readRequestToken({ authorization: "Bearer  ", url: "/mcp?k=fallback" }),
+  ).toBe("fallback");
+});
+
 it("normalizes empty successful notification responses to accepted", () => {
   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
     HttpServerResponse.text("", { status: 200, contentType: "application/json" }),

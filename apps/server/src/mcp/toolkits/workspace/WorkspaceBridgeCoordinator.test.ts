@@ -1,0 +1,342 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFs from "node:fs/promises";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { expect, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationCommand,
+  type OrchestrationThreadShell,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import {
+  WorkspaceBridgeCoordinator,
+  WorkspaceBridgeCoordinatorLive,
+  formatNumberedSlice,
+  matchesQuery,
+  parseGitStatus,
+  splitLines,
+} from "./WorkspaceBridgeCoordinator.ts";
+
+const threadId = ThreadId.make("thread-chatgpt-1");
+
+const scope: McpInvocationScope = {
+  environmentId: EnvironmentId.make("environment-1"),
+  threadId,
+  providerSessionId: "provider-session-1",
+  providerInstanceId: ProviderInstanceId.make("chatgpt"),
+  capabilities: new Set(["workspace"]),
+  issuedAt: 0,
+  expiresAt: Number.MAX_SAFE_INTEGER,
+};
+
+const makeThreadShell = (worktreePath: string): OrchestrationThreadShell =>
+  ({
+    id: threadId,
+    projectId: "project-1",
+    title: "ChatGPT thread",
+    modelSelection: { instanceId: ProviderInstanceId.make("chatgpt"), model: "chatgpt" },
+    runtimeMode: "approval-required",
+    interactionMode: "default",
+    executorModelSelection: null,
+    executorMaxSubAgents: 3,
+    branch: null,
+    worktreePath,
+    parentThreadId: null,
+    latestTurn: null,
+    createdAt: "2026-07-29T00:00:00.000Z",
+    updatedAt: "2026-07-29T00:00:00.000Z",
+    archivedAt: null,
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+  }) as OrchestrationThreadShell;
+
+/**
+ * Builds a workspace on disk with the shapes the guard has to handle: normal
+ * source, a credential file, version-control internals, and a symlink that
+ * points outside the tree.
+ */
+const makeWorkspace = Effect.fn("test.makeWorkspace")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "chatgpt-bridge-" });
+  const outside = yield* fs.makeTempDirectoryScoped({ prefix: "chatgpt-outside-" });
+
+  yield* Effect.promise(async () => {
+    await NodeFs.mkdir(NodePath.join(root, "src"), { recursive: true });
+    await NodeFs.mkdir(NodePath.join(root, ".git"), { recursive: true });
+    await NodeFs.mkdir(NodePath.join(root, "node_modules", "left-pad"), { recursive: true });
+    await NodeFs.writeFile(
+      NodePath.join(root, "src", "index.ts"),
+      "const greeting = 1;\nconst other = 2;\nexport { greeting };\n",
+    );
+    await NodeFs.writeFile(NodePath.join(root, "README.md"), "# Demo\n");
+    await NodeFs.writeFile(NodePath.join(root, "AGENTS.md"), "conventions\n");
+    await NodeFs.writeFile(NodePath.join(root, ".env"), "OPENAI_API_KEY=sk-secret\n");
+    await NodeFs.writeFile(NodePath.join(root, ".git", "config"), "[core]\n");
+    await NodeFs.writeFile(NodePath.join(root, "node_modules", "left-pad", "index.js"), "//\n");
+    await NodeFs.writeFile(NodePath.join(outside, "secrets.txt"), "TOP SECRET\n");
+    await NodeFs.symlink(NodePath.join(outside, "secrets.txt"), NodePath.join(root, "escape.txt"));
+  });
+
+  return { root, outside };
+});
+
+const makeHarness = (root: string) => {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const engine = OrchestrationEngineService.of({
+    readEvents: () => Stream.empty,
+    dispatch: (command) =>
+      Effect.sync(() => {
+        dispatched.push(command);
+        return { sequence: dispatched.length };
+      }),
+    streamDomainEvents: Stream.never,
+    latestSequence: Effect.succeed(0),
+    streamThreadEvents: () => Stream.never,
+  });
+
+  const unused = () => Effect.die("unused in WorkspaceBridgeCoordinator tests");
+  const snapshotQuery = ProjectionSnapshotQuery.of({
+    getCommandReadModel: unused,
+    getSnapshot: unused,
+    getShellSnapshot: unused,
+    getArchivedShellSnapshot: unused,
+    getSnapshotSequence: unused,
+    getCounts: unused,
+    getActiveProjectByWorkspaceRoot: unused,
+    getProjectShellById: unused,
+    getFirstActiveThreadIdByProjectId: unused,
+    getThreadCheckpointContext: unused,
+    getFullThreadDiffContext: unused,
+    getThreadShellById: () => Effect.succeed(Option.some(makeThreadShell(root))),
+    getThreadDetailById: unused,
+    getThreadDetailSnapshot: unused,
+    listChildThreadRefs: () => Effect.succeed([]),
+  });
+
+  const layer = WorkspaceBridgeCoordinatorLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(OrchestrationEngineService, engine),
+        Layer.succeed(ProjectionSnapshotQuery, snapshotQuery),
+        NodeServices.layer,
+      ),
+    ),
+  );
+
+  return { dispatched, layer };
+};
+
+const withCoordinator = <A>(
+  use: (
+    coordinator: WorkspaceBridgeCoordinator["Service"],
+    context: { readonly root: string; readonly dispatched: Array<OrchestrationCommand> },
+  ) => Effect.Effect<A, unknown, never>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { root } = yield* makeWorkspace();
+      const { dispatched, layer } = makeHarness(root);
+      const coordinator = yield* WorkspaceBridgeCoordinator.pipe(Effect.provide(layer));
+      return yield* use(coordinator, { root, dispatched });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+it.effect("overview reports the repository and hides blocked entries", () =>
+  withCoordinator((coordinator) =>
+    Effect.gen(function* () {
+      const result = yield* coordinator.overview(scope);
+      expect(result.entries).toContain("src");
+      expect(result.entries).toContain("README.md");
+      expect(result.entries).not.toContain(".git");
+      expect(result.entries).not.toContain("node_modules");
+      expect(result.instructionFiles).toEqual(["AGENTS.md", "README.md"]);
+      expect(result.readOnly).toBe(true);
+    }),
+  ),
+);
+
+it.effect("read returns a numbered slice and reports the true total", () =>
+  withCoordinator((coordinator) =>
+    Effect.gen(function* () {
+      const whole = yield* coordinator.read(scope, { path: "src/index.ts" });
+      expect(whole.totalLines).toBe(3);
+      expect(whole.content).toContain("1\tconst greeting = 1;");
+
+      const slice = yield* coordinator.read(scope, {
+        path: "src/index.ts",
+        startLine: 2,
+        endLine: 2,
+      });
+      expect(slice.content).toBe("2\tconst other = 2;");
+      expect(slice.startLine).toBe(2);
+      expect(slice.totalLines).toBe(3);
+    }),
+  ),
+);
+
+it.effect("read refuses credential files, traversal, and symlink escapes", () =>
+  withCoordinator((coordinator) =>
+    Effect.gen(function* () {
+      const blocked = yield* coordinator.read(scope, { path: ".env" }).pipe(Effect.flip);
+      expect(blocked.reason).toBe("path-not-allowed");
+
+      const traversal = yield* coordinator
+        .read(scope, { path: "../../etc/passwd" })
+        .pipe(Effect.flip);
+      expect(traversal.reason).toBe("path-not-allowed");
+
+      // The symlink lives inside the workspace, so containment alone would
+      // have let this through — only the realpath check stops it.
+      const escape = yield* coordinator.read(scope, { path: "escape.txt" }).pipe(Effect.flip);
+      expect(escape.reason).toBe("path-not-allowed");
+    }),
+  ),
+);
+
+it.effect("tree skips blocked directories entirely", () =>
+  withCoordinator((coordinator) =>
+    Effect.gen(function* () {
+      const result = yield* coordinator.tree(scope, { path: ".", maxDepth: 4 });
+      const paths = result.entries.map((entry) => entry.path);
+      expect(paths).toContain("src");
+      expect(paths).toContain("src/index.ts");
+      expect(paths.some((path) => path.startsWith(".git"))).toBe(false);
+      expect(paths.some((path) => path.startsWith("node_modules"))).toBe(false);
+    }),
+  ),
+);
+
+it.effect("tree reports truncation instead of silently dropping entries", () =>
+  withCoordinator((coordinator) =>
+    Effect.gen(function* () {
+      const result = yield* coordinator.tree(scope, { path: ".", maxEntries: 1 });
+      expect(result.entries).toHaveLength(1);
+      expect(result.truncated).toBe(true);
+    }),
+  ),
+);
+
+it.effect("search finds matches and never reads blocked files", () =>
+  withCoordinator((coordinator) =>
+    Effect.gen(function* () {
+      const found = yield* coordinator.search(scope, { query: "greeting" });
+      expect(found.matches.map((match) => match.path)).toContain("src/index.ts");
+      expect(found.matches[0]?.line).toBe(1);
+
+      // The secret exists on disk inside the workspace; the guard is what
+      // keeps it out of the result set.
+      const secret = yield* coordinator.search(scope, { query: "sk-secret" });
+      expect(secret.matches).toHaveLength(0);
+    }),
+  ),
+);
+
+it.effect("every call mirrors one tool activity into the thread", () =>
+  withCoordinator((coordinator, context) =>
+    Effect.gen(function* () {
+      yield* coordinator.overview(scope);
+      yield* coordinator.read(scope, { path: "README.md" });
+
+      const activities = context.dispatched.filter(
+        (command) => command.type === "thread.activity.append",
+      );
+      expect(activities).toHaveLength(2);
+      for (const command of activities) {
+        expect(command.threadId).toBe(threadId);
+        const activity = (command as { activity: { tone: string; kind: string } }).activity;
+        expect(activity.tone).toBe("tool");
+        expect(activity.kind.startsWith("tool.chatgpt-bridge.")).toBe(true);
+      }
+    }),
+  ),
+);
+
+it.effect("a missing thread is refused before any filesystem access", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const unused = () => Effect.die("unused");
+      const snapshotQuery = ProjectionSnapshotQuery.of({
+        getCommandReadModel: unused,
+        getSnapshot: unused,
+        getShellSnapshot: unused,
+        getArchivedShellSnapshot: unused,
+        getSnapshotSequence: unused,
+        getCounts: unused,
+        getActiveProjectByWorkspaceRoot: unused,
+        getProjectShellById: unused,
+        getFirstActiveThreadIdByProjectId: unused,
+        getThreadCheckpointContext: unused,
+        getFullThreadDiffContext: unused,
+        getThreadShellById: () => Effect.succeed(Option.none()),
+        getThreadDetailById: unused,
+        getThreadDetailSnapshot: unused,
+        listChildThreadRefs: () => Effect.succeed([]),
+      });
+      const engine = OrchestrationEngineService.of({
+        readEvents: () => Stream.empty,
+        dispatch: () => Effect.succeed({ sequence: 1 }),
+        streamDomainEvents: Stream.never,
+        latestSequence: Effect.succeed(0),
+        streamThreadEvents: () => Stream.never,
+      });
+      const coordinator = yield* WorkspaceBridgeCoordinator.pipe(
+        Effect.provide(
+          WorkspaceBridgeCoordinatorLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(OrchestrationEngineService, engine),
+                Layer.succeed(ProjectionSnapshotQuery, snapshotQuery),
+                NodeServices.layer,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const error = yield* coordinator.read(scope, { path: "README.md" }).pipe(Effect.flip);
+      expect(error.reason).toBe("thread-not-found");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  ),
+);
+
+it("splitLines does not invent a trailing line for newline-terminated files", () => {
+  expect(splitLines("a\nb\n")).toEqual(["a", "b"]);
+  expect(splitLines("a\nb")).toEqual(["a", "b"]);
+  expect(splitLines("a\r\nb\r\n")).toEqual(["a", "b"]);
+  expect(splitLines("")).toEqual([]);
+});
+
+it("formatNumberedSlice aligns numbers to the widest line in the slice", () => {
+  expect(formatNumberedSlice(["a", "b"], 9)).toBe(" 9\ta\n10\tb");
+});
+
+it("matchesQuery is case-insensitive until the query carries a capital", () => {
+  expect(matchesQuery("const Greeting = 1", "greeting")).toBe(true);
+  expect(matchesQuery("const greeting = 1", "Greeting")).toBe(false);
+  expect(matchesQuery("const Greeting = 1", "Greeting")).toBe(true);
+});
+
+it("parseGitStatus reports the destination path of a rename", () => {
+  expect(
+    parseGitStatus("R  old/name.ts -> new/name.ts\n M src/index.ts\n?? untracked.md\n"),
+  ).toEqual([
+    { path: "new/name.ts", status: "R" },
+    { path: "src/index.ts", status: "M" },
+    { path: "untracked.md", status: "??" },
+  ]);
+});

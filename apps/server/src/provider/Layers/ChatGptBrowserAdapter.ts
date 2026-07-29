@@ -21,6 +21,8 @@ import * as Stream from "effect/Stream";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { chromium } from "playwright-core";
 
+import { buildConnectorUrl } from "../../mcp/McpConnectorUrl.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   ProviderAdapterRequestError,
@@ -71,6 +73,12 @@ interface ChatGptSessionContext {
   activeTurnId: TurnId | undefined;
   activeTurnFiber: Fiber.Fiber<void, never> | undefined;
   stopped: boolean;
+  /**
+   * Set when a workspace connector was issued and the model has not yet been
+   * told about it. Cleared after the first turn carries the preamble, so the
+   * instruction is sent once per conversation rather than on every message.
+   */
+  pendingWorkspacePreamble: boolean;
 }
 
 interface ChatGptAdapterOptions {
@@ -298,6 +306,44 @@ function unsupported(operation: string) {
   });
 }
 
+/**
+ * The message shown in the thread when a workspace connector is available.
+ *
+ * ChatGPT's Developer Mode connectors are registered once in account
+ * settings, not per conversation, so this cannot be automated away — the user
+ * pastes the URL once and every later thread reuses the registered connector.
+ * The instructions live in the timeline rather than in docs because that is
+ * where the user is when the URL first exists.
+ */
+export function connectorSetupMessage(connectorUrl: string): string {
+  return [
+    "**Workspace connector ready.**",
+    "",
+    "This thread can give ChatGPT read-only access to its repository. In ChatGPT: Settings → Connectors → add a connector with **No authentication** and this Server URL:",
+    "",
+    "```",
+    connectorUrl,
+    "```",
+    "",
+    "The URL carries a credential scoped to this thread only. It can read files, search, and show uncommitted changes — it cannot write, run commands, or reach any other project. Revoke it by ending this session.",
+  ].join("\n");
+}
+
+/**
+ * Prompt preamble that points the model at the connector on the first turn.
+ *
+ * Without it the model answers from the prompt text alone and never calls the
+ * tools, because nothing in a fresh conversation suggests the repository is
+ * reachable. Sent once per session, not per turn, so it does not accumulate.
+ */
+export function workspacePreamble(): string {
+  return [
+    "[SergeCode] You are connected to a local repository through the SergeCode workspace connector.",
+    "Call `workspace_overview` first to see the project, then use `workspace_tree`, `workspace_read`, `workspace_search`, and `workspace_changes` to ground your answers in the real code.",
+    "The connector is read-only: propose changes as diffs or instructions rather than trying to apply them.",
+  ].join(" ");
+}
+
 function attachmentNote(input: ProviderSendTurnInput): string {
   const attachments = input.attachments ?? [];
   if (attachments.length === 0) return "";
@@ -381,6 +427,38 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
       ),
     );
 
+  /**
+   * Mints this thread's read-only workspace connector, or `undefined` when
+   * the bridge is off or no public address is configured.
+   *
+   * A loopback endpoint is deliberately not advertised: OpenAI's backend
+   * dials the connector, so a `127.0.0.1` URL would be accepted in the
+   * settings UI and then silently fail on every tool call. Better to show no
+   * connector than a broken one.
+   */
+  const issueWorkspaceConnector = (threadId: ThreadId): Effect.Effect<string | undefined> =>
+    Effect.gen(function* () {
+      if (!settings.workspaceBridge) return undefined;
+      const publicBaseUrl = nonEmpty(settings.publicBaseUrl);
+      if (!publicBaseUrl) return undefined;
+
+      const credential = yield* McpSessionRegistry.issueActiveWorkspaceConnector({
+        threadId,
+        providerInstanceId: instanceId,
+      });
+      if (!credential) return undefined;
+      return buildConnectorUrl({ publicBaseUrl, token: credential.token });
+    }).pipe(
+      // A connector is an enhancement, not a precondition for chatting. If
+      // issuance fails the session still starts as a plain prompt bridge.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not issue a ChatGPT workspace connector", {
+          threadId,
+          cause,
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
+
   const deleteSessionIfCurrent = (threadId: ThreadId, session: ChatGptSessionContext): void => {
     if (sessions.get(threadId) === session) {
       sessions.delete(threadId);
@@ -409,7 +487,9 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
   ): Effect.Effect<void> => {
     let activeAssistantItemId = assistantItemId;
     return Effect.gen(function* () {
-      const prompt = `${input.input ?? ""}${attachmentNote(input)}`;
+      const preamble = session.pendingWorkspacePreamble ? `${workspacePreamble()}\n\n` : "";
+      session.pendingWorkspacePreamble = false;
+      const prompt = `${preamble}${input.input ?? ""}${attachmentNote(input)}`;
       yield* offerRuntimeEvent({
         ...(yield* eventBase(session.threadId, { turnId })),
         type: "turn.started",
@@ -628,6 +708,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           createdAt,
           updatedAt: createdAt,
         };
+        const connectorUrl = yield* issueWorkspaceConnector(input.threadId);
         sessions.set(input.threadId, {
           threadId: input.threadId,
           session,
@@ -637,12 +718,26 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           activeTurnId: undefined,
           activeTurnFiber: undefined,
           stopped: false,
+          pendingWorkspacePreamble: connectorUrl !== undefined,
         });
         yield* offerRuntimeEvent({
           ...(yield* eventBase(input.threadId)),
           type: "session.started",
           payload: { message: "Connected to ChatGPT in a browser." },
         });
+        if (connectorUrl !== undefined) {
+          const connectorItemId = nextRuntimeItemId("chatgpt-connector");
+          yield* offerRuntimeEvent({
+            ...(yield* eventBase(input.threadId, { itemId: connectorItemId })),
+            type: "item.completed",
+            payload: {
+              itemType: "assistant_message",
+              status: "completed",
+              title: "Workspace connector",
+              data: { text: connectorSetupMessage(connectorUrl) },
+            },
+          });
+        }
         yield* offerRuntimeEvent({
           ...(yield* eventBase(input.threadId)),
           type: "thread.started",

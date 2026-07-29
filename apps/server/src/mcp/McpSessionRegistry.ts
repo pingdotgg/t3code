@@ -14,11 +14,20 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  /**
+   * What the credential may do. Defaults to `["agents"]`, which is what every
+   * locally-spawned provider session gets. The ChatGPT web bridge asks for
+   * `["workspace"]` instead, because that credential is handed to a third
+   * party and must not be able to start agents.
+   */
+  readonly capabilities?: ReadonlyArray<McpInvocationContext.McpCapability>;
 }
 
 export interface McpIssuedCredential {
   readonly config: McpProviderSession.McpProviderSessionConfig;
   readonly expiresAt: number;
+  /** Raw bearer token, needed to build a URL-embedded connector address. */
+  readonly token: string;
 }
 
 export interface McpSessionRegistryShape {
@@ -114,7 +123,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["agents"]),
+        capabilities: new Set(request.capabilities ?? ["agents"]),
         issuedAt,
         expiresAt,
       };
@@ -133,6 +142,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           authorizationHeader: `Bearer ${rawToken}`,
         },
         expiresAt,
+        token: rawToken,
       };
     },
   );
@@ -200,6 +210,27 @@ export const issueActiveMcpCredential = (
     ? activeMcpSessionRegistry
         .revokeThread(request.threadId)
         .pipe(Effect.andThen(activeMcpSessionRegistry.issue(request)))
+    : Effect.sync((): McpIssuedCredential | undefined => undefined);
+
+/**
+ * Mints the read-only credential handed to a ChatGPT Developer Mode
+ * connector.
+ *
+ * Deliberately separate from `issueActiveMcpCredential`: that one grants
+ * `agents` to a locally-spawned provider process, while this token is pasted
+ * into a third-party settings field and travels to OpenAI's backend. Granting
+ * only `workspace` keeps a leaked connector URL at "can read this thread's
+ * files" rather than "can start agents on this machine".
+ *
+ * Unlike the provider-session credential, this one does not revoke the
+ * thread's existing credentials first — the browser session's own MCP
+ * credential must keep working alongside it.
+ */
+export const issueActiveWorkspaceConnector = (
+  request: McpCredentialRequest,
+): Effect.Effect<McpIssuedCredential | undefined> =>
+  activeMcpSessionRegistry
+    ? activeMcpSessionRegistry.issue({ ...request, capabilities: ["workspace"] })
     : Effect.sync((): McpIssuedCredential | undefined => undefined);
 
 export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>

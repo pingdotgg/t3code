@@ -382,6 +382,27 @@ export const ChatGptBrowserSettings = makeProviderSettingsSchema(
         providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
       }),
     ),
+    workspaceBridge: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Workspace connector",
+        description:
+          "Issue a read-only MCP connector URL for each ChatGPT thread so the conversation can inspect the thread's repository. Requires a public HTTPS address below.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
+    publicBaseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Public HTTPS address",
+        description:
+          "Externally reachable HTTPS origin for this server, from a tunnel such as cloudflared, ngrok, or Tailscale Funnel. OpenAI's servers — not your browser — call the connector, so a loopback address will not work. Leave blank to keep the connector off.",
+        providerSettingsForm: {
+          placeholder: "https://your-tunnel.trycloudflare.com",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -395,6 +416,8 @@ export const ChatGptBrowserSettings = makeProviderSettingsSchema(
       "conversationUrl",
       "newConversationPerThread",
       "headless",
+      "workspaceBridge",
+      "publicBaseUrl",
     ],
   },
 );
