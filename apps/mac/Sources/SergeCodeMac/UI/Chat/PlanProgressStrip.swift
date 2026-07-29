@@ -292,11 +292,16 @@ struct PlanProgressStrip: View {
                 .frame(height: 200)
             }
         }
-        // System glass keeps the expanded reading surface vibrant and legible
-        // over scenery without bringing back the opaque gray plate.
-        .glassEffect(
-            .regular,
+        // Reading surface stays opaque over the scenery, matching PlanCard's
+        // markdown body. The list unfolds upward from the rail, so the rail
+        // and the credit pill keep their shared baseline.
+        .background(
+            Color(nsColor: .textBackgroundColor),
             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+        .overlay {
+            RoundedRectangle(cornerRadius: AlpineTheme.Corners.card)
+                .strokeBorder(.secondary.opacity(0.18), lineWidth: 1)
+        }
         .frame(maxWidth: 520, alignment: .leading)
     }
 
