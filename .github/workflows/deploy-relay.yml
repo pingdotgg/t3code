@@ -22,7 +22,7 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
-    if: github.event_name == 'workflow_dispatch' || vars.SERGECODE_RELAY_DEPLOY_ENABLED == 'true'
+    if: vars.SERGECODE_RELAY_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:

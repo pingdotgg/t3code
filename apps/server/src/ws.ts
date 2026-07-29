@@ -1930,9 +1930,9 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeServerLifecycle,
             Effect.gen(function* () {
               const snapshot = yield* lifecycleEvents.snapshot;
-              const snapshotEvents = Array.from(snapshot.events).toSorted(
-                (left, right) => left.sequence - right.sequence,
-              );
+              const snapshotEvents = Array.from(snapshot.events)
+                .toSorted((left, right) => left.sequence - right.sequence)
+                .filter((event) => event.type !== "hostUpdateRequested");
               const liveEvents = lifecycleEvents.stream.pipe(
                 Stream.filter((event) => event.sequence > snapshot.sequence),
               );

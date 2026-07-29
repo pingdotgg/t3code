@@ -35,6 +35,7 @@ export function hostNeedsMacAppUpdate(
   host: HostApplicationDescriptor,
   latest: MacAppRelease,
 ): boolean {
+  if (host.updateCapability !== "sparkle") return false;
   const hostBuild = /^\d+$/.test(host.buildNumber)
     ? Number.parseInt(host.buildNumber, 10)
     : Number.NaN;

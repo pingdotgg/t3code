@@ -111,9 +111,9 @@ the URL manually.
 ### Deployment CI
 
 The relay is versioned separately from client releases. `.github/workflows/deploy-relay.yml` deploys
-the shared Alchemy `prod` stage on manual dispatch. After the repository variable
-`SERGECODE_RELAY_DEPLOY_ENABLED` is set to `true`, relay-relevant pushes to `main` deploy it
-automatically. Pull requests never deploy relay stages. Stable and nightly release builds both
+the shared Alchemy `prod` stage on manual dispatch when the repository variable
+`SERGECODE_RELAY_DEPLOY_ENABLED` is set to `true`. With that variable enabled, relay-relevant
+pushes to `main` deploy it automatically as well. Pull requests never deploy relay stages. Stable and nightly release builds both
 resolve their static public config from the same `production` GitHub environment. Developers can
 deploy personal non-production stages locally with any stage name other than `prod`.
 

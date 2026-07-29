@@ -4108,10 +4108,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               projectName: "project",
             },
           },
+          {
+            version: 1 as const,
+            sequence: 2,
+            type: "hostUpdateRequested" as const,
+            payload: { requestedAt: "2026-01-01T00:00:01.000Z" },
+          },
         ] as const;
         const liveEvents = Stream.make({
           version: 1 as const,
-          sequence: 2,
+          sequence: 3,
           type: "ready" as const,
           payload: { at: "2026-01-01T00:00:00.000Z", environment: testEnvironmentDescriptor },
         });
@@ -4139,7 +4145,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(first?.type, "welcome");
         assert.equal(first?.sequence, 1);
         assert.equal(second?.type, "ready");
-        assert.equal(second?.sequence, 2);
+        assert.equal(second?.sequence, 3);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

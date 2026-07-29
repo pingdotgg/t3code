@@ -16,6 +16,11 @@ interface SnapshotState {
   readonly events: ReadonlyArray<ServerLifecycleStreamEvent>;
 }
 
+const isReplayableLifecycleEvent = (
+  event: ServerLifecycleStreamEvent,
+): event is Exclude<ServerLifecycleStreamEvent, { type: "hostUpdateRequested" }> =>
+  event.type !== "hostUpdateRequested";
+
 export class ServerLifecycleEvents extends Context.Service<
   ServerLifecycleEvents,
   {
@@ -40,10 +45,9 @@ const make = Effect.gen(function* () {
           ...event,
           sequence: nextSequence,
         } satisfies ServerLifecycleStreamEvent;
-        const nextEvents = [
-          nextEvent,
-          ...current.events.filter((entry) => entry.type !== nextEvent.type),
-        ];
+        const nextEvents = isReplayableLifecycleEvent(nextEvent)
+          ? [nextEvent, ...current.events.filter((entry) => entry.type !== nextEvent.type)]
+          : current.events;
         return [nextEvent, { sequence: nextSequence, events: nextEvents }] as const;
       }).pipe(Effect.tap((event) => PubSub.publish(pubsub, event))),
     snapshot: Ref.get(state),

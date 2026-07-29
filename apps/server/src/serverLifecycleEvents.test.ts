@@ -61,14 +61,7 @@ it.effect(
 
       const snapshot = yield* lifecycleEvents.snapshot;
       assert.equal(snapshot.sequence, 4);
-      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), [
-        "hostUpdateRequested",
-        "ready",
-        "welcome",
-      ]);
-      assert.deepEqual(
-        snapshot.events.filter((event) => event.type === "hostUpdateRequested"),
-        [latestUpdateRequest],
-      );
+      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), ["ready", "welcome"]);
+      assert.deepEqual(snapshot.events, [ready.value, welcome.value]);
     }).pipe(Effect.provide(ServerLifecycleEvents.layer)),
 );

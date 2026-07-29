@@ -54,5 +54,11 @@ describe("mac app update advisory", () => {
         { version: "0.7.0", buildNumber: 25 },
       ),
     ).toBe(false);
+    expect(
+      hostNeedsMacAppUpdate(
+        { ...host, updateCapability: "none" },
+        { version: "0.7.0", buildNumber: 25 },
+      ),
+    ).toBe(false);
   });
 });

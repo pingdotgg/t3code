@@ -56,10 +56,9 @@ API becomes `relay.<RELAY_API_ZONE_NAME>` unless `RELAY_DOMAIN` overrides it.
 
 Configure the repository and its `production` GitHub environment exactly as
 listed in [`infra/relay/README.md`](../../infra/relay/README.md#deployment-ci).
-Leave `SERGECODE_RELAY_DEPLOY_ENABLED` unset while configuring credentials.
-Run **Deploy SurgeCode Cloud relay** manually once. After the first successful
-deployment, set the repository variable to `true` to deploy relay-relevant
-changes from `main` automatically.
+Set `SERGECODE_RELAY_DEPLOY_ENABLED` to `true` only after configuring and verifying
+the required credentials. The **Deploy SurgeCode Cloud relay** workflow requires
+that variable for both manual dispatches and relay-relevant changes from `main`.
 
 The app release environment must also expose the public client configuration:
 
