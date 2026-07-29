@@ -451,6 +451,9 @@ export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.T
 export const ServerRemoveKeybindingResult = ServerUpsertKeybindingResult;
 export type ServerRemoveKeybindingResult = typeof ServerRemoveKeybindingResult.Type;
 
+export const ServerResetKeybindingsResult = ServerUpsertKeybindingResult;
+export type ServerResetKeybindingsResult = typeof ServerResetKeybindingsResult.Type;
+
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviders,

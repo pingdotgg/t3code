@@ -339,6 +339,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    resetKeybindings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:reset-keybindings",
+      tag: WS_METHODS.serverResetKeybindings,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     updateSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-settings",
       tag: WS_METHODS.serverUpdateSettings,

@@ -1,4 +1,9 @@
-import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
+import {
+  KeybindingCommand,
+  KeybindingRule,
+  KeybindingsConfig,
+  MAX_KEYBINDINGS_COUNT,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
@@ -451,6 +456,106 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       const persistedView = persisted.map(({ key, command }) => ({ key, command }));
       assert.deepEqual(persistedView, [{ key: "mod+shift+r", command: "script.run-tests.run" }]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("resets customized keybindings to defaults while keeping script bindings", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+        { key: "mod+r", command: "script.run-tests.run" },
+      ]);
+
+      const resolved = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.resetKeybindingRulesToDefaults;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [
+        ...Keybindings.DEFAULT_KEYBINDINGS.map(({ key, command }) => ({ key, command })),
+        { key: "mod+r", command: "script.run-tests.run" },
+      ]);
+      assert.isTrue(resolved.some((entry) => entry.command === "script.run-tests.run"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("resets a malformed keybindings config to defaults", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true });
+      yield* fs.writeFileString(keybindingsConfigPath, "{ not an array");
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.resetKeybindingRulesToDefaults;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(
+        persistedView,
+        Keybindings.DEFAULT_KEYBINDINGS.map(({ key, command }) => ({ key, command })),
+      );
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("refuses to reset a keybindings config it cannot read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      // A directory at the config path fails the read the same way a transient
+      // filesystem error would, without overwriting rules that are still there.
+      yield* fs.makeDirectory(keybindingsConfigPath, { recursive: true });
+
+      const result = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.resetKeybindingRulesToDefaults;
+      }).pipe(toDetailResult);
+
+      assertFailure(result, "failed to read keybindings config");
+      assert.isTrue((yield* fs.stat(keybindingsConfigPath)).type === "Directory");
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("keeps every default when preserved script bindings exceed the max count", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const scriptBudget = MAX_KEYBINDINGS_COUNT - Keybindings.DEFAULT_KEYBINDINGS.length;
+      const scriptRules = Array.from(
+        { length: scriptBudget + 5 },
+        (_, index): KeybindingRule => ({
+          key: "mod+r",
+          command: `script.s${index}.run`,
+        }),
+      );
+      yield* writeKeybindingsConfig(keybindingsConfigPath, scriptRules);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        return yield* keybindings.resetKeybindingRulesToDefaults;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedDefaults = persisted
+        .filter((rule) => !String(rule.command).startsWith("script."))
+        .map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(
+        persistedDefaults,
+        Keybindings.DEFAULT_KEYBINDINGS.map(({ key, command }) => ({ key, command })),
+      );
+      assert.equal(persisted.length, MAX_KEYBINDINGS_COUNT);
+      // Later rules win, so the surviving scripts must be the trailing ones.
+      assert.deepEqual(
+        persisted
+          .filter((rule) => String(rule.command).startsWith("script."))
+          .map((rule) => rule.command),
+        scriptRules.slice(5).map((rule) => rule.command),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 

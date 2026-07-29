@@ -6,6 +6,7 @@ import {
   InfoIcon,
   MinusIcon,
   PlusIcon,
+  RotateCcwIcon,
   SearchIcon,
   TriangleAlertIcon,
   XIcon,
@@ -35,6 +36,7 @@ import {
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
+import { readLocalApi } from "../../localApi";
 import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import {
@@ -1092,6 +1094,9 @@ export function KeybindingsSettingsPanel() {
   const removeKeybindingMutation = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
+  const resetKeybindingsMutation = useAtomCommand(serverEnvironment.resetKeybindings, {
+    reportFailure: false,
+  });
   const openInPreferredEditor = useOpenInPreferredEditor(
     primaryEnvironment?.environmentId ?? null,
     availableEditors,
@@ -1220,6 +1225,48 @@ export function KeybindingsSettingsPanel() {
     [saveKeybinding],
   );
 
+  const [isResetting, setIsResetting] = useState(false);
+  const primaryEnvironmentRef = useRef(primaryEnvironment);
+  useEffect(() => {
+    primaryEnvironmentRef.current = primaryEnvironment;
+  }, [primaryEnvironment]);
+  const resetAllKeybindings = useCallback(() => {
+    const environmentId = primaryEnvironment?.environmentId;
+    if (!environmentId) return;
+    void (async () => {
+      const confirmed = await readLocalApi()?.dialogs.confirm(
+        [
+          "Reset all keybindings to their defaults?",
+          "Every customization is discarded. Project script bindings are kept.",
+        ].join("\n"),
+      );
+      if (!confirmed) return;
+      // The primary environment can change while the dialog is open, and this
+      // discards every customization — target only what the user was shown.
+      if (primaryEnvironmentRef.current?.environmentId !== environmentId) {
+        toastManager.add({
+          title: "Keybindings were not reset",
+          description: "The active environment changed while the confirmation was open.",
+          type: "error",
+        });
+        return;
+      }
+      setIsResetting(true);
+      const result = await resetKeybindingsMutation({
+        environmentId,
+        input: {},
+      });
+      setIsResetting(false);
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        title: "Unable to reset keybindings",
+        description: error instanceof Error ? error.message : "The keybindings were not reset.",
+        type: "error",
+      });
+    })();
+  }, [primaryEnvironment?.environmentId, resetKeybindingsMutation]);
+
   const bindingsCount = (
     <span className="text-[11px] text-muted-foreground">
       {rows.length + (isAddingBinding ? 1 : 0)}{" "}
@@ -1257,6 +1304,24 @@ export function KeybindingsSettingsPanel() {
                 }
               />
               <TooltipPopup side="top">Add keybinding</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    disabled={!primaryEnvironment || isResetting}
+                    onClick={resetAllKeybindings}
+                    aria-label="Reset all keybindings to defaults"
+                  >
+                    <RotateCcwIcon className="size-3" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Reset all to defaults</TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger

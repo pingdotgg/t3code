@@ -309,6 +309,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverUpdateServer, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverResetKeybindings, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
@@ -1439,6 +1440,15 @@ const makeWsRpcLayer = (
             WS_METHODS.serverRemoveKeybinding,
             Effect.gen(function* () {
               const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
+              return { keybindings: keybindingsConfig, issues: [] };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverResetKeybindings]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverResetKeybindings,
+            Effect.gen(function* () {
+              const keybindingsConfig = yield* keybindings.resetKeybindingRulesToDefaults;
               return { keybindings: keybindingsConfig, issues: [] };
             }),
             { "rpc.aggregate": "server" },

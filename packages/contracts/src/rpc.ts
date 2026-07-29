@@ -119,6 +119,7 @@ import {
   ServerLifecycleStreamEvent,
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
+  ServerResetKeybindingsResult,
   ServerProviderUpdatedPayload,
   ServerSelfUpdateError,
   ServerSelfUpdateInput,
@@ -209,6 +210,7 @@ export const WS_METHODS = {
   serverUpdateServer: "server.updateServer",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
+  serverResetKeybindings: "server.resetKeybindings",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -246,6 +248,12 @@ export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybi
 export const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybinding, {
   payload: ServerRemoveKeybindingInput,
   success: ServerRemoveKeybindingResult,
+  error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerResetKeybindingsRpc = Rpc.make(WS_METHODS.serverResetKeybindings, {
+  payload: Schema.Struct({}),
+  success: ServerResetKeybindingsResult,
   error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
 });
 
@@ -698,6 +706,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateServerRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
+  WsServerResetKeybindingsRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
