@@ -429,6 +429,9 @@ export function normalizeClaudeCliEffort(
   if (!effort) {
     return undefined;
   }
+  if (effort === "ultrathink") {
+    return undefined;
+  }
   if (effort === "ultracode") {
     return "xhigh";
   }
