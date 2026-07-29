@@ -307,7 +307,9 @@ export function CloudEnvironmentConnectRows({
                     <Button
                       size="sm"
                       variant="destructive-outline"
-                      disabled={deregisteringEnvironmentId === environment.environmentId}
+                      disabled={
+                        connectingEnvironmentId !== null || deregisteringEnvironmentId !== null
+                      }
                     >
                       {deregisteringEnvironmentId === environment.environmentId
                         ? "Deregistering…"
@@ -343,10 +345,7 @@ export function CloudEnvironmentConnectRows({
               </AlertDialog>
               <Button
                 size="sm"
-                disabled={
-                  connectingEnvironmentId !== null ||
-                  deregisteringEnvironmentId === environment.environmentId
-                }
+                disabled={connectingEnvironmentId !== null || deregisteringEnvironmentId !== null}
                 onClick={() => void connectEnvironment(environment)}
               >
                 {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}

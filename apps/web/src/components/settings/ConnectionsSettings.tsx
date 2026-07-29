@@ -1486,7 +1486,7 @@ function SavedBackendListRow({
                         size="xs"
                         variant="destructive-outline"
                         disabled={
-                          deregisteringEnvironmentId === environmentId ||
+                          deregisteringEnvironmentId !== null ||
                           removingEnvironmentId === environmentId
                         }
                       >
