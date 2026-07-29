@@ -19,6 +19,7 @@ import {
   ProviderVersionCache,
   resolveLatestProviderVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
+  resolveProviderMaintenanceCapabilitiesWithPathsEffect,
 } from "./providerMaintenance.ts";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
@@ -494,7 +495,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
+  it.effect("returns resolved paths while detecting pnpm global symlinks", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
       const binDir = NodePath.join(tempDir, "bin");
@@ -518,14 +519,19 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       NodeFS.chmodSync(packageBinPath, 0o755);
       NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: symlinkPath,
-        env: {
-          PATH: "",
+      const resolution = yield* resolveProviderMaintenanceCapabilitiesWithPathsEffect(
+        packageToolUpdate,
+        {
+          binaryPath: symlinkPath,
+          env: {
+            PATH: "",
+          },
         },
-      });
+      );
 
-      expect(capabilities).toEqual({
+      expect(resolution.resolvedCommandPath).toBe(symlinkPath);
+      expect(resolution.realCommandPath).toBe(packageBinPath);
+      expect(resolution.capabilities).toEqual({
         provider: driver("packageTool"),
         packageName: "@example/package-tool",
         update: {
