@@ -50,6 +50,10 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 
 - Provider sessions use a shared launch environment pipeline instead of ad hoc environment assembly.
 
+### Provider Instructions
+
+- Default-mode Codex instructions allow `request_user_input` when configured instead of treating it as unavailable.
+
 ### Base Path And Remote URLs
 
 - The fork includes base-path handling for served web assets and remote URL normalization.
