@@ -95,6 +95,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments"
 import { useProjects, useThreadShells } from "../state/entities";
 import { useRunningTerminalsForThreads } from "../state/terminalSessions";
 import { useDiscoveredPortsForThreads } from "../portDiscoveryState";
+import { useWorktreeCanonicalThreadRef } from "../worktreeScope";
 import { previewEnvironment } from "../state/preview";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
@@ -666,102 +667,101 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
 
   return (
     <li
-        data-thread-item
-        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
-      >
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div
-                role="button"
-                tabIndex={0}
-                data-testid="sidebar-v2-row-slim"
-                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
-                onClick={handleClick}
-                onDoubleClick={handleDoubleClick}
-                onKeyDown={handleKeyDown}
-                onContextMenu={handleContextMenu}
-              />
-            }
-          >
-            {/* Settled history recedes: dimmed favicon at rest, restored on
+      data-thread-item
+      className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <div
+              role="button"
+              tabIndex={0}
+              data-testid="sidebar-v2-row-slim"
+              className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+              onClick={handleClick}
+              onDoubleClick={handleDoubleClick}
+              onKeyDown={handleKeyDown}
+              onContextMenu={handleContextMenu}
+            />
+          }
+        >
+          {/* Settled history recedes: dimmed favicon at rest, restored on
               hover so the tail stays scannable when you're hunting. */}
-            <span
-              className={cn(
-                "shrink-0 transition-opacity",
-                !props.isActive &&
-                  "opacity-40 grayscale group-hover/v2-row:opacity-100 group-hover/v2-row:grayscale-0",
-              )}
-            >
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
-                className="size-4"
-                fallbackIcon={MessageSquareIcon}
-              />
-            </span>
-            {title}
-            {/* The PR badge stays outside the hover-fading slot: it must
+          <span
+            className={cn(
+              "shrink-0 transition-opacity",
+              !props.isActive &&
+                "opacity-40 grayscale group-hover/v2-row:opacity-100 group-hover/v2-row:grayscale-0",
+            )}
+          >
+            <ProjectFavicon
+              environmentId={thread.environmentId}
+              cwd={props.projectCwd ?? ""}
+              className="size-4"
+              fallbackIcon={MessageSquareIcon}
+            />
+          </span>
+          {title}
+          {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
-            {prBadge}
-            <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
-              <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
-                {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
-                  // Snoozed rows show when they come BACK, not when they were
-                  // last touched — the return ticket is the row's whole story.
-                  <span className="text-xs text-blue-600 tabular-nums dark:text-blue-400">
-                    {props.snoozeWakeLabelText}
-                  </span>
-                ) : isWoke ? (
-                  // A wake can land straight in the settled tail (e.g. PR
-                  // merged while snoozed); the signal must survive the trip.
-                  <span
-                    role="status"
-                    aria-label="Woke from snooze"
-                    className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300"
-                  >
-                    <AlarmClockIcon aria-hidden className="size-3" />
-                    Woke
-                  </span>
-                ) : (
-                  <span className="text-xs">
-                    {variantAction === "unsettle"
-                      ? settledTimeLabel(thread)
-                      : threadTimeLabel(thread)}
-                  </span>
-                )}
-              </span>
-              {variantAction === "unsnooze" ? (
-                !props.snoozeSupported ? null : (
-                  <button
-                    type="button"
-                    aria-label="Wake thread now"
-                    onClick={handleUnsnoozeClick}
-                    className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
-                  >
-                    <AlarmClockOffIcon className="size-3" />
-                  </button>
-                )
-              ) : !props.settlementSupported ? null : (
-                <button
-                  type="button"
-                  aria-label="Un-settle thread"
-                  onClick={handleUnsettleClick}
-                  className="absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
+          {prBadge}
+          <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
+            <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
+              {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
+                // Snoozed rows show when they come BACK, not when they were
+                // last touched — the return ticket is the row's whole story.
+                <span className="text-xs text-blue-600 tabular-nums dark:text-blue-400">
+                  {props.snoozeWakeLabelText}
+                </span>
+              ) : isWoke ? (
+                // A wake can land straight in the settled tail (e.g. PR
+                // merged while snoozed); the signal must survive the trip.
+                <span
+                  role="status"
+                  aria-label="Woke from snooze"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300"
                 >
-                  <Undo2Icon className="mb-px size-3.5" />
-                </button>
+                  <AlarmClockIcon aria-hidden className="size-3" />
+                  Woke
+                </span>
+              ) : (
+                <span className="text-xs">
+                  {variantAction === "unsettle"
+                    ? settledTimeLabel(thread)
+                    : threadTimeLabel(thread)}
+                </span>
               )}
             </span>
-            {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
-          </TooltipTrigger>
-          {detailsTooltip}
-        </Tooltip>
-      </li>
+            {variantAction === "unsnooze" ? (
+              !props.snoozeSupported ? null : (
+                <button
+                  type="button"
+                  aria-label="Wake thread now"
+                  onClick={handleUnsnoozeClick}
+                  className="absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
+                >
+                  <AlarmClockOffIcon className="size-3" />
+                </button>
+              )
+            ) : !props.settlementSupported ? null : (
+              <button
+                type="button"
+                aria-label="Un-settle thread"
+                onClick={handleUnsettleClick}
+                className="absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/v2-row:opacity-100"
+              >
+                <Undo2Icon className="mb-px size-3.5" />
+              </button>
+            )}
+          </span>
+          {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
+        </TooltipTrigger>
+        {detailsTooltip}
+      </Tooltip>
+    </li>
   );
 });
-
 
 function latestTurnDiff(
   thread: SidebarThreadSummary,
@@ -1077,7 +1077,16 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
         ) ?? null);
   const isActiveCard = activeMember !== null;
   const environmentId = newest.environmentId;
-  const threadIds = useMemo(() => threads.map((thread) => thread.id), [threads]);
+  const canonicalThreadRef = useWorktreeCanonicalThreadRef(newestRef);
+  const threadIds = useMemo(
+    () => [
+      ...new Set([
+        ...threads.map((thread) => thread.id),
+        ...(canonicalThreadRef ? [canonicalThreadRef.threadId] : []),
+      ]),
+    ],
+    [canonicalThreadRef, threads],
+  );
 
   // Worktree-level activity: any member thread's terminal with a running
   // subprocess, and any dev server discovered on a member's terminal. These
@@ -1183,23 +1192,24 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
   const worktreePath = threads.find((thread) => thread.worktreePath !== null)?.worktreePath ?? null;
   const gitCwd = worktreePath ?? props.projectCwd;
   const gitStatus = useEnvironmentQuery(
-    (newest.branch != null || worktreePath !== null) && gitCwd !== null
+    gitCwd !== null
       ? vcsEnvironment.status({
           environmentId,
           input: { cwd: gitCwd },
         })
       : null,
   );
+  const checkoutBranch =
+    worktreePath === null ? (gitStatus.data?.refName ?? newest.branch) : newest.branch;
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: worktreePath === null ? "local" : "worktree",
     activeWorktreePath: worktreePath,
-    activeThreadBranch: newest.branch,
+    activeThreadBranch: checkoutBranch,
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
   const pr = resolveThreadPr({
-    threadBranch: newest.branch,
+    threadBranch: checkoutBranch,
     gitStatus: gitStatus.data,
-    hasDedicatedWorktree: worktreePath !== null,
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const prState = pr?.state ?? null;
@@ -1261,6 +1271,9 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
   // member can take it — a half-applied snooze would leave the card in
   // place and read as a failed click.
   const snoozeNowIso = new Date().toISOString();
+  const showSettleButton =
+    props.settlementSupported &&
+    threads.every((thread) => canSettle(thread, { now: snoozeNowIso }));
   const showSnoozeButton =
     props.snoozeSupported && threads.every((thread) => canSnooze(thread, { now: snoozeNowIso }));
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
@@ -1282,7 +1295,10 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
         : shouldRecede
           ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
-    isInFlight && !isActiveCard && !anySelected && "opacity-70 transition-opacity hover:opacity-100",
+    isInFlight &&
+      !isActiveCard &&
+      !anySelected &&
+      "opacity-70 transition-opacity hover:opacity-100",
   );
 
   return (
@@ -1365,7 +1381,10 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
               >
                 {topStatus ? (
                   <span
-                    className={cn("inline-flex items-center gap-1 font-medium", topStatus.className)}
+                    className={cn(
+                      "inline-flex items-center gap-1 font-medium",
+                      topStatus.className,
+                    )}
                   >
                     {topStatus.icon === "working" ? (
                       <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
@@ -1388,7 +1407,7 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
                   threadTimeLabel(timeLabelThread)
                 )}
               </span>
-              {props.settlementSupported || showSnoozeButton ? (
+              {showSettleButton || showSnoozeButton ? (
                 <span
                   className={cn(
                     "absolute inset-y-0 right-0 flex items-stretch gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/v2-row:opacity-100",
@@ -1402,7 +1421,7 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
                       onSnooze={handleSnoozePreset}
                     />
                   ) : null}
-                  {props.settlementSupported ? (
+                  {showSettleButton ? (
                     <button
                       type="button"
                       aria-label="Settle worktree"
@@ -1446,8 +1465,8 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
             })}
           </div>
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-            {newest.branch ? (
-              <span className="min-w-0 flex-1 truncate whitespace-nowrap">{newest.branch}</span>
+            {checkoutBranch ? (
+              <span className="min-w-0 flex-1 truncate whitespace-nowrap">{checkoutBranch}</span>
             ) : (
               <span className="flex-1" />
             )}
@@ -2002,11 +2021,13 @@ export default function SidebarV2() {
   // Shelf rows stand in for their whole group; the representative prefers
   // the route thread so highlight and navigation stay honest.
   const snoozedRepThreads = useMemo(
-    () => visibleSnoozedGroups.map((group) => pickWorktreeGroupRepresentative(group, routeThreadKey)),
+    () =>
+      visibleSnoozedGroups.map((group) => pickWorktreeGroupRepresentative(group, routeThreadKey)),
     [routeThreadKey, visibleSnoozedGroups],
   );
   const settledRepThreads = useMemo(
-    () => renderedSettledGroups.map((group) => pickWorktreeGroupRepresentative(group, routeThreadKey)),
+    () =>
+      renderedSettledGroups.map((group) => pickWorktreeGroupRepresentative(group, routeThreadKey)),
     [renderedSettledGroups, routeThreadKey],
   );
   // The flat jump/selection spine: card members in visual order, then the
@@ -2241,10 +2262,11 @@ export default function SidebarV2() {
           );
         });
         if (pending.length === 0) return;
-        // Prefer members the server will accept; when none qualify, send
-        // the first anyway so the user sees the server's reason.
-        const settleable = pending.filter((thread) => canSettle(thread, { now }));
-        const targets = settleable.length > 0 ? settleable : [pending[0]!];
+        // A worktree-level action is all-or-nothing. If any member is blocked,
+        // send only that member so the server's reason reaches the user without
+        // partially settling its siblings.
+        const blocked = pending.find((thread) => !canSettle(thread, { now }));
+        const targets = blocked ? [blocked] : pending;
         const targetKeys = targets.map(sidebarThreadKey);
         for (const key of targetKeys) settlingThreadKeysRef.current.add(key);
         try {

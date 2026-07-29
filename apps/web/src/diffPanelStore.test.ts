@@ -79,4 +79,16 @@ describe("diffPanelStore", () => {
       revealRequestId: 1,
     });
   });
+
+  it("falls back to checkout changes when a sibling has no turn diffs", () => {
+    useDiffPanelStore
+      .getState()
+      .selectTurn(THREAD_REF, TurnId.make("turn-from-sibling"), "src/app.ts");
+
+    useDiffPanelStore.getState().reconcileTurnSelection(THREAD_REF, []);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: null });
+  });
 });

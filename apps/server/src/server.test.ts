@@ -6929,6 +6929,83 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 
   it.effect(
+    "closes the archived canonical terminal owner after the last live sibling archives",
+    () =>
+      Effect.gen(function* () {
+        const canonicalThreadId = ThreadId.make("thread-archive-canonical");
+        const finalSiblingId = ThreadId.make("thread-archive-final-sibling");
+        const worktreePath = "/tmp/worktrees/shared";
+        const effects: string[] = [];
+
+        yield* buildAppUnderTest({
+          layers: {
+            terminalManager: {
+              close: (input) =>
+                Effect.sync(() => {
+                  effects.push(`terminal.close:${input.threadId}`);
+                }),
+            },
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  effects.push(`dispatch:${command.type}`);
+                  return { sequence: 1 };
+                }),
+            },
+            projectionSnapshotQuery: {
+              getThreadShellById: () =>
+                Effect.succeed(
+                  Option.some(
+                    makeDefaultOrchestrationThreadShell({
+                      id: finalSiblingId,
+                      createdAt: "2026-01-02T00:00:00.000Z",
+                      worktreePath,
+                    }),
+                  ),
+                ),
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  snapshotSequence: 2,
+                  projects: [],
+                  threads: [],
+                  updatedAt: "2026-01-03T00:00:00.000Z",
+                }),
+              getArchivedShellSnapshot: () =>
+                Effect.succeed({
+                  snapshotSequence: 2,
+                  projects: [],
+                  threads: [
+                    makeDefaultOrchestrationThreadShell({
+                      id: canonicalThreadId,
+                      createdAt: "2026-01-01T00:00:00.000Z",
+                      worktreePath,
+                    }),
+                  ],
+                  updatedAt: "2026-01-03T00:00:00.000Z",
+                }),
+            },
+          },
+        });
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.archive",
+              commandId: CommandId.make("cmd-thread-archive-final-sibling"),
+              threadId: finalSiblingId,
+            }),
+          ),
+        );
+
+        assert.deepEqual(effects, [
+          "dispatch:thread.archive",
+          `terminal.close:${canonicalThreadId}`,
+        ]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
     "bootstraps first-send worktree turns on the server before dispatching turn start",
     () =>
       Effect.gen(function* () {

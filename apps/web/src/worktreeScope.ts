@@ -1,6 +1,11 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type EnvironmentId,
+  type ProjectId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import {
@@ -12,10 +17,59 @@ import {
 
 /** Threads without a worktree share the project's workspace-root checkout. */
 const LOCAL_CHECKOUT_SEGMENT = "local";
+const CANONICAL_OWNER_STORAGE_KEY = "t3code:worktree-canonical-owners:v1";
+
+let canonicalOwnerThreadIdByScopeKey: Map<string, string> | null = null;
 
 function normalizeWorktreePath(worktreePath: string | null | undefined): string | null {
-  const trimmed = worktreePath?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : null;
+  return worktreePath && worktreePath.length > 0 ? worktreePath : null;
+}
+
+function readCanonicalOwners(): Map<string, string> {
+  if (canonicalOwnerThreadIdByScopeKey !== null) {
+    return canonicalOwnerThreadIdByScopeKey;
+  }
+  const owners = new Map<string, string>();
+  if (typeof window !== "undefined") {
+    try {
+      const serialized = window.localStorage.getItem(CANONICAL_OWNER_STORAGE_KEY);
+      if (serialized !== null) {
+        const parsed: unknown = JSON.parse(serialized);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          for (const [scopeKey, threadId] of Object.entries(parsed)) {
+            if (typeof threadId === "string" && threadId.length > 0) {
+              owners.set(scopeKey, threadId);
+            }
+          }
+        }
+      }
+    } catch {
+      // Corrupt or unavailable storage should only reset canonical ownership.
+    }
+  }
+  canonicalOwnerThreadIdByScopeKey = owners;
+  return owners;
+}
+
+function persistCanonicalOwners(owners: ReadonlyMap<string, string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      CANONICAL_OWNER_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(owners)),
+    );
+  } catch {
+    // Resource ownership still remains stable for this renderer session.
+  }
+}
+
+function rememberCanonicalOwner(scopeKey: string, threadId: string): string {
+  const owners = readCanonicalOwners();
+  const existing = owners.get(scopeKey);
+  if (existing !== undefined) return existing;
+  owners.set(scopeKey, threadId);
+  persistCanonicalOwners(owners);
+  return threadId;
 }
 
 /** Identity of the checkout a thread runs in. There is no server-side worktree
@@ -43,9 +97,51 @@ export function resolveWorktreeScopeKeyForThreadRef(ref: ScopedThreadRef): strin
   return shell === null ? scopedThreadKey(ref) : threadWorktreeScopeKey(shell);
 }
 
+export function worktreeStateKeysForThreadRef(ref: ScopedThreadRef): {
+  primaryKey: string;
+  fallbackKey: string;
+} {
+  return {
+    primaryKey: resolveWorktreeScopeKeyForThreadRef(ref),
+    fallbackKey: scopedThreadKey(ref),
+  };
+}
+
+export function readWorktreeScopedRecordValue<T>(
+  record: Readonly<Record<string, T>>,
+  ref: ScopedThreadRef,
+): T | undefined {
+  const { primaryKey, fallbackKey } = worktreeStateKeysForThreadRef(ref);
+  return record[primaryKey] ?? record[fallbackKey];
+}
+
+export function migrateWorktreeScopedRecord<T>(
+  record: Record<string, T>,
+  ref: ScopedThreadRef,
+): { key: string; record: Record<string, T> } {
+  const { primaryKey, fallbackKey } = worktreeStateKeysForThreadRef(ref);
+  return migrateWorktreeScopedRecordKeys(record, primaryKey, fallbackKey);
+}
+
+export function migrateWorktreeScopedRecordKeys<T>(
+  record: Record<string, T>,
+  primaryKey: string,
+  fallbackKey: string,
+): { key: string; record: Record<string, T> } {
+  if (primaryKey === fallbackKey || record[fallbackKey] === undefined) {
+    return { key: primaryKey, record };
+  }
+  const fallbackValue = record[fallbackKey]!;
+  const { [fallbackKey]: _fallback, ...remaining } = record;
+  return {
+    key: primaryKey,
+    record: { ...remaining, [primaryKey]: fallbackValue },
+  };
+}
+
 function compareCanonicalCandidates(
-  left: EnvironmentThreadShell,
-  right: EnvironmentThreadShell,
+  left: Pick<EnvironmentThreadShell, "createdAt" | "id">,
+  right: Pick<EnvironmentThreadShell, "createdAt" | "id">,
 ): number {
   const leftCreatedAt = Date.parse(left.createdAt);
   const rightCreatedAt = Date.parse(right.createdAt);
@@ -61,6 +157,14 @@ function compareCanonicalCandidates(
   return left.id.localeCompare(right.id);
 }
 
+export function selectStableCanonicalThreadId(
+  candidates: ReadonlyArray<Pick<EnvironmentThreadShell, "createdAt" | "id">>,
+  rememberedThreadId?: string,
+): string | null {
+  if (rememberedThreadId !== undefined) return rememberedThreadId;
+  return candidates.toSorted(compareCanonicalCandidates)[0]?.id ?? null;
+}
+
 function selectCanonicalShell(
   ref: ScopedThreadRef,
   shell: EnvironmentThreadShell | null,
@@ -70,10 +174,14 @@ function selectCanonicalShell(
     return ref;
   }
   const scopeKey = threadWorktreeScopeKey(shell);
+  const rememberedThreadId = readCanonicalOwners().get(scopeKey);
+  if (rememberedThreadId !== undefined) {
+    return scopeThreadRef(ref.environmentId, ThreadId.make(rememberedThreadId));
+  }
   // Archived threads stay eligible on purpose: the canonical ref must not
   // shift (orphaning the worktree's terminal/preview sessions) just because
   // the oldest thread was archived while siblings remain.
-  let canonical: EnvironmentThreadShell | null = null;
+  const matchingCandidates: EnvironmentThreadShell[] = [];
   for (const candidate of candidates) {
     if (candidate === null || candidate.environmentId !== ref.environmentId) {
       continue;
@@ -81,11 +189,11 @@ function selectCanonicalShell(
     if (threadWorktreeScopeKey(candidate) !== scopeKey) {
       continue;
     }
-    if (canonical === null || compareCanonicalCandidates(candidate, canonical) < 0) {
-      canonical = candidate;
-    }
+    matchingCandidates.push(candidate);
   }
-  return canonical === null ? ref : scopeThreadRef(canonical.environmentId, canonical.id);
+  const selectedThreadId = selectStableCanonicalThreadId(matchingCandidates) ?? shell.id;
+  const ownerThreadId = rememberCanonicalOwner(scopeKey, selectedThreadId);
+  return scopeThreadRef(shell.environmentId, ThreadId.make(ownerThreadId));
 }
 
 /** Stable thread ref used to scope wire calls (terminal/preview RPCs) for a
@@ -122,8 +230,23 @@ export function worktreeCanonicalThreadRefsByScopeKey(
     }
   }
   return new Map(
-    [...bestByKey].map(([key, shell]) => [key, scopeThreadRef(shell.environmentId, shell.id)]),
+    [...bestByKey].map(([key, shell]) => [
+      key,
+      scopeThreadRef(shell.environmentId, ThreadId.make(rememberCanonicalOwner(key, shell.id))),
+    ]),
   );
+}
+
+export function forgetWorktreeCanonicalOwner(ref: ScopedThreadRef): void {
+  const shell = readThreadShell(ref);
+  if (shell === null) return;
+  forgetWorktreeCanonicalOwnerByScopeKey(threadWorktreeScopeKey(shell));
+}
+
+export function forgetWorktreeCanonicalOwnerByScopeKey(scopeKey: string): void {
+  const owners = readCanonicalOwners();
+  if (!owners.delete(scopeKey)) return;
+  persistCanonicalOwners(owners);
 }
 
 /** Reactive twin of resolveWorktreeScopeKeyForThreadRef. */
