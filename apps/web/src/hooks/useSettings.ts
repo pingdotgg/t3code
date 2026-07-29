@@ -302,7 +302,6 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           });
         }
       }
-
       if (Object.keys(clientPatch).length > 0) {
         persistClientSettings({
           ...getClientSettingsSnapshot(),
