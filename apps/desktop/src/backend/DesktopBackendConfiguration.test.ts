@@ -143,7 +143,15 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.bootstrap.noBrowser, true);
         assert.equal(first.bootstrap.port, 4888);
         assert.equal(first.bootstrap.host, "0.0.0.0");
-        assert.equal(first.bootstrap.t3Home, environment.baseDir);
+        assert.deepEqual(first.bootstrap.storageRoots, {
+          layout: "legacy",
+          configDir: environment.configDir,
+          dataDir: environment.dataDir,
+          stateDir: environment.stateDir,
+          cacheDir: environment.cacheDir,
+          runtimeDir: environment.runtimeDir,
+          legacyBaseDir: environment.baseDir,
+        });
         assert.equal(first.bootstrap.tailscaleServeEnabled, true);
         assert.equal(first.bootstrap.tailscaleServePort, 8443);
         assert.match(first.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
@@ -449,10 +457,22 @@ describe("DesktopBackendConfiguration", () => {
       const previousWslEnv = process.env.WSLENV;
       const previousOpenAiKey = process.env.OPENAI_API_KEY;
       const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+      const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+      const previousXdgDataHome = process.env.XDG_DATA_HOME;
+      const previousXdgStateHome = process.env.XDG_STATE_HOME;
+      const previousXdgCacheHome = process.env.XDG_CACHE_HOME;
+      const previousXdgRuntimeDir = process.env.XDG_RUNTIME_DIR;
+      const previousLowercaseT3CodeHome = process.env.t3code_home;
       try {
-        process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
+        process.env.WSLENV = "GOPATH/p:openai_api_key/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
         process.env.OPENAI_API_KEY = "openai-key";
         process.env.ANTHROPIC_API_KEY = "anthropic-key";
+        process.env.t3code_home = "C:\\t3code";
+        process.env.XDG_CONFIG_HOME = "C:\\xdg\\config";
+        process.env.XDG_DATA_HOME = "C:\\xdg\\data";
+        process.env.XDG_STATE_HOME = "C:\\xdg\\state";
+        process.env.XDG_CACHE_HOME = "C:\\xdg\\cache";
+        process.env.XDG_RUNTIME_DIR = "C:\\xdg\\runtime";
 
         yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -470,13 +490,19 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");
           assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
+          assert.isUndefined(config.env.t3code_home);
+          assert.isUndefined(config.env.XDG_CONFIG_HOME);
+          assert.isUndefined(config.env.XDG_DATA_HOME);
+          assert.isUndefined(config.env.XDG_STATE_HOME);
+          assert.isUndefined(config.env.XDG_CACHE_HOME);
+          assert.isUndefined(config.env.XDG_RUNTIME_DIR);
           // The existing WSLENV is preserved byte-for-byte (note the empty
           // "::" segment survives — WSL ignores it, so we don't normalize
           // it away) and ANTHROPIC_API_KEY is appended. OPENAI_API_KEY is
           // already declared, so it isn't forwarded twice.
           assert.equal(
             config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY",
+            "GOPATH/p:openai_api_key/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY",
           );
         }).pipe(
           Effect.provide(
@@ -498,6 +524,12 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("WSLENV", previousWslEnv);
         restoreEnv("OPENAI_API_KEY", previousOpenAiKey);
         restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
+        restoreEnv("XDG_CONFIG_HOME", previousXdgConfigHome);
+        restoreEnv("XDG_DATA_HOME", previousXdgDataHome);
+        restoreEnv("XDG_STATE_HOME", previousXdgStateHome);
+        restoreEnv("XDG_CACHE_HOME", previousXdgCacheHome);
+        restoreEnv("XDG_RUNTIME_DIR", previousXdgRuntimeDir);
+        restoreEnv("t3code_home", previousLowercaseT3CodeHome);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -520,7 +552,7 @@ describe("DesktopBackendConfiguration", () => {
           // not spawn wsl.exe (which would loop on preflight failures while the
           // Connections backend control is hidden). Resolve the Windows primary.
           assert.equal(config.executablePath, process.execPath);
-          assert.equal(config.bootstrap.t3Home, environment.baseDir);
+          assert.equal(config.bootstrap.storageRoots?.dataDir, environment.dataDir);
           assert.isTrue(Option.isNone(config.preflightFailure));
         }).pipe(
           Effect.provide(

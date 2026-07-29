@@ -1,6 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -12,6 +15,17 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
+import * as NodeOS from "node:os";
+import {
+  applyT3StorageDirectoryOverrides,
+  hasT3StorageDirectoryOverrides,
+  resolveDefaultT3StorageRoots,
+  resolveLegacyT3StorageRoots,
+  resolveT3StorageDirectoryOverrides,
+  selectT3StorageRoots,
+  type T3StorageRoots,
+} from "@t3tools/shared/storagePaths";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
@@ -32,7 +46,15 @@ export const hostFlag = Flag.string("host").pipe(
 );
 export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription(
-    "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
+    "Use the legacy unified T3 Code directory layout (equivalent to T3CODE_HOME).",
+  ),
+  Flag.optional,
+);
+export const CliStorageLayout = Schema.Literals(["xdg", "legacy"]);
+export type CliStorageLayout = typeof CliStorageLayout.Type;
+export const storageLayoutFlag = Flag.choice("storage-layout", CliStorageLayout.literals).pipe(
+  Flag.withDescription(
+    "Force the XDG/platform-native split layout or the legacy unified layout instead of selecting automatically.",
   ),
   Flag.optional,
 );
@@ -105,6 +127,51 @@ const EnvServerConfig = Config.all({
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  t3ConfigDir: Config.string("T3CODE_CONFIG_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  t3DataDir: Config.string("T3CODE_DATA_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  t3StateDir: Config.string("T3CODE_STATE_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  t3CacheDir: Config.string("T3CODE_CACHE_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  t3RuntimeDir: Config.string("T3CODE_RUNTIME_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  xdgConfigHome: Config.string("XDG_CONFIG_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  xdgDataHome: Config.string("XDG_DATA_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  xdgStateHome: Config.string("XDG_STATE_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  xdgCacheHome: Config.string("XDG_CACHE_HOME").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  xdgRuntimeDir: Config.string("XDG_RUNTIME_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  appData: Config.string("APPDATA").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  localAppData: Config.string("LOCALAPPDATA").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.string("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
@@ -146,6 +213,7 @@ export interface CliServerFlags {
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
   readonly baseDir: Option.Option<string>;
+  readonly storageLayout?: Option.Option<CliStorageLayout>;
   readonly cwd: Option.Option<string>;
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
@@ -158,16 +226,19 @@ export interface CliServerFlags {
 
 export interface CliAuthLocationFlags {
   readonly baseDir: Option.Option<string>;
+  readonly storageLayout?: Option.Option<CliStorageLayout>;
   readonly devUrl?: Option.Option<URL>;
 }
 
 export const sharedServerLocationFlags = {
   baseDir: baseDirFlag,
+  storageLayout: storageLayoutFlag,
   devUrl: devUrlFlag,
 } as const;
 
 export const projectLocationFlags = {
   baseDir: baseDirFlag,
+  storageLayout: storageLayoutFlag,
 } as const;
 
 export const sharedServerCommandFlags = {
@@ -175,6 +246,7 @@ export const sharedServerCommandFlags = {
   port: portFlag,
   host: hostFlag,
   baseDir: baseDirFlag,
+  storageLayout: storageLayoutFlag,
   cwd: Argument.string("cwd").pipe(
     Argument.withDescription(
       "Working directory for provider sessions (defaults to the current directory).",
@@ -207,12 +279,173 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
   return parsePersistedServerObservabilitySettings(raw);
 });
 
+export class StorageDirectoryConfigurationConflictError extends Schema.TaggedErrorClass<StorageDirectoryConfigurationConflictError>()(
+  "StorageDirectoryConfigurationConflictError",
+  {},
+) {
+  override get message(): string {
+    return "T3CODE_HOME/--base-dir cannot be combined with T3CODE_CONFIG_DIR, T3CODE_DATA_DIR, T3CODE_STATE_DIR, T3CODE_CACHE_DIR, or T3CODE_RUNTIME_DIR.";
+  }
+}
+
+export class ForcedXdgLayoutConflictError extends Schema.TaggedErrorClass<ForcedXdgLayoutConflictError>()(
+  "ForcedXdgLayoutConflictError",
+  {},
+) {
+  override get message(): string {
+    return "--storage-layout xdg cannot be combined with T3CODE_HOME or --base-dir.";
+  }
+}
+
+export class ForcedLegacyLayoutConflictError extends Schema.TaggedErrorClass<ForcedLegacyLayoutConflictError>()(
+  "ForcedLegacyLayoutConflictError",
+  {},
+) {
+  override get message(): string {
+    return "--storage-layout legacy cannot be combined with T3CODE_CONFIG_DIR, T3CODE_DATA_DIR, T3CODE_STATE_DIR, T3CODE_CACHE_DIR, or T3CODE_RUNTIME_DIR.";
+  }
+}
+
+export class RuntimeDirectoryOpenError extends Schema.TaggedErrorClass<RuntimeDirectoryOpenError>()(
+  "RuntimeDirectoryOpenError",
+  {
+    runtimeDir: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Refusing to use runtime directory '${this.runtimeDir}' because it could not be opened without following symbolic links.`;
+  }
+}
+
+export class RuntimeDirectoryNotADirectoryError extends Schema.TaggedErrorClass<RuntimeDirectoryNotADirectoryError>()(
+  "RuntimeDirectoryNotADirectoryError",
+  {
+    runtimeDir: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Refusing to use runtime directory '${this.runtimeDir}' because it is not a directory.`;
+  }
+}
+
+export class RuntimeDirectoryOwnerMismatchError extends Schema.TaggedErrorClass<RuntimeDirectoryOwnerMismatchError>()(
+  "RuntimeDirectoryOwnerMismatchError",
+  {
+    runtimeDir: Schema.String,
+    expectedUserId: Schema.Number,
+    actualUserId: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Refusing to use runtime directory '${this.runtimeDir}' because it is owned by user ${this.actualUserId} instead of ${this.expectedUserId}.`;
+  }
+}
+
+export class RuntimeDirectoryChmodError extends Schema.TaggedErrorClass<RuntimeDirectoryChmodError>()(
+  "RuntimeDirectoryChmodError",
+  {
+    runtimeDir: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to restrict runtime directory '${this.runtimeDir}' permissions.`;
+  }
+}
+
+const legacyStorageIsInitialized = Effect.fn(function* (roots: T3StorageRoots) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const artifacts = [
+    path.join(roots.stateDir, "state.sqlite"),
+    path.join(roots.configDir, "settings.json"),
+    path.join(roots.configDir, "keybindings.json"),
+    path.join(roots.configDir, "desktop-settings.json"),
+    path.join(roots.configDir, "client-settings.json"),
+    path.join(roots.stateDir, "environment-id"),
+    path.join(roots.stateDir, "connection-catalog.json"),
+    path.join(roots.stateDir, "secrets"),
+    path.join(roots.stateDir, "saved-environments.json"),
+  ];
+  const results = yield* Effect.all(
+    artifacts.map((artifact) => fs.exists(artifact)),
+    { concurrency: "unbounded" },
+  );
+  return results.some(Boolean);
+});
+
+const prepareSplitRuntimeDirectory = Effect.fn("prepareSplitRuntimeDirectory")(function* (
+  runtimeDir: string,
+  userId: number,
+) {
+  yield* Effect.tryPromise({
+    try: () => NodeFSP.mkdir(runtimeDir, { recursive: true, mode: 0o700 }),
+    catch: (cause) =>
+      new RuntimeDirectoryOpenError({
+        runtimeDir,
+        cause,
+      }),
+  });
+
+  return yield* Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () =>
+        NodeFSP.open(
+          runtimeDir,
+          NodeFS.constants.O_RDONLY | NodeFS.constants.O_DIRECTORY | NodeFS.constants.O_NOFOLLOW,
+        ),
+      catch: (cause) =>
+        new RuntimeDirectoryOpenError({
+          runtimeDir,
+          cause,
+        }),
+    }),
+    (handle) =>
+      Effect.gen(function* () {
+        const stat = yield* Effect.tryPromise({
+          try: () => handle.stat(),
+          catch: (cause) =>
+            new RuntimeDirectoryOpenError({
+              runtimeDir,
+              cause,
+            }),
+        });
+        if (!stat.isDirectory()) {
+          return yield* new RuntimeDirectoryNotADirectoryError({
+            runtimeDir,
+          });
+        }
+        if (stat.uid !== userId) {
+          return yield* new RuntimeDirectoryOwnerMismatchError({
+            runtimeDir,
+            expectedUserId: userId,
+            actualUserId: stat.uid,
+          });
+        }
+        yield* Effect.tryPromise({
+          try: () => handle.chmod(0o700),
+          catch: (cause) =>
+            new RuntimeDirectoryChmodError({
+              runtimeDir,
+              cause,
+            }),
+        });
+      }),
+    (handle) => Effect.promise(() => handle.close()).pipe(Effect.ignore),
+  );
+});
+
 export const resolveServerConfig = (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
   options?: {
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
+    readonly homeDirectory?: string;
+    readonly temporaryDirectory?: string;
+    readonly userId?: number;
+    readonly platform?: NodeJS.Platform;
   },
 ) =>
   Effect.gen(function* () {
@@ -225,6 +458,7 @@ export const resolveServerConfig = (
       port: flags.port ?? Option.none(),
       host: flags.host ?? Option.none(),
       baseDir: flags.baseDir ?? Option.none(),
+      storageLayout: flags.storageLayout ?? Option.none(),
       cwd: flags.cwd ?? Option.none(),
       devUrl: flags.devUrl ?? Option.none(),
       noBrowser: flags.noBrowser ?? Option.none(),
@@ -240,6 +474,8 @@ export const resolveServerConfig = (
         ? yield* readBootstrapEnvelope(DesktopBackendBootstrap, bootstrapFd)
         : Option.none();
     const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
+    const bootstrapStorageIsPinned =
+      bootstrap?.storageRoots !== undefined || bootstrap?.t3Home !== undefined;
 
     const mode: ServerConfig.RuntimeMode = Option.getOrElse(
       resolveOptionPrecedence(
@@ -274,17 +510,114 @@ export const resolveServerConfig = (
       normalizedFlags.baseDir,
       Option.fromUndefinedOr(env.t3Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
-    const baseDir = yield* resolveBaseDir(
-      Option.getOrUndefined(
-        resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
-      ),
-    );
+    const forcedStorageLayout = Option.getOrUndefined(normalizedFlags.storageLayout);
+    const homeDirectory = options?.homeDirectory ?? NodeOS.homedir();
+    const temporaryDirectory = options?.temporaryDirectory ?? NodeOS.tmpdir();
+    const platform = options?.platform ?? (yield* HostProcessPlatform);
+    const userId = options?.userId ?? (platform === "win32" ? undefined : NodeOS.userInfo().uid);
+    const pathOperations = {
+      join: (...paths: ReadonlyArray<string>) => path.join(...paths),
+      resolve: (...paths: ReadonlyArray<string>) => path.resolve(...paths),
+      isAbsolute: (candidate: string) => path.isAbsolute(candidate),
+    };
+    const storageEnvironment = {
+      T3CODE_CONFIG_DIR: env.t3ConfigDir,
+      T3CODE_DATA_DIR: env.t3DataDir,
+      T3CODE_STATE_DIR: env.t3StateDir,
+      T3CODE_CACHE_DIR: env.t3CacheDir,
+      T3CODE_RUNTIME_DIR: env.t3RuntimeDir,
+      XDG_CONFIG_HOME: env.xdgConfigHome,
+      XDG_DATA_HOME: env.xdgDataHome,
+      XDG_STATE_HOME: env.xdgStateHome,
+      XDG_CACHE_HOME: env.xdgCacheHome,
+      XDG_RUNTIME_DIR: env.xdgRuntimeDir,
+      APPDATA: env.appData,
+      LOCALAPPDATA: env.localAppData,
+    };
+    const directoryOverrides = resolveT3StorageDirectoryOverrides({
+      environment: storageEnvironment,
+      homeDirectory,
+      path: pathOperations,
+    });
+    if (
+      !bootstrapStorageIsPinned &&
+      Option.isSome(explicitBaseDir) &&
+      hasT3StorageDirectoryOverrides(directoryOverrides)
+    ) {
+      return yield* new StorageDirectoryConfigurationConflictError();
+    }
+    if (
+      !bootstrapStorageIsPinned &&
+      forcedStorageLayout === "xdg" &&
+      Option.isSome(explicitBaseDir)
+    ) {
+      return yield* new ForcedXdgLayoutConflictError();
+    }
+    if (
+      !bootstrapStorageIsPinned &&
+      forcedStorageLayout === "legacy" &&
+      hasT3StorageDirectoryOverrides(directoryOverrides)
+    ) {
+      return yield* new ForcedLegacyLayoutConflictError();
+    }
+    const defaultSplitRoots = resolveDefaultT3StorageRoots({
+      platform,
+      homeDirectory,
+      temporaryDirectory,
+      ...(userId === undefined ? {} : { userId }),
+      isDevelopment: devUrl !== undefined,
+      environment: storageEnvironment,
+      path: pathOperations,
+    });
+    const explicitSplitRoots = hasT3StorageDirectoryOverrides(directoryOverrides)
+      ? applyT3StorageDirectoryOverrides(defaultSplitRoots, directoryOverrides)
+      : undefined;
+    const explicitLegacyRoots = Option.isSome(explicitBaseDir)
+      ? resolveLegacyT3StorageRoots({
+          baseDir: yield* resolveBaseDir(explicitBaseDir.value),
+          stateDirectoryName: devUrl === undefined ? "userdata" : "dev",
+          path,
+        })
+      : undefined;
+    const legacyRoots = resolveLegacyT3StorageRoots({
+      baseDir: path.join(homeDirectory, ".t3"),
+      stateDirectoryName: devUrl === undefined ? "userdata" : "dev",
+      path,
+    });
+    const bootstrapRoots =
+      bootstrap?.storageRoots ??
+      (bootstrap?.t3Home === undefined
+        ? undefined
+        : resolveLegacyT3StorageRoots({
+            baseDir: yield* resolveBaseDir(bootstrap.t3Home),
+            stateDirectoryName: devUrl === undefined ? "userdata" : "dev",
+            path,
+          }));
+    const storageRoots =
+      bootstrapRoots ??
+      selectT3StorageRoots({
+        ...(forcedStorageLayout === "legacy"
+          ? { explicitLegacyRoots: explicitLegacyRoots ?? legacyRoots }
+          : explicitLegacyRoots === undefined
+            ? {}
+            : { explicitLegacyRoots }),
+        ...(forcedStorageLayout === "xdg"
+          ? { explicitSplitRoots: explicitSplitRoots ?? defaultSplitRoots }
+          : explicitSplitRoots === undefined
+            ? {}
+            : { explicitSplitRoots }),
+        defaultSplitRoots,
+        legacyRoots,
+        legacyStorageInitialized: yield* legacyStorageIsInitialized(legacyRoots),
+      });
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-      baseDirIsExplicit: Option.isSome(explicitBaseDir),
-    });
+    const derivedPaths = yield* ServerConfig.deriveServerPathsFromRoots(storageRoots);
+    const baseDir = derivedPaths.dataDir;
+    if (platform !== "win32" && storageRoots.layout === "split" && userId !== undefined) {
+      yield* prepareSplitRuntimeDirectory(derivedPaths.runtimeDir, userId);
+    }
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
@@ -395,6 +728,7 @@ export const resolveCliAuthConfig = (
       port: Option.none(),
       host: Option.none(),
       baseDir: flags.baseDir,
+      storageLayout: flags.storageLayout ?? Option.none(),
       cwd: Option.none(),
       devUrl: flags.devUrl ?? Option.none(),
       noBrowser: Option.none(),

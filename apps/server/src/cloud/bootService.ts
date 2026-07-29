@@ -14,6 +14,15 @@ import {
   HostProcessExecutablePath,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
+import {
+  T3CODE_CACHE_DIR_ENV,
+  T3CODE_CONFIG_DIR_ENV,
+  T3CODE_DATA_DIR_ENV,
+  T3CODE_RUNTIME_DIR_ENV,
+  T3CODE_STATE_DIR_ENV,
+  t3StorageEnvironment,
+  type T3StorageRoots,
+} from "@t3tools/shared/storagePaths";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { ensurePinnedRuntimeInstalled, pinnedRuntimePaths } from "./pinnedRuntime.ts";
@@ -26,6 +35,13 @@ import { ensurePinnedRuntimeInstalled, pinnedRuntimePaths } from "./pinnedRuntim
  */
 
 const BOOT_SERVICE_NAME = "t3code";
+const GRANULAR_STORAGE_ENVIRONMENT_NAMES = [
+  T3CODE_CONFIG_DIR_ENV,
+  T3CODE_DATA_DIR_ENV,
+  T3CODE_STATE_DIR_ENV,
+  T3CODE_CACHE_DIR_ENV,
+  T3CODE_RUNTIME_DIR_ENV,
+];
 
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
@@ -74,6 +90,7 @@ export interface BootServicePlan {
   /** Absolute path of the pinned t3 entry point the unit will run. */
   readonly t3EntryPath: string;
   readonly baseDir: string;
+  readonly storageRoots?: T3StorageRoots;
   readonly logPath: string;
   readonly unitPath: string;
 }
@@ -85,6 +102,16 @@ export interface BootServicePlan {
  * `logPath` because `systemctl --user` failures are otherwise invisible.
  */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
+  const storageEnvironment =
+    plan.storageRoots === undefined
+      ? { T3CODE_HOME: plan.baseDir }
+      : t3StorageEnvironment(plan.storageRoots);
+  const storageEnvironmentLines = Object.entries(storageEnvironment).map(
+    ([name, value]) => `Environment=${name}=${quoteSystemdValue(value)}`,
+  );
+  const unsetStorageEnvironmentLine = Object.hasOwn(storageEnvironment, "T3CODE_HOME")
+    ? `UnsetEnvironment=${GRANULAR_STORAGE_ENVIRONMENT_NAMES.join(" ")}`
+    : "UnsetEnvironment=T3CODE_HOME";
   // No After=network-online.target: it does not exist in the systemd *user*
   // manager, so ordering on it is silently ignored. The server retries its
   // relay connection, and Restart=always covers early-boot failures.
@@ -100,7 +127,8 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "[Service]",
     "Type=simple",
     "WorkingDirectory=%h",
-    `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    ...storageEnvironmentLines,
+    unsetStorageEnvironmentLine,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.t3EntryPath)} serve`,
     "Restart=always",
@@ -184,6 +212,7 @@ export interface BootServiceHost {
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
+  readonly storageRoots?: T3StorageRoots;
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
@@ -295,6 +324,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     nodePath: host.execPath,
     t3EntryPath: plannedEntryPath,
     baseDir: input.baseDir,
+    ...(input.storageRoots === undefined ? {} : { storageRoots: input.storageRoots }),
     logPath,
     unitPath,
   };
@@ -427,6 +457,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
 export const layer = (input: {
   readonly baseDir: string;
+  readonly storageRoots?: T3StorageRoots;
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;

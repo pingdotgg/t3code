@@ -98,3 +98,7 @@ export const primaryServerObservabilityAtom = Atom.make(
   (get): ServerConfig["observability"] | null =>
     get(primaryServerConfigAtom)?.observability ?? null,
 ).pipe(Atom.withLabel("web-primary-server-observability"));
+
+export const primaryServerStorageAtom = Atom.make(
+  (get): ServerConfig["storage"] | null => get(primaryServerConfigAtom)?.storage ?? null,
+).pipe(Atom.withLabel("web-primary-server-storage"));

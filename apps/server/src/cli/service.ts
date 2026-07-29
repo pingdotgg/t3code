@@ -8,11 +8,20 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { projectLocationFlags, resolveCliAuthConfig, type CliAuthLocationFlags } from "./config.ts";
 
 export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
     baseDir: config.baseDir,
+    storageRoots: {
+      layout: config.layout,
+      configDir: config.configDir,
+      dataDir: config.dataDir,
+      stateDir: config.stateDir,
+      cacheDir: config.cacheDir,
+      runtimeDir: config.runtimeDir,
+      ...(config.legacyBaseDir === undefined ? {} : { legacyBaseDir: config.legacyBaseDir }),
+    },
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
   }).pipe(Layer.provide(ProcessRunner.layer));
@@ -63,7 +72,7 @@ export function formatServiceStatus(
 }
 
 const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
-  flags: { readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"] },
+  flags: CliAuthLocationFlags,
   run: Effect.Effect<A, E, BootService.BootService>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;

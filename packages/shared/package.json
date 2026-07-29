@@ -147,6 +147,10 @@
       "types": "./src/path.ts",
       "import": "./src/path.ts"
     },
+    "./storagePaths": {
+      "types": "./src/storagePaths.ts",
+      "import": "./src/storagePaths.ts"
+    },
     "./keybindings": {
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"

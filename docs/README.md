@@ -11,6 +11,7 @@
   - [Remote access](./user/remote-access.md)
   - [Keeping T3 Code in sync](./user/server-updates.md)
   - [Keybindings](./user/keybindings.md)
+  - [Storage directories](./user/storage-directories.md)
 - [T3 Connect](./cloud/t3-connect-clerk.md)
 - [Integrations](./integrations/source-control-providers.md)
 - [Mobile](./mobile/app.md)
