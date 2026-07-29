@@ -187,6 +187,9 @@ describe("buildThreadTitlePrompt", () => {
     );
     expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
     expect(result.prompt).toContain("better represents the current state of the thread");
+    expect(result.prompt).toContain(
+      "Capture the thread's intent, not a PR number or other superficial detail.",
+    );
     expect(result.prompt).toContain("Thread contents:");
     expect(result.prompt).toContain("The remaining issue is stale session state");
   });

@@ -245,7 +245,12 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
       isRegeneration
         ? "Title should summarize the thread's current state, not just its initial request."
         : "Title should summarize the user's request, not restate it verbatim.",
-      ...(isRegeneration ? ["Return a different title from the previous title."] : []),
+      ...(isRegeneration
+        ? [
+            "Capture the thread's intent, not a PR number or other superficial detail.",
+            "Return a different title from the previous title.",
+          ]
+        : []),
       "Keep it short and specific (3-8 words).",
       "Avoid quotes, filler, prefixes, and trailing punctuation.",
       "If images are attached, use them as primary context for visual/UI issues.",
