@@ -53,11 +53,9 @@ import {
 } from "@t3tools/contracts";
 import { computeUsageCost } from "@t3tools/shared/tokenAccounting";
 import {
-  applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
-  resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import {
   isNativeToolFamily,
@@ -977,8 +975,7 @@ function resolveTaskEntityType(
  * subagent turns. An agent definition may override effort in its frontmatter
  * and the SDK exposes no per-task effort on the wire, so that case still
  * reports the session effort. Returns undefined when the session runs without
- * an effort level (model without effort support, or `ultrathink`, which is a
- * prompt prefix rather than an effort the subagent inherits).
+ * an effort level (for example, when the model does not support effort).
  */
 function resolveSubagentTaskEffort(
   context: ClaudeSessionContext,
@@ -1711,23 +1708,11 @@ const RESUME_DEAD_SHELL_NOTE =
 
 function buildPromptText(
   input: ProviderSendTurnInput,
-  boundInstanceId: ProviderInstanceId,
   options?: {
     readonly appendResumeDeadShellNote?: boolean;
-    readonly getModelCapabilities?: ClaudeModelCapabilitiesLookup | undefined;
   },
 ): string {
-  const rawEffort =
-    input.modelSelection?.instanceId === boundInstanceId
-      ? getModelSelectionStringOptionValue(input.modelSelection, "effort")
-      : null;
-  const claudeModel =
-    input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
-  const caps =
-    options?.getModelCapabilities?.(claudeModel) ?? getClaudeModelCapabilities(claudeModel);
-
-  const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  const base = applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  const base = input.input?.trim() ?? "";
   if (!options?.appendResumeDeadShellNote) {
     return base;
   }
@@ -1773,7 +1758,7 @@ function buildClaudeImageContentBlock(input: {
  * always reporting a hardcoded provider kind.
  *
  * @param input - Canonical send-turn payload from the provider service.
- * @param dependencies - File, attachment, instance, and provider context.
+ * @param dependencies - File, attachment, and provider context.
  * @returns A Claude SDK user message containing text and supported images.
  */
 const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
@@ -1781,15 +1766,12 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   dependencies: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
-    readonly boundInstanceId: ProviderInstanceId;
     readonly provider: ProviderDriverKind;
     readonly appendResumeDeadShellNote?: boolean;
-    readonly getModelCapabilities?: ClaudeModelCapabilitiesLookup | undefined;
   },
 ) {
-  const text = buildPromptText(input, dependencies.boundInstanceId, {
+  const text = buildPromptText(input, {
     appendResumeDeadShellNote: dependencies.appendResumeDeadShellNote === true,
-    getModelCapabilities: dependencies.getModelCapabilities,
   });
   const sdkContent: Array<Record<string, unknown>> = [];
 
@@ -5267,10 +5249,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
-      boundInstanceId,
       provider: PROVIDER,
       appendResumeDeadShellNote,
-      getModelCapabilities: options?.getModelCapabilities,
     }).pipe(
       Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
     );

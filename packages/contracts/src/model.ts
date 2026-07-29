@@ -26,7 +26,6 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
   type: Schema.Literal("select"),
   options: Schema.Array(ProviderOptionChoice),
   currentValue: Schema.optional(TrimmedNonEmptyString),
-  promptInjectedValues: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
 

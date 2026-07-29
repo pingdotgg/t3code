@@ -1370,7 +1370,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
-      it.effect("includes Claude Opus 5 on supported Claude Code versions", () =>
+      it.effect("includes Claude Opus 5 without the removed Ultrathink effort", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
@@ -1387,6 +1387,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               : undefined,
             { id: "high", label: "High", isDefault: true },
           );
+          const advertisedEfforts = status.models.flatMap(
+            (model) =>
+              model.capabilities?.optionDescriptors
+                ?.filter((descriptor) => descriptor.type === "select")
+                .flatMap((descriptor) => descriptor.options.map((option) => option.id)) ?? [],
+          );
+          assert.strictEqual(advertisedEfforts.includes("ultrathink"), false);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

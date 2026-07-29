@@ -14,7 +14,6 @@ struct EffortLevelStyleTests {
             ("high", step * 3, .standard),
             ("xhigh", step * 4, .extraHigh),
             ("max", step * 5, .maximum),
-            ("ultrathink", step * 5, .maximum),
             ("ultra", 1, .unlimited),
             ("ultra-code", 1, .unlimited),
             ("ultracode", 1, .unlimited),
