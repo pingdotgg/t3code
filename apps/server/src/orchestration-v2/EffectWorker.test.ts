@@ -250,6 +250,133 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
   }),
 );
 
+it.effect("terminalizes a process-bound claim when success settlement fails", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const effectId = "effect:worker-process-bound-settlement-failure";
+    const workerId = "worker-process-bound-settlement-failure";
+    const claimedEffect: OrchestrationEffectV2 = {
+      id: effectId,
+      commandId: CommandId.make("command:worker-process-bound-settlement-failure"),
+      threadId: ThreadId.make("thread:worker-process-bound-settlement-failure"),
+      request: {
+        type: "provider-turn.start",
+        runId: RunId.make("run:worker-process-bound-settlement-failure"),
+      },
+      status: "running",
+      attemptCount: 1,
+      availableAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const retries = yield* Ref.make(0);
+    const terminalErrors = yield* Ref.make<ReadonlyArray<string>>([]);
+    const executionCount = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      succeed: () =>
+        Effect.fail(
+          new EffectOutboxError({
+            operation: "succeed",
+            effectId,
+            cause: "simulated success settlement failure",
+          }),
+        ),
+      retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+      fail: ({ error }) =>
+        Ref.update(terminalErrors, (existing) => [...existing, error]).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        execute: () => Ref.update(executionCount, (count) => count + 1),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    const exit = yield* OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(workerLayer),
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.equal(yield* Ref.get(executionCount), 1);
+    assert.equal(yield* Ref.get(retries), 0);
+    const terminalError = (yield* Ref.get(terminalErrors))[0];
+    assert.isDefined(terminalError);
+    assert.include(terminalError, "after execution started");
+    assert.include(terminalError, "simulated success settlement failure");
+  }),
+);
+
+it.effect("requeues a replay-safe claim when success settlement fails", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const effectId = "effect:worker-replay-safe-settlement-failure";
+    const workerId = "worker-replay-safe-settlement-failure";
+    const claimedEffect: OrchestrationEffectV2 = {
+      id: effectId,
+      commandId: CommandId.make("command:worker-replay-safe-settlement-failure"),
+      threadId: ThreadId.make("thread:worker-replay-safe-settlement-failure"),
+      request: { type: "terminal.cleanup" },
+      status: "running",
+      attemptCount: 1,
+      availableAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const retries = yield* Ref.make(0);
+    const terminalizations = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      succeed: () =>
+        Effect.fail(
+          new EffectOutboxError({
+            operation: "succeed",
+            effectId,
+            cause: "simulated replay-safe settlement failure",
+          }),
+        ),
+      retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+      fail: () => Ref.update(terminalizations, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({ execute: () => Effect.void }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    const exit = yield* OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(workerLayer),
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.equal(yield* Ref.get(retries), 1);
+    assert.equal(yield* Ref.get(terminalizations), 0);
+  }),
+);
+
 it.effect("uses durable deadlines, notifications, and a slow liveness poll", () =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
