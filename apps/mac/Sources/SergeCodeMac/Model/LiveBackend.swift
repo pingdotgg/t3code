@@ -3596,6 +3596,9 @@ public actor LiveBackend: BackendService {
         if loweredDriver.contains("claudeagent") || loweredDriver.contains("claudex") {
             return .claude
         }
+        // Checked before `codex` so a future `chatgpt-codex`-style driver slug
+        // lands on the browser provider rather than the CLI one.
+        if loweredDriver.contains("chatgpt") { return .chatgpt }
         if loweredDriver.contains("codex") { return .codex }
         if loweredDriver.contains("grok") { return .grok }
         if loweredDriver.contains("kimi") { return .kimi }

@@ -5,6 +5,9 @@ import Foundation
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case claude, claudeWork, codex, grok, kimi
+    /// Drives a signed-in chatgpt.com session in a real browser instead of a
+    /// local CLI, so work runs against the ChatGPT plan's limits.
+    case chatgpt
     /// Decodes persisted threads created by the removed Claudex and Cursor
     /// providers. These cases are intentionally excluded from `allCases` so
     /// they are never offered for new sessions.
@@ -12,7 +15,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable 
     case legacyCursor = "cursor"
 
     public static let allCases: [ProviderKind] = [
-        .claude, .claudeWork, .codex, .grok, .kimi,
+        .claude, .claudeWork, .codex, .grok, .kimi, .chatgpt,
     ]
 
     public var id: String { rawValue }
@@ -24,6 +27,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .codex: "Codex"
         case .grok: "Grok"
         case .kimi: "Kimi"
+        case .chatgpt: "ChatGPT"
         case .legacyClaudex: "Claudex (Unsupported)"
         case .legacyCursor: "Cursor (Unsupported)"
         }

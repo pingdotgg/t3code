@@ -382,6 +382,45 @@ export const ChatGptBrowserSettings = makeProviderSettingsSchema(
         providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
       }),
     ),
+    workspaceBridge: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Workspace connector",
+        description:
+          "Issue an MCP connector URL for each ChatGPT thread so the conversation can work with the thread's repository. Requires a public HTTPS address (managed tunnel below, or a manual one).",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
+    workspaceBridgeAccess: Schema.Literals(["read", "write", "full"]).pipe(
+      Schema.withDecodingDefault(Effect.succeed("write" as const)),
+      Schema.annotateKey({
+        title: "Workspace access",
+        description:
+          "What the connector may do: read (inspect files only), write (also edit files and apply patches), or full (also run shell commands). Edits and commands still follow the thread's runtime mode — in Approvals mode each one needs your approval in the timeline.",
+        providerSettingsForm: { clearWhenEmpty: "omit" },
+      }),
+    ),
+    connectorTunnel: Schema.Literals(["off", "cloudflared"]).pipe(
+      Schema.withDecodingDefault(Effect.succeed("off" as const)),
+      Schema.annotateKey({
+        title: "Managed tunnel",
+        description:
+          "Let SergeCode run `cloudflared` and expose only the MCP connector endpoint publicly. Requires cloudflared on PATH (brew install cloudflared). The public hostname changes on every server restart; re-register the connector URL in ChatGPT after a restart, or use a stable manual address below instead.",
+        providerSettingsForm: { clearWhenEmpty: "omit" },
+      }),
+    ),
+    publicBaseUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Public HTTPS address (manual)",
+        description:
+          "Externally reachable HTTPS origin for this server, from your own tunnel (named cloudflared tunnel, ngrok domain, Tailscale Funnel). Overrides the managed tunnel when set. OpenAI's servers — not your browser — call the connector, so a loopback address will not work.",
+        providerSettingsForm: {
+          placeholder: "https://your-tunnel.trycloudflare.com",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -395,6 +434,10 @@ export const ChatGptBrowserSettings = makeProviderSettingsSchema(
       "conversationUrl",
       "newConversationPerThread",
       "headless",
+      "workspaceBridge",
+      "workspaceBridgeAccess",
+      "connectorTunnel",
+      "publicBaseUrl",
     ],
   },
 );

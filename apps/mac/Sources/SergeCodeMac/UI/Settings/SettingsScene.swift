@@ -1043,7 +1043,9 @@ private struct ProviderRow: View {
 
             AvailabilityBadge(availability: provider.availability, kind: provider.kind)
 
-            if provider.availability == .available {
+            // No CLI means nothing to update from here; the browser provider
+            // is maintained by the browser, not by SergeCode.
+            if provider.availability == .available, let cliCommand = provider.kind.cliCommand {
                 if isUpdating {
                     ProgressView()
                         .controlSize(.small)
@@ -1051,7 +1053,7 @@ private struct ProviderRow: View {
                         .transition(.opacity)
                 } else {
                     Menu {
-                        Button("Run \(provider.kind.cliCommand) Updater") {
+                        Button("Run \(cliCommand) Updater") {
                             guard !isUpdating else { return }
                             isUpdating = true
                             Task {
@@ -1118,21 +1120,33 @@ private struct AvailabilityBadge: View {
     }
 
     private var hint: String? {
-        switch availability {
+        guard let cliCommand = kind.cliCommand else {
+            return switch availability {
+            case .available: nil
+            case .authRequired: "Sign in to chatgpt.com in the connected browser."
+            case .missing: "Configure a browser endpoint in Provider settings."
+            }
+        }
+        return switch availability {
         case .available: nil
-        case .authRequired: "Run \(kind.cliCommand) login in Terminal."
-        case .missing: "Install \(kind.cliCommand) to use this provider."
+        case .authRequired: "Run \(cliCommand) login in Terminal."
+        case .missing: "Install \(cliCommand) to use this provider."
         }
     }
 }
 
 private extension ProviderKind {
-    var cliCommand: String {
+    /// The CLI this provider is installed and authenticated through, or nil
+    /// when it has none. ChatGPT authenticates by being signed in to
+    /// chatgpt.com in the connected browser, so CLI install/login/update copy
+    /// would send the user somewhere that cannot help them.
+    var cliCommand: String? {
         switch self {
         case .claude, .claudeWork: "claude"
         case .codex: "codex"
         case .grok: "grok"
         case .kimi: "kimi"
+        case .chatgpt: nil
         case .legacyClaudex: "claudex"
         case .legacyCursor: "cursor"
         }

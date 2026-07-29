@@ -75,6 +75,36 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
+it.effect("scopes capabilities per credential and defaults to agents", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const threadId = ThreadId.make("thread-capabilities");
+
+    const providerCredential = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const providerScope = yield* registry.resolve(providerCredential.token);
+    expect(providerScope?.capabilities.has("agents")).toBe(true);
+    expect(providerScope?.capabilities.has("workspace")).toBe(false);
+
+    // The connector credential leaves this machine, so it must never carry
+    // the ability to start agents.
+    const connectorCredential = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("chatgpt"),
+      capabilities: ["workspace"],
+    });
+    const connectorScope = yield* registry.resolve(connectorCredential.token);
+    expect(connectorScope?.capabilities.has("workspace")).toBe(true);
+    expect(connectorScope?.capabilities.has("agents")).toBe(false);
+
+    // Both remain valid at once: a ChatGPT thread has a provider session and
+    // a connector, and issuing one must not revoke the other.
+    expect(yield* registry.resolve(providerCredential.token)).toBeDefined();
+  }),
+);
+
 it.effect("expires credentials after inactivity", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

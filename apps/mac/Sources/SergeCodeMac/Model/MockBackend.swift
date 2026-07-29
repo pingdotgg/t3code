@@ -1131,6 +1131,11 @@ private actor MockState {
             ModelOption(
                 instanceID: "provider-kimi", modelID: "kimi-code/kimi-for-coding-highspeed",
                 displayName: "K2.7 Coding Highspeed", provider: .kimi, isDefault: false),
+            // The browser bridge exposes one model: whatever the signed-in
+            // chatgpt.com session is currently set to.
+            ModelOption(
+                instanceID: "provider-chatgpt", modelID: "chatgpt",
+                displayName: "ChatGPT (browser)", provider: .chatgpt, isDefault: true),
         ]
     }
 
@@ -1601,6 +1606,9 @@ private actor MockState {
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
             ProviderInstance(id: "provider-kimi", kind: .kimi, availability: .available, version: "0.29.0"),
+            // No version: the browser provider has no CLI to report one.
+            ProviderInstance(
+                id: "provider-chatgpt", kind: .chatgpt, availability: .available, version: nil),
         ]
 
         let thread1 = ChatThread(
