@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -46,6 +47,36 @@ describe("ClientSettings glass opacity", () => {
   it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
     expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
     expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
+  });
+});
+
+describe("ServerSettings background activity defaults", () => {
+  it("keeps the customized conservative Git fetch cadence as a balanced override", () => {
+    const settings = decodeServerSettings({});
+
+    expect(settings.backgroundActivity).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "balanced",
+      overrides: {
+        automaticGitFetchInterval: Duration.minutes(5),
+      },
+    });
+    expect(Duration.toMillis(settings.automaticGitFetchInterval)).toBe(300_000);
+  });
+
+  it("preserves an explicitly selected upstream balanced profile", () => {
+    expect(
+      decodeServerSettings({
+        backgroundActivity: {
+          profile: "balanced",
+        },
+      }).backgroundActivity,
+    ).toEqual({
+      schemaVersion: 1,
+      profile: "balanced",
+      overrides: {},
+    });
   });
 });
 

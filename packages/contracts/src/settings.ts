@@ -443,6 +443,7 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+export const DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.minutes(5);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([
@@ -474,6 +475,17 @@ export const BackgroundActivityOverrides = Schema.Struct({
 });
 export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
 
+const DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT = {
+  schemaVersion: 1,
+  profile: "custom",
+  baseProfile: DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
+  overrides: {
+    automaticGitFetchInterval: Duration.toMillis(
+      DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL,
+    ),
+  },
+} as const;
+
 export const BackgroundActivitySettings = Schema.Struct({
   schemaVersion: Schema.Literal(1).pipe(Schema.withDecodingDefault(Effect.succeed(1 as const))),
   profile: BackgroundActivityProfileSelection.pipe(
@@ -481,8 +493,11 @@ export const BackgroundActivitySettings = Schema.Struct({
   ),
   baseProfile: Schema.optionalKey(BackgroundActivityProfile),
   overrides: BackgroundActivityOverrides.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT)));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
+export const DEFAULT_BACKGROUND_ACTIVITY_SETTINGS: BackgroundActivitySettings = Schema.decodeSync(
+  BackgroundActivitySettings,
+)(DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT);
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -492,7 +507,7 @@ export const ServerSettings = Schema.Struct({
   // consumers should resolve `backgroundActivity` instead.
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
     Schema.withDecodingDefault(
-      Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
+      Effect.succeed(Duration.toMillis(DEFAULT_SOURCE_CONTROL_AUTOMATIC_GIT_FETCH_INTERVAL)),
     ),
   ),
   providerHealthRefreshInterval: Schema.DurationFromMillis.pipe(

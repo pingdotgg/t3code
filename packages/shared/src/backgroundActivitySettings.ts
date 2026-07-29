@@ -1,6 +1,7 @@
 import {
   type BackgroundActivityProfile,
   type BackgroundActivitySettings,
+  DEFAULT_BACKGROUND_ACTIVITY_SETTINGS,
   DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
@@ -103,6 +104,22 @@ function durationsEqual(a: Duration.Duration, b: Duration.Duration): boolean {
   return Duration.toMillis(a) === Duration.toMillis(b);
 }
 
+function isDefaultBackgroundActivitySettings(
+  backgroundActivity: BackgroundActivitySettings,
+): boolean {
+  const defaultFetchInterval =
+    DEFAULT_BACKGROUND_ACTIVITY_SETTINGS.overrides.automaticGitFetchInterval;
+  const fetchInterval = backgroundActivity.overrides.automaticGitFetchInterval;
+  return (
+    backgroundActivity.profile === DEFAULT_BACKGROUND_ACTIVITY_SETTINGS.profile &&
+    backgroundActivity.baseProfile === DEFAULT_BACKGROUND_ACTIVITY_SETTINGS.baseProfile &&
+    Object.keys(backgroundActivity.overrides).length === 1 &&
+    fetchInterval !== undefined &&
+    defaultFetchInterval !== undefined &&
+    durationsEqual(fetchInterval, defaultFetchInterval)
+  );
+}
+
 function resolvedSettingsEqual(
   a: ResolvedBackgroundActivitySettings,
   b: ResolvedBackgroundActivitySettings,
@@ -197,15 +214,9 @@ export function normalizeBackgroundActivitySettings(
 export function resolveServerBackgroundActivitySettings(
   settings: ServerSettings,
 ): ResolvedBackgroundActivitySettings {
-  const defaultBackgroundActivity: BackgroundActivitySettings = {
-    schemaVersion: 1,
-    profile: DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
-    overrides: {},
-  };
-  const backgroundActivityIsDefault =
-    settings.backgroundActivity.profile === defaultBackgroundActivity.profile &&
-    settings.backgroundActivity.baseProfile === undefined &&
-    Object.keys(settings.backgroundActivity.overrides).length === 0;
+  const backgroundActivityIsDefault = isDefaultBackgroundActivitySettings(
+    settings.backgroundActivity,
+  );
   const legacyProfile = settings.backgroundActivityProfile;
   const hasLegacyOverrides =
     legacyProfile !== DEFAULT_BACKGROUND_ACTIVITY_PROFILE ||

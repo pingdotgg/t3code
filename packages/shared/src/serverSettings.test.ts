@@ -18,6 +18,30 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("resolves the customized default as balanced policy with a five-minute Git override", () => {
+    const resolved = resolveServerBackgroundActivitySettings(DEFAULT_SERVER_SETTINGS);
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(300_000);
+    expect(Duration.toMillis(resolved.providerHealthRefreshInterval)).toBe(300_000);
+    expect(resolved.pauseWhenHostLowPower).toBe(true);
+  });
+
+  it("keeps upstream's explicit balanced preset at thirty seconds", () => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "balanced",
+        overrides: {},
+      },
+      automaticGitFetchInterval: Duration.seconds(30),
+    });
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();
