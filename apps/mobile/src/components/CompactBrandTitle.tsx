@@ -34,8 +34,8 @@ export function CompactBrandTitle() {
         style={{
           color: mutedColor,
           fontFamily: "DMSans-Medium",
-          fontSize: 18,
-          letterSpacing: -0.45,
+          fontSize: 21,
+          letterSpacing: -0.5,
         }}
       >
         Code
