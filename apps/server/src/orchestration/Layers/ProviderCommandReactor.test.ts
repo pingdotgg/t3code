@@ -387,6 +387,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -434,6 +435,7 @@ describe("ProviderCommandReactor", () => {
       runtimeSessions,
       stateDir,
       drain,
+      runEffect,
     };
   }
 
@@ -635,6 +637,326 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
+  });
+
+  it("regenerates a thread title from the current conversation", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Resolve stale reconnect state" }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-existing"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Investigate reconnect regressions",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-title-regeneration"),
+          role: "user",
+          text: "Please investigate reconnect regressions after restarting the session.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-assistant-before-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("assistant-message-before-title-regeneration"),
+        delta: "The remaining issue is stale reconnect state.",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-assistant-complete-before-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("assistant-message-before-title-regeneration"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regenerate"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
+      cwd: "/tmp/provider-project",
+      previousTitle: "Investigate reconnect regressions",
+      message: [
+        "USER:",
+        "Please investigate reconnect regressions after restarting the session.",
+        "",
+        "ASSISTANT:",
+        "The remaining issue is stale reconnect state.",
+      ].join("\n"),
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Resolve stale reconnect state");
+  });
+
+  it("keeps the current title when regeneration returns the fallback", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "New thread" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-before-fallback-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Keep meaningful title",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-fallback-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-fallback-regeneration"),
+          role: "user",
+          text: "Investigate the reconnect state.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-fallback-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Keep meaningful title");
+  });
+
+  it("keeps the full retained context and excludes attachments outside it", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const retainedContext = "x".repeat(8_000);
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-before-truncated-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Existing title",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-truncated-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-truncated-regeneration"),
+          role: "user",
+          text: "Old visual issue",
+          attachments: [
+            {
+              type: "image",
+              id: "old-title-context-image",
+              name: "old-issue.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-assistant-truncated-regeneration-context"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("assistant-truncated-regeneration-context"),
+        delta: `content before retained tail${"x".repeat(8_100)}`,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-assistant-truncated-regeneration-context-complete"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("assistant-truncated-regeneration-context"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regenerate-truncated-context"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0].message).toBe(
+      `[Earlier content truncated]\n\n${retainedContext}`,
+    );
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toBeUndefined();
+  });
+
+  it("does not overwrite a manual rename while title regeneration is running", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const generatedTitle = await harness.runEffect(
+      Deferred.make<{ readonly title: string }, never>(),
+    );
+    harness.generateThreadTitle.mockReturnValue(Deferred.await(generatedTitle));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-before-regeneration-race"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Existing thread title",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-regeneration-race"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-regeneration-race"),
+          role: "user",
+          text: "Investigate the reconnect state.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regeneration-race"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-manual-rename-during-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Keep manual rename",
+      }),
+    );
+    await harness.runEffect(
+      Deferred.succeed(generatedTitle, { title: "Generated title should not win" }),
+    );
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Keep manual rename");
+  });
+
+  it("does not overwrite a manual rename while title regeneration is queued", async () => {
+    let releaseStart = () => {};
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const harness = await createHarness({
+      startSessionEffect: (session) => Effect.promise(() => startGate).pipe(Effect.as(session)),
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Generated title should not win" }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-before-queued-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Existing thread title",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-queued-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-queued-regeneration"),
+          role: "user",
+          text: "Investigate the reconnect state.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-queued-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-manual-rename-before-regeneration-starts"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Keep queued manual rename",
+      }),
+    );
+    releaseStart();
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Keep queued manual rename");
   });
 
   it("does not overwrite an existing custom thread title on the first turn", async () => {

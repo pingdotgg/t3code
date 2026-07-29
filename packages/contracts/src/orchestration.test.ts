@@ -320,12 +320,15 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadMetaUpdatedPayload({
       threadId: "thread-1",
+      regenerateTitle: true,
+      previousTitle: "Previous title",
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
       },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
+    assert.strictEqual(parsed.previousTitle, "Previous title");
     assert.strictEqual(parsed.modelSelection?.instanceId, "claudeAgent");
   }),
 );
@@ -625,6 +628,36 @@ it.effect("accepts a title seed in thread.turn.start", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.titleSeed, "Investigate reconnect failures");
+  }),
+);
+
+it.effect("accepts a title regeneration intent in thread.meta.update", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-title-regenerate",
+      threadId: "thread-1",
+      regenerateTitle: true,
+    });
+    assert.strictEqual(parsed.type, "thread.meta.update");
+    if (parsed.type === "thread.meta.update") {
+      assert.strictEqual(parsed.regenerateTitle, true);
+    }
+  }),
+);
+
+it.effect("rejects an explicit title combined with title regeneration", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.meta.update",
+        commandId: "cmd-title-regenerate-with-title",
+        threadId: "thread-1",
+        title: "Explicit title",
+        regenerateTitle: true,
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
   }),
 );
 

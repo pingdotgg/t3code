@@ -51,6 +51,7 @@ type ProviderIntentEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.meta-updated"
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
@@ -90,6 +91,60 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const MAX_REGENERATION_ATTACHMENTS = 4;
+const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
+const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+
+function formatThreadTitleContext(
+  messages: ReadonlyArray<{
+    readonly role: "user" | "assistant" | "system";
+    readonly text: string;
+    readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  }>,
+): {
+  readonly message: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+} {
+  let context = "";
+  let truncated = false;
+  const retainedAttachments: Array<ChatAttachment> = [];
+
+  for (const message of messages.toReversed()) {
+    if (message.role === "system") {
+      continue;
+    }
+    const text = message.text.trim();
+    const attachmentSummary = (message.attachments ?? [])
+      .map((attachment) => attachment.name)
+      .join(", ");
+    const contents = [
+      ...(text.length > 0 ? [text] : []),
+      ...(attachmentSummary.length > 0 ? [`[Attachments: ${attachmentSummary}]`] : []),
+    ].join("\n");
+    if (contents.length === 0) {
+      continue;
+    }
+
+    const section = `${message.role.toUpperCase()}:\n${contents}`;
+    const separator = context.length > 0 ? "\n\n" : "";
+    const available = MAX_THREAD_TITLE_CONTEXT_CHARS - context.length - separator.length;
+    if (section.length > available) {
+      if (available > 0) {
+        context = `${section.slice(-available)}${separator}${context}`;
+        retainedAttachments.unshift(...(message.attachments ?? []));
+      }
+      truncated = true;
+      break;
+    }
+    context = `${section}${separator}${context}`;
+    retainedAttachments.unshift(...(message.attachments ?? []));
+  }
+
+  return {
+    message: truncated ? `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${context}` : context,
+    attachments: retainedAttachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+  };
+}
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -777,6 +832,76 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const regenerateThreadTitle = Effect.fn("regenerateThreadTitle")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>,
+  ) {
+    if (event.payload.regenerateTitle !== true) {
+      return;
+    }
+
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    const { message, attachments } = formatThreadTitleContext(thread.messages);
+    if (message.length === 0) {
+      return;
+    }
+
+    const previousTitle = event.payload.previousTitle ?? thread.title;
+    if (thread.title !== previousTitle) {
+      return;
+    }
+    const project = yield* resolveProject(thread.projectId);
+    const cwd =
+      resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      }) ?? process.cwd();
+    const { textGenerationModelSelection: modelSelection } =
+      yield* serverSettingsService.getSettings;
+    const generated = yield* textGeneration.generateThreadTitle({
+      cwd,
+      message,
+      previousTitle,
+      ...(attachments.length > 0 ? { attachments } : {}),
+      modelSelection,
+    });
+    if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
+      return;
+    }
+
+    const latestThread = yield* resolveThread(event.payload.threadId);
+    if (!latestThread || latestThread.title !== previousTitle) {
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("thread-title-regenerate"),
+      threadId: event.payload.threadId,
+      title: generated.title,
+    });
+  });
+  const processThreadTitleRegenerationSafely = (
+    event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>,
+  ) =>
+    regenerateThreadTitle(event).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("provider command reactor failed to regenerate thread title", {
+          threadId: event.payload.threadId,
+          cause: Cause.pretty(cause),
+        });
+      }),
+    );
+  const threadTitleRegenerationWorker = yield* makeDrainableWorker(
+    processThreadTitleRegenerationSafely,
+  );
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -1047,6 +1172,9 @@ const make = Effect.gen(function* () {
       eventType: event.type,
     });
     switch (event.type) {
+      case "thread.meta-updated":
+        yield* threadTitleRegenerationWorker.enqueue(event);
+        return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThread(event.payload.threadId);
         if (!thread?.session || thread.session.status === "stopped") {
@@ -1096,6 +1224,7 @@ const make = Effect.gen(function* () {
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
+        (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
@@ -1114,7 +1243,10 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain,
+    drain: Effect.gen(function* () {
+      yield* worker.drain;
+      yield* threadTitleRegenerationWorker.drain;
+    }),
   } satisfies ProviderCommandReactorShape;
 });
 
