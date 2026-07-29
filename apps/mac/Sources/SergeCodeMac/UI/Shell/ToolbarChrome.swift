@@ -2,27 +2,27 @@ import SwiftUI
 
 // MARK: - Toolbar control groups
 
-/// A quiet, connected surface for related window-toolbar content.
-///
-/// The toolbar already sits above the app's scenery and does not need a
-/// separate piece of Liquid Glass around every action. One low-contrast,
-/// squarer group keeps the controls legible without turning them into a row
-/// of floating bubbles.
 extension View {
-    func alpineToolbarControlGroup() -> some View {
+    /// The low-contrast translucent surface shared by floating app controls.
+    ///
+    /// New Session established this treatment in the window toolbar. Reusing
+    /// the same adaptive fill and hairline in the chat keeps repository,
+    /// transcript, and progress controls on one visual plane without the
+    /// heavier gray plates produced by system materials over scenery.
+    func alpineGlassSurface<S: InsettableShape>(in shape: S) -> some View {
         background {
-            RoundedRectangle(
-                cornerRadius: AlpineTheme.Corners.control, style: .continuous
-            )
-            .fill(Color.primary.opacity(0.055))
+            shape.fill(Color.primary.opacity(0.055))
         }
         .overlay {
-            RoundedRectangle(
-                cornerRadius: AlpineTheme.Corners.control, style: .continuous
-            )
-            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
         }
-        .clipShape(
+        .clipShape(shape)
+    }
+
+    /// A quiet, connected surface for related window-toolbar content.
+    func alpineToolbarControlGroup() -> some View {
+        alpineGlassSurface(
+            in:
             RoundedRectangle(
                 cornerRadius: AlpineTheme.Corners.control, style: .continuous
             ))

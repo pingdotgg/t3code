@@ -80,15 +80,9 @@ private struct AutoReviewProgressCard: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.96))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(phase.tint.opacity(0.28), lineWidth: 1)
-                }
-        }
-        .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
+        .alpineGlassSurface(
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
     }
 
     private var stageIcon: some View {
