@@ -205,7 +205,7 @@ describe("release workflow tracing config propagation", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workflowPath = yield* path.fromFileUrl(
-        new URL("../../../.github/workflows/release.yml", import.meta.url),
+        new URL("../../../docs/upstream/workflows/release.yml", import.meta.url),
       );
       const workflow = yield* fileSystem.readFileString(workflowPath);
 

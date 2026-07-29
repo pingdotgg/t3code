@@ -137,3 +137,17 @@ Full glossary with file links: `docs/reference/encyclopedia.md`
 
 - Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## Agent skills
+
+### Issue tracker
+
+Product specs and implementation issues are tracked in this fork's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Engineering skills use the repository's existing triage vocabulary plus explicit agent and human readiness labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This monorepo uses a multi-context domain layout. The root glossary and encyclopedia remain authoritative until context-specific maps are introduced. See `docs/agents/domain.md`.

@@ -1,3 +1,4 @@
+# Archived upstream workflow. Restore only after the fork owns its Expo project configuration.
 name: Mobile EAS Production
 
 # Production builds and OTA updates run from CI (Linux) — never from a laptop.
@@ -33,7 +34,7 @@ on:
 jobs:
   production:
     name: EAS Production ${{ inputs.mode }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:
