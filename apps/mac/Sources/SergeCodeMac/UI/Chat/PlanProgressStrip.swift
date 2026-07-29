@@ -190,9 +190,6 @@ struct PlanProgressStrip: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             ZStack(alignment: .leading) {
-                // Keep an explicit dark base behind empty and partial progress
-                // so the rail remains legible over every scenery image.
-                Capsule().fill(Color.black.opacity(0.32))
                 fill(width: max(0, width * fraction), height: proxy.size.height, done: done)
                 ticks(total: total, width: width, fraction: fraction)
             }
