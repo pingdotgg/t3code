@@ -216,6 +216,17 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+  /**
+   * Turns Remote Control on/off for the running session via a
+   * `{subtype: "remote_control", enabled, name?}` control request — the
+   * same mechanism the interactive CLI's `/remote-control` slash command
+   * uses internally. Not declared in the SDK's public `Query` type (or the
+   * `SDKMessage`/`SDKSystemMessage` unions its `bridge_status` response
+   * arrives as), but is a real method on the object `query()` returns.
+   * Optional here only because hand-rolled test doubles for
+   * `ClaudeQueryRuntime` don't implement it.
+   */
+  readonly enableRemoteControl?: (enabled: boolean, name?: string) => Promise<unknown>;
   readonly close: () => void;
 }
 
@@ -2605,6 +2616,35 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // Also undeclared (see above) — status pushed after the `remote_control`
+    // control request `enableRemoteControl` sends (see `ClaudeQueryRuntime`).
+    // Field shape isn't documented anywhere (undeclared in the SDK's own
+    // types); read whatever of `state`/`url`/`content`/`sessionUrl` is
+    // present defensively rather than assuming one exact shape. Surfaced as
+    // a runtime warning (visible in the thread's work log) since there's no
+    // dedicated UI for it yet.
+    if ((message.subtype as string) === "bridge_state") {
+      const bridgeMessage = message as unknown as {
+        state?: unknown;
+        url?: unknown;
+        sessionUrl?: unknown;
+        content?: unknown;
+      };
+      const url =
+        typeof bridgeMessage.url === "string"
+          ? bridgeMessage.url
+          : typeof bridgeMessage.sessionUrl === "string"
+            ? bridgeMessage.sessionUrl
+            : undefined;
+      const state = typeof bridgeMessage.state === "string" ? bridgeMessage.state : undefined;
+      const content =
+        typeof bridgeMessage.content === "string"
+          ? bridgeMessage.content
+          : `Remote Control ${state ?? "status"}${url ? ` · ${url}` : ""}`;
+      yield* emitRuntimeWarning(context, content, url ? { url } : undefined);
+      return;
+    }
+
     switch (message.subtype) {
       case "init":
         yield* offerRuntimeEvent({
@@ -3495,13 +3535,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const claudeBinaryPath = claudeSdkExecutablePath;
       const extraArgs = {
         ...parseCliArgs(claudeSettings.launchArgs).flags,
-        // Either the per-instance persistent setting or a per-thread
-        // choice made when the thread was created (see
-        // ClaudeSessionHistory.bindSessionLaunchOptions) enables it.
-        ...(claudeSettings.remoteControl || resumeState?.remoteControl
-          ? { "remote-control": null }
-          : {}),
       };
+      // `--remote-control` as a bare CLI launch flag is a no-op under
+      // `query()` (it only does something in the interactive CLI's own
+      // terminal-driven code path) — Remote Control has to be turned on via
+      // a control request on the running session instead, once the query
+      // object exists (see the `enableRemoteControl` call below). Either
+      // the per-instance persistent setting or a per-thread choice made
+      // when the thread was created (see
+      // ClaudeSessionHistory.bindSessionLaunchOptions) enables it.
+      const shouldEnableRemoteControl = claudeSettings.remoteControl || resumeState?.remoteControl;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
@@ -3659,6 +3702,45 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
+
+      if (shouldEnableRemoteControl) {
+        const enableRemoteControlResult = yield* Effect.promise(() =>
+          (context.query.enableRemoteControl?.(true) ?? Promise.resolve(undefined)).then(
+            (response): { readonly ok: true; readonly response: unknown } => ({
+              ok: true,
+              response,
+            }),
+            (cause: unknown): { readonly ok: false; readonly cause: unknown } => ({
+              ok: false,
+              cause,
+            }),
+          ),
+        );
+        if (!enableRemoteControlResult.ok) {
+          yield* Effect.logWarning("claude.remoteControl.enable-failed", {
+            threadId,
+            cause: enableRemoteControlResult.cause,
+          });
+        } else {
+          // Undocumented response shape (see `ClaudeQueryRuntime.enableRemoteControl`)
+          // — read a connect URL out of it defensively if one is present,
+          // rather than only relying on the later async `bridge_state`
+          // message (see `handleSystemMessage`), which may not carry one.
+          const response = enableRemoteControlResult.response as
+            | { url?: unknown; sessionUrl?: unknown }
+            | null
+            | undefined;
+          const url =
+            typeof response?.url === "string"
+              ? response.url
+              : typeof response?.sessionUrl === "string"
+                ? response.sessionUrl
+                : undefined;
+          if (url) {
+            yield* emitRuntimeWarning(context, `Remote Control ready · ${url}`, { url });
+          }
+        }
+      }
 
       const sessionStartedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
