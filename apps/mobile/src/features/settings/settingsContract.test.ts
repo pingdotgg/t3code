@@ -30,7 +30,6 @@ describe("native settings contract", () => {
       name: "SettingsWaitlist",
       linking: "waitlist",
       title: "Sign in",
-      target: "SettingsAuth",
     });
     expect(SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name).not.toBe(
       SETTINGS_ARCHIVE_ROUTE_CONTRACT.name,

@@ -25,5 +25,4 @@ export const SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT = {
   name: "SettingsWaitlist",
   linking: "waitlist",
   title: "Sign in",
-  target: "SettingsAuth",
 } as const;
