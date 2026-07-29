@@ -225,6 +225,7 @@ import {
   useWorktreeCanonicalThreadRef,
   useWorktreeScopeKeyForThreadRef,
   worktreeCanonicalThreadRefsByScopeKey,
+  worktreeRepresentativeThreadRefsByScopeKey,
 } from "../worktreeScope";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -1393,16 +1394,25 @@ function ChatViewContent(props: ChatViewProps) {
     () => worktreeCanonicalThreadRefsByScopeKey(threadShells),
     [threadShells],
   );
+  const representativeThreadRefByScopeKey = useMemo(
+    () => worktreeRepresentativeThreadRefsByScopeKey(threadShells),
+    [threadShells],
+  );
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
   const mountedTerminalThreadRefs = useMemo(
     () =>
       mountedTerminalThreadKeys.flatMap((mountedThreadKey) => {
-        const mountedThreadRef =
-          canonicalThreadRefByScopeKey.get(mountedThreadKey) ??
+        const threadRef =
+          representativeThreadRefByScopeKey.get(mountedThreadKey) ??
           parseScopedThreadKey(mountedThreadKey);
-        return mountedThreadRef ? [{ key: mountedThreadKey, threadRef: mountedThreadRef }] : [];
+        if (!threadRef) {
+          return [];
+        }
+        const terminalThreadId =
+          canonicalThreadRefByScopeKey.get(mountedThreadKey)?.threadId ?? threadRef.threadId;
+        return [{ key: mountedThreadKey, terminalThreadId, threadRef }];
       }),
-    [canonicalThreadRefByScopeKey, mountedTerminalThreadKeys],
+    [canonicalThreadRefByScopeKey, mountedTerminalThreadKeys, representativeThreadRefByScopeKey],
   );
 
   const fallbackDraftProjectRef = draftThread
@@ -6081,28 +6091,30 @@ function ChatViewContent(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            visible={mountedThreadKey === activeWorktreeScopeKey && terminalUiState.terminalOpen}
-            launchContext={
-              mountedThreadKey === activeWorktreeScopeKey
-                ? (activeTerminalLaunchContext ?? null)
-                : null
-            }
-            focusRequestId={
-              mountedThreadKey === activeWorktreeScopeKey ? terminalFocusRequestId : 0
-            }
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {mountedTerminalThreadRefs.map(
+          ({ key: mountedThreadKey, terminalThreadId, threadRef: mountedThreadRef }) => (
+            <PersistentThreadTerminalDrawer
+              key={mountedThreadKey}
+              threadRef={mountedThreadRef}
+              threadId={terminalThreadId}
+              visible={mountedThreadKey === activeWorktreeScopeKey && terminalUiState.terminalOpen}
+              launchContext={
+                mountedThreadKey === activeWorktreeScopeKey
+                  ? (activeTerminalLaunchContext ?? null)
+                  : null
+              }
+              focusRequestId={
+                mountedThreadKey === activeWorktreeScopeKey ? terminalFocusRequestId : 0
+              }
+              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+              splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+              keybindings={keybindings}
+              onAddTerminalContext={addTerminalContextToDraft}
+            />
+          ),
+        )}
       </div>
 
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (

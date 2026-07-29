@@ -126,6 +126,24 @@ export function worktreeCanonicalThreadRefsByScopeKey(
   return refsByKey;
 }
 
+/**
+ * Real thread refs used when mounted checkout-scoped UI still needs thread and
+ * project metadata. Wire resources use the synthetic refs above, but those refs
+ * intentionally have no matching thread shell.
+ */
+export function worktreeRepresentativeThreadRefsByScopeKey(
+  shells: ReadonlyArray<EnvironmentThreadShell>,
+): Map<string, ScopedThreadRef> {
+  const refsByKey = new Map<string, ScopedThreadRef>();
+  for (const shell of shells) {
+    const key = threadWorktreeScopeKey(shell);
+    if (!refsByKey.has(key)) {
+      refsByKey.set(key, scopeThreadRef(shell.environmentId, shell.id));
+    }
+  }
+  return refsByKey;
+}
+
 /** Reactive twin of resolveWorktreeScopeKeyForThreadRef. */
 export function useWorktreeScopeKeyForThreadRef(ref: ScopedThreadRef | null): string | null {
   const shell = useThreadShell(ref);

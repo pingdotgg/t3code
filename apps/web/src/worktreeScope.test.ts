@@ -1,4 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { worktreeResourceThreadId } from "@t3tools/shared/worktreeResource";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -8,6 +9,9 @@ import {
   migrateWorktreeScopedRecordKeys,
   resolveWorktreeCanonicalThreadRef,
   resolveWorktreeScopeKeyForThreadRef,
+  threadWorktreeScopeKey,
+  worktreeCanonicalThreadRefsByScopeKey,
+  worktreeRepresentativeThreadRefsByScopeKey,
   worktreeScopeKey,
 } from "./worktreeScope";
 
@@ -84,6 +88,32 @@ describe("worktreeScope", () => {
       worktreeScopeKey(environmentId, projectId, worktreePath),
     );
     expect(resolveWorktreeCanonicalThreadRef(threadRef).threadId).toBe(
+      worktreeResourceThreadId(projectId, worktreePath),
+    );
+  });
+
+  it("keeps a real thread ref available for checkout-scoped UI metadata", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const projectId = ProjectId.make("project-1");
+    const worktreePath = "/repo/worktree";
+    const first = {
+      environmentId,
+      id: ThreadId.make("thread-1"),
+      projectId,
+      worktreePath,
+    } as EnvironmentThreadShell;
+    const second = {
+      environmentId,
+      id: ThreadId.make("thread-2"),
+      projectId,
+      worktreePath,
+    } as EnvironmentThreadShell;
+    const scopeKey = threadWorktreeScopeKey(first);
+
+    expect(worktreeRepresentativeThreadRefsByScopeKey([first, second]).get(scopeKey)).toEqual(
+      scopeThreadRef(environmentId, first.id),
+    );
+    expect(worktreeCanonicalThreadRefsByScopeKey([first, second]).get(scopeKey)?.threadId).toBe(
       worktreeResourceThreadId(projectId, worktreePath),
     );
   });
