@@ -15,6 +15,9 @@ struct SergeCodeApp: App {
     private let multi: MultiDeviceModel
     // Alpine identity: Dolomites photo pool + per-thread scene assignment.
     private let scenery = SceneryStore()
+    // Settings live inside the main window (no Settings scene); the App owns
+    // the presentation so the ⌘, menu command below can drive it.
+    private let settingsPresentation = SettingsPresentation()
     // Sparkle auto-updater controller
     private let updaterController: SPUStandardUpdaterController
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -101,7 +104,8 @@ struct SergeCodeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(multi: multi, scenery: scenery)
+            RootView(multi: multi, scenery: scenery, settings: settingsPresentation)
+                .environment(settingsPresentation)
                 .environment(\.colorScheme, .dark)
                 .preferredColorScheme(.dark)
                 .background(DarkAppearanceConfigurator())
@@ -169,6 +173,15 @@ struct SergeCodeApp: App {
                     updaterController.checkForUpdates(nil)
                 }
             }
+            // Settings live inside the main window (no `Settings` scene, so
+            // AppKit no longer vends its own item). ⌘, toggles: the takeover
+            // replaces the main content, so the shortcut is also the way back.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    settingsPresentation.toggle()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
             // `.replacing` (not `.after`): a bare `WindowGroup` auto-vends a
             // "New Window" item already bound to ⌘N, which would otherwise
             // race our own ⌘N item for the same key equivalent (and a second
@@ -195,16 +208,6 @@ struct SergeCodeApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
-        }
-
-        Settings {
-            SettingsScene(
-                model: multi.local,
-                scenery: scenery,
-                multi: multi)
-                .environment(\.colorScheme, .dark)
-                .preferredColorScheme(.dark)
-                .background(DarkAppearanceConfigurator())
         }
     }
 

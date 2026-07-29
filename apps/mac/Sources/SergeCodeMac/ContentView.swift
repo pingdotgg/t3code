@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
+    let settings: SettingsPresentation
 
     // Off until the user asks for it: the inspector shows a thread's changes
     // timeline, so it has nothing to say on the welcome hero, where its
@@ -19,6 +20,23 @@ struct RootView: View {
     private var model: AppModel { multi.activeModel }
 
     var body: some View {
+        ZStack {
+            splitShell
+            // Settings replace the main content rather than opening a second
+            // window: the takeover sits over both columns with its own
+            // sidebar, and the window toolbar hides underneath it (its
+            // buttons would otherwise float over the settings surface and
+            // keep driving a hidden split view).
+            if settings.isPresented {
+                SettingsHostView(multi: multi, scenery: scenery, presentation: settings)
+                    .transition(Motion.materialize)
+            }
+        }
+        .animation(Motion.structure, value: settings.isPresented)
+        .toolbar(settings.isPresented ? .hidden : .automatic, for: .windowToolbar)
+    }
+
+    private var splitShell: some View {
         // Drag-collapse writes visibility through this binding; wrapping
         // the set animates the snap-closed instead of an instant jump.
         NavigationSplitView(columnVisibility: Binding(
@@ -175,6 +193,8 @@ struct RootView: View {
                 case "inspector.show": showInspector = true
                 case "inspector.hide": showInspector = false
                 case "sidebar": toggleSidebar()
+                case "settings.show": settings.open()
+                case "settings.hide": settings.close()
                 default: break
                 }
             }

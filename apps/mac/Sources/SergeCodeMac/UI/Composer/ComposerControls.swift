@@ -197,6 +197,10 @@ private struct RunProfileMenu: View {
     let thread: ChatThread
     let model: AppModel
 
+    /// Optional because DEBUG probes host composer views without the App's
+    /// environment; the row simply hides its shortcut in that case.
+    @Environment(SettingsPresentation.self) private var settingsPresentation:
+        SettingsPresentation?
     @UIState private var isHovering = false
     @UIState private var isPresented = false
     /// Incremented on each acknowledged effort change to replay the burst.
@@ -329,10 +333,13 @@ private struct RunProfileMenu: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer(minLength: 8)
-                            SettingsLink {
-                                Text("Open Settings")
+                            if settingsPresentation != nil {
+                                Button("Open Settings") {
+                                    isPresented = false
+                                    settingsPresentation?.open(.workflows)
+                                }
+                                .controlSize(.small)
                             }
-                            .controlSize(.small)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)

@@ -8,7 +8,7 @@ struct WorkflowRoutingSettingsTab: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            SettingsSection(header: "Ultra workflows") {
+            SettingsSection(header: "Ultra workflows", icon: "point.3.connected.trianglepath.dotted") {
                 if let settings = draft {
                     routeRow(
                         title: "Explore & scope",
@@ -43,7 +43,7 @@ struct WorkflowRoutingSettingsTab: View {
                 }
             }
 
-            SettingsSection(header: "How routing works") {
+            SettingsSection(header: "How routing works", icon: "questionmark.circle") {
                 SettingsCardRow {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(

@@ -499,6 +499,20 @@
                 // Brand surfaces: About window + empty state with the
                 // BrandMark/BrandWordmark treatment.
                 await probeBrand(model: model, scenery: scenery, dir: dir)
+
+                // In-window settings takeover: the tab snapshots above host
+                // SettingsScene standalone; this drives the real presentation
+                // path (notification → RootView → toolbar hides →
+                // SettingsHostView) and captures the main window with the
+                // takeover up, then dismissed again.
+                NotificationCenter.default.post(
+                    name: .uiProbeToggleSection, object: "settings.show")
+                try? await Task.sleep(for: .seconds(1.5))
+                snapshot("20-settings-takeover", dir: dir)
+                NotificationCenter.default.post(
+                    name: .uiProbeToggleSection, object: "settings.hide")
+                try? await Task.sleep(for: .seconds(1))
+                snapshot("20b-settings-takeover-dismissed", dir: dir)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
             }
