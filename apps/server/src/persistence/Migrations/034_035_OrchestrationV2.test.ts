@@ -105,6 +105,66 @@ layer("035_036_OrchestrationV2", (it) => {
       ]);
     }),
   );
+
+  it.effect("preserves turn items with colliding ordinals in migration 037", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 36 });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs (
+          run_id,
+          thread_id,
+          ordinal,
+          provider,
+          status,
+          requested_at,
+          payload_json
+        ) VALUES (
+          'run:one',
+          'thread:one',
+          1,
+          'codex',
+          'completed',
+          '2026-01-01T00:00:00.000Z',
+          '{}'
+        )
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id,
+          thread_id,
+          run_id,
+          ordinal,
+          type,
+          status,
+          updated_at,
+          payload_json
+        ) VALUES
+          ('turn-item:b', 'thread:one', 'run:one', 7, 'assistant_message', 'completed', '2026-01-01T00:00:00.000Z', '{}'),
+          ('turn-item:a', 'thread:one', 'run:one', 7, 'assistant_message', 'completed', '2026-01-01T00:00:00.000Z', '{}'),
+          ('turn-item:c', 'thread:one', 'run:one', 9, 'assistant_message', 'completed', '2026-01-01T00:00:00.000Z', '{}'),
+          ('turn-item:d', 'thread:two', NULL, 42, 'assistant_message', 'completed', '2026-01-01T00:00:00.000Z', '{}')
+      `;
+
+      yield* runMigrations({ toMigrationInclusive: 37 });
+
+      const positions = yield* sql<{
+        readonly thread_id: string;
+        readonly turn_item_id: string;
+        readonly ordinal: number;
+      }>`
+        SELECT thread_id, turn_item_id, ordinal
+        FROM orchestration_v2_turn_item_positions
+        ORDER BY thread_id, ordinal
+      `;
+      assert.deepStrictEqual(positions, [
+        { thread_id: "thread:one", turn_item_id: "turn-item:a", ordinal: 1_000_001 },
+        { thread_id: "thread:one", turn_item_id: "turn-item:b", ordinal: 1_000_002 },
+        { thread_id: "thread:one", turn_item_id: "turn-item:c", ordinal: 1_000_003 },
+        { thread_id: "thread:two", turn_item_id: "turn-item:d", ordinal: 1 },
+      ]);
+    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  );
 });
 
 it.effect("upgrades a database already at released main migration 034", () =>
