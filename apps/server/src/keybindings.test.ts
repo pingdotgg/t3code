@@ -201,6 +201,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("sidebar.toggle"), "mod+b");
       assert.equal(defaultsByCommand.get("rightPanel.toggle"), "mod+alt+b");
       assert.equal(defaultsByCommand.get("terminal.splitVertical"), "mod+shift+d");
+      assert.equal(defaultsByCommand.get("chat.newEnvironment"), "mod+shift+n");
+      assert.isFalse(defaultsByCommand.has("chat.newLocal"));
       assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
     }),
@@ -299,6 +301,55 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         }
         assert.isTrue(byCommand.has("script.run-tests.run"));
       }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("migrates the previous new-local default to the environment picker", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        {
+          key: "mod+shift+n",
+          command: "chat.newLocal",
+          when: "!terminalFocus",
+        },
+        {
+          key: "mod+shift+l",
+          command: "chat.newLocal",
+          when: "!terminalFocus",
+        },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "chat.newEnvironment" &&
+            entry.key === "mod+shift+n" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isFalse(
+        persisted.some(
+          (entry) =>
+            entry.command === "chat.newLocal" &&
+            entry.key === "mod+shift+n" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "chat.newLocal" &&
+            entry.key === "mod+shift+l" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
   it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {

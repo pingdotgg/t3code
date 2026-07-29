@@ -77,6 +77,13 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "chat.newEnvironment") {
+        event.preventDefault();
+        event.stopPropagation();
+        openCommandPalette({ open: "new-thread-on" });
+        return;
+      }
+
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
