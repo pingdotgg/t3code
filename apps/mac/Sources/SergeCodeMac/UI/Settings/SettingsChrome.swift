@@ -24,7 +24,16 @@ struct SettingsCard<Content: View>: View {
             .padding(.vertical, 2)
             .background(shape.fill(Color.white.opacity(0.055)))
             .clipShape(shape)
-            .overlay(shape.strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
+            // Top-lit hairline: brighter along the top edge so cards read as
+            // raised surfaces instead of outlined rectangles.
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.14), Color.white.opacity(0.06)],
+                        startPoint: .top,
+                        endPoint: .bottom),
+                    lineWidth: 1))
+            .shadow(color: .black.opacity(0.16), radius: 9, y: 3)
     }
 }
 
@@ -58,22 +67,25 @@ struct SettingsDivider: View {
 
 // MARK: - Section
 
-/// A titled group of settings: optional header label above the card and
-/// optional footer text below, matching the ComposerPickerSectionLabel and
-/// grouped-Form footer roles.
+/// A titled group of settings: optional header label (with an optional
+/// accent-tinted glyph) above the card and optional footer text below,
+/// matching the ComposerPickerSectionLabel and grouped-Form footer roles.
 struct SettingsSection<Content: View, HeaderTrailing: View>: View {
     let header: String?
+    let icon: String?
     let footer: String?
     @ViewBuilder let headerTrailing: HeaderTrailing
     @ViewBuilder let content: Content
 
     init(
         header: String? = nil,
+        icon: String? = nil,
         footer: String? = nil,
         @ViewBuilder headerTrailing: () -> HeaderTrailing,
         @ViewBuilder content: () -> Content
     ) {
         self.header = header
+        self.icon = icon
         self.footer = footer
         self.headerTrailing = headerTrailing()
         self.content = content()
@@ -82,10 +94,17 @@ struct SettingsSection<Content: View, HeaderTrailing: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let header {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if let icon {
+                        Image(systemName: icon)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(AlpineTheme.accent)
+                    }
                     Text(header)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .kerning(0.4)
                     Spacer(minLength: 8)
                     headerTrailing
                 }
@@ -110,11 +129,12 @@ struct SettingsSection<Content: View, HeaderTrailing: View>: View {
 extension SettingsSection where HeaderTrailing == EmptyView {
     init(
         header: String? = nil,
+        icon: String? = nil,
         footer: String? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.init(
-            header: header, footer: footer,
+            header: header, icon: icon, footer: footer,
             headerTrailing: { EmptyView() }, content: content)
     }
 }
@@ -269,9 +289,17 @@ struct SettingsSearchField: View {
 /// glyph when selected), selected wash, hover wash, feedback motion.
 struct SettingsSidebar: View {
     @Binding var selection: SettingsTab
+    /// True when hosted in the main window: the window toolbar is hidden
+    /// under the takeover, so the traffic lights float over this column and
+    /// the content has to start below them.
+    var inset = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            Text("Settings")
+                .font(.title3.bold())
+                .padding(.horizontal, 8)
+                .padding(.bottom, 2)
             group(label: nil, tabs: [.general])
             group(label: "Agents", tabs: [.providers, .workflows, .dictation, .autoReview])
             group(label: "Workspace", tabs: [.archive, .scenery])
@@ -279,10 +307,10 @@ struct SettingsSidebar: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .padding(.top, 14)
+        .padding(.top, inset ? 48 : 14)
         .frame(width: 196)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.white.opacity(0.04))
+        .background(Color.white.opacity(0.04).ignoresSafeArea())
     }
 
     private func group(label: String?, tabs: [SettingsTab]) -> some View {
