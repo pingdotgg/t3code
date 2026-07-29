@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
@@ -116,5 +117,68 @@ describe("resolveMarkdownFileLinkTarget", () => {
 
   it("does not treat app routes as file links", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+  });
+});
+
+describe("resolveInlineCodeFileLinkMeta", () => {
+  const cwd = "/Users/julius/project";
+
+  it("links relative and absolute file paths", () => {
+    expect(resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md", cwd)).toMatchObject({
+      targetPath: "/Users/julius/project/.plans/worktree-management-v1.md",
+      basename: "worktree-management-v1.md",
+    });
+    expect(resolveInlineCodeFileLinkMeta("/workspace/Makefile")).toMatchObject({
+      basename: "Makefile",
+    });
+  });
+
+  it("links Windows-style paths and line positions", () => {
+    expect(resolveInlineCodeFileLinkMeta("C:\\Users\\mike\\project\\src\\main.ts")).toMatchObject({
+      basename: "main.ts",
+    });
+    expect(resolveInlineCodeFileLinkMeta("src\\main.ts:71", cwd)).toMatchObject({
+      targetPath: "/Users/julius/project/src/main.ts:71",
+      line: 71,
+    });
+  });
+
+  it("links conventional extensionless filenames only with line positions", () => {
+    expect(resolveInlineCodeFileLinkMeta("Makefile:12", cwd)).toMatchObject({
+      targetPath: "/Users/julius/project/Makefile:12",
+      line: 12,
+    });
+    expect(resolveInlineCodeFileLinkMeta("Dockerfile:8:2", cwd)).toMatchObject({
+      line: 8,
+      column: 2,
+    });
+    expect(resolveInlineCodeFileLinkMeta("AGENTS.md", cwd)).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("error:1", cwd)).toBeNull();
+  });
+
+  it("rejects hosts, commands, refs, directories, globs, and URLs", () => {
+    for (const value of [
+      "127.0.0.1:3000",
+      "localhost:3000",
+      "example.com/index.html",
+      "example.software/index.html",
+      "api.internal/schema.json",
+      "git worktree list --porcelain",
+      "origin/main",
+      "apps/web",
+      "./src",
+      "~/project",
+      "/workspace/project",
+      "release/v1.2",
+      "refs/tags/v1.2.3",
+      "src/**/*.ts",
+      "https://example.com/docs.html",
+    ]) {
+      expect(resolveInlineCodeFileLinkMeta(value, cwd)).toBeNull();
+    }
+  });
+
+  it("requires a cwd for relative paths", () => {
+    expect(resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md")).toBeNull();
   });
 });
