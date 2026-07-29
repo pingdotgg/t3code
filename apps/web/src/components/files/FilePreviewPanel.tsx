@@ -22,7 +22,7 @@ import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
-import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -646,15 +646,6 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-function initialRenderMarkdown(): boolean {
-  try {
-    return getLocalStorageItem(RENDER_MARKDOWN_STORAGE_KEY, Schema.Boolean) ?? false;
-  } catch (error) {
-    console.error(error);
-    return false;
-  }
-}
-
 export default function FilePreviewPanel({
   environmentId,
   cwd,
@@ -684,7 +675,11 @@ export default function FilePreviewPanel({
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
-  const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useState(initialRenderMarkdown);
+  const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
+    RENDER_MARKDOWN_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   // Paired with the path on purpose: each file surface counts its reveals from
   // one, so a bare id would let a dismissed reveal on one file swallow the first
   // reveal on the next.
@@ -811,11 +806,6 @@ export default function FilePreviewPanel({
                           ? { path: relativePath, requestId: revealRequestId }
                           : null,
                       );
-                      try {
-                        setLocalStorageItem(RENDER_MARKDOWN_STORAGE_KEY, pressed, Schema.Boolean);
-                      } catch (error) {
-                        console.error(error);
-                      }
                     }}
                     aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
                     variant="ghost"
