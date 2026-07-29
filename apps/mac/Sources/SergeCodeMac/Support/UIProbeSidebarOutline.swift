@@ -108,14 +108,18 @@
                 print(
                     "UIProbe: project \(group.name) attention=\(summary.attention) "
                         + "running=\(summary.running) idle=\(summary.idle) "
-                        + "settled=\(summary.settled) subtitle=\"\(summary.subtitle)\"")
+                        + "snoozed=\(summary.snoozed) settled=\(summary.settled) "
+                        + "subtitle=\"\(summary.subtitle)\"")
                 if summary.total != group.threads.count {
                     mismatches.append(
                         "\(group.name) total=\(summary.total) threads=\(group.threads.count)")
                 }
-                if summary.open != split.active.count || summary.settled != split.settled.count {
+                if summary.open != split.active.count || summary.settled != split.settled.count
+                    || summary.snoozed != split.snoozed.count
+                {
                     mismatches.append(
                         "\(group.name) split open=\(split.active.count) "
+                            + "snoozed=\(split.snoozed.count) "
                             + "settled=\(split.settled.count)")
                 }
             }

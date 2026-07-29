@@ -76,6 +76,9 @@
             case "sidebar-menus":
                 await SidebarMenuProbe.run(multi: multi, scenery: scenery, dir: dir)
                 return
+            case "sidebar-snooze":
+                await SidebarSnoozeProbe.run(multi: multi, scenery: scenery, dir: dir)
+                return
             case "sidebar-outline":
                 await SidebarOutlineProbe.run(multi: multi, scenery: scenery, dir: dir)
                 return

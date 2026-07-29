@@ -230,6 +230,7 @@
                 return total + 1
                     + visible
                     + (hidden > 0 ? 1 : 0)
+                    + (split.snoozed.isEmpty ? 0 : 1)
                     + (split.settled.isEmpty ? 0 : 1)
                     + (revealed.contains(group.id) ? split.settled.count : 0)
             }
