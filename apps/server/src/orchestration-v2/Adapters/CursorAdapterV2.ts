@@ -573,7 +573,7 @@ function nestedGrepWorkspaceResults(success: Record<string, unknown>): Record<st
   );
 }
 
-function nestedToolCallFromEnvelope(
+export function nestedToolCallFromEnvelope(
   envelope: Record<string, unknown>,
 ): { readonly callId: string; readonly toolCall: ToolCall } | undefined {
   const callId = typeof envelope.toolCallId === "string" ? envelope.toolCallId : undefined;
@@ -598,10 +598,7 @@ function nestedToolCallFromEnvelope(
           ? args.path
           : typeof success?.path === "string"
             ? success.path
-            : undefined;
-      if (path === undefined) {
-        return undefined;
-      }
+            : "<unknown path>";
       return {
         callId: nestedCallId,
         toolCall: {
