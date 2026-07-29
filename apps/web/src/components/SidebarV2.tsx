@@ -110,6 +110,7 @@ import {
   buildSidebarV2ThreadContextMenuItems,
   canArchiveSettledSidebarThread,
   filterArchivableSidebarThreads,
+  formatArchiveSkippedDescription,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   getCompletedArchiveThreadKeys,
@@ -2054,10 +2055,7 @@ export default function SidebarV2() {
               outcome.archivedThreadKeys.length === 0
                 ? "No threads archived"
                 : "Some threads were not archived",
-            description:
-              skippedCount === 1
-                ? "1 thread became active and was skipped."
-                : `${skippedCount} threads became active and were skipped.`,
+            description: formatArchiveSkippedDescription(skippedCount),
           }),
         );
       }

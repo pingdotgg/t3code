@@ -6,6 +6,7 @@ import {
   canArchiveSettledSidebarThread,
   createThreadJumpHintVisibilityController,
   filterArchivableSidebarThreads,
+  formatArchiveSkippedDescription,
   getCompletedArchiveThreadKeys,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -52,6 +53,20 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("formatArchiveSkippedDescription", () => {
+  it("describes a single eligibility skip without assuming why it happened", () => {
+    expect(formatArchiveSkippedDescription(1)).toBe(
+      "1 thread was no longer eligible for this archive action and was skipped.",
+    );
+  });
+
+  it("describes multiple eligibility skips without assuming why they happened", () => {
+    expect(formatArchiveSkippedDescription(2)).toBe(
+      "2 threads were no longer eligible for this archive action and were skipped.",
+    );
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

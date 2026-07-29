@@ -26,6 +26,12 @@ export function shouldRenderSidebarV2ArchiveAll(input: {
   return input.archivableCount > 0 || input.isArchiving;
 }
 
+export function formatArchiveSkippedDescription(skippedCount: number): string {
+  return skippedCount === 1
+    ? "1 thread was no longer eligible for this archive action and was skipped."
+    : `${skippedCount} threads were no longer eligible for this archive action and were skipped.`;
+}
+
 type SidebarProject = {
   id: string;
   title: string;
