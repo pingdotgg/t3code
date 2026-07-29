@@ -14,12 +14,23 @@ import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
+import { deregisterEnvironment as deregisterEnvironmentAtom } from "~/cloud/linkEnvironmentAtoms";
 import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
@@ -66,6 +77,9 @@ export function CloudEnvironmentConnectRows({
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
     reportFailure: false,
   });
+  const deregisterEnvironment = useAtomCommand(deregisterEnvironmentAtom, {
+    reportFailure: false,
+  });
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
@@ -84,6 +98,8 @@ export function CloudEnvironmentConnectRows({
   const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
+  const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
+    useState<EnvironmentId | null>(null);
   const savedById = new Map(
     savedEnvironments.map((environment) => [environment.environmentId, environment]),
   );
@@ -115,6 +131,45 @@ export function CloudEnvironmentConnectRows({
     toastManager.add({
       type: "error",
       title: "Could not connect environment",
+      description: message,
+      data: traceId
+        ? {
+            secondaryActionProps: {
+              children: "Copy trace ID",
+              onClick: () => void navigator.clipboard?.writeText(traceId),
+            },
+          }
+        : undefined,
+    });
+  };
+
+  const deregisterRelayEnvironment = async (environment: RelayClientEnvironmentRecord) => {
+    setDeregisteringEnvironmentId(environment.environmentId);
+    const result = await deregisterEnvironment({ environmentId: environment.environmentId });
+    setDeregisteringEnvironmentId(null);
+    if (result._tag === "Success") {
+      await refreshRelayEnvironments();
+      toastManager.add({
+        type: "success",
+        title: "Server deregistered",
+        description: "Its T3 Connect access was revoked and one host space is now available.",
+      });
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) return;
+    const cause = squashAtomCommandFailure(result);
+    const message =
+      cause instanceof Error ? cause.message : "Could not deregister the T3 Connect server.";
+    const traceId = findErrorTraceId(cause);
+    console.error("[t3-connect] Could not deregister environment", {
+      environmentId: environment.environmentId,
+      message,
+      traceId,
+      cause,
+    });
+    toastManager.add({
+      type: "error",
+      title: "Could not deregister server",
       description: message,
       data: traceId
         ? {
@@ -245,13 +300,58 @@ export function CloudEnvironmentConnectRows({
               {savedConnection.buttonLabel}
             </Button>
           ) : (
-            <Button
-              size="sm"
-              disabled={connectingEnvironmentId !== null}
-              onClick={() => void connectEnvironment(environment)}
-            >
-              {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <AlertDialog>
+                <AlertDialogTrigger
+                  render={
+                    <Button
+                      size="sm"
+                      variant="destructive-outline"
+                      disabled={deregisteringEnvironmentId === environment.environmentId}
+                    >
+                      {deregisteringEnvironmentId === environment.environmentId
+                        ? "Deregistering…"
+                        : "Deregister"}
+                    </Button>
+                  }
+                />
+                <AlertDialogPopup>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Deregister “{environment.label}” from T3 Connect?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This revokes this server’s T3 Connect access, removes its managed tunnel, and
+                      frees one of your three host spaces. You can use this even if you no longer
+                      have access to the server.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogClose render={<Button variant="outline">Cancel</Button>} />
+                    <AlertDialogClose
+                      render={
+                        <Button
+                          variant="destructive"
+                          onClick={() => void deregisterRelayEnvironment(environment)}
+                        >
+                          Deregister server
+                        </Button>
+                      }
+                    />
+                  </AlertDialogFooter>
+                </AlertDialogPopup>
+              </AlertDialog>
+              <Button
+                size="sm"
+                disabled={
+                  connectingEnvironmentId !== null ||
+                  deregisteringEnvironmentId === environment.environmentId
+                }
+                onClick={() => void connectEnvironment(environment)}
+              >
+                {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
+              </Button>
+            </div>
           )}
         </div>
       </div>

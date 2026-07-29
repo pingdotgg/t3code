@@ -26,6 +26,7 @@ import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { CloudSession } from "@t3tools/client-runtime/platform";
 
 import {
   readPrimaryEnvironmentDescriptor,
@@ -383,6 +384,34 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
         );
     }
   }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
+}
+
+export function deregisterRelayEnvironment(input: {
+  readonly environmentId: EnvironmentId;
+}): Effect.Effect<void, CloudEnvironmentLinkError, CloudSession | ManagedRelay.ManagedRelayClient> {
+  return Effect.gen(function* () {
+    const session = yield* CloudSession;
+    const clerkToken = yield* session.clerkToken.pipe(
+      Effect.mapError(
+        (cause) =>
+          new CloudEnvironmentLinkError({
+            message: "Could not obtain the T3 Connect session token.",
+            cause,
+          }),
+      ),
+    );
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
+    yield* relayClient
+      .unlinkEnvironment({
+        clerkToken,
+        environmentId: input.environmentId,
+      })
+      .pipe(
+        Effect.mapError(
+          decodedRelayClientError("Could not remove the environment from T3 Connect."),
+        ),
+      );
+  });
 }
 
 // "publish_only" links the environment to the relay for agent-activity

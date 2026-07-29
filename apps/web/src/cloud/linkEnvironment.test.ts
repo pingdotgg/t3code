@@ -22,11 +22,13 @@ import {
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { CloudSession } from "@t3tools/client-runtime/platform";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
 import {
   collectCloudLinkTargets,
+  deregisterRelayEnvironment,
   linkPrimaryEnvironmentToCloud,
   listManagedCloudEnvironments,
   normalizeRelayBaseUrl,
@@ -122,14 +124,18 @@ function registryLayer(options?: {
 }
 
 function services(options?: Parameters<typeof registryLayer>[0]) {
-  return Layer.mergeAll(relayLayer(), registryLayer(options));
+  return Layer.mergeAll(
+    relayLayer(),
+    registryLayer(options),
+    Layer.succeed(CloudSession, CloudSession.of({ clerkToken: Effect.succeed("clerk-token") })),
+  );
 }
 
 function withServices<A, E>(
   effect: Effect.Effect<
     A,
     E,
-    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | EnvironmentRegistry
+    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | EnvironmentRegistry | CloudSession
   >,
   options?: Parameters<typeof registryLayer>[0],
 ) {
@@ -434,6 +440,25 @@ describe("web cloud link environment client", () => {
       expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
         `/v1/client/environment-links/${TARGET.environmentId}`,
       );
+    }),
+  );
+
+  it.effect("deregisters an inaccessible environment directly through the relay", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withServices(
+        deregisterRelayEnvironment({
+          environmentId: EnvironmentId.make(TARGET.environmentId),
+        }),
+      );
+
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        `/v1/client/environment-links/${TARGET.environmentId}`,
+      );
+      expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("DELETE");
+      expect(fetchMock.mock.calls[0]?.[1]?.headers.authorization).toBe("Bearer clerk-token");
     }),
   );
 });

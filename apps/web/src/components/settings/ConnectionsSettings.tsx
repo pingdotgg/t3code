@@ -70,6 +70,7 @@ import {
   AlertDialogHeader,
   AlertDialogPopup,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "../ui/alert-dialog";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
@@ -111,6 +112,7 @@ import {
   resolveServerSelfUpdateCapability,
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { deregisterEnvironment as deregisterEnvironmentAtom } from "~/cloud/linkEnvironmentAtoms";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
@@ -119,6 +121,7 @@ import {
   connectSshEnvironment as connectSshEnvironmentAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
+import { relayEnvironmentDiscovery } from "~/state/relay";
 import {
   desktopNetworkAccessStateAtom,
   refreshDesktopNetworkAccessState,
@@ -1338,15 +1341,19 @@ function NetworkAccessDescription({
 
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
+  deregisteringEnvironmentId: EnvironmentId | null;
   removingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
+  onDeregister: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
 };
 
 function SavedBackendListRow({
   environment,
+  deregisteringEnvironmentId,
   removingEnvironmentId,
   onConnect,
+  onDeregister,
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
@@ -1471,6 +1478,51 @@ function SavedBackendListRow({
             </Tooltip>
           ) : (
             <>
+              {environment.relayManaged ? (
+                <AlertDialog>
+                  <AlertDialogTrigger
+                    render={
+                      <Button
+                        size="xs"
+                        variant="destructive-outline"
+                        disabled={
+                          deregisteringEnvironmentId === environmentId ||
+                          removingEnvironmentId === environmentId
+                        }
+                      >
+                        {deregisteringEnvironmentId === environmentId
+                          ? "Deregistering…"
+                          : "Deregister"}
+                      </Button>
+                    }
+                  />
+                  <AlertDialogPopup>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Deregister “{environment.label}” from T3 Connect?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This revokes this server’s T3 Connect access, removes its managed tunnel,
+                        and frees one of your three host spaces. Use this if you no longer have
+                        access to the server or do not want it registered to your account.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogClose render={<Button variant="outline">Cancel</Button>} />
+                      <AlertDialogClose
+                        render={
+                          <Button
+                            variant="destructive"
+                            onClick={() => void onDeregister(environmentId)}
+                          >
+                            Deregister server
+                          </Button>
+                        }
+                      />
+                    </AlertDialogFooter>
+                  </AlertDialogPopup>
+                </AlertDialog>
+              ) : null}
               {!isConnected ? (
                 <Button
                   size="xs"
@@ -1718,6 +1770,12 @@ export function ConnectionsSettings() {
     reportFailure: false,
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  const deregisterEnvironment = useAtomCommand(deregisterEnvironmentAtom, {
+    reportFailure: false,
+  });
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
+    reportFailure: false,
+  });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
@@ -1795,6 +1853,8 @@ export function ConnectionsSettings() {
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
+    useState<EnvironmentId | null>(null);
+  const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
@@ -2248,6 +2308,58 @@ export function ConnectionsSettings() {
       }
     },
     [removeEnvironment],
+  );
+
+  const handleDeregisterEnvironment = useCallback(
+    async (environmentId: EnvironmentId) => {
+      setDeregisteringEnvironmentId(environmentId);
+      setSavedBackendError(null);
+      const deregisterResult = await deregisterEnvironment({ environmentId });
+      if (deregisterResult._tag === "Failure") {
+        setDeregisteringEnvironmentId(null);
+        if (!isAtomCommandInterrupted(deregisterResult)) {
+          const error = squashAtomCommandFailure(deregisterResult);
+          const message =
+            error instanceof Error ? error.message : "Failed to deregister the T3 Connect server.";
+          setSavedBackendError(message);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not deregister server",
+              description: message,
+            }),
+          );
+        }
+        return;
+      }
+
+      const removeResult = await removeEnvironment(environmentId);
+      await refreshRelayEnvironments();
+      setDeregisteringEnvironmentId(null);
+      if (removeResult._tag === "Failure" && !isAtomCommandInterrupted(removeResult)) {
+        const error = squashAtomCommandFailure(removeResult);
+        const message =
+          error instanceof Error
+            ? error.message
+            : "The server was deregistered, but its saved connection could not be removed.";
+        setSavedBackendError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Server deregistered with local cleanup pending",
+            description: message,
+          }),
+        );
+        return;
+      }
+
+      toastManager.add({
+        type: "success",
+        title: "Server deregistered",
+        description: "Its T3 Connect access was revoked and one host space is now available.",
+      });
+    },
+    [deregisterEnvironment, refreshRelayEnvironments, removeEnvironment],
   );
 
   const handleConnectSshHost = useCallback(
@@ -3383,8 +3495,10 @@ export function ConnectionsSettings() {
           <SavedBackendListRow
             key={environment.environmentId}
             environment={environment}
+            deregisteringEnvironmentId={deregisteringEnvironmentId}
             removingEnvironmentId={removingSavedEnvironmentId}
             onConnect={handleConnectSavedBackend}
+            onDeregister={handleDeregisterEnvironment}
             onRemove={handleRemoveSavedBackend}
           />
         ))}

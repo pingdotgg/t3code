@@ -5,6 +5,7 @@ import {
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import {
+  deregisterRelayEnvironment,
   linkPrimaryEnvironmentToCloud,
   type CloudLinkMode,
   type CloudLinkTarget,
@@ -43,4 +44,14 @@ export const updatePrimaryEnvironmentPreferences = createRuntimeCommand(connecti
   concurrency: cloudLinkConcurrency,
   execute: (input: { readonly target: CloudLinkTarget; readonly publishAgentActivity: boolean }) =>
     updatePrimaryCloudPreferences(input),
+});
+
+export const deregisterEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:cloud:deregister-environment",
+  scheduler: cloudLinkScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly environmentId: string }) => input.environmentId,
+  },
+  execute: deregisterRelayEnvironment,
 });
