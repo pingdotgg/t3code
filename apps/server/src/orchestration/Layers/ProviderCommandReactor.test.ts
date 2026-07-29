@@ -839,7 +839,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
-  it("continues regenerating after a completion dispatch fails", async () => {
+  it("retries a failed completion and continues regenerating", async () => {
     const harness = await createHarness({
       titleRegenerationCompletionDispatchFailures: 1,
     });
@@ -882,6 +882,11 @@ describe("ProviderCommandReactor", () => {
     );
     await harness.drain();
 
+    let readModel = await harness.readModel();
+    let thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Title lost to completion failure");
+    expect(thread?.titleRegeneration).toBeNull();
+
     await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.meta.update",
@@ -893,9 +898,9 @@ describe("ProviderCommandReactor", () => {
     await harness.drain();
 
     expect(harness.generateThreadTitle).toHaveBeenCalledTimes(2);
-    expect(harness.titleRegenerationCompletionDispatchAttempts).toBe(2);
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(harness.titleRegenerationCompletionDispatchAttempts).toBe(3);
+    readModel = await harness.readModel();
+    thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Recovered regeneration worker");
     expect(thread?.titleRegeneration).toBeNull();
   });

@@ -879,6 +879,21 @@ const make = Effect.gen(function* () {
 
     return generated.title;
   });
+  const dispatchThreadTitleRegenerationCompletion = Effect.fn(
+    "dispatchThreadTitleRegenerationCompletion",
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: CommandId;
+    readonly title?: string;
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.title.regeneration.complete",
+      commandId: yield* serverCommandId("thread-title-regeneration-complete"),
+      threadId: input.threadId,
+      requestId: input.requestId,
+      ...(input.title !== undefined ? { title: input.title } : {}),
+    });
+  });
   const processThreadTitleRegenerationSafely = Effect.fn("processThreadTitleRegenerationSafely")(
     function* (event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>) {
       if (event.payload.regenerateTitle !== true) {
@@ -901,13 +916,25 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      yield* orchestrationEngine.dispatch({
-        type: "thread.title.regeneration.complete",
-        commandId: yield* serverCommandId("thread-title-regeneration-complete"),
+      const completion = {
         threadId: event.payload.threadId,
         requestId,
         ...(generatedTitle !== undefined ? { title: generatedTitle } : {}),
-      });
+      };
+      yield* dispatchThreadTitleRegenerationCompletion(completion).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning(
+            "provider command reactor retrying title regeneration completion",
+            {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            },
+          ).pipe(Effect.andThen(dispatchThreadTitleRegenerationCompletion(completion)));
+        }),
+      );
     },
     (effect, event) =>
       effect.pipe(
