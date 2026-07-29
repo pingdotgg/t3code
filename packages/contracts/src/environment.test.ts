@@ -48,3 +48,29 @@ describe("ExecutionEnvironmentDescriptor.advertisedEndpoints", () => {
     expect(decoded.advertisedEndpoints?.[0]?.isDefault).toBe(true);
   });
 });
+
+describe("ExecutionEnvironmentDescriptor.hostApplication", () => {
+  it("keeps older server descriptors compatible", () => {
+    expect(decodeDescriptor(baseDescriptor).hostApplication).toBeUndefined();
+  });
+
+  it("decodes the desktop host version independently from the server version", () => {
+    const decoded = decodeDescriptor({
+      ...baseDescriptor,
+      hostApplication: {
+        name: "SurgeCode",
+        version: "0.7.0",
+        buildNumber: "25",
+        updateCapability: "sparkle",
+      },
+    });
+
+    expect(decoded.serverVersion).toBe("0.0.0-test");
+    expect(decoded.hostApplication).toEqual({
+      name: "SurgeCode",
+      version: "0.7.0",
+      buildNumber: "25",
+      updateCapability: "sparkle",
+    });
+  });
+});

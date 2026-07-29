@@ -47,6 +47,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
+  ServerHostUpdateUnavailableError,
   type RelayClientInstallProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -297,6 +298,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
+  [WS_METHODS.serverRequestHostUpdate, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
@@ -1352,6 +1354,28 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverRequestHostUpdate]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRequestHostUpdate,
+            config.mode === "desktop" && config.hostAppVersion && config.hostAppBuild
+              ? nowIso.pipe(
+                  Effect.flatMap((requestedAt) =>
+                    lifecycleEvents.publish({
+                      version: 1,
+                      type: "hostUpdateRequested",
+                      payload: { requestedAt },
+                    }),
+                  ),
+                  Effect.as({ accepted: true as const }),
+                )
+              : Effect.fail(
+                  new ServerHostUpdateUnavailableError({
+                    message:
+                      "This environment is not supervised by a remotely updateable SurgeCode app.",
+                  }),
+                ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
@@ -1906,9 +1930,9 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeServerLifecycle,
             Effect.gen(function* () {
               const snapshot = yield* lifecycleEvents.snapshot;
-              const snapshotEvents = Array.from(snapshot.events).toSorted(
-                (left, right) => left.sequence - right.sequence,
-              );
+              const snapshotEvents = Array.from(snapshot.events)
+                .toSorted((left, right) => left.sequence - right.sequence)
+                .filter((event) => event.type !== "hostUpdateRequested");
               const liveEvents = lifecycleEvents.stream.pipe(
                 Stream.filter((event) => event.sequence > snapshot.sequence),
               );

@@ -137,6 +137,9 @@ struct SidebarProjectGroup: Identifiable {
     let name: String
     let members: [SidebarProjectMember]
     let threads: [SidebarThreadItem]
+    /// Dedicated auto-fixer sessions are real, selectable threads, but belong
+    /// under the origin session instead of competing with it in project rank.
+    let autoReviewChildrenByParent: [ThreadSelection: [SidebarThreadItem]]
     /// Cached while the group is projected. Reading this from a sort
     /// comparator must stay O(1): computing it from `threads` there turns a
     /// group sort into repeated scans of every thread in the sidebar.
@@ -229,14 +232,12 @@ enum SidebarProjection {
             let sortedMembers = unsortedMembers.sorted(by: memberSort)
             let preferred = sortedMembers.first(where: { $0.location.isLocal })
                 ?? sortedMembers[0]
-            let perMemberThreads = sortedMembers.flatMap { member in
+            let allItems = sortedMembers.flatMap { member in
                 let model = member.location.model
                 let ordered = AppModel.pinnedFirst(
                     model.orderedThreads(for: member.project.id),
                     pinnedIDs: model.pinnedThreadIDs)
-                // Delegated sub-agent threads render as inline cards in their
-                // parent's timeline, never as sidebar rows.
-                return ordered.filter { !isDelegatedAgentThread($0) }.map { thread in
+                return ordered.map { thread in
                     SidebarThreadItem(
                         member: member,
                         thread: thread,
@@ -244,6 +245,22 @@ enum SidebarProjection {
                         isPinned: model.isThreadPinned(thread))
                 }
             }
+            let childEntries = allItems.compactMap {
+                item -> (parent: ThreadSelection, child: SidebarThreadItem)? in
+                guard isAutoReviewFixerThread(item.thread),
+                    let parentID = item.thread.parentThreadId
+                else { return nil }
+                return (
+                    ThreadSelection(
+                        deviceID: item.member.location.id,
+                        threadID: parentID),
+                    item)
+            }
+            let children = Dictionary(grouping: childEntries, by: \.parent)
+                .mapValues { $0.map(\.child) }
+            // Other delegated sub-agent threads render as inline cards in
+            // their parent's timeline, never as sidebar rows.
+            let perMemberThreads = allItems.filter { !isDelegatedAgentThread($0.thread) }
             let pinnedFirst =
                 perMemberThreads.filter(\.isPinned) + perMemberThreads.filter { !$0.isPinned }
             return SidebarProjectGroup(
@@ -251,6 +268,7 @@ enum SidebarProjection {
                 name: preferred.project.name,
                 members: sortedMembers,
                 threads: pinnedFirst,
+                autoReviewChildrenByParent: children,
                 lastActivityAt: pinnedFirst.lazy.map(\.thread.updatedAt).max())
         }
         .sorted { lhs, rhs in
@@ -395,6 +413,13 @@ enum SidebarProjection {
             return true
         }
         return thread.title.trimmingCharacters(in: .whitespaces).hasPrefix("Agent: ")
+    }
+
+    /// Dedicated auto-fixer threads are the one delegated-thread kind with a
+    /// first-class sidebar destination. Keep the predicate strict so ordinary
+    /// subagents remain represented by their parent timeline cards.
+    static func isAutoReviewFixerThread(_ thread: ChatThread) -> Bool {
+        AutoReviewThreadPresentation.isDedicatedFixer(thread)
     }
 
     static func searchResults(

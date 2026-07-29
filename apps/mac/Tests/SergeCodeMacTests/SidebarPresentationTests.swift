@@ -140,8 +140,8 @@ struct SidebarPresentationTests {
         #expect(groups[0].threads[0].statusLabel == "Running, 2 sub-agents running")
     }
 
-    @Test("delegated agent threads are hidden from the sidebar")
-    func delegatedAgentThreadsAreHidden() {
+    @Test("only dedicated auto-fixers become nested sidebar destinations")
+    func delegatedAgentThreadsAreHiddenExceptAutoFixers() {
         let projectID = "project-nest"
         let parent = makeThread(
             id: "parent", projectID: projectID, title: "Main session", at: 10)
@@ -154,16 +154,23 @@ struct SidebarPresentationTests {
         // Legacy rows predate parentThreadId but keep the Agent: title prefix.
         let legacy = makeThread(
             id: "legacy", projectID: projectID, title: "Agent: legacy", at: 7)
+        let fixer = makeThread(
+            id: "fixer", projectID: projectID, title: "Auto-review fixer · PR #42",
+            status: .running, at: 7, parentThreadId: "parent")
         let other = makeThread(
             id: "other", projectID: projectID, title: "Other session", at: 6)
         let local = makeModel(
             projects: [Project(id: projectID, name: "Nest", path: "/nest")],
-            threads: [child, orphan, legacy, other, parent])
+            threads: [child, orphan, legacy, fixer, other, parent])
         let groups = SidebarProjection.projectGroups(
             in: MultiDeviceModel(local: local), scope: .all)
 
         #expect(groups.count == 1)
         #expect(groups[0].threads.map(\.thread.id) == ["parent", "other"])
+        #expect(
+            groups[0].autoReviewChildrenByParent[
+                ThreadSelection(deviceID: .local, threadID: "parent")
+            ]?.map(\.thread.id) == ["fixer"])
     }
 
     @Test("isDelegatedAgentThread matches parent links and Agent: titles")
@@ -179,6 +186,16 @@ struct SidebarPresentationTests {
         #expect(
             !SidebarProjection.isDelegatedAgentThread(
                 makeThread(id: "c", projectID: "p", title: "Regular session", at: 1)))
+        #expect(
+            SidebarProjection.isAutoReviewFixerThread(
+                makeThread(
+                    id: "fixer", projectID: "p", title: "Auto-review fixer · PR #9",
+                    at: 1, parentThreadId: "parent")))
+        #expect(
+            !SidebarProjection.isAutoReviewFixerThread(
+                makeThread(
+                    id: "agent", projectID: "p", title: "Agent: reviewer",
+                    at: 1, parentThreadId: "parent")))
     }
 
     @Test("machine scope and search use the unified projection")

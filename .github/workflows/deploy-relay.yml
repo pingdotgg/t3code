@@ -1,0 +1,84 @@
+name: Deploy SurgeCode Cloud relay
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-relay.yml"
+      - "infra/relay/**"
+      - "packages/contracts/src/environment.ts"
+      - "packages/contracts/src/relay.ts"
+      - "packages/shared/src/relay**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-production
+  cancel-in-progress: false
+
+jobs:
+  deploy_relay:
+    name: Deploy production relay
+    if: vars.SERGECODE_RELAY_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PLANETSCALE_ORGANIZATION: ${{ vars.PLANETSCALE_ORGANIZATION }}
+      AXIOM_ORG_ID: ${{ vars.AXIOM_ORG_ID }}
+      RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
+      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
+      RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
+      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      APNS_ENVIRONMENT: ${{ vars.APNS_ENVIRONMENT }}
+      APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
+      APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
+      APNS_BUNDLE_ID: ${{ vars.APNS_BUNDLE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
+      PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
+      AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+      ALCHEMY_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          required=(
+            CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
+            PLANETSCALE_ORGANIZATION PLANETSCALE_API_TOKEN_ID PLANETSCALE_API_TOKEN
+            AXIOM_ORG_ID AXIOM_TOKEN
+            RELAY_API_ZONE_NAME RELAY_TUNNEL_ZONE_NAME
+            CLERK_PUBLISHABLE_KEY CLERK_SECRET_KEY CLERK_JWT_AUDIENCE
+            APNS_ENVIRONMENT APNS_TEAM_ID APNS_KEY_ID APNS_BUNDLE_ID APNS_PRIVATE_KEY
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "Missing relay deployment configuration: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Deploy production relay stage
+        run: vp run --filter t3code-relay deploy --stage prod --yes --github-output

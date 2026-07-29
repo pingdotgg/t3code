@@ -14,6 +14,7 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { hostNeedsMacAppUpdate, useLatestMacAppRelease } from "./macAppUpdate";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   return connectionStatusText({
@@ -33,6 +34,9 @@ export function ConnectionEnvironmentRow(props: {
     environmentId: EnvironmentId,
     updates: { readonly label: string; readonly displayUrl: string },
   ) => Promise<AtomCommandResult<unknown, unknown>>;
+  readonly onRequestHostUpdate: (
+    environmentId: EnvironmentId,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
@@ -42,6 +46,14 @@ export function ConnectionEnvironmentRow(props: {
   const primaryFg = useThemeColor("--color-primary-foreground");
   const dangerFg = useThemeColor("--color-danger-foreground");
   const statusLabel = connectionStatusLabel(props.environment);
+  const latestMacRelease = useLatestMacAppRelease();
+  const hostApplication = props.environment.hostApplication;
+  const hasMacUpdate =
+    hostApplication !== null &&
+    latestMacRelease !== null &&
+    hostNeedsMacAppUpdate(hostApplication, latestMacRelease);
+  const isLegacyHost =
+    props.environment.isRelayManaged && props.environment.hostVersionStatus === "legacy";
   const statusTraceId = props.environment.connectionErrorTraceId;
   const hasConnectionFailure = props.environment.connectionError !== null;
   const isRetrying =
@@ -62,6 +74,36 @@ export function ConnectionEnvironmentRow(props: {
       error instanceof Error ? error.message : "The environment could not be updated.",
     );
   }, [label, url, props]);
+  const handleRequestHostUpdate = useCallback(() => {
+    if (!hostApplication || !latestMacRelease) return;
+    Alert.alert(
+      "Update remote Mac?",
+      `Ask ${props.environment.environmentLabel} to open its signed SurgeCode updater for ${latestMacRelease.version}. Installation is confirmed on the Mac.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Open updater",
+          onPress: () => {
+            void (async () => {
+              const result = await props.onRequestHostUpdate(props.environment.environmentId);
+              if (AsyncResult.isSuccess(result)) {
+                Alert.alert(
+                  "Update requested",
+                  "The SurgeCode updater was opened on the remote Mac.",
+                );
+                return;
+              }
+              const error = Cause.squash(result.cause);
+              Alert.alert(
+                "Could not request update",
+                error instanceof Error ? error.message : "The remote Mac rejected the request.",
+              );
+            })();
+          },
+        },
+      ],
+    );
+  }, [hostApplication, latestMacRelease, props]);
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-card">
@@ -114,6 +156,15 @@ export function ConnectionEnvironmentRow(props: {
               ) : null}
             </Text>
           ) : null}
+          {hasMacUpdate && latestMacRelease ? (
+            <Text className="text-xs text-amber-600 dark:text-amber-400" numberOfLines={1}>
+              SurgeCode {latestMacRelease.version} is available
+            </Text>
+          ) : isLegacyHost ? (
+            <Text className="text-xs text-amber-600 dark:text-amber-400" numberOfLines={1}>
+              Update this Mac once to enable version checks
+            </Text>
+          ) : null}
         </View>
 
         <SymbolView
@@ -134,9 +185,22 @@ export function ConnectionEnvironmentRow(props: {
           className="gap-3 px-4 pb-4"
         >
           {props.environment.isRelayManaged ? (
-            <Text className="text-sm text-foreground-muted">
-              Managed by cloud relay. Tunnel details update automatically.
-            </Text>
+            <View className="gap-1">
+              <Text className="text-sm text-foreground-muted">
+                Managed by SurgeCode Cloud. Tunnel details update automatically.
+              </Text>
+              {hostApplication ? (
+                <Text className="text-xs text-foreground-muted">
+                  SurgeCode {hostApplication.version} (build {hostApplication.buildNumber})
+                </Text>
+              ) : null}
+              {isLegacyHost ? (
+                <Text className="text-xs text-amber-600 dark:text-amber-400">
+                  This host predates secure version reporting. Update SurgeCode locally once before
+                  remote update requests can be used.
+                </Text>
+              ) : null}
+            </View>
           ) : (
             <>
               <View className="gap-1.5">
@@ -179,6 +243,25 @@ export function ConnectionEnvironmentRow(props: {
           )}
 
           <View className="flex-row justify-end gap-2">
+            {hasMacUpdate ? (
+              <Pressable
+                className="min-h-[42px] flex-1 flex-row items-center justify-center gap-1.5 rounded-[14px] bg-primary px-3.5 py-2.5 active:opacity-70"
+                onPress={handleRequestHostUpdate}
+              >
+                <SymbolView
+                  name="arrow.down.circle"
+                  size={13}
+                  tintColor={primaryFg}
+                  type="monochrome"
+                />
+                <Text
+                  className="text-xs font-t3-bold uppercase text-primary-foreground"
+                  style={{ letterSpacing: 0.8 }}
+                >
+                  Update Mac
+                </Text>
+              </Pressable>
+            ) : null}
             {props.environment.isRelayManaged ? null : (
               <Pressable
                 className="min-h-[42px] flex-1 flex-row items-center justify-center gap-1.5 rounded-[14px] bg-primary px-3.5 py-2.5 active:opacity-70"
