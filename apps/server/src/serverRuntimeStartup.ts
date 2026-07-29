@@ -419,6 +419,17 @@ export const make = Effect.gen(function* () {
 
     const welcomeBase = yield* resolveWelcomeBase;
     const environment = yield* serverEnvironment.getDescriptor;
+    const legacyMigrationThreadCount = yield* legacyV1ThreadImporter.pendingThreadCount;
+    if (legacyMigrationThreadCount > 0) {
+      yield* lifecycleEvents.publish({
+        version: 1,
+        type: "legacyThreadMigration",
+        payload: {
+          status: "running",
+          totalThreadCount: legacyMigrationThreadCount,
+        },
+      });
+    }
     const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
       importLegacyShells: runStartupPhase(
         "orchestration-v2.legacy-v1.import-shells",
@@ -475,14 +486,29 @@ export const make = Effect.gen(function* () {
 
     yield* Effect.logDebug("Accepting commands");
     yield* commandGate.signalCommandReady;
-    yield* legacyV1ThreadImporter.importPendingTranscripts.pipe(
+    const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
       Effect.tap((summary) =>
         summary.importedThreadCount === 0
           ? Effect.void
           : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
       ),
-      Effect.forkScoped,
     );
+    yield* (
+      legacyMigrationThreadCount > 0
+        ? importPendingTranscripts.pipe(
+            Effect.tap(() =>
+              lifecycleEvents.publish({
+                version: 1,
+                type: "legacyThreadMigration",
+                payload: {
+                  status: "complete",
+                  totalThreadCount: legacyMigrationThreadCount,
+                },
+              }),
+            ),
+          )
+        : importPendingTranscripts
+    ).pipe(Effect.forkScoped);
 
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,
