@@ -157,10 +157,12 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
             1,
             '2026-01-04T01:00:00.000Z',
             '2026-01-04T01:00:00.000Z'
-          )
+        )
       `;
 
+      assert.equal(yield* importer.pendingThreadCount, 1);
       const shellImport = yield* importer.reconcileShells;
+      assert.equal(yield* importer.pendingThreadCount, 1);
       assert.deepStrictEqual(shellImport, {
         importedThreadCount: 1,
         importedMessageCount: 2,
@@ -214,6 +216,7 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       });
 
       const transcriptImport = yield* importer.ensureTranscript(threadId);
+      assert.equal(yield* importer.pendingThreadCount, 0);
       assert.deepStrictEqual(transcriptImport, {
         importedThreadCount: 1,
         importedMessageCount: 2,
