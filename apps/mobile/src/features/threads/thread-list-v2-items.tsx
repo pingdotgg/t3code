@@ -3,9 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
-import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
@@ -14,7 +12,6 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
-import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
@@ -32,7 +29,6 @@ import {
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
 } from "./threadListV2";
-import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
@@ -112,7 +108,6 @@ const SNOOZE_ACCENT_DARK = "#60a5fa";
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(props: {
   readonly count: number;
-  readonly disabled?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
@@ -125,12 +120,11 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       }
       accessibilityLabel={props.count === 1 ? "1 snoozed thread" : `${props.count} snoozed threads`}
       accessibilityRole="button"
-      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
+      accessibilityState={{ expanded: props.expanded }}
       className={cn(
         "mb-1.5 mt-4 flex-row items-center gap-2.5",
         props.pane === "sidebar" ? "px-3" : "px-5",
       )}
-      disabled={props.disabled}
       onPress={props.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
@@ -139,11 +133,10 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       </Text>
       <View className="h-px flex-1 bg-adaptive-blue-500-a20-blue-400-a15" />
       <SymbolView
-        name="chevron.down"
+        name={props.expanded ? "chevron.up" : "chevron.down"}
         size={10}
         tintColor={colorScheme === "dark" ? SNOOZE_ACCENT_DARK : SNOOZE_ACCENT_LIGHT}
         type="monochrome"
-        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
@@ -151,7 +144,6 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
 
 export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(props: {
   readonly count: number;
-  readonly disabled?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
@@ -163,12 +155,11 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
       }
       accessibilityLabel={props.count === 1 ? "1 settled thread" : `${props.count} settled threads`}
       accessibilityRole="button"
-      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
+      accessibilityState={{ expanded: props.expanded }}
       className={cn(
         "mb-1.5 mt-4 flex-row items-center gap-2.5",
         props.pane === "sidebar" ? "px-3" : "px-5",
       )}
-      disabled={props.disabled}
       onPress={props.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
@@ -177,11 +168,10 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
       </Text>
       <View className="h-px flex-1 bg-border" />
       <SymbolView
-        name="chevron.down"
+        name={props.expanded ? "chevron.up" : "chevron.down"}
         size={10}
         tintColorClassName={"accent-foreground-muted"}
         type="monochrome"
-        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
     </Pressable>
   );
@@ -203,8 +193,6 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
   readonly environmentLabel: string | null;
-  /** Drawn beside the label; ignored while the label is null. */
-  readonly environmentMachine?: EnvironmentMachineKind;
   readonly pane?: "screen" | "sidebar";
   /** Draws the "Pending" divider above the first queued row. */
   readonly showPendingDivider: boolean;
@@ -214,6 +202,9 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
+  const theme = useUniwindTheme();
+  const drawerColor = theme["--color-drawer"];
+  const pressedBackgroundColor = theme["--color-subtle"];
   const sidebarPane = props.pane === "sidebar";
   const projectTitle =
     props.projectTitle ?? props.project?.title ?? pendingTask.creation.projectTitle ?? "";
@@ -250,26 +241,17 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         {pendingTask.title}
       </Text>
       {branch || props.environmentLabel ? (
-        <View className="mt-1 flex-row items-center gap-1">
-          <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
-            {branch ? (
-              <Text className="text-xs text-foreground-muted" style={{ fontFamily: MONO_FONT }}>
-                {branch}
-              </Text>
-            ) : null}
-            {branch && props.environmentLabel ? "  ·  " : null}
-            {props.environmentLabel ? (
-              <Text className="text-xs text-foreground-tertiary">{props.environmentLabel}</Text>
-            ) : null}
-          </Text>
-          {props.environmentLabel && props.environmentMachine ? (
-            <EnvironmentMachineSymbol
-              kind={props.environmentMachine}
-              size={11}
-              tintColorClassName="accent-foreground-tertiary"
-            />
+        <Text className="mt-1 text-xs text-foreground-muted" numberOfLines={1}>
+          {branch ? (
+            <Text className="text-xs text-foreground-muted" style={{ fontFamily: MONO_FONT }}>
+              {branch}
+            </Text>
           ) : null}
-        </View>
+          {branch && props.environmentLabel ? "  ·  " : null}
+          {props.environmentLabel ? (
+            <Text className="text-xs text-foreground-tertiary">{props.environmentLabel}</Text>
+          ) : null}
+        </Text>
       ) : null}
     </>
   );
@@ -288,15 +270,15 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           accessibilityHint="Opens the queued task for editing"
           accessibilityLabel={pendingTask.title}
           accessibilityRole="button"
-          className={sidebarPane ? "bg-drawer active:bg-subtle" : undefined}
           onPress={() => onSelectPendingTask(pendingTask)}
           style={
             sidebarPane
-              ? {
+              ? ({ pressed }) => ({
+                  backgroundColor: pressed ? pressedBackgroundColor : drawerColor,
                   borderRadius: SIDEBAR_V2_ROW_RADIUS,
                   paddingHorizontal: 12,
                   paddingVertical: 10,
-                }
+                })
               : ({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })
           }
         >
@@ -337,9 +319,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       the web sidebar's remote-environment cloud icon, but as text since
       phones have no hover tooltips. */
   readonly environmentLabel: string | null;
-  /** Drawn after the label so the machine reads at a glance; ignored while
-      the label is null. */
-  readonly environmentMachine?: EnvironmentMachineKind;
   /** Hosting surface. "screen" (default) renders the compact Home idiom:
       flat edge-to-edge rows on the screen background with inset hairlines.
       "sidebar" renders the iPad split-view idiom: rounded rows blending
@@ -419,14 +398,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
 
   const status = resolveThreadListV2Status(thread);
-  const statusLabel = STATUS_LABEL_BY_STATUS[status];
-  // Settled rows label by the same stamp they sort by, so order and label
-  // can't disagree. updatedAt is always present, so the resolver never
-  // returns null here.
-  const settledTimestamp =
-    variant === "slim" && !snoozedRow ? resolveSettledThreadTimestamp(thread) : null;
-  const timeLabel =
-    settledTimestamp !== null ? relativeTime(settledTimestamp) : threadTimeLabel(thread);
+  // "Done" marks a completion the user has not opened yet — same emerald
+  // label as the web sidebar, sourced from the server-side visited watermark
+  // so checking a thread on any device clears it everywhere.
+  const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const statusLabel =
+    STATUS_LABEL_BY_STATUS[status] ??
+    (isUnread ? { label: "Done", className: "text-emerald-700 dark:text-emerald-300" } : undefined);
+  const timeLabel = threadTimeLabel(thread);
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRegenerateTitle = useCallback(
@@ -508,7 +487,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   } satisfies MenuAction,
                 ]
               : []),
-            thread.pinnedAt != null
+            pinnedRow
               ? { id: "unpin", title: "Unpin", image: "pin.slash" }
               : { id: "pin", title: "Pin", image: "pin" },
           ]
@@ -519,7 +498,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       props.canMovePinnedUp,
       props.pinReorderSupported,
       props.pinningSupported,
-      thread.pinnedAt,
     ],
   );
   const titleRegenerationMenuItems = useMemo<MenuAction[]>(
@@ -555,13 +533,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [pinMenuItem, titleRegenerationMenuItems],
   );
   const slimMenuActions = useMemo<MenuAction[]>(
-    () => [
-      SLIM_MENU_ACTIONS[0]!,
-      ...(thread.pinnedAt != null ? pinMenuItem : []),
-      ...titleRegenerationMenuItems,
-      SLIM_MENU_ACTIONS[1]!,
-    ],
-    [pinMenuItem, thread.pinnedAt, titleRegenerationMenuItems],
+    () => [SLIM_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SLIM_MENU_ACTIONS[1]!],
+    [titleRegenerationMenuItems],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [SNOOZED_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SNOOZED_MENU_ACTIONS[1]!],
@@ -746,51 +719,37 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : thread.branch || props.environmentLabel ? (
           /* "branch · machine" share one truncating line. The machine sits
              last so a tight fit cuts the repetitive label, not the branch —
-             and machine-only fills the row for non-git projects. The glyph
-             hugs the label (it cannot live inside the Text without breaking
-             truncation), and the wrapper takes the slack so the trailers
-             stay pinned right. */
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
-              )}
-              numberOfLines={1}
-            >
-              {thread.branch ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
-                  )}
-                  style={{ fontFamily: MONO_FONT }}
-                >
-                  {thread.branch}
-                </Text>
-              ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
-              {props.environmentLabel ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected ? "text-user-bubble-foreground-muted" : "text-foreground-tertiary",
-                  )}
-                >
-                  {props.environmentLabel}
-                </Text>
-              ) : null}
-            </Text>
-            {props.environmentLabel && props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={11}
-                tintColorClassName={
-                  selected ? "accent-user-bubble-foreground-muted" : "accent-foreground-tertiary"
-                }
-              />
+             and machine-only fills the row for non-git projects. */
+          <Text
+            className={cn(
+              "flex-1 text-xs",
+              selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+            )}
+            numberOfLines={1}
+          >
+            {thread.branch ? (
+              <Text
+                className={cn(
+                  "text-xs",
+                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+                )}
+                style={{ fontFamily: MONO_FONT }}
+              >
+                {thread.branch}
+              </Text>
             ) : null}
-          </View>
+            {thread.branch && props.environmentLabel ? "  ·  " : null}
+            {props.environmentLabel ? (
+              <Text
+                className={cn(
+                  "text-xs",
+                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-tertiary",
+                )}
+              >
+                {props.environmentLabel}
+              </Text>
+            ) : null}
+          </Text>
         ) : (
           <View className="flex-1" />
         )}
@@ -926,7 +885,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {snoozedRow && props.snoozeWakeLabelText !== undefined
               ? props.snoozeWakeLabelText
-              : timeLabel}
+              : relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt)}
           </Text>
         </View>
       </Pressable>

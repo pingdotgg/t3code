@@ -10,11 +10,8 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
-<<<<<<< HEAD
-=======
   RunId,
   RuntimeRequestId,
->>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
 } from "@t3tools/contracts";
 import {
   ProviderDriverKind,
@@ -230,8 +227,8 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
-  FileIcon,
-  PaperclipIcon,
+  ListTodoIcon,
+  LoaderCircleIcon,
   PencilRulerIcon,
   PlayIcon,
   type LucideIcon,
@@ -248,6 +245,7 @@ import {
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
   resolveProviderDriverKindForInstanceSelection,
+  resolveProviderCatalogAvailability,
   resolveSelectableProviderInstanceEntry,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
@@ -287,7 +285,7 @@ const runtimeModeConfig: Record<
   },
   auto: {
     label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
+    description: "An AI reviewer approves routine actions; risky ones still ask.",
     icon: SparklesIcon,
   },
   "full-access": {
@@ -342,8 +340,12 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  showPlanToggle: boolean;
+  planSidebarLabel: string;
+  planSidebarOpen: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onTogglePlanSidebar: () => void;
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
@@ -351,6 +353,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
     props.interactionMode === "plan"
       ? "Plan mode — click to return to normal build mode"
       : "Default mode — click to enter plan mode";
+  const planSidebarTooltip = props.planSidebarOpen
+    ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
+    : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`;
 
   const interactionModeToggle = props.showInteractionModeToggle ? (
     <>
@@ -362,8 +367,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               className={cn(
                 "shrink-0 whitespace-nowrap",
                 props.interactionMode === "plan"
-                  ? "bg-accent text-accent-foreground hover:bg-accent/80"
-                  : "text-secondary-label hover:text-foreground",
+                  ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
+                  : "text-muted-foreground/70 hover:text-foreground/80",
               )}
               type="button"
               onClick={props.onToggleInteractionMode}
@@ -426,6 +431,36 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
       </Tooltip>
 
       {interactionModeToggle}
+
+      {props.showPlanToggle ? (
+        <>
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <ComposerControl
+                  className={cn(
+                    "shrink-0 whitespace-nowrap",
+                    props.planSidebarOpen
+                      ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
+                      : "text-muted-foreground/70 hover:text-foreground/80",
+                  )}
+                  type="button"
+                  onClick={props.onTogglePlanSidebar}
+                  aria-label={planSidebarTooltip}
+                />
+              }
+            >
+              <ComposerControlIcon
+                icon={ListTodoIcon}
+                className={props.planSidebarOpen ? "text-current opacity-100" : undefined}
+              />
+              <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">{planSidebarTooltip}</TooltipPopup>
+          </Tooltip>
+        </>
+      ) : null}
     </>
   );
 });
@@ -465,7 +500,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         />
       ) : null}
       {props.isPreparingWorktree ? (
-        <span className="text-secondary-label text-xs">Preparing worktree...</span>
+        <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
       {props.isRunning && props.hasSendableContent ? (
         <span className="hidden text-[11px] text-muted-foreground/70 sm:inline">
@@ -587,18 +622,11 @@ export interface ChatComposerProps {
 
   // Plan
   showPlanFollowUpPrompt: boolean;
-<<<<<<< HEAD
-  activeProposedPlan: Thread["proposedPlans"][number] | null;
-<<<<<<< HEAD
-=======
-=======
   activeProposedPlan: LatestProposedPlanState | null;
->>>>>>> d454b3880e (Retire V1 client orchestration parity)
   activePlan: { runId?: RunId | null } | null;
   sidebarProposedPlan: { runId?: RunId | null } | null;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
->>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
 
   // Mode
   runtimeMode: RuntimeMode;
@@ -606,6 +634,7 @@ export interface ChatComposerProps {
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
+  providerCatalogLoaded: boolean;
   providerStatuses: ServerProvider[];
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
@@ -656,6 +685,7 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  togglePlanSidebar: () => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -700,9 +730,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     respondingRequestIds,
     showPlanFollowUpPrompt,
     activeProposedPlan,
+    activePlan,
+    sidebarProposedPlan,
+    planSidebarLabel,
+    planSidebarOpen,
     runtimeMode,
     interactionMode,
     lockedProvider,
+    providerCatalogLoaded,
     providerStatuses,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
@@ -733,6 +768,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
+    togglePlanSidebar,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -913,7 +949,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
     [providerInstanceEntries, selectedInstanceId],
   );
-  const noProviderAvailable = selectedProviderEntry === undefined;
+  const providerCatalogAvailability = resolveProviderCatalogAvailability({
+    catalogLoaded: providerCatalogLoaded,
+    entries: providerInstanceEntries,
+    selectedEntry: selectedProviderEntry,
+  });
+  const noProviderAvailable = providerCatalogAvailability !== "ready";
+  const providerAvailabilityCopy =
+    providerCatalogAvailability === "loading"
+      ? {
+          label: "Loading providers…",
+          placeholder: "Providers are still loading",
+        }
+      : providerCatalogAvailability === "unconfigured"
+        ? {
+            label: "No providers configured",
+            placeholder: "Enable a provider in Settings to send a message",
+          }
+        : {
+            label: "Providers unavailable",
+            placeholder: "No configured provider is currently available",
+          };
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -963,16 +1019,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  // Plan mode is a legacy feature behind Settings → Beta. With the flag off,
-  // ChatView forces the effective mode to "default", so hiding the toggle
-  // can't trap anyone in plan mode.
-  const planModeUiEnabled = settings.planModeEnabled;
   const composerProviderControls = useMemo(
     () => ({
-      showInteractionModeToggle:
-        planModeUiEnabled && getProviderInteractionModeToggle(providerStatuses, selectedProvider),
+      showInteractionModeToggle: getProviderInteractionModeToggle(
+        providerStatuses,
+        selectedProvider,
+      ),
     }),
-    [planModeUiEnabled, providerStatuses, selectedProvider],
+    [providerStatuses, selectedProvider],
   );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
@@ -1144,24 +1198,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/model",
           description: "Switch response model for this thread",
         },
-        ...(planModeUiEnabled
-          ? ([
-              {
-                id: "slash:plan",
-                type: "slash-command",
-                command: "plan",
-                label: "/plan",
-                description: "Switch this thread into plan mode",
-              },
-              {
-                id: "slash:default",
-                type: "slash-command",
-                command: "default",
-                label: "/default",
-                description: "Switch this thread back to normal build mode",
-              },
-            ] as const)
-          : []),
+        {
+          id: "slash:plan",
+          type: "slash-command",
+          command: "plan",
+          label: "/plan",
+          description: "Switch this thread into plan mode",
+        },
+        {
+          id: "slash:default",
+          type: "slash-command",
+          command: "default",
+          label: "/default",
+          description: "Switch this thread back to normal build mode",
+        },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
         (command) => ({
@@ -1196,13 +1246,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     }
     return [];
-  }, [
-    composerTrigger,
-    planModeUiEnabled,
-    selectedProvider,
-    selectedProviderStatus,
-    workspaceEntries.entries,
-  ]);
+  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1242,6 +1286,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -1985,7 +2030,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event: KeyboardEvent,
   ) => {
     if (key === "Tab" && event.shiftKey) {
-      if (!planModeUiEnabled) return false;
       toggleInteractionMode();
       return true;
     }
@@ -3106,7 +3150,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     type="button"
                     className={cn(
                       "min-w-0 flex-1 truncate bg-transparent py-1.5 text-left text-sm",
-                      activePendingProgress?.customAnswer ? "text-foreground" : "text-placeholder",
+                      activePendingProgress?.customAnswer
+                        ? "text-foreground"
+                        : "text-muted-foreground/60",
                       !activePendingProgress?.activeQuestion?.multiSelect && "px-3 py-2",
                     )}
                     onPointerDown={(event) => event.preventDefault()}
@@ -3151,7 +3197,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   "min-w-0 flex-1 truncate bg-transparent p-0 text-left text-[14px] focus:outline-none",
                   (activePendingProgress ? activePendingProgress.customAnswer : prompt.trim())
                     ? "text-foreground"
-                    : "text-placeholder",
+                    : "text-muted-foreground/35",
                 )}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={expandMobileComposer}
@@ -3161,11 +3207,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ? activePendingProgress.customAnswer ||
                     "Type your own answer, or leave this blank to use the selected option"
                   : prompt.trim() ||
-                    (noProviderAvailable ? "Enable a provider in Settings" : "Ask anything...")}
+                    (noProviderAvailable
+                      ? providerAvailabilityCopy.placeholder
+                      : "Ask anything...")}
               </button>
               <button
                 type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-30"
+                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/90 text-primary-foreground disabled:opacity-30"
                 disabled={collapsedComposerPrimaryActionDisabled}
                 aria-label={collapsedComposerPrimaryActionLabel}
                 onPointerDown={(event) => event.preventDefault()}
@@ -3315,7 +3363,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             />
                           </button>
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-secondary-label">
+                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
                             {image.name}
                           </div>
                         )}
@@ -3387,7 +3435,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : projectSelectionRequired
                           ? "Choose a project above to start a thread"
                           : noProviderAvailable
-                            ? "Enable a provider in Settings to send a message"
+                            ? providerAvailabilityCopy.placeholder
                             : phase === "disconnected"
                               ? "Ask for follow-up changes or attach images"
                               : "Ask anything, @tag files/folders, $use skills, or / for commands"
@@ -3454,10 +3502,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     variant="ghost"
                     disabled
                     data-chat-provider-unavailable="true"
-                    className="shrink-0 gap-2 px-2 text-secondary-label sm:px-3"
+                    data-chat-provider-availability={providerCatalogAvailability}
+                    className="shrink-0 gap-2 px-2 text-muted-foreground/70 sm:px-3"
                   >
-                    <CircleAlertIcon className="size-4" />
-                    No provider available
+                    {providerCatalogAvailability === "loading" ? (
+                      <LoaderCircleIcon className="size-4" />
+                    ) : (
+                      <CircleAlertIcon className="size-4" />
+                    )}
+                    {providerAvailabilityCopy.label}
                   </Button>
                 ) : (
                   <ProviderModelPicker
@@ -3488,11 +3541,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
                 {isComposerFooterCompact ? (
                   <CompactComposerControlsMenu
+                    activePlan={showPlanSidebarToggle}
                     interactionMode={interactionMode}
+                    planSidebarLabel={planSidebarLabel}
+                    planSidebarOpen={planSidebarOpen}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                     traitsMenuContent={providerTraitsMenuContent}
                     onToggleInteractionMode={toggleInteractionMode}
+                    onTogglePlanSidebar={togglePlanSidebar}
                     onRuntimeModeChange={handleRuntimeModeChange}
                   />
                 ) : (
@@ -3507,8 +3564,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
+                      showPlanToggle={showPlanSidebarToggle}
+                      planSidebarLabel={planSidebarLabel}
+                      planSidebarOpen={planSidebarOpen}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
+                      onTogglePlanSidebar={togglePlanSidebar}
                     />
                   </>
                 )}

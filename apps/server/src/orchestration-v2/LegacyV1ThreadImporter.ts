@@ -178,6 +178,7 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     archivedAt: nullableDateTime(row.archived_at),
     settledOverride: settledOverrideFor(row.settled_override),
     settledAt: nullableDateTime(row.settled_at),
+    lastVisitedAt: null,
     deletedAt: nullableDateTime(row.deleted_at),
   };
 }

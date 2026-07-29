@@ -91,6 +91,16 @@ export interface EnvironmentThreadShell {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt: string | null;
+  readonly settledOverride: "settled" | "active" | null;
+  readonly settledAt: string | null;
+  readonly snoozedUntil: string | null;
+  readonly snoozedAt: string | null;
+  /**
+   * Server-tracked visited watermark. `undefined` means the environment's
+   * server predates visited tracking and clients should fall back to any
+   * local visited state they keep.
+   */
+  readonly lastVisitedAt?: string | null;
   readonly deletedAt: string | null;
   readonly source: OrchestrationV2ThreadShell;
 }
@@ -143,10 +153,14 @@ export function presentThreadShell(
       : ({
           runId: thread.latestRunId,
           status: thread.status === "idle" ? "completed" : thread.status,
-          requestedAt: null,
-          startedAt: null,
+          requestedAt: nullableIso(thread.latestRunRequestedAt ?? null),
+          startedAt: nullableIso(thread.latestRunStartedAt ?? null),
           completedAt:
-            thread.status === "idle" || terminalRunStatus(thread.status) ? updatedAt : null,
+            thread.latestRunCompletedAt === undefined
+              ? thread.status === "idle" || terminalRunStatus(thread.status)
+                ? updatedAt
+                : null
+              : nullableIso(thread.latestRunCompletedAt),
           assistantMessageId: null,
         } satisfies ThreadRunSummary);
   return {
@@ -177,6 +191,13 @@ export function presentThreadShell(
     createdAt: iso(thread.createdAt),
     updatedAt,
     archivedAt: nullableIso(thread.archivedAt),
+    settledOverride: thread.settledOverride,
+    settledAt: nullableIso(thread.settledAt),
+    snoozedUntil: nullableIso(thread.snoozedUntil ?? null),
+    snoozedAt: nullableIso(thread.snoozedAt ?? null),
+    ...(thread.lastVisitedAt === undefined
+      ? {}
+      : { lastVisitedAt: nullableIso(thread.lastVisitedAt) }),
     deletedAt: nullableIso(thread.deletedAt),
     source: thread,
   };

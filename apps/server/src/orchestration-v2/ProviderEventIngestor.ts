@@ -248,6 +248,10 @@ export const layer: Layer.Layer<ProviderEventIngestorV2, never, EventSinkV2 | Id
                     providerTurnId: input.event.providerTurnId,
                     itemOrdinal: input.event.failureItemOrdinal,
                     failure: input.event.failure,
+                    ...(input.event.retry === undefined ? {} : { retry: input.event.retry }),
+                    ...(input.event.retryStartedAt === undefined
+                      ? {}
+                      : { retryStartedAt: input.event.retryStartedAt }),
                     occurredAt,
                   }),
                 }),

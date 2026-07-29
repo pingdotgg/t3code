@@ -2,11 +2,14 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
+  OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
 
 type TimelineRun = Pick<OrchestrationV2Run, "id" | "status">;
 type TimelineRunAttempt = Pick<OrchestrationV2RunAttempt, "runId" | "rootNodeId" | "status">;
-type TimelineTurnItem = Pick<OrchestrationV2TurnItem, "type" | "runId" | "nodeId">;
+type TimelineTurnItem = Pick<OrchestrationV2TurnItem, "type" | "runId" | "nodeId"> & {
+  readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
+};
 
 export function isOrchestrationV2SupersededInterrupt(input: {
   readonly item: TimelineTurnItem;
@@ -46,6 +49,18 @@ export function isOrchestrationV2TurnItemVisible(input: {
   if (
     item.runId !== null &&
     input.runs.some((run) => run.id === item.runId && run.status === "rolled_back")
+  ) {
+    return false;
+  }
+
+  // A queued message is composer state, not conversation history. When its run
+  // is cancelled the input never reached the provider, so it must not surface
+  // as a transcript row.
+  if (
+    item.type === "user_message" &&
+    item.inputIntent === "queued_turn" &&
+    item.runId !== null &&
+    input.runs.some((run) => run.id === item.runId && run.status === "cancelled")
   ) {
     return false;
   }

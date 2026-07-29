@@ -2,7 +2,7 @@
 
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef } from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
@@ -17,10 +17,29 @@ import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
   clampPreviewMiniPlayerSize,
+  defaultPreviewMiniPlayerPosition,
   PREVIEW_MINI_PLAYER_DEFAULT_SIZE,
-  PREVIEW_MINI_PLAYER_EDGE_GAP,
-  PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
 } from "./previewMiniPlayerLayout";
+
+/**
+ * Where a freshly opened player should land: under the inline thread-details
+ * card when that panel is open (it owns the top-right corner), otherwise the
+ * top-right CSS placement the element already has.
+ */
+function initialPreviewMiniPlayerPosition(root: HTMLElement, parent: HTMLElement) {
+  const fallback = { x: root.offsetLeft, y: root.offsetTop };
+  const card = root
+    .closest('[data-thread-details-inline-reserved="true"]')
+    ?.querySelector('[data-thread-details-panel="inline"] [data-thread-details-card]');
+  if (!(card instanceof HTMLElement)) return fallback;
+  const cardRect = card.getBoundingClientRect();
+  return defaultPreviewMiniPlayerPosition({
+    fallback,
+    parentRect: parent.getBoundingClientRect(),
+    playerWidth: root.offsetWidth,
+    detailsCardRect: { right: cardRect.right, bottom: cardRect.bottom },
+  });
+}
 
 interface DragState {
   readonly pointerId: number;
@@ -34,8 +53,6 @@ interface ResizeState {
   readonly pointerId: number;
   readonly pointerX: number;
   readonly pointerY: number;
-  readonly playerX: number;
-  readonly playerY: number;
   readonly width: number;
   readonly height: number;
 }
@@ -50,7 +67,6 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   const rootRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
-  const [defaultLayoutVersion, setDefaultLayoutVersion] = useState("");
   const miniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
   );
@@ -97,12 +113,8 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         bottomInset,
       );
       usePreviewMiniPlayerStore.getState().resize(threadRef, tabId, nextSize);
-      if (!position) {
-        setDefaultLayoutVersion(`${parent.clientWidth}:${parent.clientHeight}`);
-        return;
-      }
       const next = clampPreviewMiniPlayerPosition(
-        position,
+        position ?? initialPreviewMiniPlayerPosition(root, parent),
         { width: parent.clientWidth, height: parent.clientHeight },
         nextSize,
         bottomInset,
@@ -169,16 +181,11 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   const handleResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     const root = rootRef.current;
-    const parent = root?.offsetParent;
-    if (!root || !(parent instanceof HTMLElement)) return;
-    const rootRect = root.getBoundingClientRect();
-    const parentRect = parent.getBoundingClientRect();
+    if (!root) return;
     resizeRef.current = {
       pointerId: event.pointerId,
       pointerX: event.clientX,
       pointerY: event.clientY,
-      playerX: rootRect.left - parentRect.left,
-      playerY: rootRect.top - parentRect.top,
       width: root.offsetWidth,
       height: root.offsetHeight,
     };
@@ -209,7 +216,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     );
     usePreviewMiniPlayerStore.getState().resize(threadRef, tabId, nextSize);
     const nextPosition = clampPreviewMiniPlayerPosition(
-      { x: resize.playerX, y: resize.playerY },
+      position ?? { x: root.offsetLeft, y: root.offsetTop },
       { width: parent.clientWidth, height: parent.clientHeight },
       nextSize,
       bottomInset,
@@ -237,14 +244,14 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         position
           ? { left: position.x, top: position.y, width: size.width, height: size.height }
           : {
-              right: PREVIEW_MINI_PLAYER_EDGE_GAP,
-              top: PREVIEW_MINI_PLAYER_EDGE_GAP,
+              right: 16,
+              top: 16,
               width: size.width,
               height: size.height,
             }
       }
     >
-      <div className="group pointer-events-auto absolute right-2 top-2 z-[49] size-3">
+      <div className="group pointer-events-auto absolute right-2 top-2 z-[34] size-3">
         <div
           aria-hidden="true"
           className="absolute right-0 top-0 size-2 rounded-full bg-foreground/25 shadow-sm ring-1 ring-background/70 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
@@ -317,30 +324,25 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
       </div>
 
       <div className="relative h-full min-h-0">
-        <div className="absolute inset-0 z-[47] rounded-xl bg-muted shadow-2xl/35" />
+        <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-2xl/35" />
         <BrowserSurfaceSlot
           tabId={runtimeTabId}
           visible={Boolean(desktopOverlay?.hasWebContents)}
           cornerRadius={12}
-          zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
           fitSourceContent
-          layoutVersion={
-            position
-              ? `${position.x}:${position.y}`
-              : `initial:${bottomInset}:${defaultLayoutVersion}`
-          }
+          layoutVersion={position ? `${position.x}:${position.y}` : `initial:${bottomInset}`}
           className="absolute inset-0"
         />
-        <div className="pointer-events-none absolute inset-0 z-[49] rounded-xl ring-1 ring-inset ring-border/80" />
+        <div className="pointer-events-none absolute inset-0 z-[31] rounded-xl ring-1 ring-inset ring-border/80" />
         {!desktopOverlay?.hasWebContents ? (
-          <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground">
+          <div className="pointer-events-none absolute inset-0 z-[32] flex items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground">
             Reconnecting preview…
           </div>
         ) : null}
         <button
           type="button"
           aria-label="Resize floating preview"
-          className="pointer-events-auto absolute bottom-0 right-0 z-[49] size-5 cursor-nwse-resize rounded-br-xl after:absolute after:bottom-1 after:right-1 after:size-2 after:border-b after:border-r after:border-foreground/45"
+          className="pointer-events-auto absolute bottom-0 right-0 z-[33] size-5 cursor-nwse-resize rounded-br-xl after:absolute after:bottom-1 after:right-1 after:size-2 after:border-b after:border-r after:border-foreground/45"
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
           onPointerUp={endResize}

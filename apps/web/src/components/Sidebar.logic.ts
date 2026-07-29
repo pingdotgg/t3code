@@ -195,7 +195,7 @@ type ThreadStatusInput = Pick<
   | "runtime"
 >>>>>>> 79c36e6204 (Complete orchestration V2 frontend cutover)
 > & {
-  lastVisitedAt?: string | undefined;
+  lastVisitedAt?: string | null | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -288,6 +288,21 @@ export function useThreadJumpHintVisibility(): {
     showThreadJumpHints,
     updateThreadJumpHintsVisibility,
   };
+}
+
+/**
+ * Effective visited watermark for a thread. Servers with visited tracking
+ * project `lastVisitedAt` on the shell and are authoritative — that value is
+ * shared across every device connected to the environment. Pre-tracking
+ * servers omit the field, and the browser's locally persisted watermark keeps
+ * working as before.
+ */
+export function resolveThreadLastVisitedAt(
+  serverLastVisitedAt: string | null | undefined,
+  localLastVisitedAt: string | undefined,
+): string | undefined {
+  if (serverLastVisitedAt === undefined) return localLastVisitedAt;
+  return serverLastVisitedAt ?? undefined;
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {

@@ -25,6 +25,8 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -252,6 +254,39 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     // A replaced or unmounted native editor may not emit a blur event.
     setComposerFocused(false);
   }, [selectedThreadKey, showContent]);
+
+  const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  const lastDispatchedVisitRef = useRef<string | null>(null);
+  const selectedThreadId = props.selectedThread.id;
+  const selectedThreadUpdatedAt = props.selectedThread.updatedAt;
+  const selectedThreadLastVisitedAt = props.selectedThread.lastVisitedAt;
+  useEffect(() => {
+    // Records the server-side visited watermark while the thread is on
+    // screen (mirror of web ChatView), so the "Done" marker clears on every
+    // device. Field absent → the server predates visited tracking.
+    if (selectedThreadLastVisitedAt === undefined) return;
+    const threadUpdatedAtMs = Date.parse(selectedThreadUpdatedAt);
+    if (Number.isNaN(threadUpdatedAtMs)) return;
+    const lastVisitedAtMs = selectedThreadLastVisitedAt
+      ? Date.parse(selectedThreadLastVisitedAt)
+      : NaN;
+    if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= threadUpdatedAtMs) return;
+    // Dedupe per watermark — the effect re-runs before the command echo lands.
+    const dispatchKey = `${selectedThreadKey}:${selectedThreadUpdatedAt}`;
+    if (lastDispatchedVisitRef.current === dispatchKey) return;
+    lastDispatchedVisitRef.current = dispatchKey;
+    void visitThread({
+      environmentId: props.environmentId,
+      input: { threadId: selectedThreadId, visitedAt: selectedThreadUpdatedAt },
+    });
+  }, [
+    props.environmentId,
+    selectedThreadId,
+    selectedThreadKey,
+    selectedThreadLastVisitedAt,
+    selectedThreadUpdatedAt,
+    visitThread,
+  ]);
 
   useEffect(() => {
     setAnchorMessageId(null);

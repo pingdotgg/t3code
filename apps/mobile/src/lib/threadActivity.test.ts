@@ -108,6 +108,29 @@ describe("buildThreadFeed", () => {
     ).toBe(true);
   });
 
+  it("adds queued input only after dispatch creates its turn item", () => {
+    const dispatchedRunId = RunId.make("run-dispatched-queued");
+    const dispatchedMessageId = MessageId.make("message-dispatched-queued");
+    expect(buildThreadFeed([])).toEqual([]);
+
+    const promotedEntries = buildThreadFeed([
+      projected(
+        {
+          ...userMessage(),
+          id: TurnItemId.make("item-dispatched-queued"),
+          runId: dispatchedRunId,
+          messageId: dispatchedMessageId,
+          inputIntent: "turn_start",
+        },
+        0,
+      ),
+    ]);
+    expect(promotedEntries.map((entry) => entry.id)).toEqual([dispatchedMessageId]);
+    expect(
+      promotedEntries[0]?.type === "message" ? promotedEntries[0].message.inputIntent : undefined,
+    ).toBe("turn_start");
+  });
+
   it("preserves authoritative V2 order instead of sorting reconstructed collections", () => {
     const rows = [
       projected(userMessage("2026-06-20T00:00:03.000Z"), 0),

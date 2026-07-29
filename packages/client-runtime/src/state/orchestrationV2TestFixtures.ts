@@ -52,6 +52,9 @@ export const v2ThreadShell: OrchestrationV2ThreadShell = {
   createdAt: v2Now,
   updatedAt: v2Now,
   archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  lastVisitedAt: null,
   deletedAt: null,
 };
 
@@ -74,6 +77,9 @@ export const v2Projection: OrchestrationV2ThreadProjection = {
     createdAt: v2Now,
     updatedAt: v2Now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
     deletedAt: null,
   },
   runs: [],

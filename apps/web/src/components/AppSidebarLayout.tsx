@@ -14,6 +14,7 @@ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalSt
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
+<<<<<<< HEAD
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
@@ -21,6 +22,10 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
+=======
+import { useEnvironmentIdentificationMode, useSidebarV2Enabled } from "../hooks/useSettings";
+import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
+>>>>>>> 844dad005a (feat(orchestration): track provider retries and thread visits)
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -143,11 +148,20 @@ function ProjectProjectionRetention() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+<<<<<<< HEAD
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   // Settings routes show the settings nav in place of whichever thread
   // sidebar is active.
+=======
+  const sidebarV2Enabled = useSidebarV2Enabled();
+  // Seeds server-side visited tracking from this browser's localStorage the
+  // first time each thread shell loads (no-op on already-seeded servers).
+  useThreadVisitedMigration();
+  // Settings routes render the settings nav, which lives in the v1 component
+  // and is identical for both sidebars — so v1 stays mounted there.
+>>>>>>> 844dad005a (feat(orchestration): track provider retries and thread visits)
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
