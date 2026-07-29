@@ -42,6 +42,25 @@ export function isThreadTitleRegenerationPending(
 ): boolean {
   return threadTitleRegenerationRemainingMs(thread, nowMs) > 0;
 }
+
+export function buildBulkTitleRegenerationContextMenuItem(input: {
+  supportedCount: number;
+  actionableCount: number;
+}): ContextMenuItem<"regenerate-title"> | null {
+  if (input.supportedCount === 0) return null;
+  if (input.actionableCount === 0) {
+    return {
+      id: "regenerate-title",
+      label: `Regenerating… (${input.supportedCount})`,
+      disabled: true,
+    };
+  }
+  return {
+    id: "regenerate-title",
+    label: `Regenerate titles (${input.actionableCount})`,
+  };
+}
+
 type SidebarProject = {
   id: string;
   title: string;
