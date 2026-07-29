@@ -1,3 +1,5 @@
+import { TOOL_CALL_READ_ONLY_WORKSPACE_ROOT } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+
 const SEEDED_CURSOR_REPLAY_SCENARIOS = new Set(["subagent", "tool_call_read_only", "todo_list"]);
 
 export function cursorReplayPromptsForWorkspace(input: {
@@ -20,4 +22,8 @@ export function shouldSeedCursorReplayWorkspace(input: {
   readonly owned: boolean;
 }): boolean {
   return input.owned && SEEDED_CURSOR_REPLAY_SCENARIOS.has(input.scenario);
+}
+
+export function cursorReplayTranscriptCwd(scenario: string): string | undefined {
+  return scenario === "tool_call_read_only" ? TOOL_CALL_READ_ONLY_WORKSPACE_ROOT : undefined;
 }
