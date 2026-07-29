@@ -54,6 +54,9 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
+// Conventional one-level workspace collections checked after the repository root.
+const MONOREPO_PROJECT_ROOTS = ["apps", "packages", "services"] as const;
+
 // Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
 const LINK_ICON_HTML_RE =
   /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
@@ -120,9 +123,9 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
 
-  const resolveIconHref = (href: string): ReadonlyArray<string> => {
+  const resolveIconHref = (basePath: string, href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
-    return [path.join("public", clean), clean];
+    return [path.join(basePath, "public", clean), path.join(basePath, clean)];
   };
 
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
@@ -166,6 +169,82 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
+  const findFromSourceFiles = Effect.fn("ProjectFaviconResolver.findFromSourceFiles")(function* (
+    projectCwd: string,
+    basePath: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    for (const sourceFile of ICON_SOURCE_FILES) {
+      const relativePath = path.join(basePath, sourceFile);
+      const sourcePath = yield* workspacePaths
+        .resolveRelativePathWithinRoot({
+          workspaceRoot: projectCwd,
+          relativePath,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectFaviconResolutionError({
+                operation: "resolve-path",
+                workspaceRoot: projectCwd,
+                relativePath,
+                cause,
+              }),
+          ),
+        );
+      const source = yield* optionOnNotFound(
+        fileSystem.readFileString(sourcePath.absolutePath),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectFaviconResolutionError({
+              operation: "read-source",
+              workspaceRoot: projectCwd,
+              relativePath,
+              absolutePath: sourcePath.absolutePath,
+              cause,
+            }),
+        ),
+      );
+      if (Option.isNone(source)) {
+        continue;
+      }
+      const href = extractIconHref(source.value);
+      if (!href) {
+        continue;
+      }
+      const existing = yield* findExistingFile(projectCwd, resolveIconHref(basePath, href));
+      if (existing) {
+        return existing;
+      }
+    }
+    return null;
+  });
+
+  const listMonorepoProjectBases = Effect.fn("ProjectFaviconResolver.listMonorepoProjectBases")(
+    function* (projectCwd: string): Effect.fn.Return<ReadonlyArray<string>> {
+      const bases: Array<string> = [];
+      for (const monorepoRoot of MONOREPO_PROJECT_ROOTS) {
+        const absoluteRoot = path.join(projectCwd, monorepoRoot);
+        const stats = yield* fileSystem.stat(absoluteRoot).pipe(
+          Effect.map(Option.some),
+          Effect.orElseSucceed(() => Option.none()),
+        );
+        if (Option.isNone(stats) || stats.value.type !== "Directory") {
+          continue;
+        }
+        const entries = yield* fileSystem
+          .readDirectory(absoluteRoot, { recursive: false })
+          .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+        for (const entry of entries.toSorted()) {
+          if (!entry.startsWith(".")) {
+            bases.push(path.join(monorepoRoot, entry));
+          }
+        }
+      }
+      return bases;
+    },
+  );
+
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
   )(function* (cwd) {
@@ -195,47 +274,22 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    for (const sourceFile of ICON_SOURCE_FILES) {
-      const sourcePath = yield* workspacePaths
-        .resolveRelativePathWithinRoot({
-          workspaceRoot: projectCwd,
-          relativePath: sourceFile,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectFaviconResolutionError({
-                operation: "resolve-path",
-                workspaceRoot: projectCwd,
-                relativePath: sourceFile,
-                cause,
-              }),
-          ),
-        );
-      const source = yield* optionOnNotFound(
-        fileSystem.readFileString(sourcePath.absolutePath),
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectFaviconResolutionError({
-              operation: "read-source",
-              workspaceRoot: projectCwd,
-              relativePath: sourceFile,
-              absolutePath: sourcePath.absolutePath,
-              cause,
-            }),
-        ),
-      );
-      if (Option.isNone(source)) {
-        continue;
+    const rootSourceIcon = yield* findFromSourceFiles(projectCwd, "");
+    if (rootSourceIcon) {
+      return rootSourceIcon;
+    }
+
+    const monorepoProjectBases = yield* listMonorepoProjectBases(projectCwd);
+    for (const basePath of monorepoProjectBases) {
+      for (const candidate of FAVICON_CANDIDATES) {
+        const existing = yield* findExistingFile(projectCwd, [path.join(basePath, candidate)]);
+        if (existing) {
+          return existing;
+        }
       }
-      const href = extractIconHref(source.value);
-      if (!href) {
-        continue;
-      }
-      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href));
-      if (existing) {
-        return existing;
+      const sourceIcon = yield* findFromSourceFiles(projectCwd, basePath);
+      if (sourceIcon) {
+        return sourceIcon;
       }
     }
 

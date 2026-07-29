@@ -91,7 +91,91 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset =
+  | { readonly kind: "file"; readonly path: string }
+  | {
+      readonly kind: "text";
+      readonly body: string;
+      readonly contentType: "image/svg+xml";
+    };
+
+function findMarkupEnd(source: string, start: number): number {
+  let quote: '"' | "'" | null = null;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      if (character === quote) {
+        quote = null;
+      }
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+export function extractSvgDocument(source: string): string | null {
+  let rootStart = -1;
+  let depth = 0;
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const tagStart = source.indexOf("<", cursor);
+    if (tagStart === -1) {
+      return null;
+    }
+    if (source.startsWith("<!--", tagStart)) {
+      const commentEnd = source.indexOf("-->", tagStart + 4);
+      if (commentEnd === -1) {
+        return null;
+      }
+      cursor = commentEnd + 3;
+      continue;
+    }
+    if (source.startsWith("<![CDATA[", tagStart)) {
+      const cdataEnd = source.indexOf("]]>", tagStart + 9);
+      if (cdataEnd === -1) {
+        return null;
+      }
+      cursor = cdataEnd + 3;
+      continue;
+    }
+
+    const tagEnd = findMarkupEnd(source, tagStart);
+    if (tagEnd === -1) {
+      return null;
+    }
+    const tag = source.slice(tagStart, tagEnd + 1);
+    const svgTag = tag.match(/^<\s*(\/?)\s*svg\b/i);
+    if (svgTag) {
+      const isClosing = svgTag[1] === "/";
+      const isSelfClosing = !isClosing && /\/\s*>$/.test(tag);
+      if (rootStart === -1) {
+        if (isClosing) {
+          cursor = tagEnd + 1;
+          continue;
+        }
+        rootStart = tagStart;
+        if (isSelfClosing) {
+          return source.slice(rootStart, tagEnd + 1);
+        }
+        depth = 1;
+      } else if (isClosing) {
+        depth -= 1;
+        if (depth === 0) {
+          return source.slice(rootStart, tagEnd + 1);
+        }
+      } else if (!isSelfClosing) {
+        depth += 1;
+      }
+    }
+    cursor = tagEnd + 1;
+  }
+
+  return null;
+}
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -394,7 +478,30 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
-    return faviconPath ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset) : null;
+    if (!faviconPath) return null;
+    const path = yield* Path.Path;
+    if (path.extname(faviconPath).toLowerCase() !== ".svg") {
+      return { kind: "file", path: faviconPath } satisfies ResolvedAsset;
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const source = yield* fileSystem.readFileString(faviconPath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to read project SVG favicon.", {
+          path: faviconPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    if (source === null) return null;
+    const svg = extractSvgDocument(source);
+    return svg
+      ? ({
+          kind: "text",
+          body: svg,
+          contentType: "image/svg+xml",
+        } satisfies ResolvedAsset)
+      : ({ kind: "file", path: faviconPath } satisfies ResolvedAsset);
   }
 
   const decodedPath = decodeRelativePath(relativePath);

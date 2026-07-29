@@ -13,7 +13,12 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  extractSvgDocument,
+  issueAssetUrl,
+  resolveAsset,
+} from "./AssetAccess.ts";
 
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
@@ -29,6 +34,28 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it("extracts a self-closing SVG document from surrounding content", () => {
+    expect(extractSvgDocument('<?xml version="1.0"?><svg viewBox="0 0 1 1" />trailing')).toBe(
+      '<svg viewBox="0 0 1 1" />',
+    );
+  });
+
+  it("extracts only the first SVG document when the source has multiple roots", () => {
+    expect(
+      extractSvgDocument(
+        '<svg viewBox="0 0 1 1"><path /></svg><script>unsafe()</script><svg></svg>',
+      ),
+    ).toBe('<svg viewBox="0 0 1 1"><path /></svg>');
+  });
+
+  it("preserves nested SVG elements inside the first root document", () => {
+    expect(
+      extractSvgDocument(
+        '<svg viewBox="0 0 2 2"><svg viewBox="0 0 1 1"><path /></svg><circle /></svg><script>unsafe()</script>',
+      ),
+    ).toBe('<svg viewBox="0 0 2 2"><svg viewBox="0 0 1 1"><path /></svg><circle /></svg>');
+  });
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -206,7 +233,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("issues project favicon capabilities with a signed fallback", () =>
+  it.effect("issues sanitized SVG favicon capabilities with a signed fallback", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -214,8 +241,15 @@ describe("AssetAccess", () => {
         prefix: "t3-asset-favicon-",
       });
       const faviconPath = path.join(root, "favicon.svg");
-      yield* fileSystem.writeFileString(faviconPath, "<svg />");
-      const canonicalFaviconPath = yield* fileSystem.realPath(faviconPath);
+      yield* fileSystem.writeFileString(
+        faviconPath,
+        [
+          '<?xml version="1.0"?>',
+          '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "https://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">',
+          '<svg xmlns="http://www.w3.org/2000/svg"><path /></svg>',
+          "<!-- trailing content -->",
+        ].join("\n"),
+      );
 
       const faviconResult = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root },
@@ -227,7 +261,11 @@ describe("AssetAccess", () => {
           faviconSuffix.slice(0, faviconSeparatorIndex),
           faviconSuffix.slice(faviconSeparatorIndex + 1),
         ),
-      ).toEqual({ kind: "file", path: canonicalFaviconPath });
+      ).toEqual({
+        kind: "text",
+        body: '<svg xmlns="http://www.w3.org/2000/svg"><path /></svg>',
+        contentType: "image/svg+xml",
+      });
 
       yield* fileSystem.remove(faviconPath);
       const fallbackResult = yield* issueAssetUrl({
