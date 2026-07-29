@@ -580,6 +580,7 @@ interface StagePackageJson {
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ASAR_UNPACK = ["node_modules/@ff-labs/fff-bin-*/**/*"] as const;
+export const DESKTOP_AFTER_PACK_HOOK_FILE = "desktop-after-pack.ts";
 
 export interface MacPasskeySigningConfiguration {
   readonly appId: string;
@@ -1385,6 +1386,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  afterPackHookPath?: string,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -1407,6 +1409,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // files through the asar (transparently redirected to the unpacked copy), so
     // there's no duplication.
     asarUnpack: [...DESKTOP_ASAR_UNPACK, "apps/server/dist/**", "**/node_modules/**"],
+    ...(afterPackHookPath ? { afterPack: afterPackHookPath } : {}),
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1776,6 +1779,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      path.join(stageAppDir, DESKTOP_AFTER_PACK_HOOK_FILE),
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -1784,6 +1788,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
+  yield* fs.copyFile(
+    path.join(repoRoot, "scripts", DESKTOP_AFTER_PACK_HOOK_FILE),
+    path.join(stageAppDir, DESKTOP_AFTER_PACK_HOOK_FILE),
+  );
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
   const stageWorkspaceConfig = createStageWorkspaceConfig({
     platform: options.platform,
