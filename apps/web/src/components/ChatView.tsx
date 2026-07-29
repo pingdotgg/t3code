@@ -4363,16 +4363,15 @@ function ChatViewBody(
               </div>
             ) : null}
 
-            {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
             {showScrollToBottom && (
-              <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
+              <div className="pointer-events-none absolute bottom-1 right-[calc(env(safe-area-inset-right)+--spacing(3))] z-30 flex py-1.5 sm:right-[calc(env(safe-area-inset-right)+--spacing(5))]">
                 <button
                   type="button"
+                  aria-label="Scroll to bottom"
                   onClick={() => scrollToEnd(true)}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                  className="pointer-events-auto flex size-8 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:cursor-pointer hover:border-border hover:text-foreground"
                 >
                   <ChevronDownIcon className="size-3.5" />
-                  Scroll to bottom
                 </button>
               </div>
             )}
