@@ -31,7 +31,13 @@ export interface GlobalProviderEventSinkOptions {
 
 export interface GlobalProviderEventSink {
   readonly filePath: string;
-  push: (stream: EventNdjsonStream, threadId: ThreadId | null, event: unknown) => void;
+  /**
+   * `eventJson` is the event already serialized as JSON. Callers serialize
+   * once and hand the same string to both the per-thread log file and this
+   * sink, so a provider event is never stringified twice on the streaming
+   * hot path.
+   */
+  push: (stream: EventNdjsonStream, threadId: ThreadId | null, eventJson: string) => void;
   flush: Effect.Effect<void>;
 }
 
@@ -70,15 +76,14 @@ export const makeGlobalProviderEventSink = Effect.fn("makeGlobalProviderEventSin
 
   return {
     filePath: options.filePath,
-    push(stream, threadId, event) {
+    push(stream, threadId, eventJson) {
       try {
-        const line = {
-          observedAt: new Date().toISOString(),
-          stream,
-          threadId: threadId ?? null,
-          event,
-        };
-        buffer.push(`${JSON.stringify(line)}\n`);
+        // Spliced rather than re-serialized: `eventJson` is already JSON, so
+        // wrapping it by hand avoids a second JSON.stringify of the event.
+        const observedAt = new Date().toISOString();
+        buffer.push(
+          `{"observedAt":${JSON.stringify(observedAt)},"stream":${JSON.stringify(stream)},"threadId":${JSON.stringify(threadId ?? null)},"event":${eventJson}}\n`,
+        );
         if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {
           flushUnsafe();
         }

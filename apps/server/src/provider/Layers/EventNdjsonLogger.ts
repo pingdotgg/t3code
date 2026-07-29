@@ -260,14 +260,16 @@ export const makeEventNdjsonLogger = Effect.fn("makeEventNdjsonLogger")(function
   });
 
   const write = Effect.fn("write")(function* (event: unknown, threadId: ThreadId | null) {
-    globalSink?.push(options.stream, threadId, event);
-
-    const threadSegment = resolveThreadSegment(threadId);
     const message = yield* toLogMessage(event);
     if (!message) {
       return;
     }
 
+    // Pushed before resolving the thread writer so the consolidated sink still
+    // records events for threads whose per-thread file could not be opened.
+    globalSink?.push(options.stream, threadId, message);
+
+    const threadSegment = resolveThreadSegment(threadId);
     const writer = yield* resolveThreadWriter(threadSegment);
     if (!writer) {
       return;

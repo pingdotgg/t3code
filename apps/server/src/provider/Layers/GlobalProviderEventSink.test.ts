@@ -23,8 +23,8 @@ describe("GlobalProviderEventSink", () => {
             batchWindowMs: 5,
           });
 
-          sink.push("native", ThreadId.make("thread-1"), { id: "evt-1" });
-          sink.push("canonical", null, { id: "evt-2" });
+          sink.push("native", ThreadId.make("thread-1"), JSON.stringify({ id: "evt-1" }));
+          sink.push("canonical", null, JSON.stringify({ id: "evt-2" }));
           yield* sink.flush;
 
           const lines = fs
@@ -63,7 +63,7 @@ describe("GlobalProviderEventSink", () => {
               maxFiles: 10,
               batchWindowMs: 60_000,
             });
-            sink.push("native", ThreadId.make("thread-1"), { id: "evt-1" });
+            sink.push("native", ThreadId.make("thread-1"), JSON.stringify({ id: "evt-1" }));
           }),
         );
 
