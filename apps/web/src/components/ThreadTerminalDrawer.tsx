@@ -843,6 +843,10 @@ export function TerminalViewport({
         const terminal = terminalRef.current;
         const fitAddon = fitAddonRef.current;
         if (!terminal || !fitAddon) return;
+        // A hidden ancestor collapses the box to 0x0, and fitting to that would
+        // hand the PTY a minimal grid: the running program reflows its output
+        // for a viewport nobody can see, and keeps it until the drawer returns.
+        if (container.clientWidth === 0 || container.clientHeight === 0) return;
         const previous = { cols: terminal.cols, rows: terminal.rows };
         const size = refitTerminal(terminal, fitAddon);
         // Pixel changes rarely move the grid; only tell the PTY when they do.
