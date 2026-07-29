@@ -44,7 +44,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  makePackageManagedProviderMaintenanceResolver,
+  makeSelfUpdatingProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -60,11 +60,13 @@ import {
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
-const UPDATE = makePackageManagedProviderMaintenanceResolver({
+const UPDATE = makeSelfUpdatingProviderMaintenanceResolver({
   provider: DRIVER_KIND,
-  npmPackageName: "@openai/codex",
-  homebrewFormula: "codex",
-  nativeUpdate: null,
+  packageName: "@openai/codex",
+  executable: "codex",
+  args: ["update"],
+  lockKey: "codex-self-update",
+  minimumVersion: "0.126.0",
 });
 
 /**

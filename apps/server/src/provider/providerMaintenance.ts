@@ -48,6 +48,7 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
+  readonly minimumVersion?: string;
 }
 
 export interface ProviderMaintenanceCapabilityResolutionOptions {
@@ -100,6 +101,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
+  readonly updateMinimumVersion?: string;
 }): ProviderMaintenanceCapabilities {
   const update =
     input.updateExecutable === null || input.updateLockKey === null
@@ -109,11 +111,36 @@ export function makeProviderMaintenanceCapabilities(input: {
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
+          ...(input.updateMinimumVersion ? { minimumVersion: input.updateMinimumVersion } : {}),
         };
   return {
     provider: input.provider,
     packageName: input.packageName,
     update,
+  };
+}
+
+export function makeSelfUpdatingProviderMaintenanceResolver(input: {
+  readonly provider: ProviderDriverKind;
+  readonly packageName: string | null;
+  readonly executable: string;
+  readonly args: ReadonlyArray<string>;
+  readonly lockKey: string;
+  readonly minimumVersion?: string;
+}): ProviderMaintenanceCapabilitiesResolver {
+  return {
+    resolve: (options) =>
+      makeProviderMaintenanceCapabilities({
+        provider: input.provider,
+        packageName: input.packageName,
+        updateExecutable:
+          nonEmptyString(options?.resolvedCommandPath) ??
+          nonEmptyString(options?.binaryPath) ??
+          input.executable,
+        updateArgs: input.args,
+        updateLockKey: input.lockKey,
+        ...(input.minimumVersion ? { updateMinimumVersion: input.minimumVersion } : {}),
+      }),
   };
 }
 
@@ -408,16 +435,38 @@ export function createProviderVersionAdvisory(input: {
     currentVersion: input.currentVersion,
     latestVersion,
   });
+  const canUpdate = canRunProviderMaintenanceUpdate(capabilities, input.currentVersion);
 
   return {
     status: advisory.status,
     currentVersion: input.currentVersion,
     latestVersion,
-    updateCommand: capabilities.update?.command ?? null,
-    canUpdate: capabilities.update !== null,
+    updateCommand: canUpdate ? (capabilities.update?.command ?? null) : null,
+    canUpdate,
     checkedAt: input.checkedAt ?? null,
-    message: advisory.message,
+    message:
+      advisory.status === "behind_latest" && !canUpdate
+        ? "Update this provider manually, then refresh provider status."
+        : advisory.message,
   };
+}
+
+export function canRunProviderMaintenanceUpdate(
+  maintenanceCapabilities: ProviderMaintenanceCapabilities,
+  currentVersion: string | null | undefined,
+): boolean {
+  const update = maintenanceCapabilities.update;
+  if (!update) {
+    return false;
+  }
+  if (!update.minimumVersion) {
+    return true;
+  }
+  return (
+    currentVersion !== null &&
+    currentVersion !== undefined &&
+    compareSemverVersions(currentVersion, update.minimumVersion) >= 0
+  );
 }
 
 const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {

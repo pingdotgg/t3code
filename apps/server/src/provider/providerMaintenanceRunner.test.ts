@@ -299,6 +299,48 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("requires manual updates below a provider self-update minimum version", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        version: "0.125.0",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@openai/codex",
+              updateExecutable: "codex",
+              updateArgs: ["update"],
+              updateLockKey: "codex-self-update",
+              updateMinimumVersion: "0.126.0",
+            }),
+          ),
+      });
+
+      const exit = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.exit);
+      assert(Exit.isFailure(exit));
+      const error = Cause.squash(exit.cause);
+      assert(isServerProviderUpdateError(error));
+      assert.strictEqual(error.reason, "This installed provider version must be updated manually.");
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.126.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect(
     "runs update commands through Effect ChildProcess when no test runner is injected",
     () => {

@@ -14,6 +14,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
+  makeSelfUpdatingProviderMaintenanceResolver,
   makeStaticProviderMaintenanceResolver,
   normalizeCommandPath,
   ProviderVersionCache,
@@ -68,6 +69,14 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateLockKey: "static-tool",
   }),
 );
+const selfUpdatingTool = makeSelfUpdatingProviderMaintenanceResolver({
+  provider: driver("selfUpdatingTool"),
+  packageName: "@example/self-updating-tool",
+  executable: "self-updating-tool",
+  args: ["update"],
+  lockKey: "self-updating-tool",
+  minimumVersion: "2.0.0",
+});
 const installedPackageToolProvider: ServerProvider = {
   instanceId: ProviderInstanceId.make("packageTool"),
   driver: driver("packageTool"),
@@ -195,6 +204,56 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
         lockKey: "static-tool",
       },
+    });
+  });
+
+  it("uses the resolved provider binary for self-updates", () => {
+    expect(
+      selfUpdatingTool.resolve({
+        binaryPath: "self-updating-tool",
+        resolvedCommandPath: "/opt/tools/self-updating-tool",
+      }),
+    ).toEqual({
+      provider: driver("selfUpdatingTool"),
+      packageName: "@example/self-updating-tool",
+      update: {
+        command: "/opt/tools/self-updating-tool update",
+        executable: "/opt/tools/self-updating-tool",
+        args: ["update"],
+        lockKey: "self-updating-tool",
+        minimumVersion: "2.0.0",
+      },
+    });
+  });
+
+  it("keeps self-update guidance manual below the supported provider version", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("selfUpdatingTool"),
+        currentVersion: "1.9.9",
+        latestVersion: "2.1.0",
+        maintenanceCapabilities: selfUpdatingTool.resolve(),
+      }),
+    ).toMatchObject({
+      status: "behind_latest",
+      updateCommand: null,
+      canUpdate: false,
+      message: "Update this provider manually, then refresh provider status.",
+    });
+  });
+
+  it("enables self-updates at the minimum supported provider version", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("selfUpdatingTool"),
+        currentVersion: "2.0.0",
+        latestVersion: "2.1.0",
+        maintenanceCapabilities: selfUpdatingTool.resolve(),
+      }),
+    ).toMatchObject({
+      status: "behind_latest",
+      updateCommand: "self-updating-tool update",
+      canUpdate: true,
     });
   });
 

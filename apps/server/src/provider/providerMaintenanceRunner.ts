@@ -23,7 +23,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
-import { enrichProviderSnapshotWithVersionAdvisory } from "./providerMaintenance.ts";
+import {
+  canRunProviderMaintenanceUpdate,
+  enrichProviderSnapshotWithVersionAdvisory,
+} from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
@@ -302,6 +305,15 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       return yield* new ServerProviderUpdateError({
         provider,
         reason: "This provider does not support one-click updates.",
+      });
+    }
+    const currentProvider = (yield* providerRegistry.getProviders).find(
+      (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
+    );
+    if (!canRunProviderMaintenanceUpdate(capabilities, currentProvider?.version)) {
+      return yield* new ServerProviderUpdateError({
+        provider,
+        reason: "This installed provider version must be updated manually.",
       });
     }
 
