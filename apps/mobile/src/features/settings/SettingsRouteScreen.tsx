@@ -8,7 +8,15 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type ComponentType,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -51,6 +59,11 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import {
+  SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE,
+  type SettingsMode,
+  type SharedSettingsTailSectionId,
+} from "./settingsContract";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -129,17 +142,7 @@ function LocalSettingsRouteScreen() {
           />
         </SettingsSection>
 
-        <GeneralSettingsSection />
-
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
-        </SettingsSection>
-
-        <BetaSettingsSection />
-
-        <ArchivedThreadsSettingsSection />
-
-        <AppSettingsSection />
+        <SharedSettingsTail mode="local" />
       </ScrollView>
     </View>
   );
@@ -517,19 +520,28 @@ function ConfiguredSettingsRouteScreen() {
           />
         </SettingsSection>
 
-        <GeneralSettingsSection />
-
-        <SettingsSection title="Appearance">
-          <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
-        </SettingsSection>
-
-        <BetaSettingsSection />
-
-        <ArchivedThreadsSettingsSection />
-
-        <AppSettingsSection />
+        <SharedSettingsTail mode="configured" />
       </ScrollView>
     </View>
+  );
+}
+
+const SHARED_SETTINGS_TAIL_COMPONENTS = {
+  general: GeneralSettingsSection,
+  appearance: AppearanceSettingsSection,
+  beta: BetaSettingsSection,
+  archive: ArchivedThreadsSettingsSection,
+  app: AppSettingsSection,
+} satisfies Record<SharedSettingsTailSectionId, ComponentType>;
+
+function SharedSettingsTail({ mode }: { mode: SettingsMode }) {
+  return (
+    <>
+      {SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE[mode].map((sectionId) => {
+        const Section = SHARED_SETTINGS_TAIL_COMPONENTS[sectionId];
+        return <Section key={sectionId} />;
+      })}
+    </>
   );
 }
 
@@ -548,6 +560,14 @@ function GeneralSettingsSection() {
         value={projectGroupingEnabled}
         onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
       />
+    </SettingsSection>
+  );
+}
+
+function AppearanceSettingsSection() {
+  return (
+    <SettingsSection title="Appearance">
+      <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
     </SettingsSection>
   );
 }

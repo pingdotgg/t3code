@@ -47,6 +47,10 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import {
+  SETTINGS_ARCHIVE_ROUTE_CONTRACT,
+  SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT,
+} from "./features/settings/settingsContract";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -160,11 +164,11 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Add Environment",
       },
     }),
-    SettingsArchive: createNativeStackScreen({
+    [SETTINGS_ARCHIVE_ROUTE_CONTRACT.name]: createNativeStackScreen({
       screen: ArchivedThreadsRouteScreen,
-      linking: "archive",
+      linking: SETTINGS_ARCHIVE_ROUTE_CONTRACT.linking,
       options: {
-        title: "Archived Threads",
+        title: SETTINGS_ARCHIVE_ROUTE_CONTRACT.title,
       },
     }),
     SettingsAppearance: createNativeStackScreen({
@@ -188,12 +192,12 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Sign in",
       },
     }),
-    SettingsWaitlist: createNativeStackScreen({
+    [SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name]: createNativeStackScreen({
       // Keep the old deep link working after the Connect GA launch.
       screen: SettingsAuthRouteScreen,
-      linking: "waitlist",
+      linking: SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.linking,
       options: {
-        title: "Sign in",
+        title: SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.title,
       },
     }),
   },
