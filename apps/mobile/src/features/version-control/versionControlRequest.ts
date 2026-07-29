@@ -5,6 +5,24 @@ export class VersionControlCommandInterrupted extends Error {
   }
 }
 
+export async function runInitialRemoteFetch(options: {
+  readonly cwd: string;
+  readonly fetchedCwds: Set<string>;
+  readonly fetch: () => Promise<unknown>;
+  readonly refresh: () => Promise<unknown>;
+}): Promise<boolean> {
+  if (options.fetchedCwds.has(options.cwd)) return false;
+  options.fetchedCwds.add(options.cwd);
+  try {
+    await options.fetch();
+    await options.refresh();
+    return true;
+  } catch {
+    options.fetchedCwds.delete(options.cwd);
+    return false;
+  }
+}
+
 export async function retryInterruptedVersionControlRequest<TResult>(
   request: () => Promise<TResult>,
   maxRetries = 1,

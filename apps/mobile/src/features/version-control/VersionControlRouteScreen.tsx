@@ -47,7 +47,10 @@ import {
   VersionControlCommandInterrupted,
   useVersionControlPanelApi,
 } from "./useVersionControlPanelApi";
-import { retryInterruptedVersionControlRequest } from "./versionControlRequest";
+import {
+  retryInterruptedVersionControlRequest,
+  runInitialRemoteFetch,
+} from "./versionControlRequest";
 import {
   BranchCommitRow,
   CompactTag,
@@ -309,13 +312,12 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       if (!selectedThreadCwd) return;
       const cwd = selectedThreadCwd;
       void refreshSnapshot();
-      if (!initiallyFetchedCwds.current.has(cwd)) {
-        initiallyFetchedCwds.current.add(cwd);
-        void api
-          .fetchAllRemotes({ cwd })
-          .then(() => refreshSnapshot())
-          .catch(() => undefined);
-      }
+      void runInitialRemoteFetch({
+        cwd,
+        fetchedCwds: initiallyFetchedCwds.current,
+        fetch: () => api.fetchAllRemotes({ cwd }),
+        refresh: refreshSnapshot,
+      });
     }, [api, refreshSnapshot, selectedThreadCwd]),
   );
 
