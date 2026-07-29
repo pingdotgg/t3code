@@ -817,6 +817,38 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatus.status).toBe("completed");
             expect(delegatedStatus.resultContextTransferId).not.toBeNull();
 
+            const childFollowupCall = yield* invoke("t3_thread_send", {
+              threadId: delegated.childThreadId,
+              message: "Confirm the delegated API boundary remains inspected.",
+              clientRequestId: "delegated-child-followup-1",
+            });
+            const childFollowup = yield* decodeThreadSendResult(
+              childFollowupCall.structuredContent,
+            ).pipe(Effect.orDie);
+            const childFollowupWaitCall = yield* invoke("t3_thread_wait", {
+              threadId: delegated.childThreadId,
+              runId: childFollowup.runId,
+              timeoutMs: 10_000,
+            });
+            const childFollowupWait = yield* decodeThreadWaitResult(
+              childFollowupWaitCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(childFollowupWait).toMatchObject({
+              runId: childFollowup.runId,
+              status: "completed",
+              timedOut: false,
+            });
+            const delegatedStatusAfterFollowupCall = yield* invoke("task_status", {
+              taskId: delegated.taskId,
+            });
+            const delegatedStatusAfterFollowup = yield* decodeDelegateTaskResult(
+              delegatedStatusAfterFollowupCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(delegatedStatusAfterFollowup).toMatchObject({
+              childRunId: childFollowup.runId,
+              status: "completed",
+            });
+
             // A wait-mode child (completionWake settled_only) that completes
             // while the parent run is live does not offer a wake: the
             // blocking delegate_task call above already returned the result.

@@ -7,6 +7,8 @@ import * as NodeURL from "node:url";
 
 import { expect, it } from "vite-plus/test";
 
+import { acpReplayAgentArgs } from "../src/orchestration-v2/Adapters/AcpAdapterV2.testkit.ts";
+
 const replayAgentPath = NodeURL.fileURLToPath(new URL("./acp-replay-agent.ts", import.meta.url));
 
 async function runRuntimeExit(status: "success" | "error" | "cancelled") {
@@ -16,7 +18,8 @@ async function runRuntimeExit(status: "success" | "error" | "cancelled") {
     scenario: `${status}-runtime-exit`,
     entries: [{ type: "runtime_exit", status }],
   };
-  const child = NodeChildProcess.spawn(process.execPath, [replayAgentPath], {
+  const args = acpReplayAgentArgs(replayAgentPath);
+  const child = NodeChildProcess.spawn(process.execPath, args, {
     env: {
       ...process.env,
       T3_ACP_REPLAY_STATUS_PATH: statusPath,
@@ -42,6 +45,7 @@ async function runRuntimeExit(status: "success" | "error" | "cancelled") {
       status: JSON.parse(NodeFS.readFileSync(statusPath, "utf8")) as unknown,
       stderr,
       transcript,
+      args,
     };
   } finally {
     NodeFS.rmSync(scratch, { recursive: true, force: true });
@@ -51,6 +55,7 @@ async function runRuntimeExit(status: "success" | "error" | "cancelled") {
 it("accepts a recorded cancelled runtime exit", async () => {
   const result = await runRuntimeExit("cancelled");
   expect(result.code, result.stderr).toBe(0);
+  expect(result.args).toEqual(["--experimental-strip-types", replayAgentPath]);
   expect(result.status).toEqual({
     scenario: result.transcript.scenario,
     cursor: 1,
