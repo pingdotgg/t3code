@@ -4,7 +4,7 @@ The first-class Version Control panel includes a singleton right-panel surface, 
 
 Web source-control rows use the shared Sidebar v2 rich-tooltip presentation and timing. Working tree, file, branch, commit, stash, and remote cards expose their full paths or refs and relevant status, timestamp, identity, URL, and line-change details without covering the row. File cards use trigger-scoped virtual anchors while retaining a common panel-aligned left edge. Nested action buttons keep their terse label tooltips and preserve the parent rich card only for the nested trigger in that same row, so unrelated tooltips elsewhere are unaffected.
 
-VCS status ignores internal `.git/` watcher events before refreshing local status and uses a conservative default automatic remote Git fetch interval.
+VCS status ignores internal `.git/` watcher events before refreshing local status. In `packages/contracts/src/settings.ts`, the default `backgroundActivity` is a custom profile based on `balanced` that overrides only the automatic remote Git fetch interval to five minutes. `packages/shared/src/backgroundActivitySettings.ts` resolves that default and reconciles legacy flat settings, while explicit `performance`, `balanced`, and `battery-saver` selections retain their preset fetch behavior of 15 seconds, 30 seconds, and disabled respectively. Source Control settings may override the interval, including setting it to zero so remote fetches occur only through explicit Git actions.
 
 Provider-backed change-request lookups remain best-effort in the panel service. Provider/auth/CLI failures must not fail the whole panel snapshot or hide git-derived actionable branch rows.
 
