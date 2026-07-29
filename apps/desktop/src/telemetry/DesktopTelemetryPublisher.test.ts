@@ -1,3 +1,4 @@
+import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -7,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -147,13 +149,21 @@ describe("DesktopTelemetryPublisher", () => {
         const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
         const encoded = yield* publisher.encoded.pipe(Stream.take(2), Stream.runCollect);
         const decoder = new TextDecoder();
-        const messages = Array.from(encoded, (bytes) => JSON.parse(decoder.decode(bytes).trim()));
+        const decodeMessage = Schema.decodeUnknownEffect(
+          Schema.fromJsonString(DesktopHostTelemetryMessage),
+        );
+        const messages = yield* Effect.forEach(encoded, (bytes) =>
+          decodeMessage(decoder.decode(bytes).trim()),
+        );
 
         assert.equal(messages[0]?.type, "desktopTelemetryHello");
         assert.equal(messages[0]?.electronPid, process.pid);
-        assert.equal(messages[1]?.type, "desktopTelemetry");
-        assert.deepEqual(messages[1]?.electronProcesses, []);
-        assert.equal(messages[1]?.electronPid, process.pid);
+        const initialSnapshot = messages[1];
+        if (initialSnapshot?.type !== "desktopTelemetry") {
+          return assert.fail("Expected the second telemetry message to be a snapshot.");
+        }
+        assert.deepEqual(initialSnapshot.electronProcesses, []);
+        assert.equal(initialSnapshot.electronPid, process.pid);
         assert.equal(metricsReadCount, 0);
 
         const nextSnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(Effect.forkChild);
@@ -260,6 +270,15 @@ describe("DesktopTelemetryPublisher", () => {
         speedLimitListener?.(65);
         const speedLimitSnapshot = Option.getOrThrow(yield* Fiber.join(speedLimitSnapshotFiber));
         assert.equal(Option.getOrNull(speedLimitSnapshot.speedLimitPercent), 65);
+
+        const encodedSpeedLimit = yield* publisher.encoded.pipe(Stream.take(2), Stream.runCollect);
+        const decodedSpeedLimit = yield* decodeMessage(decoder.decode(encodedSpeedLimit[1]).trim());
+        if (decodedSpeedLimit.type !== "desktopTelemetry") {
+          return assert.fail("Expected the encoded telemetry message to be a snapshot.");
+        }
+        assert.equal(Option.getOrNull(decodedSpeedLimit.speedLimitPercent), 65);
+        assert.equal(decodedSpeedLimit.electronProcesses[0]?.pid, 4_242);
+        assert.equal(decodedSpeedLimit.electronProcesses[0]?.creationTimeMs, 1_001);
 
         const metricsBeforeSecondaryOnlySample = metricsReadCount;
         yield* TestClock.adjust(Duration.seconds(15));

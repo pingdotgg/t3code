@@ -220,14 +220,19 @@ export const DesktopElectronProcessMetric = Schema.Struct({
 });
 export type DesktopElectronProcessMetric = typeof DesktopElectronProcessMetric.Type;
 
+const DesktopHostPowerSnapshot = Schema.Struct({
+  ...HostPowerSnapshot.fields,
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+
 export const DesktopHostTelemetrySnapshot = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("desktopTelemetry"),
   sequence: NonNegativeInt,
   sampledAtUnixMs: NonNegativeInt,
   electronPid: PositiveInt,
-  power: HostPowerSnapshot,
-  speedLimitPercent: Schema.Option(Schema.Number),
+  power: DesktopHostPowerSnapshot,
+  speedLimitPercent: Schema.OptionFromNullOr(Schema.Number),
   electronProcesses: Schema.Array(DesktopElectronProcessMetric),
 });
 export type DesktopHostTelemetrySnapshot = typeof DesktopHostTelemetrySnapshot.Type;
