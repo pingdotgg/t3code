@@ -415,6 +415,12 @@ function isMissingGitCwdError(error: GitCommandError): boolean {
 function isNonRepositoryGitStderr(stderr: string): boolean {
   return stderr.toLowerCase().includes("not a git repository");
 }
+function isUnbornHeadStderr(stderr: string): boolean {
+  return (
+    stderr.toLowerCase().includes("unknown revision") &&
+    stderr.toLowerCase().includes("path not in the working tree")
+  );
+}
 
 interface Trace2Monitor {
   readonly env: NodeJS.ProcessEnv;
@@ -1511,27 +1517,73 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
-    const [unstagedNumstatStdout, stagedNumstatStdout, defaultRefResult, hasPrimaryRemote] =
-      yield* Effect.all(
-        [
-          runGitStdout("GitVcsDriver.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
-          runGitStdout("GitVcsDriver.statusDetails.stagedNumstat", cwd, [
-            "diff",
-            "--cached",
-            "--numstat",
-          ]),
-          executeGit(
-            "GitVcsDriver.statusDetails.defaultRef",
-            cwd,
-            ["symbolic-ref", "refs/remotes/origin/HEAD"],
-            {
-              allowNonZeroExit: true,
-            },
-          ),
-          originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
-        ],
-        { concurrency: "unbounded" },
-      );
+    const [numstatStdout, defaultRefResult, hasPrimaryRemote] = yield* Effect.all(
+      [
+        executeGitWithStableDiagnostics(
+          "GitVcsDriver.statusDetails.numstat",
+          cwd,
+          ["diff", "HEAD", "--numstat"],
+          { allowNonZeroExit: true },
+        ).pipe(
+          Effect.flatMap((result) => {
+            if (result.exitCode === 0) return Effect.succeed(result.stdout);
+            if (isUnbornHeadStderr(result.stderr)) {
+              return Effect.map(
+                Effect.all([
+                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn", cwd, [
+                    "diff",
+                    "--numstat",
+                  ]),
+                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
+                    "diff",
+                    "--cached",
+                    "--numstat",
+                  ]),
+                ]),
+                ([unstagedStdout, stagedStdout]) => {
+                  const staged = parseNumstatEntries(stagedStdout);
+                  const unstaged = parseNumstatEntries(unstagedStdout);
+                  const map = new Map<string, { insertions: number; deletions: number }>();
+                  for (const entry of [...staged, ...unstaged]) {
+                    const existing = map.get(entry.path) ?? {
+                      insertions: 0,
+                      deletions: 0,
+                    };
+                    existing.insertions += entry.insertions;
+                    existing.deletions += entry.deletions;
+                    map.set(entry.path, existing);
+                  }
+                  return Array.from(map.entries())
+                    .map(([p, s]) => `${s.insertions}\t${s.deletions}\t${p}`)
+                    .join("\n");
+                },
+              );
+            }
+            return Effect.fail(
+              new GitCommandError({
+                ...gitCommandContext({
+                  operation: "GitVcsDriver.statusDetails.numstat",
+                  cwd,
+                  args: ["diff", "HEAD", "--numstat"],
+                }),
+                detail: "git diff HEAD --numstat failed.",
+                exitCode: result.exitCode,
+                stdoutLength: result.stdout.length,
+                stderrLength: result.stderr.length,
+              }),
+            );
+          }),
+        ),
+        executeGit(
+          "GitVcsDriver.statusDetails.defaultRef",
+          cwd,
+          ["symbolic-ref", "refs/remotes/origin/HEAD"],
+          { allowNonZeroExit: true },
+        ),
+        originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
+      ],
+      { concurrency: "unbounded" },
+    );
     const statusStdout = statusResult.stdout;
     const defaultBranch =
       defaultRefResult.exitCode === 0
@@ -1592,14 +1644,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : yield* computeAheadCountAgainstBase(cwd, refName).pipe(Effect.orElseSucceed(() => 0));
     }
 
-    const stagedEntries = parseNumstatEntries(stagedNumstatStdout);
-    const unstagedEntries = parseNumstatEntries(unstagedNumstatStdout);
+    const numstatEntries = parseNumstatEntries(numstatStdout);
     const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
-    for (const entry of [...stagedEntries, ...unstagedEntries]) {
-      const existing = fileStatMap.get(entry.path) ?? { insertions: 0, deletions: 0 };
-      existing.insertions += entry.insertions;
-      existing.deletions += entry.deletions;
-      fileStatMap.set(entry.path, existing);
+    for (const entry of numstatEntries) {
+      fileStatMap.set(entry.path, { insertions: entry.insertions, deletions: entry.deletions });
     }
 
     let insertions = 0;
@@ -2001,7 +2049,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGit(
           "GitVcsDriver.readUntrackedReviewDiffs.diff",
           cwd,
-          ["diff", "--no-index", "--patch", "--minimal", "--", "/dev/null", relativePath],
+          [
+            "diff",
+            "--no-index",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            "--",
+            "/dev/null",
+            relativePath,
+          ],
           {
             allowNonZeroExit: true,
             maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
@@ -2046,6 +2105,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       [
         "diff",
         "--patch",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
         "--minimal",
         ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
         "HEAD",
@@ -2079,6 +2141,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             [
               "diff",
               "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
               "--minimal",
               ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
               `${baseRef}...HEAD`,
