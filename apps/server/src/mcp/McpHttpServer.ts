@@ -54,6 +54,17 @@ export const normalizeMcpHttpResponse = (
 };
 
 /**
+ * Authentication needs the raw query string, but the downstream MCP handler
+ * and any request logger must never receive the live connector credential.
+ */
+export const redactMcpRequestUrl = (
+  request: HttpServerRequest.HttpServerRequest,
+): HttpServerRequest.HttpServerRequest => ({
+  ...request,
+  url: redactConnectorToken(request.url),
+});
+
+/**
  * Reads the credential from the `Authorization` header, falling back to the
  * URL query parameter.
  *
@@ -97,6 +108,7 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
           return unauthorized;
         }
         return yield* httpEffect.pipe(
+          Effect.provideService(HttpServerRequest.HttpServerRequest, redactMcpRequestUrl(request)),
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.map(normalizeMcpHttpResponse),
         );

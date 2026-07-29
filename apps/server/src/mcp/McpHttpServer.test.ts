@@ -3,7 +3,13 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/unstable/ai";
-import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import {
+  HttpBody,
+  HttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 
 import * as McpHttpServer from "./McpHttpServer.ts";
 
@@ -48,6 +54,18 @@ it("falls back to the URL when the Authorization header is present but empty", (
   expect(
     McpHttpServer.readRequestToken({ authorization: "Bearer  ", url: "/mcp?k=fallback" }),
   ).toBe("fallback");
+});
+
+it("redacts the query credential before a successful handler can log the request", () => {
+  const token = "live-connector-token";
+  const request = HttpServerRequest.fromWeb(
+    new Request(`https://connector.example.test/mcp?k=${token}&keep=1`),
+  );
+
+  const redacted = McpHttpServer.redactMcpRequestUrl(request);
+  expect(redacted.url).toContain("k=REDACTED");
+  expect(redacted.url).toContain("keep=1");
+  expect(redacted.url).not.toContain(token);
 });
 
 it("normalizes empty successful notification responses to accepted", () => {
