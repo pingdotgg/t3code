@@ -62,11 +62,13 @@ export const layer: Layer.Layer<
               cause: "The runtime request no longer exists.",
             });
           }
-          if (request.status !== "pending") {
+          // Dispatch validates the request while it is pending, then persists the
+          // resolved projection before this effect is executed.
+          if (request.status !== "resolved") {
             return yield* new RuntimeRequestResponseExecutionError({
               threadId: input.threadId,
               requestId: input.requestId,
-              cause: "The runtime request is no longer pending.",
+              cause: "The runtime request is not ready for response execution.",
             });
           }
           if (
