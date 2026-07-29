@@ -356,6 +356,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect("supplies the package maintainer that fpm-backed Linux targets require", () =>
+    Effect.gen(function* () {
+      const linux = yield* createBuildConfig(
+        "linux",
+        "deb",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const linuxConfig = linux.linux as {
+        readonly target: ReadonlyArray<string>;
+        readonly maintainer?: string;
+      };
+
+      assert.deepStrictEqual(linuxConfig.target, ["deb"]);
+      // electron-builder's FpmTarget aborts the build unless it can resolve a
+      // `Name <email>` maintainer, so this is what keeps deb/rpm buildable.
+      assert.match(linuxConfig.maintainer ?? "", /^.+ <[^@\s]+@[^@\s]+>$/u);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect("preserves both Linux icon resize failures with structural context", () => {
     const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
 

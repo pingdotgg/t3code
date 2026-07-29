@@ -573,6 +573,37 @@ jobs:
 
           vp run dist:desktop:artifact "${args[@]}"
 
+      - name: Build Linux deb package
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          # electron-builder writes update metadata for every fpm target, so the
+          # deb build would overwrite the AppImage updater manifest. Linux
+          # auto-update only supports the AppImage, so stash the manifest and put
+          # it back once the deb is packaged.
+          manifest_backup="$RUNNER_TEMP/linux-update-manifest"
+          mkdir -p "$manifest_backup"
+          for manifest in release/*-linux*.yml; do
+            cp "$manifest" "$manifest_backup/"
+          done
+
+          # --skip-build reuses the app compiled by the previous step; this only
+          # reruns packaging.
+          vp run dist:desktop:artifact \
+            --platform linux \
+            --target deb \
+            --arch "${{ matrix.arch }}" \
+            --build-version "${{ needs.preflight.outputs.version }}" \
+            --skip-build \
+            --verbose
+
+          for manifest in "$manifest_backup"/*.yml; do
+            cp "$manifest" release/
+          done
+
       - name: Collect release assets
         shell: bash
         run: |
@@ -584,6 +615,7 @@ jobs:
             "release/*.dmg" \
             "release/*.zip" \
             "release/*.AppImage" \
+            "release/*.deb" \
             "release/*.exe" \
             "release/*.blockmap" \
             "release/*.yml"; do
@@ -804,6 +836,7 @@ jobs:
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
+            release-assets/*.deb
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
@@ -824,6 +857,7 @@ jobs:
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
+            release-assets/*.deb
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
