@@ -306,6 +306,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:get-claude-resumable-session-transcript",
       tag: WS_METHODS.serverGetClaudeResumableSessionTranscript,
     }),
+    setClaudeThreadRemoteControl: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:set-claude-thread-remote-control",
+      tag: WS_METHODS.serverSetClaudeThreadRemoteControl,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

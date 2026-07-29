@@ -455,6 +455,29 @@ export const ServerGetClaudeResumableSessionTranscriptResult = Schema.Struct({
 export type ServerGetClaudeResumableSessionTranscriptResult =
   typeof ServerGetClaudeResumableSessionTranscriptResult.Type;
 
+/**
+ * Turns Remote Control on/off for an already-created Claude Code thread
+ * (as opposed to `ThreadTurnStartBootstrapCreateThread.remoteControl`,
+ * which only applies at thread-creation time). Since Remote Control is a
+ * `claude` process launch flag, not something a running process can be
+ * told to flip live, applying this to a thread with an active session
+ * stops that session — it relaunches with the flag on the thread's next
+ * turn.
+ */
+export const ServerSetClaudeThreadRemoteControlInput = Schema.Struct({
+  threadId: ThreadId,
+  providerInstanceId: ProviderInstanceId,
+  enabled: Schema.Boolean,
+});
+export type ServerSetClaudeThreadRemoteControlInput =
+  typeof ServerSetClaudeThreadRemoteControlInput.Type;
+
+export const ServerSetClaudeThreadRemoteControlResult = Schema.Struct({
+  applied: Schema.Boolean,
+});
+export type ServerSetClaudeThreadRemoteControlResult =
+  typeof ServerSetClaudeThreadRemoteControlResult.Type;
+
 export const ServerSignalProcessInput = Schema.Struct({
   pid: PositiveInt,
   signal: ServerProcessSignal,

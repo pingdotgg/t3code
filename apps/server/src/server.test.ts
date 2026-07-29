@@ -614,6 +614,7 @@ const buildAppUnderTest = (options?: {
             list: () => Effect.succeed({ sessions: [] }),
             getTranscript: () => Effect.succeed({ messages: [] }),
             bindSessionLaunchOptions: () => Effect.void,
+            setThreadRemoteControl: () => Effect.succeed({ applied: true }),
           }),
         ),
       ),

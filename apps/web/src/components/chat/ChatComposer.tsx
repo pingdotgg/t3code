@@ -163,6 +163,7 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
+  RadioTowerIcon,
   SparklesIcon,
   XIcon,
 } from "lucide-react";
@@ -267,9 +268,13 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
+  showRemoteControlToggle: boolean;
+  remoteControlEnabled: boolean;
+  remoteControlPending: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
+  onToggleRemoteControl: (enabled: boolean) => void;
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
@@ -392,6 +397,42 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
             </TooltipTrigger>
             <TooltipPopup side="top">{planSidebarTooltip}</TooltipPopup>
+          </Tooltip>
+        </>
+      ) : null}
+
+      {props.showRemoteControlToggle ? (
+        <>
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                    props.remoteControlEnabled
+                      ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
+                      : "text-muted-foreground/70 hover:text-foreground/80",
+                  )}
+                  size="sm"
+                  type="button"
+                  disabled={props.remoteControlPending}
+                  onClick={() => props.onToggleRemoteControl(!props.remoteControlEnabled)}
+                  aria-label={
+                    props.remoteControlEnabled ? "Disable Remote Control" : "Enable Remote Control"
+                  }
+                />
+              }
+            >
+              <RadioTowerIcon
+                className={props.remoteControlEnabled ? "text-current opacity-100" : undefined}
+              />
+              <span className="sr-only sm:not-sr-only">Remote Control</span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              Attach to this session from claude.ai or the Claude mobile app once it starts.
+            </TooltipPopup>
           </Tooltip>
         </>
       ) : null}
@@ -556,6 +597,11 @@ export interface ChatComposerProps {
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
 
+  // Remote Control
+  showRemoteControlToggle: boolean;
+  remoteControlEnabled: boolean;
+  remoteControlPending: boolean;
+
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
@@ -604,6 +650,7 @@ export interface ChatComposerProps {
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   togglePlanSidebar: () => void;
+  onToggleRemoteControl: (enabled: boolean) => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -651,6 +698,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planSidebarOpen,
     runtimeMode,
     interactionMode,
+    showRemoteControlToggle,
+    remoteControlEnabled,
+    remoteControlPending,
     lockedProvider,
     providerStatuses,
     activeProjectDefaultModelSelection,
@@ -680,6 +730,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     handleRuntimeModeChange,
     handleInteractionModeChange,
     togglePlanSidebar,
+    onToggleRemoteControl,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -2679,10 +2730,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     planSidebarOpen={planSidebarOpen}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                    showRemoteControlToggle={showRemoteControlToggle}
+                    remoteControlEnabled={remoteControlEnabled}
+                    remoteControlPending={remoteControlPending}
                     traitsMenuContent={providerTraitsMenuContent}
                     onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
                     onRuntimeModeChange={handleRuntimeModeChange}
+                    onToggleRemoteControl={onToggleRemoteControl}
                   />
                 ) : (
                   <>
@@ -2699,9 +2754,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
+                      showRemoteControlToggle={showRemoteControlToggle}
+                      remoteControlEnabled={remoteControlEnabled}
+                      remoteControlPending={remoteControlPending}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
+                      onToggleRemoteControl={onToggleRemoteControl}
                     />
                   </>
                 )}

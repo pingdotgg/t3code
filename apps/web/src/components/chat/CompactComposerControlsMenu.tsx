@@ -1,9 +1,10 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import { EllipsisIcon, ListTodoIcon, RadioTowerIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -19,10 +20,14 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
+  showRemoteControlToggle: boolean;
+  remoteControlEnabled: boolean;
+  remoteControlPending: boolean;
   traitsMenuContent?: ReactNode;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onToggleRemoteControl: (enabled: boolean) => void;
 }) {
   return (
     <Menu>
@@ -83,6 +88,22 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
                 ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
                 : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`}
             </MenuItem>
+          </>
+        ) : null}
+        {props.showRemoteControlToggle ? (
+          <>
+            <MenuDivider />
+            <MenuCheckboxItem
+              variant="switch"
+              checked={props.remoteControlEnabled}
+              disabled={props.remoteControlPending}
+              onCheckedChange={(checked) => props.onToggleRemoteControl(Boolean(checked))}
+            >
+              <span className="inline-flex items-center gap-2">
+                <RadioTowerIcon className="size-4 shrink-0" />
+                Remote Control
+              </span>
+            </MenuCheckboxItem>
           </>
         ) : null}
       </MenuPopup>

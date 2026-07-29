@@ -37,6 +37,8 @@ import {
   type ServerGetClaudeResumableSessionTranscriptResult,
   type ServerListClaudeResumableSessionsInput,
   type ServerListClaudeResumableSessionsResult,
+  type ServerSetClaudeThreadRemoteControlInput,
+  type ServerSetClaudeThreadRemoteControlResult,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -53,6 +55,7 @@ import { resolveClaudeConfigDirPath } from "../Drivers/ClaudeSkills.ts";
 import { ProviderValidationError } from "../Errors.ts";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
+import { ProviderService } from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import type { ProviderSessionDirectoryWriteError } from "../Services/ProviderSessionDirectory.ts";
 
@@ -236,7 +239,11 @@ export interface ClaudeSessionHistoryBindSessionLaunchOptionsInput {
   readonly providerInstanceId: ProviderInstanceId;
   /** Resume a picked on-disk session's model context via `--resume <uuid>`. */
   readonly resumeExternalSessionId?: string;
-  /** Start the session with Claude Code's Remote Control (`--remote-control`) enabled. */
+  /**
+   * Start the session with Claude Code's Remote Control (`--remote-control`)
+   * enabled, or explicitly disabled. `undefined` leaves whatever was
+   * previously bound untouched (e.g. a plain resume-only call).
+   */
   readonly remoteControl?: boolean;
 }
 
@@ -265,6 +272,20 @@ export class ClaudeSessionHistory extends Context.Service<
     readonly bindSessionLaunchOptions: (
       input: ClaudeSessionHistoryBindSessionLaunchOptionsInput,
     ) => Effect.Effect<void, ProviderValidationError | ProviderSessionDirectoryWriteError>;
+    /**
+     * Turns Remote Control on/off for an already-created thread. Unlike
+     * `bindSessionLaunchOptions` (thread-creation time only), this can run
+     * against a thread with an active running session — Remote Control is a
+     * `claude` process launch flag, not something a running process can be
+     * told to flip live, so this stops the thread's active session (if any)
+     * after binding the choice, so it relaunches with the flag applied on
+     * its next turn. Best-effort/non-fatal: `applied: false` on a bind
+     * failure (e.g. non-Claude instance); a stop failure or no active
+     * session never fails the call, since the bind itself already took.
+     */
+    readonly setThreadRemoteControl: (
+      input: ServerSetClaudeThreadRemoteControlInput,
+    ) => Effect.Effect<ServerSetClaudeThreadRemoteControlResult>;
   }
 >()("t3/provider/Layers/ClaudeSessionHistory") {}
 
@@ -273,6 +294,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const providerService = yield* ProviderService;
   const serverSettings = yield* ServerSettingsService;
 
   // Claude instances can be configured with a custom `homePath` (keeping
@@ -400,7 +422,7 @@ export const make = Effect.gen(function* () {
 
   const bindSessionLaunchOptions: ClaudeSessionHistory["Service"]["bindSessionLaunchOptions"] =
     Effect.fn("ClaudeSessionHistory.bindSessionLaunchOptions")(function* (input) {
-      if (input.resumeExternalSessionId === undefined && !input.remoteControl) {
+      if (input.resumeExternalSessionId === undefined && input.remoteControl === undefined) {
         return;
       }
       if (
@@ -425,20 +447,55 @@ export const make = Effect.gen(function* () {
           issue: `Resume/Remote Control are only supported for Claude Code provider instances; '${input.providerInstanceId}' is a '${instance.driverKind}' instance.`,
         });
       }
+      // Merge onto whatever's already bound (rather than replacing
+      // wholesale) — this can now be called on a thread that already has a
+      // `resume` cursor from a prior turn (e.g. toggling Remote Control on
+      // an existing, already-running thread), and clobbering that would
+      // strand the thread's actual Claude session continuity.
+      const existingBinding = yield* providerSessionDirectory.getBinding(input.threadId);
+      const existingResumeCursor = Option.getOrUndefined(existingBinding)?.resumeCursor;
+      const existingResumeCursorFields =
+        existingResumeCursor !== null &&
+        typeof existingResumeCursor === "object" &&
+        existingResumeCursor !== undefined
+          ? (existingResumeCursor as Record<string, unknown>)
+          : {};
       yield* providerSessionDirectory.upsert({
         threadId: input.threadId,
         provider: instance.driverKind,
         providerInstanceId: input.providerInstanceId,
         resumeCursor: {
+          ...existingResumeCursorFields,
           ...(input.resumeExternalSessionId !== undefined
             ? { resume: input.resumeExternalSessionId }
             : {}),
-          ...(input.remoteControl ? { remoteControl: true } : {}),
+          ...(input.remoteControl !== undefined ? { remoteControl: input.remoteControl } : {}),
         },
       });
     });
 
-  return ClaudeSessionHistory.of({ list, getTranscript, bindSessionLaunchOptions });
+  const setThreadRemoteControl: ClaudeSessionHistory["Service"]["setThreadRemoteControl"] =
+    Effect.fn("ClaudeSessionHistory.setThreadRemoteControl")(function* (input) {
+      const bindResult = yield* bindSessionLaunchOptions({
+        threadId: input.threadId,
+        providerInstanceId: input.providerInstanceId,
+        remoteControl: input.enabled,
+      }).pipe(Effect.result);
+      if (bindResult._tag === "Failure") {
+        return { applied: false };
+      }
+      yield* providerService
+        .stopSession({ threadId: input.threadId })
+        .pipe(Effect.catch(() => Effect.void));
+      return { applied: true };
+    });
+
+  return ClaudeSessionHistory.of({
+    list,
+    getTranscript,
+    bindSessionLaunchOptions,
+    setThreadRemoteControl,
+  });
 });
 
 export const layer = Layer.effect(ClaudeSessionHistory, make);

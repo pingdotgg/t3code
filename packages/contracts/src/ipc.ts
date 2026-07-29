@@ -44,6 +44,8 @@ import type {
   ServerProviderUpdateInput,
   ServerProviderUpdatedPayload,
   ServerRemoveKeybindingResult,
+  ServerSetClaudeThreadRemoteControlInput,
+  ServerSetClaudeThreadRemoteControlResult,
   ServerSignalProcessInput,
   ServerSignalProcessResult,
   ServerTraceDiagnosticsResult,
@@ -1164,6 +1166,9 @@ export interface LocalApi {
     getClaudeResumableSessionTranscript: (
       input: ServerGetClaudeResumableSessionTranscriptInput,
     ) => Promise<ServerGetClaudeResumableSessionTranscriptResult>;
+    setClaudeThreadRemoteControl: (
+      input: ServerSetClaudeThreadRemoteControlInput,
+    ) => Promise<ServerSetClaudeThreadRemoteControlResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
   };
 }

@@ -145,7 +145,6 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   HistoryIcon,
-  RadioTowerIcon,
   TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -239,7 +238,6 @@ import {
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
-import { Switch } from "./ui/switch";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -1143,6 +1141,10 @@ function ChatViewContent(props: ChatViewProps) {
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
+  const setClaudeThreadRemoteControl = useAtomCommand(
+    serverEnvironment.setClaudeThreadRemoteControl,
+    { reportFailure: false },
+  );
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -1289,11 +1291,17 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
-  // Remote Control can only be decided once, at thread creation — it's a
-  // launch flag for the session's underlying `claude` process, not
-  // something that can be toggled after it's already running. Reset
-  // whenever the viewed thread changes so it never leaks between drafts.
-  const [draftRemoteControlEnabled, setDraftRemoteControlEnabled] = useState(false);
+  // Remote Control is a launch flag for the session's underlying `claude`
+  // process, not something a running process can be told to flip live. For
+  // a draft thread this is just picked up at send time (see
+  // `bootstrap.createThread.remoteControl` below). For an existing thread
+  // it's applied via `setClaudeThreadRemoteControl`, which stops the
+  // thread's active session so it relaunches with the flag on its next
+  // turn. Local display state only — reset per thread since there's no
+  // read-path yet for whatever's actually bound server-side.
+  const [remoteControlEnabled, setRemoteControlEnabled] = useState(false);
+  const [remoteControlPending, setRemoteControlPending] = useState(false);
+  const [resumeBannerHidden, setResumeBannerHidden] = useState(false);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
   const [
     pendingServerThreadStartFromOriginByThreadId,
@@ -4134,6 +4142,45 @@ function ChatViewContent(props: ChatViewProps) {
     }
     void handleSwitchCheckoutToThread();
   }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
+  const handleToggleRemoteControl = useCallback(
+    async (nextEnabled: boolean) => {
+      setRemoteControlEnabled(nextEnabled);
+      if (isLocalDraftThread || !activeThread) {
+        // Draft threads only pick this up at send time (see
+        // `bootstrap.createThread.remoteControl`) — nothing to call yet.
+        return;
+      }
+      setRemoteControlPending(true);
+      const result = await setClaudeThreadRemoteControl({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          providerInstanceId: activeThread.modelSelection.instanceId,
+          enabled: nextEnabled,
+        },
+      });
+      setRemoteControlPending(false);
+      if (result._tag === "Failure") {
+        setRemoteControlEnabled(!nextEnabled);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Couldn't update Remote Control",
+            description: "Something went wrong applying the change. Try again.",
+          }),
+        );
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: nextEnabled ? "Remote Control enabled" : "Remote Control disabled",
+          description: "Applies the next time this thread's session starts.",
+        }),
+      );
+    },
+    [isLocalDraftThread, activeThread, environmentId, setClaudeThreadRemoteControl],
+  );
   const pendingResumeSessionIntent = useResumeSessionIntentStore((store) =>
     isLocalDraftThread && activeThread ? (store.intentByThreadId[activeThread.id] ?? null) : null,
   );
@@ -4152,6 +4199,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
   const resumeSessionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!pendingResumeSessionIntent || !isLocalDraftThread || !activeThread) return null;
+    if (resumeBannerHidden) return null;
     const draftThreadId = activeThread.id;
     return {
       id: `resume-session:${pendingResumeSessionIntent.resumeExternalSessionId}`,
@@ -4164,43 +4212,31 @@ function ChatViewContent(props: ChatViewProps) {
           Cancel
         </Button>
       ),
+      // Hides the banner without cancelling the resume — the resume still
+      // happens on send. Kept separate from the `actions` Cancel button
+      // above (which does cancel) via the same deferred-animation path
+      // already used for the branch-mismatch banner below: unlike Cancel,
+      // hiding isn't correctness-critical, so the 220ms dismiss race is
+      // harmless here.
+      dismissLabel: "Hide (still resumes on send)",
+      onDismiss: () => setResumeBannerHidden(true),
     };
-  }, [pendingResumeSessionIntent, isLocalDraftThread, activeThread, cancelResumeSessionIntent]);
-  const canOfferRemoteControlToggle =
-    isLocalDraftThread && selectedProvider === ProviderDriverKind.make("claudeAgent");
-  const remoteControlBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
-    if (!canOfferRemoteControlToggle) return null;
-    return {
-      id: "draft-remote-control",
-      variant: "info",
-      icon: <RadioTowerIcon />,
-      title: "Remote Control",
-      description: "Attach to this session from claude.ai or the Claude mobile app once it starts.",
-      actions: (
-        <Switch
-          checked={draftRemoteControlEnabled}
-          onCheckedChange={(checked) => setDraftRemoteControlEnabled(Boolean(checked))}
-          aria-label="Enable Remote Control for this session"
-        />
-      ),
-    };
-  }, [canOfferRemoteControlToggle, draftRemoteControlEnabled]);
+  }, [
+    pendingResumeSessionIntent,
+    isLocalDraftThread,
+    activeThread,
+    resumeBannerHidden,
+    cancelResumeSessionIntent,
+  ]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     const resumeSessionItems = resumeSessionBannerItem === null ? [] : [resumeSessionBannerItem];
-    const remoteControlItems = remoteControlBannerItem === null ? [] : [remoteControlBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
-      return [
-        ...systemComposerBannerItems,
-        ...resumeSessionItems,
-        ...remoteControlItems,
-        ...parkedThreadItems,
-      ];
+      return [...systemComposerBannerItems, ...resumeSessionItems, ...parkedThreadItems];
     }
     return [
       ...systemComposerBannerItems,
       ...resumeSessionItems,
-      ...remoteControlItems,
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",
@@ -4245,7 +4281,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     resumeSessionBannerItem,
-    remoteControlBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -4260,7 +4295,11 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThread?.id]);
 
   useEffect(() => {
-    setDraftRemoteControlEnabled(false);
+    setRemoteControlEnabled(false);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    setResumeBannerHidden(false);
   }, [activeThread?.id]);
 
   useEffect(() => {
@@ -4843,7 +4882,7 @@ function ChatViewContent(props: ChatViewProps) {
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                       ...(resumeExternalSessionId ? { resumeExternalSessionId } : {}),
-                      ...(draftRemoteControlEnabled ? { remoteControl: true } : {}),
+                      ...(remoteControlEnabled ? { remoteControl: true } : {}),
                     },
                   }
                 : {}),
@@ -5933,6 +5972,12 @@ function ChatViewContent(props: ChatViewProps) {
                             planSidebarOpen={planSidebarOpen}
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
+                            showRemoteControlToggle={
+                              selectedProvider === ProviderDriverKind.make("claudeAgent")
+                            }
+                            remoteControlEnabled={remoteControlEnabled}
+                            remoteControlPending={remoteControlPending}
+                            onToggleRemoteControl={handleToggleRemoteControl}
                             lockedProvider={lockedProvider}
                             providerStatuses={providerStatuses as ServerProvider[]}
                             activeProjectDefaultModelSelection={
