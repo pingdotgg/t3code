@@ -2,7 +2,7 @@
 // docs/wire-protocol.md), hand-ported 1:1 from
 // packages/contracts/src/orchestration.ts. This is the v1 method subset:
 // dispatchCommand (write path), getTurnDiff/getFullThreadDiff (diff panel),
-// replayEvents (reconnect catch-up), getArchivedShellSnapshot/subscribeShell
+// getArchivedShellSnapshot/subscribeShell
 // (project+thread sidebar), subscribeThread (chat timeline/approvals/
 // checkpoints). Diagnostics/keybindings/source-control RPCs are out of v1
 // scope (see apps/mac/ARCHITECTURE.md) and are not modeled here.
@@ -726,6 +726,11 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var archivedAt: String?
     public var settledOverride: String?
     public var settledAt: String?
+    /// Snooze overlay on the active lifecycle: suppressed from the inbox
+    /// until `snoozedUntil` passes (timer wakes emit no event) or activity
+    /// clears the snooze server-side. Absent on pre-snooze servers.
+    public var snoozedUntil: String?
+    public var snoozedAt: String?
     public var session: OrchestrationSession?
     public var latestUserMessageAt: String?
     public var hasPendingApprovals: Bool
@@ -738,7 +743,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
             executorModelSelection, executorMaxSubAgents, branch, worktreePath, parentThreadId,
-            latestTurn, createdAt, updatedAt, archivedAt, settledOverride, settledAt, session,
+            latestTurn, createdAt, updatedAt, archivedAt, settledOverride, settledAt,
+            snoozedUntil, snoozedAt, session,
             latestUserMessageAt, hasPendingApprovals, hasPendingUserInput,
             hasActionableProposedPlan, autoReviewPhase
     }
@@ -764,6 +770,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
         archivedAt = try c.decode(String?.self, forKey: .archivedAt, default: nil)
         settledOverride = try c.decode(String?.self, forKey: .settledOverride, default: nil)
         settledAt = try c.decode(String?.self, forKey: .settledAt, default: nil)
+        snoozedUntil = try c.decode(String?.self, forKey: .snoozedUntil, default: nil)
+        snoozedAt = try c.decode(String?.self, forKey: .snoozedAt, default: nil)
         session = try c.decode(OrchestrationSession?.self, forKey: .session, default: nil)
         latestUserMessageAt = try c.decode(String?.self, forKey: .latestUserMessageAt, default: nil)
         hasPendingApprovals = try c.decode(Bool.self, forKey: .hasPendingApprovals)
@@ -1160,6 +1168,38 @@ public struct ThreadUnsettleCommand: Encodable, Sendable {
     }
 }
 
+/// Snooze is an overlay on the active lifecycle, not a fourth destination:
+/// a snoozed thread stays "active" on the wire and clients suppress it until
+/// `snoozedUntil` passes (timer wakes emit no event) or the server clears the
+/// snooze on real activity.
+public struct ThreadSnoozeCommand: Encodable, Sendable {
+    public let type: String = "thread.snooze"
+    public var commandId: String
+    public var threadId: String
+    public var snoozedUntil: String
+
+    public init(commandId: String, threadId: String, snoozedUntil: String) {
+        self.commandId = commandId
+        self.threadId = threadId
+        self.snoozedUntil = snoozedUntil
+    }
+}
+
+public struct ThreadUnsnoozeCommand: Encodable, Sendable {
+    public let type: String = "thread.unsnooze"
+    public var commandId: String
+    public var threadId: String
+    /// Only "user": activity wakes are decided server-side and timer wakes
+    /// emit no command at all.
+    public var reason: String
+
+    public init(commandId: String, threadId: String, reason: String = "user") {
+        self.commandId = commandId
+        self.threadId = threadId
+        self.reason = reason
+    }
+}
+
 public struct ThreadMetaUpdateCommand: Encodable, Sendable {
     public let type: String = "thread.meta.update"
     public var commandId: String
@@ -1526,6 +1566,8 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
     case threadUnarchive(ThreadUnarchiveCommand)
     case threadSettle(ThreadSettleCommand)
     case threadUnsettle(ThreadUnsettleCommand)
+    case threadSnooze(ThreadSnoozeCommand)
+    case threadUnsnooze(ThreadUnsnoozeCommand)
     case threadMetaUpdate(ThreadMetaUpdateCommand)
     case threadRuntimeModeSet(ThreadRuntimeModeSetCommand)
     case threadInteractionModeSet(ThreadInteractionModeSetCommand)
@@ -1551,6 +1593,8 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
         case .threadUnarchive(let c): try container.encode(c)
         case .threadSettle(let c): try container.encode(c)
         case .threadUnsettle(let c): try container.encode(c)
+        case .threadSnooze(let c): try container.encode(c)
+        case .threadUnsnooze(let c): try container.encode(c)
         case .threadMetaUpdate(let c): try container.encode(c)
         case .threadRuntimeModeSet(let c): try container.encode(c)
         case .threadInteractionModeSet(let c): try container.encode(c)
@@ -1619,14 +1663,6 @@ public struct OrchestrationThreadLiveness: Decodable, Sendable {
     public var hasActiveTurn: Bool
     public var activeTurnId: String?
     public var checkedAt: String
-}
-
-public struct OrchestrationReplayEventsInput: Encodable, Sendable {
-    public var fromSequenceExclusive: Int
-
-    public init(fromSequenceExclusive: Int) {
-        self.fromSequenceExclusive = fromSequenceExclusive
-    }
 }
 
 // MARK: - Events (read-only; §3.1.3)

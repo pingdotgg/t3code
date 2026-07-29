@@ -1725,6 +1725,16 @@ public actor LiveBackend: BackendService {
         _ = try await client.unsettleThread(threadId: id)
     }
 
+    public func snoozeThread(id: String, until: Date) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.snoozeThread(threadId: id, snoozedUntil: WireDate.format(until))
+    }
+
+    public func unsnoozeThread(id: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.unsnoozeThread(threadId: id)
+    }
+
     public func deleteThread(id: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         _ = try await client.deleteThread(threadId: id)
@@ -3160,6 +3170,8 @@ public actor LiveBackend: BackendService {
             createdAt: WireDate.parse(shell.createdAt) ?? updatedAt, updatedAt: updatedAt,
             settledOverride: shell.settledOverride,
             settledAt: shell.settledAt.flatMap(WireDate.parse),
+            snoozedUntil: shell.snoozedUntil.flatMap(WireDate.parse),
+            snoozedAt: shell.snoozedAt.flatMap(WireDate.parse),
             latestUserMessageAt: shell.latestUserMessageAt.flatMap(WireDate.parse),
             latestTurnRequestedAt: shell.latestTurn.flatMap { WireDate.parse($0.requestedAt) },
             latestTurnStartedAt: shell.latestTurn?.startedAt.flatMap(WireDate.parse),

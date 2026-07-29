@@ -319,6 +319,29 @@ struct SidebarPresentationTests {
         #expect(split.settled.map(\.thread.id) == ["settled-new", "settled-old"])
     }
 
+    @Test("snoozed threads leave the active list until the wake time passes")
+    func groupThreadsSuppressSnoozed() {
+        let projectID = "project-snoozed"
+        let active = makeThread(id: "active", projectID: projectID, status: .idle, at: 9)
+        let snoozed = makeThread(
+            id: "snoozed", projectID: projectID, status: .idle, at: 8,
+            snoozedUntil: Date().addingTimeInterval(3600))
+        let woken = makeThread(
+            id: "woken", projectID: projectID, status: .idle, at: 7,
+            snoozedUntil: Date().addingTimeInterval(-60))
+        let local = makeModel(
+            projects: [Project(id: projectID, name: "Project", path: "/project")],
+            threads: [active, snoozed, woken])
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        let split = SidebarProjection.groupThreads(groups[0])
+
+        // A passed wake time simply stops classifying as snoozed — no event.
+        #expect(split.active.map(\.thread.id) == ["active", "woken"])
+        #expect(split.settled.map(\.thread.id) == ["snoozed"])
+    }
+
     private func makeModel(
         projects: [Project],
         threads: [ChatThread],
@@ -364,7 +387,8 @@ struct SidebarPresentationTests {
         parentThreadId: String? = nil,
         backgroundAgentCount: Int = 0,
         settledOverride: String? = nil,
-        settledAt: Date? = nil
+        settledAt: Date? = nil,
+        snoozedUntil: Date? = nil
     ) -> ChatThread {
         ChatThread(
             id: id,
@@ -375,6 +399,7 @@ struct SidebarPresentationTests {
             updatedAt: Date(timeIntervalSince1970: timestamp),
             settledOverride: settledOverride,
             settledAt: settledAt,
+            snoozedUntil: snoozedUntil,
             backgroundAgentCount: backgroundAgentCount,
             parentThreadId: parentThreadId)
     }

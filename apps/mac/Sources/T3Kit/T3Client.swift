@@ -235,12 +235,6 @@ public actor T3Client {
             OrchestrationGetThreadLivenessInput(threadId: threadId))
     }
 
-    public func replayEvents(fromSequenceExclusive: Int) async throws -> [OrchestrationEvent] {
-        try await call(
-            "orchestration.replayEvents",
-            OrchestrationReplayEventsInput(fromSequenceExclusive: fromSequenceExclusive))
-    }
-
     public func getArchivedShellSnapshot(
         cursor: Int? = nil, limit: Int? = nil
     ) async throws -> OrchestrationShellSnapshot {
@@ -374,6 +368,21 @@ public actor T3Client {
     public func unsettleThread(threadId: String) async throws -> DispatchResult {
         try await dispatch(
             .threadUnsettle(ThreadUnsettleCommand(commandId: T3Ids.newCommandId(), threadId: threadId, reason: "user")))
+    }
+
+    /// `snoozedUntil` is the ISO-8601 wake time (`T3Clock.nowISO8601()` format).
+    @discardableResult
+    public func snoozeThread(threadId: String, snoozedUntil: String) async throws -> DispatchResult {
+        try await dispatch(
+            .threadSnooze(
+                ThreadSnoozeCommand(
+                    commandId: T3Ids.newCommandId(), threadId: threadId, snoozedUntil: snoozedUntil)))
+    }
+
+    @discardableResult
+    public func unsnoozeThread(threadId: String) async throws -> DispatchResult {
+        try await dispatch(
+            .threadUnsnooze(ThreadUnsnoozeCommand(commandId: T3Ids.newCommandId(), threadId: threadId)))
     }
 
     @discardableResult

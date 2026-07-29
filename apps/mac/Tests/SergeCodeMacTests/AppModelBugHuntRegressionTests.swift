@@ -320,6 +320,8 @@ private final class StubBackend: BackendService, @unchecked Sendable {
         if settleShouldFail { throw StubBackendError.failed }
     }
     func unsettleThread(id: String) async throws {}
+    func snoozeThread(id: String, until: Date) async throws {}
+    func unsnoozeThread(id: String) async throws {}
     func deleteThread(id: String) async throws {}
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     {}

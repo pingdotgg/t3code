@@ -144,6 +144,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.unsettleThread(id: id)
     }
 
+    public func snoozeThread(id: String, until: Date) async throws {
+        await state.snoozeThread(id: id, until: until)
+    }
+
+    public func unsnoozeThread(id: String) async throws {
+        await state.unsnoozeThread(id: id)
+    }
+
     public func deleteThread(id: String) async throws {
         await state.deleteThread(id: id)
     }
@@ -735,6 +743,26 @@ private actor MockState {
         guard var thread = threadsByID[id], thread.status == .settled else { return }
         thread.status = idleStatus(for: id)
         thread.backgroundAgentCount = backgroundAgentsByThread[id] ?? 0
+        thread.updatedAt = Date()
+        threadsByID[id] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func snoozeThread(id: String, until: Date) {
+        guard var thread = threadsByID[id], thread.status != .archived else { return }
+        // Mirror the server: snooze is an overlay — the thread stays in its
+        // current status and clients derive suppression from snoozedUntil.
+        thread.snoozedUntil = until
+        thread.snoozedAt = Date()
+        thread.updatedAt = Date()
+        threadsByID[id] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func unsnoozeThread(id: String) {
+        guard var thread = threadsByID[id], thread.snoozedUntil != nil else { return }
+        thread.snoozedUntil = nil
+        thread.snoozedAt = nil
         thread.updatedAt = Date()
         threadsByID[id] = thread
         emit(.threadUpserted(thread))

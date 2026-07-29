@@ -1184,6 +1184,7 @@ private struct SidebarThreadMenu: View {
     let newThreadHelp: (SidebarProjectMember, ProviderKind) -> String
 
     @UIState private var showingProviders = false
+    @UIState private var showingSnooze = false
 
     private var model: AppModel { item.member.location.model }
     private var providers: [ProviderKind] { model.configuredProviderKinds }
@@ -1192,11 +1193,14 @@ private struct SidebarThreadMenu: View {
         VStack(spacing: 0) {
             if showingProviders {
                 providerPage
+            } else if showingSnooze {
+                snoozePage
             } else {
                 actionPage
             }
         }
         .animation(Motion.structure, value: showingProviders)
+        .animation(Motion.structure, value: showingSnooze)
     }
 
     private var actionPage: some View {
@@ -1245,6 +1249,8 @@ private struct SidebarThreadMenu: View {
 
                 lifecycleRow
 
+                snoozeRow
+
                 AlpineMenuRow(icon: "archivebox", title: "Archive") {
                     Haptics.play(.commit)
                     dismiss()
@@ -1277,6 +1283,49 @@ private struct SidebarThreadMenu: View {
             return item.thread.status == .settled ? "unsettle" : "none"
         }
     #endif
+
+    /// Snooze and wake are the same slot. Snooze is an overlay on the active
+    /// lifecycle: the thread stays active on the wire and the sidebar
+    /// suppresses it until `snoozedUntil` passes (no wake event) or the
+    /// server clears it on real activity.
+    @ViewBuilder
+    private var snoozeRow: some View {
+        if ThreadInboxSemantics.isSnoozed(item.thread) {
+            AlpineMenuRow(icon: "moon.zzz", title: "Wake") {
+                dismiss()
+                Task { await model.unsnoozeThread(item.thread) }
+            }
+            .disabled(!item.isSelectable)
+        } else if item.thread.status != .archived {
+            AlpineMenuRow(icon: "moon.zzz", title: "Snooze", opensSubmenu: true) {
+                showingSnooze = true
+            }
+            .disabled(!item.isSelectable)
+        }
+    }
+
+    private var snoozePage: some View {
+        VStack(spacing: 0) {
+            ComposerPickerHeader(
+                icon: "moon.zzz",
+                title: "Snooze until",
+                subtitle: item.thread.title,
+                onBack: { showingSnooze = false },
+                titleLineLimit: 1)
+            Divider().opacity(0.55)
+            AlpineMenuList {
+                ForEach(SnoozePreset.presets(now: Date())) { preset in
+                    AlpineMenuRow(icon: preset.icon, title: preset.title) {
+                        Haptics.play(.commit)
+                        dismiss()
+                        let thread = item.thread
+                        Task { await model.snoozeThread(thread, until: preset.until) }
+                    }
+                    .disabled(!item.isSelectable)
+                }
+            }
+        }
+    }
 
     /// Settle and un-settle are the same slot: a live session can be settled,
     /// a settled one reopened, and an archived one is neither.

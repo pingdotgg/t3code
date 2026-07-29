@@ -12,8 +12,9 @@
 // There is no application-level handshake (§1.3) — a caller may issue any
 // RPC as the first request once `connect()` returns. This actor does not
 // auto-reconnect (§1.5): reconnection (fresh `AuthClient.makeSocketURL()`,
-// a new `RpcConnection`, re-`server.getConfig`, re-`subscribe*`, optionally
-// `orchestration.replayEvents`) is a supervisor concern one layer up (§4.3).
+// a new `RpcConnection`, re-`server.getConfig`, re-`subscribe*` with each
+// stream's `afterSequence` resume cursor) is a supervisor concern one layer
+// up (§4.3).
 //
 // ─────────────────────────────────────────────────────────────────────────
 // DESIGN NOTES — invariants preserved across the two protocol fixes below.
