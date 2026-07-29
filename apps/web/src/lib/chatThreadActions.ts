@@ -1,6 +1,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import { DEFAULT_NEW_THREAD_WORKSPACE } from "./newThreadDefaults";
 
 interface ThreadContextLike {
   environmentId: EnvironmentId;
@@ -49,21 +50,12 @@ export function resolveThreadActionProjectRef(
   return context.defaultProjectRef;
 }
 
-function buildContextualThreadOptions(context: ChatThreadActionContext): NewThreadOptions {
-  return {
-    branch: context.activeThread?.branch ?? context.activeDraftThread?.branch ?? null,
-    worktreePath:
-      context.activeThread?.worktreePath ?? context.activeDraftThread?.worktreePath ?? null,
-    envMode:
-      context.activeDraftThread?.envMode ??
-      (context.activeThread?.worktreePath ? "worktree" : "local"),
-  };
+function buildContextualThreadOptions(_context: ChatThreadActionContext): NewThreadOptions {
+  return DEFAULT_NEW_THREAD_WORKSPACE;
 }
 
-function buildDefaultThreadOptions(context: ChatThreadActionContext): NewThreadOptions {
-  return {
-    envMode: context.defaultThreadEnvMode,
-  };
+function buildDefaultThreadOptions(_context: ChatThreadActionContext): NewThreadOptions {
+  return DEFAULT_NEW_THREAD_WORKSPACE;
 }
 
 export async function startNewThreadInProjectFromContext(

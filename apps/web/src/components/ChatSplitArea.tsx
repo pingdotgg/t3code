@@ -27,6 +27,7 @@ import { threadHasStarted } from "./ChatView.logic";
 import { Button } from "./ui/button";
 import { scopeProjectRef } from "@t3tools/client-runtime";
 import { DraftId, useComposerDraftStore, type DraftThreadEnvMode } from "../composerDraftStore";
+import { DEFAULT_NEW_THREAD_WORKSPACE } from "../lib/newThreadDefaults";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 import {
@@ -842,15 +843,21 @@ function ChatSplitEmptyPane(props: {
       }
       const draftId = newDraftId();
       const threadId = newThreadId();
-      const envMode: DraftThreadEnvMode = sourceThread.worktreePath ? "worktree" : "local";
+      const envMode: DraftThreadEnvMode = asSubchat
+        ? sourceThread.worktreePath
+          ? "worktree"
+          : "local"
+        : DEFAULT_NEW_THREAD_WORKSPACE.envMode;
       createDetachedDraftSession(
         scopeProjectRef(sourceThread.environmentId, sourceThread.projectId),
         draftId,
         {
           threadId,
           parentThreadId: asSubchat ? sourceThread.id : null,
-          branch: sourceThread.branch,
-          worktreePath: sourceThread.worktreePath,
+          branch: asSubchat ? sourceThread.branch : DEFAULT_NEW_THREAD_WORKSPACE.branch,
+          worktreePath: asSubchat
+            ? sourceThread.worktreePath
+            : DEFAULT_NEW_THREAD_WORKSPACE.worktreePath,
           envMode,
         },
       );

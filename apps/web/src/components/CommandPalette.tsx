@@ -47,6 +47,7 @@ import {
   startNewThreadInProjectFromContext,
   startNewThreadFromContext,
 } from "../lib/chatThreadActions";
+import { DEFAULT_NEW_THREAD_WORKSPACE } from "../lib/newThreadDefaults";
 import {
   appendBrowsePathSegment,
   canNavigateUp,
@@ -497,16 +498,10 @@ function OpenCommandPaletteDialog() {
       }
 
       await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
-        envMode: settings.defaultThreadEnvMode,
+        ...DEFAULT_NEW_THREAD_WORKSPACE,
       });
     },
-    [
-      handleNewThread,
-      navigate,
-      settings.defaultThreadEnvMode,
-      settings.sidebarThreadSortOrder,
-      threads,
-    ],
+    [handleNewThread, navigate, settings.sidebarThreadSortOrder, threads],
   );
 
   const renderProjectFavicon = useCallback(
@@ -901,7 +896,7 @@ function OpenCommandPaletteDialog() {
           });
         } else {
           await handleNewThread(scopeProjectRef(existing.environmentId, existing.id), {
-            envMode: settings.defaultThreadEnvMode,
+            ...DEFAULT_NEW_THREAD_WORKSPACE,
           }).catch(() => undefined);
         }
         setOpen(false);
@@ -924,7 +919,7 @@ function OpenCommandPaletteDialog() {
           createdAt: new Date().toISOString(),
         });
         await handleNewThread(scopeProjectRef(browseEnvironmentId, projectId), {
-          envMode: settings.defaultThreadEnvMode,
+          ...DEFAULT_NEW_THREAD_WORKSPACE,
         }).catch(() => undefined);
         setOpen(false);
       } catch (error) {
@@ -945,7 +940,6 @@ function OpenCommandPaletteDialog() {
       navigate,
       projects,
       setOpen,
-      settings.defaultThreadEnvMode,
       settings.sidebarThreadSortOrder,
       threads,
     ],

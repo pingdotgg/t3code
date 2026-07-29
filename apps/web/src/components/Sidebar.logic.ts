@@ -7,6 +7,7 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
+import { DEFAULT_NEW_THREAD_WORKSPACE } from "../lib/newThreadDefaults";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled, isThreadActivelyWorking } from "../session-logic";
 
@@ -174,7 +175,7 @@ export function resolveSidebarThreadGitCwd(input: {
   return input.worktreePath ?? input.threadProjectCwd ?? input.projectCwd;
 }
 
-export function resolveSidebarNewThreadSeedContext(input: {
+export function resolveSidebarNewThreadSeedContext(_input: {
   projectId: string;
   defaultEnvMode: SidebarNewThreadEnvMode;
   activeThread?: {
@@ -193,31 +194,7 @@ export function resolveSidebarNewThreadSeedContext(input: {
   worktreePath?: string | null;
   envMode: SidebarNewThreadEnvMode;
 } {
-  if (input.defaultEnvMode === "worktree") {
-    return {
-      envMode: "worktree",
-    };
-  }
-
-  if (input.activeDraftThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeDraftThread.branch,
-      worktreePath: input.activeDraftThread.worktreePath,
-      envMode: input.activeDraftThread.envMode,
-    };
-  }
-
-  if (input.activeThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeThread.branch,
-      worktreePath: input.activeThread.worktreePath,
-      envMode: input.activeThread.worktreePath ? "worktree" : "local",
-    };
-  }
-
-  return {
-    envMode: input.defaultEnvMode,
-  };
+  return DEFAULT_NEW_THREAD_WORKSPACE;
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

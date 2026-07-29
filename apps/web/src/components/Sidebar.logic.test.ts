@@ -277,7 +277,7 @@ describe("resolveSidebarNewThreadEnvMode", () => {
 });
 
 describe("resolveSidebarNewThreadSeedContext", () => {
-  it("prefers the default worktree mode over active thread context", () => {
+  it("starts on the local main checkout instead of the configured worktree default", () => {
     expect(
       resolveSidebarNewThreadSeedContext({
         projectId: "project-1",
@@ -295,11 +295,13 @@ describe("resolveSidebarNewThreadSeedContext", () => {
         },
       }),
     ).toEqual({
-      envMode: "worktree",
+      branch: "main",
+      worktreePath: null,
+      envMode: "local",
     });
   });
 
-  it("inherits the active server thread context when creating a new thread in the same project", () => {
+  it("does not inherit the active server thread context", () => {
     expect(
       resolveSidebarNewThreadSeedContext({
         projectId: "project-1",
@@ -312,13 +314,13 @@ describe("resolveSidebarNewThreadSeedContext", () => {
         activeDraftThread: null,
       }),
     ).toEqual({
-      branch: "effect-atom",
+      branch: "main",
       worktreePath: null,
       envMode: "local",
     });
   });
 
-  it("prefers the active draft thread context when it matches the target project", () => {
+  it("does not inherit the active draft thread context", () => {
     expect(
       resolveSidebarNewThreadSeedContext({
         projectId: "project-1",
@@ -336,13 +338,13 @@ describe("resolveSidebarNewThreadSeedContext", () => {
         },
       }),
     ).toEqual({
-      branch: "feature/new-draft",
-      worktreePath: "/repo/worktree",
-      envMode: "worktree",
+      branch: "main",
+      worktreePath: null,
+      envMode: "local",
     });
   });
 
-  it("falls back to the default env mode when there is no matching active thread context", () => {
+  it("uses the local main checkout when there is no matching active thread context", () => {
     expect(
       resolveSidebarNewThreadSeedContext({
         projectId: "project-2",
@@ -355,7 +357,9 @@ describe("resolveSidebarNewThreadSeedContext", () => {
         activeDraftThread: null,
       }),
     ).toEqual({
-      envMode: "worktree",
+      branch: "main",
+      worktreePath: null,
+      envMode: "local",
     });
   });
 });
