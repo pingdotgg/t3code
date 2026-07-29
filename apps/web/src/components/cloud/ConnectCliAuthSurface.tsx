@@ -8,8 +8,10 @@ import {
   readConnectCliCallbackResult,
   rememberConnectCliAuthState,
 } from "../../cloud/connectCliAuth";
+import { isElectron } from "../../env";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
+import { resolveClerkAuthRedirectUrl } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
 
 function ConnectCliAuthMessage({
@@ -59,7 +61,9 @@ export function ConnectCliAuthorizeSurface() {
     if (!isSignedIn) {
       if (!signInOpened.current) {
         signInOpened.current = true;
-        clerk.openSignIn({ forceRedirectUrl: window.location.href });
+        clerk.openSignIn({
+          forceRedirectUrl: resolveClerkAuthRedirectUrl(window.location.href, isElectron),
+        });
       }
       return;
     }
@@ -95,7 +99,11 @@ export function ConnectCliAuthorizeSurface() {
         <div className="mt-6">
           <Button
             type="button"
-            onClick={() => clerk.openSignIn({ forceRedirectUrl: window.location.href })}
+            onClick={() =>
+              clerk.openSignIn({
+                forceRedirectUrl: resolveClerkAuthRedirectUrl(window.location.href, isElectron),
+              })
+            }
           >
             Sign in
           </Button>
