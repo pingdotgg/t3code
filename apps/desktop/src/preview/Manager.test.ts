@@ -316,15 +316,19 @@ describe("PreviewManager", () => {
           let attached = false;
           let captureMode: "available" | "failure" | "timeout" = "available";
           let accessibilityGate: Promise<void> | null = null;
+          const controlEvents: Array<string> = [];
           const attach = vi.fn(() => {
             attached = true;
+            controlEvents.push("attach");
           });
           const detach = vi.fn(() => {
             attached = false;
+            controlEvents.push("detach");
           });
           const capturePage = vi.fn(async () => image);
           const sendCommand = vi.fn(async (method: string): Promise<unknown> => {
             if (method === "Runtime.evaluate") {
+              controlEvents.push("evaluate");
               return {
                 result: {
                   value: {
@@ -475,13 +479,22 @@ describe("PreviewManager", () => {
           const timedOutCapture = yield* manager
             .automationSnapshot("tab_snapshot")
             .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          const queuedAfterTimedOutCapture = yield* manager
+            .automationEvaluate("tab_snapshot", { expression: "document.title" })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
           yield* TestClock.adjust(5_000);
           expect((yield* Fiber.join(timedOutCapture)).screenshot).toMatchObject({
             width: 640,
             height: 360,
           });
+          expect(yield* Fiber.join(queuedAfterTimedOutCapture)).toMatchObject({
+            title: "Example",
+          });
           expect(capturePage).toHaveBeenCalledOnce();
           expect(detach).toHaveBeenCalledOnce();
+          expect(controlEvents.slice(-3)).toEqual(["detach", "attach", "evaluate"]);
 
           captureMode = "available";
           const recovered = yield* manager.automationSnapshot("tab_snapshot");

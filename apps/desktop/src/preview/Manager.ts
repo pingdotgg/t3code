@@ -391,6 +391,8 @@ interface BrowserControlSession {
   ) => void;
 }
 
+const STALE_BROWSER_CONTROL_SESSION = Symbol("StaleBrowserControlSession");
+
 interface BrowserDiagnostics {
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
@@ -819,16 +821,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const detachControlSession = Effect.fn("PreviewManager.detachControlSession")(function* (
     webContentsId: number,
   ) {
-    const control = yield* SynchronizedRef.modify(controlSessionsRef, (sessions) => [
-      sessions.get(webContentsId),
-      replaceMap(sessions, (copy) => {
-        copy.delete(webContentsId);
-      }),
-    ]);
-    if (control) {
-      yield* Scope.close(control.scope, Exit.void).pipe(Effect.ignore);
-      return;
-    }
+    const detached = yield* SynchronizedRef.modifyEffect(controlSessionsRef, (sessions) => {
+      const control = sessions.get(webContentsId);
+      if (!control) return Effect.succeed([false, sessions] as const);
+      return Scope.close(control.scope, Exit.void).pipe(
+        Effect.ignore,
+        Effect.as([
+          true,
+          replaceMap(sessions, (copy) => {
+            copy.delete(webContentsId);
+          }),
+        ] as const),
+      );
+    });
+    if (detached) return;
     yield* Ref.update(diagnosticsRef, (diagnostics) =>
       replaceMap(diagnostics, (copy) => {
         copy.delete(webContentsId);
@@ -1086,17 +1092,29 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     const boundedExecution = Effect.gen(function* () {
       const operationDeadline = (yield* currentMillis) + executionBudgetMs;
-      // Session initialization itself sends CDP commands. Keep it inside the
-      // operation deadline so an offscreen or suspended guest cannot retain
-      // the synchronized session lock indefinitely and poison later actions.
-      const control = yield* ensureControlSession(wc);
-      detachOnTimeout = false;
-      return yield* control.semaphore.withPermit(
-        Effect.sync(() => {
-          detachOnTimeout = true;
-          permitAcquired = true;
-        }).pipe(Effect.andThen(execute(operationDeadline))),
-      );
+      while (true) {
+        // Session initialization itself sends CDP commands. Keep it inside the
+        // operation deadline so an offscreen or suspended guest cannot retain
+        // the synchronized session lock indefinitely and poison later actions.
+        const control = yield* ensureControlSession(wc);
+        detachOnTimeout = false;
+        const result = yield* control.semaphore.withPermit(
+          Effect.gen(function* () {
+            const currentControl = (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id);
+            if (currentControl !== control) return STALE_BROWSER_CONTROL_SESSION;
+            detachOnTimeout = true;
+            permitAcquired = true;
+            return yield* execute(operationDeadline);
+          }).pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                detachOnTimeout = false;
+              }).pipe(Effect.andThen(detachControlSession(wc.id))),
+            ),
+          ),
+        );
+        if (result !== STALE_BROWSER_CONTROL_SESSION) return result;
+      }
     }).pipe(
       Effect.timeoutOption(executionBudgetMs),
       Effect.flatMap((result) =>
@@ -3011,6 +3029,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
       }
       const browserDiagnostics = diagnostics.get(wc.id);
+      if (detachAfterCapture) yield* detachControlSession(wc.id);
       return {
         ...page,
         accessibilityTree: accessibility,
@@ -3018,7 +3037,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         networkEntries: [...(browserDiagnostics?.networkEntries ?? [])],
         actionTimeline: [...(timelines.get(tabId) ?? [])],
         screenshot,
-        detachAfterCapture,
       };
     },
   );
@@ -3030,7 +3048,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const wc = yield* requireWebContents(tabId);
     if (!background) {
-      const result = yield* withControlSession(
+      return yield* withControlSession(
         tabId,
         wc,
         "snapshot",
@@ -3038,16 +3056,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           captureAutomationSnapshot(tabId, wc, send, false, operationDeadline),
         timeoutMs,
       );
-      if (result.detachAfterCapture) yield* detachControlSession(wc.id);
-      const { detachAfterCapture: _, ...snapshot } = result;
-      return snapshot;
     }
 
     // The renderer briefly stages a non-selected guest so Chromium can expose
     // its composited pixels. Do not focus the guest or send Page.bringToFront:
     // Electron can otherwise promote the native guest surface above the host
     // UI while ignoring the staging wrapper's opacity.
-    const result = yield* withControlSession(
+    return yield* withControlSession(
       tabId,
       wc,
       "snapshot",
@@ -3055,9 +3070,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         captureAutomationSnapshot(tabId, wc, send, true, operationDeadline),
       timeoutMs,
     );
-    if (result.detachAfterCapture) yield* detachControlSession(wc.id);
-    const { detachAfterCapture: _, ...snapshot } = result;
-    return snapshot;
   });
 
   const resolveClickPoint = Effect.fn("PreviewManager.resolveClickPoint")(function* (
