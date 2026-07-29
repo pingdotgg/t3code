@@ -161,7 +161,8 @@ SSH is an access and launch helper, not a separate environment type. `DesktopSsh
 hosts, owns password/askpass prompts, and delegates lifecycle to `SshEnvironmentManager` in
 [packages/ssh/src/tunnel.ts][sshtunnel], which resolves the target, launches or reuses the remote T3
 server, opens a local tunnel, checks HTTP readiness, optionally issues a remote pairing token, and
-returns local HTTP/WS endpoints. Disconnect closes the tunnel and stops the remote server.
+returns local HTTP/WS endpoints. Disconnect closes the tunnel and stops the remote server if the
+launcher started it; a server that was already running (marked `external`) is left running.
 
 The desktop main process owns this because it can spawn SSH, manage prompts, write launch scripts,
 and clean up forwards. The renderer connects through the forwarded URL like any other environment and

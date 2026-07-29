@@ -14,8 +14,10 @@ wants to run or edit, and waits for approval. Work outside the workspace is rest
 **Auto-accept edits**: auto-approve edits, ask before other actions. File changes go through
 without prompting; commands and anything else still stop for approval.
 
-**Auto**: an AI reviewer approves routine actions; risky ones still ask. This keeps the agent
-moving through ordinary work while holding back the things you would want to see.
+**Auto**: routine actions proceed without you; risky ones still ask. How this is enforced depends
+on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
+permission mode, and providers without an equivalent (such as OpenCode) fall back to asking, like
+Supervised.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.

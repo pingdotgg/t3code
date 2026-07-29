@@ -28,9 +28,11 @@ If you want a log message to show up in the trace file, emit it inside an active
 ### Traces
 
 Completed spans are written as NDJSON records to `serverTracePath`. The default depends on how the
-server starts: production and explicitly configured homes use `~/.t3/userdata/logs/server.trace.ndjson`,
-a linked worktree dev run uses `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit
-dev run outside a linked worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
+server starts: production and explicitly configured homes use
+`<home>/userdata/logs/server.trace.ndjson` (so `~/.t3/userdata/...` by default, or
+`/custom/path/userdata/...` with `--home-dir /custom/path`), a linked worktree dev run uses
+`<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
+worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
 
 Important fields common to both record types:
 
