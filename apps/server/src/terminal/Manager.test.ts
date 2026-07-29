@@ -1710,7 +1710,7 @@ it("clears mouse reporting from a replayed history once the shell is idle", () =
 
   expect(replayed.startsWith(MOUSE_ENABLED_HISTORY)).toBe(true);
   expect(replayed.slice(MOUSE_ENABLED_HISTORY.length)).toBe(
-    "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l",
+    "\u001b[?1000l\u001b[?1001l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1016l",
   );
 });
 
@@ -1719,6 +1719,34 @@ it("leaves mouse reporting alone while a child process can still consume it", ()
     TerminalManager.replaySafeTerminalHistory(MOUSE_ENABLED_HISTORY, true),
     MOUSE_ENABLED_HISTORY,
   );
+});
+
+it("detects mouse reporting enabled through a combined DECSET", () => {
+  const history = "$ lazygit\r\n\u001b[?1002;1006h";
+
+  expect(TerminalManager.replaySafeTerminalHistory(history, false)).not.toBe(history);
+});
+
+it("detects mouse reporting enabled through an 8-bit CSI introducer", () => {
+  const history = "$ lazygit\r\n\u009b?1003h";
+
+  expect(TerminalManager.replaySafeTerminalHistory(history, false)).not.toBe(history);
+});
+
+it("ignores an encoding mode that cannot make the terminal report on its own", () => {
+  const history = "$ echo hi\r\n\u001b[?1006h";
+
+  expect(TerminalManager.replaySafeTerminalHistory(history, false)).toBe(history);
+});
+
+it("resets every mouse mode it recognises as an enable", () => {
+  const reset = TerminalManager.replaySafeTerminalHistory("\u001b[?1002h", false).slice(
+    "\u001b[?1002h".length,
+  );
+
+  for (const mode of [1000, 1001, 1002, 1003, 1006, 1015, 1016]) {
+    expect(reset).toContain(`\u001b[?${mode}l`);
+  }
 });
 
 it("does not touch a history that never enabled mouse reporting", () => {

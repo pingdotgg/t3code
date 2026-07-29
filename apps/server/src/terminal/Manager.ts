@@ -323,11 +323,32 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
-/** Tracking modes plus the SGR encoding that reports arrive in. */
-const MOUSE_REPORTING_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l";
-const MOUSE_REPORTING_ENABLES = ["1000", "1001", "1002", "1003", "1015", "1016"].map(
-  (mode) => `\u001b[?${mode}h`,
-);
+/** Only a tracking mode makes a terminal emit reports; an encoding just shapes them. */
+const MOUSE_TRACKING_MODES: ReadonlyArray<number> = [1000, 1001, 1002, 1003];
+const MOUSE_ENCODING_MODES: ReadonlyArray<number> = [1006, 1015, 1016];
+const MOUSE_REPORTING_RESET = [...MOUSE_TRACKING_MODES, ...MOUSE_ENCODING_MODES]
+  .map((mode) => `\u001b[?${mode}l`)
+  .join("");
+// A DECSET can carry several parameters at once (`ESC[?1002;1006h`) and may use the
+// 7-bit `ESC [` or the 8-bit `\u009b` introducer, so match the shape of the sequence
+// rather than a handful of single-parameter spellings.
+// eslint-disable-next-line no-control-regex -- matching DECSET requires its control introducer.
+const DECSET_PATTERN = /(?:\u001b\[|\u009b)\?([\d;]*)h/g;
+
+function enablesMouseReporting(history: string): boolean {
+  DECSET_PATTERN.lastIndex = 0;
+  for (
+    let match = DECSET_PATTERN.exec(history);
+    match !== null;
+    match = DECSET_PATTERN.exec(history)
+  ) {
+    const parameters = (match[1] ?? "").split(";");
+    if (parameters.some((parameter) => MOUSE_TRACKING_MODES.includes(Number(parameter)))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Mouse reporting is terminal state, not text. Replaying a history whose TUI was
@@ -338,7 +359,7 @@ const MOUSE_REPORTING_ENABLES = ["1000", "1001", "1002", "1003", "1015", "1016"]
  */
 export function replaySafeTerminalHistory(history: string, hasRunningSubprocess: boolean): string {
   if (hasRunningSubprocess) return history;
-  if (!MOUSE_REPORTING_ENABLES.some((sequence) => history.includes(sequence))) return history;
+  if (!enablesMouseReporting(history)) return history;
   return `${history}${MOUSE_REPORTING_RESET}`;
 }
 
@@ -2389,6 +2410,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return attachEvent ? listener(attachEvent) : Effect.void;
       });
 
+      // The cached subprocess flag is only refreshed by a poller, so gating the replay
+      // on it would use state up to one interval old. Refresh first: a TUI that just
+      // started must keep its mouse reporting, and one that just exited must not leave
+      // it armed.
+      yield* pollSubprocessActivity();
       const initialSnapshot = yield* openOrAttachForStream(input);
 
       yield* listener({
