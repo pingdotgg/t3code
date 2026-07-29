@@ -1,5 +1,10 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, ThreadId, type ServerConfig } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type HostApplicationDescriptor,
+  type ServerConfig,
+} from "@t3tools/contracts";
 
 export interface EnvironmentRuntimeState {
   readonly connectionState: EnvironmentConnectionPhase;
@@ -16,6 +21,8 @@ export interface ConnectedEnvironmentSummary {
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
+  readonly hostApplication: HostApplicationDescriptor | null;
+  readonly hostVersionStatus: "unknown" | "legacy" | "known";
 }
 
 export interface SelectedThreadRef {

@@ -1,5 +1,14 @@
 import Foundation
 
+enum AutoReviewThreadPresentation {
+    static let fixerTitlePrefix = "Auto-review fixer · PR #"
+
+    static func isDedicatedFixer(_ thread: ChatThread) -> Bool {
+        guard let parent = thread.parentThreadId, !parent.isEmpty else { return false }
+        return thread.title.hasPrefix(fixerTitlePrefix)
+    }
+}
+
 /// The server-projected auto-review lifecycle shown on the active thread.
 enum AutoReviewProgressPhase: String, CaseIterable, Sendable {
     case reviewing
@@ -40,10 +49,14 @@ enum AutoReviewProgressPresentation {
 
     static func detail(for phase: AutoReviewProgressPhase) -> String {
         switch phase {
-        case .reviewing: "Inspecting the latest diff"
-        case .fixing: "Fixer thread is working"
+        case .reviewing: "Reviewer agent is inspecting the latest diff"
+        case .fixing: "Auto-fixer is addressing review findings"
         case .readyToMerge: "No actionable comments remain"
         }
+    }
+
+    static func actionLabel(for phase: AutoReviewProgressPhase) -> String? {
+        phase == .fixing ? "Open fixer" : nil
     }
 
     static func symbolName(for phase: AutoReviewProgressPhase) -> String {

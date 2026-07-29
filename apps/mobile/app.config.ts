@@ -112,7 +112,7 @@ const config: ExpoConfig = {
         NSAllowsArbitraryLoads: true,
       },
       NSLocalNetworkUsageDescription:
-        "Allow SurgeCode to connect to SurgeCode servers on your local network or tailnet.",
+        "Allow SurgeCode to connect to SurgeCode servers on your local network or through a secure managed tunnel.",
       ITSAppUsesNonExemptEncryption: false,
     },
   },

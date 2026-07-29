@@ -30,6 +30,9 @@ struct AutoReviewProgressPresentationTests {
                 AutoReviewProgressPresentation.accessibilityLabel(for: phase)
                     .contains(AutoReviewProgressPresentation.headline(for: phase)))
         }
+        #expect(AutoReviewProgressPresentation.actionLabel(for: .reviewing) == nil)
+        #expect(AutoReviewProgressPresentation.actionLabel(for: .fixing) == "Open fixer")
+        #expect(AutoReviewProgressPresentation.actionLabel(for: .readyToMerge) == nil)
     }
 
     @Test("only the terminal announcement retires itself")

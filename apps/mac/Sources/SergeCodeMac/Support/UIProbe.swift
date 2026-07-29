@@ -428,9 +428,7 @@
                 || ProcessInfo.processInfo.environment["SERGECODE_MOCK"] == "1"
             if isMockRun {
                 let previousMobileAccess = MobileAccessPreference.isEnabled
-                let previousTailscaleAccess = TailscaleAccessPreference.isEnabled
                 MobileAccessPreference.setEnabled(true)
-                TailscaleAccessPreference.setEnabled(true)
                 await snapshotSettings(
                     tab: .devices, name: "9-settings-devices", model: model, scenery: scenery,
                     dir: dir)
@@ -438,7 +436,6 @@
                     tab: .connection, name: "10-settings-connection", model: model,
                     scenery: scenery, dir: dir)
                 MobileAccessPreference.setEnabled(previousMobileAccess)
-                TailscaleAccessPreference.setEnabled(previousTailscaleAccess)
                 await snapshotSettings(
                     tab: .dictation, name: "11-settings-dictation", model: model, scenery: scenery,
                     dir: dir)
