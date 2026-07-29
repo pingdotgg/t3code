@@ -820,10 +820,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const detachControlSession = Effect.fn("PreviewManager.detachControlSession")(function* (
     webContentsId: number,
+    expectedControl?: BrowserControlSession,
   ) {
     const detached = yield* SynchronizedRef.modifyEffect(controlSessionsRef, (sessions) => {
       const control = sessions.get(webContentsId);
-      if (!control) return Effect.succeed([false, sessions] as const);
+      if (!control || (expectedControl !== undefined && control !== expectedControl)) {
+        return Effect.succeed([false, sessions] as const);
+      }
       return Scope.close(control.scope, Exit.void).pipe(
         Effect.ignore,
         Effect.as([
@@ -834,7 +837,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ] as const),
       );
     });
-    if (detached) return;
+    if (detached || expectedControl !== undefined) return;
     yield* Ref.update(diagnosticsRef, (diagnostics) =>
       replaceMap(diagnostics, (copy) => {
         copy.delete(webContentsId);
@@ -987,6 +990,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       send: SendCommand,
       sendCleanup: SendCommand,
       operationDeadline: number,
+      resetControlSession: Effect.Effect<void>,
     ) => Effect.Effect<A, PreviewManagerError>,
     timeoutMs = DEFAULT_AUTOMATION_TIMEOUT_MS,
   ) {
@@ -1004,6 +1008,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* (
       operationDeadline: number,
+      control: BrowserControlSession,
     ) {
       yield* update(tabId, { controller: "agent" });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
@@ -1052,9 +1057,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           features: [{ name: "prefers-color-scheme", value: colorScheme }],
         });
       }
-      return yield* use(send, sendCleanup, operationDeadline);
+      return yield* use(send, sendCleanup, operationDeadline, detachControlSession(wc.id, control));
     });
-    let detachOnTimeout = true;
     let permitAcquired = false;
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
       exit: Exit.Exit<A, PreviewManagerError>,
@@ -1097,21 +1101,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // operation deadline so an offscreen or suspended guest cannot retain
         // the synchronized session lock indefinitely and poison later actions.
         const control = yield* ensureControlSession(wc);
-        detachOnTimeout = false;
         const result = yield* control.semaphore.withPermit(
           Effect.gen(function* () {
             const currentControl = (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id);
             if (currentControl !== control) return STALE_BROWSER_CONTROL_SESSION;
-            detachOnTimeout = true;
             permitAcquired = true;
-            return yield* execute(operationDeadline);
-          }).pipe(
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                detachOnTimeout = false;
-              }).pipe(Effect.andThen(detachControlSession(wc.id))),
-            ),
-          ),
+            return yield* execute(operationDeadline, control).pipe(
+              Effect.onInterrupt(() => detachControlSession(wc.id, control)),
+            );
+          }),
         );
         if (result !== STALE_BROWSER_CONTROL_SESSION) return result;
       }
@@ -1123,14 +1121,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           : Effect.succeed(result.value),
       ),
     );
-    return yield* boundedExecution.pipe(
-      Effect.onExit(finalize),
-      Effect.tapError((error) =>
-        isPreviewAutomationTimeoutError(error) && detachOnTimeout
-          ? detachControlSession(wc.id)
-          : Effect.void,
-      ),
-    );
+    return yield* boundedExecution.pipe(Effect.onExit(finalize));
   });
 
   const evaluateWithDebugger = <A = unknown>(
@@ -2885,6 +2876,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       send: SendCommand,
       background: boolean,
       operationDeadline: number,
+      resetControlSession: Effect.Effect<void>,
     ) {
       yield* Effect.all([send("Runtime.enable"), send("Accessibility.enable")], {
         concurrency: 2,
@@ -3029,7 +3021,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
       }
       const browserDiagnostics = diagnostics.get(wc.id);
-      if (detachAfterCapture) yield* detachControlSession(wc.id);
+      if (detachAfterCapture) yield* resetControlSession;
       return {
         ...page,
         accessibilityTree: accessibility,
@@ -3052,8 +3044,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         tabId,
         wc,
         "snapshot",
-        (send, _sendCleanup, operationDeadline) =>
-          captureAutomationSnapshot(tabId, wc, send, false, operationDeadline),
+        (send, _sendCleanup, operationDeadline, resetControlSession) =>
+          captureAutomationSnapshot(tabId, wc, send, false, operationDeadline, resetControlSession),
         timeoutMs,
       );
     }
@@ -3066,8 +3058,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       tabId,
       wc,
       "snapshot",
-      (send, _sendCleanup, operationDeadline) =>
-        captureAutomationSnapshot(tabId, wc, send, true, operationDeadline),
+      (send, _sendCleanup, operationDeadline, resetControlSession) =>
+        captureAutomationSnapshot(tabId, wc, send, true, operationDeadline, resetControlSession),
       timeoutMs,
     );
   });
