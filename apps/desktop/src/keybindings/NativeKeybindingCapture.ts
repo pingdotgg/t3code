@@ -4,7 +4,7 @@ export const NATIVE_KEYBINDING_CAPTURE_CHANNEL = "desktop:native-keybinding-capt
 
 export interface NativeKeybindingCaptureInput {
   readonly key: "Escape";
-  readonly metaKey: true;
+  readonly metaKey: boolean;
   readonly ctrlKey: boolean;
   readonly altKey: boolean;
   readonly shiftKey: boolean;
@@ -12,15 +12,17 @@ export interface NativeKeybindingCaptureInput {
 
 export function nativeKeybindingCaptureInput(
   input: Pick<Input, "type" | "key" | "meta" | "control" | "alt" | "shift">,
+  platform: NodeJS.Platform,
 ): NativeKeybindingCaptureInput | null {
   const key = input.key.toLowerCase();
-  if (input.type !== "keyDown" || (key !== "escape" && key !== "esc") || !input.meta) {
+  const modPressed = platform === "darwin" ? input.meta : input.control;
+  if (input.type !== "keyDown" || (key !== "escape" && key !== "esc") || !modPressed) {
     return null;
   }
 
   return {
     key: "Escape",
-    metaKey: true,
+    metaKey: input.meta,
     ctrlKey: input.control,
     altKey: input.alt,
     shiftKey: input.shift,
@@ -34,9 +36,10 @@ export function dispatchNativeKeybindingCaptureInput(input: unknown): void {
     !("key" in input) ||
     input.key !== "Escape" ||
     !("metaKey" in input) ||
-    input.metaKey !== true ||
+    typeof input.metaKey !== "boolean" ||
     !("ctrlKey" in input) ||
     typeof input.ctrlKey !== "boolean" ||
+    (!input.metaKey && !input.ctrlKey) ||
     !("altKey" in input) ||
     typeof input.altKey !== "boolean" ||
     !("shiftKey" in input) ||

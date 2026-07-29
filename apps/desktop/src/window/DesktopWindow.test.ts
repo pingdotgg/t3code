@@ -14,17 +14,15 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
-const {
-  globalShortcutIsRegistered,
-  globalShortcutRegister,
-  globalShortcutUnregister,
-  getFocusedWebContents,
-} = vi.hoisted(() => ({
-  globalShortcutIsRegistered: vi.fn<(accelerator: string) => boolean>(() => false),
-  globalShortcutRegister: vi.fn<(accelerator: string, callback: () => void) => boolean>(() => true),
-  globalShortcutUnregister: vi.fn<(accelerator: string) => void>(),
-  getFocusedWebContents: vi.fn<() => Electron.WebContents | null>(() => null),
-}));
+const { globalShortcutIsRegistered, globalShortcutRegister, globalShortcutUnregister } = vi.hoisted(
+  () => ({
+    globalShortcutIsRegistered: vi.fn<(accelerator: string) => boolean>(() => false),
+    globalShortcutRegister: vi.fn<(accelerator: string, callback: () => void) => boolean>(
+      () => true,
+    ),
+    globalShortcutUnregister: vi.fn<(accelerator: string) => void>(),
+  }),
+);
 
 vi.mock("electron", async (importOriginal) => ({
   ...(await importOriginal<typeof import("electron")>()),
@@ -46,9 +44,6 @@ vi.mock("electron", async (importOriginal) => ({
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       },
     ]),
-  },
-  webContents: {
-    getFocusedWebContents,
   },
 }));
 
@@ -456,34 +451,49 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
 
-        const focusedWebContents = {
-          isDestroyed: vi.fn(() => false),
-          send: vi.fn(),
-        };
-        getFocusedWebContents.mockReturnValue(
-          focusedWebContents as unknown as Electron.WebContents,
-        );
+        const registrationStart = globalShortcutRegister.mock.calls.length;
         fakeWindow.windowListeners.get("focus")?.();
-        const registration = globalShortcutRegister.mock.calls.at(-1);
+        const registrations = globalShortcutRegister.mock.calls.slice(registrationStart);
+        assert.deepEqual(
+          registrations.map(([accelerator]) => accelerator),
+          [
+            "Command+Escape",
+            "Command+Control+Escape",
+            "Command+Alt+Escape",
+            "Command+Shift+Escape",
+            "Command+Control+Alt+Escape",
+            "Command+Control+Shift+Escape",
+            "Command+Alt+Shift+Escape",
+            "Command+Control+Alt+Shift+Escape",
+          ],
+        );
+        const registration = registrations.find(
+          ([accelerator]) => accelerator === "Command+Alt+Shift+Escape",
+        );
         if (!registration) {
-          assert.fail("expected Command-Escape to be registered");
+          assert.fail("expected Command-Option-Shift-Escape to be registered");
         }
-        assert.equal(registration[0], "Command+Escape");
         registration[1]();
-        assert.deepEqual(focusedWebContents.send.mock.calls, [
+        assert.deepEqual(fakeWindow.send.mock.calls, [
           [
             NATIVE_KEYBINDING_CAPTURE_CHANNEL,
             {
               key: "Escape",
               metaKey: true,
               ctrlKey: false,
-              altKey: false,
-              shiftKey: false,
+              altKey: true,
+              shiftKey: true,
             },
           ],
         ]);
+        const unregisterStart = globalShortcutUnregister.mock.calls.length;
         fakeWindow.windowListeners.get("blur")?.();
-        assert.deepEqual(globalShortcutUnregister.mock.calls.at(-1), ["Command+Escape"]);
+        assert.deepEqual(
+          globalShortcutUnregister.mock.calls
+            .slice(unregisterStart)
+            .map(([accelerator]) => accelerator),
+          registrations.map(([accelerator]) => accelerator),
+        );
       }).pipe(Effect.provide(layer));
     }),
   );

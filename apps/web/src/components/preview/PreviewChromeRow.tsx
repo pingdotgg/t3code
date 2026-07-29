@@ -19,6 +19,7 @@ import {
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { isUnmodifiedEscape } from "~/keybindings";
 import { cn } from "~/lib/utils";
 
 interface Props {
@@ -189,7 +190,7 @@ export function PreviewChromeRow({
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") submit(event);
-                    if (event.key === "Escape") {
+                    if (isUnmodifiedEscape(event)) {
                       event.preventDefault();
                       setDraft(url);
                       inputRef.current?.blur();

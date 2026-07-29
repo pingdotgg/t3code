@@ -14,6 +14,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { isUnmodifiedEscape } from "~/keybindings";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -85,7 +86,7 @@ function FileSearchField(props: {
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (!isUnmodifiedEscape(event)) return;
           props.onClose();
           event.currentTarget.blur();
         }}

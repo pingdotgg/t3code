@@ -351,6 +351,12 @@ describe("PreviewManager", () => {
         expect(loadURL).toHaveBeenCalledOnce();
         expect(loadURL).toHaveBeenCalledWith("http://localhost:3200/");
 
+        const mainWindowSend = vi.fn();
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { send: mainWindowSend },
+        } as never);
         const beforeInputEvent = { preventDefault: vi.fn() };
         listeners.get("before-input-event")?.(
           beforeInputEvent as never,
@@ -363,13 +369,18 @@ describe("PreviewManager", () => {
             shift: false,
           } as never,
         );
-        expect(webviewSend).toHaveBeenCalledWith(NATIVE_KEYBINDING_CAPTURE_CHANNEL, {
+        yield* Effect.yieldNow;
+        expect(mainWindowSend).toHaveBeenCalledWith(NATIVE_KEYBINDING_CAPTURE_CHANNEL, {
           key: "Escape",
           metaKey: true,
           ctrlKey: false,
           altKey: false,
           shiftKey: false,
         });
+        expect(webviewSend).not.toHaveBeenCalledWith(
+          NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+          expect.anything(),
+        );
         expect(beforeInputEvent.preventDefault).toHaveBeenCalledOnce();
       }),
     ),
