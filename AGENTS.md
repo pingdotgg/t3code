@@ -4,18 +4,7 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
-## Fork Notes
-
-- `FORK.md` documents behavior that intentionally differs from upstream.
-- When making fork-only changes, update `FORK.md` in the same change so future upstream merges have current context.
-- Keep workflow-only fork changes narrow and prefer job-level disables over broad refactors.
-- Do not commit package version bumps solely to represent fork releases.
-- Keep macOS release signing separate from Apple notarization; do not require notarization secrets just to sign updater artifacts.
-- Keep self-signed macOS signing certificate trust in the release workflow when using non-Apple signing certificates.
-- Re-check Electron updater channel behavior when changing version strings, release metadata, or desktop packaging.
-- Keep fork-only storage in `state-tarik02.sqlite` unless intentionally upstreaming it.
-- When preparing fork PRs, branch from `origin/main` and target `tarik02/t3code:main`.
-- If a fork PR branch accidentally includes upstream history, rebuild it from `origin/main` and replay only the intended diff.
+Fork-specific behavior and maintenance notes are documented in `FORK.md`.
 
 ## What makes T3 Code special?
 
