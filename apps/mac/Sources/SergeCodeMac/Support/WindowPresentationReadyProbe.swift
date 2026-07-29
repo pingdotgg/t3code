@@ -24,7 +24,8 @@ final class WindowPresentationReadyView: NSView {
     var onReady: @MainActor () -> Void
 
     private weak var observedWindow: NSWindow?
-    private var readinessTask: Task<Void, Never>?
+    private var visibilityObservation: NSKeyValueObservation?
+    private var readinessScheduled = false
 
     init(onReady: @escaping @MainActor () -> Void) {
         self.onReady = onReady
@@ -42,34 +43,47 @@ final class WindowPresentationReadyView: NSView {
 
         guard let window else { return }
         observedWindow = window
-        readinessTask = Task { @MainActor [weak self, weak window] in
-            guard let window else { return }
-            while !Task.isCancelled {
-                guard self?.window === window,
-                    self?.observedWindow === window
-                else { return }
-
-                if window.isVisible {
-                    // Visibility changes during AppKit's ordering transaction.
-                    // Wait one display interval so the remote child view
-                    // cannot re-enter that transaction.
-                    try? await Task.sleep(for: .milliseconds(16))
-                    guard !Task.isCancelled,
-                        self?.window === window,
-                        window.isVisible
-                    else { return }
-                    self?.onReady()
-                    return
-                }
-
-                try? await Task.sleep(for: .milliseconds(16))
+        visibilityObservation = window.observe(\.isVisible, options: [.new]) {
+            [weak self, weak window] _, change in
+            guard change.newValue == true else { return }
+            DispatchQueue.main.async { [weak self, weak window] in
+                self?.scheduleReadiness(for: window)
             }
+        }
+
+        if window.isVisible {
+            scheduleReadiness(for: window)
         }
     }
 
     private func stopWaiting() {
-        readinessTask?.cancel()
-        readinessTask = nil
+        visibilityObservation?.invalidate()
+        visibilityObservation = nil
+        readinessScheduled = false
         observedWindow = nil
     }
+
+    private func scheduleReadiness(for window: NSWindow?) {
+        guard let window,
+            self.window === window,
+            observedWindow === window,
+            !readinessScheduled
+        else { return }
+
+        readinessScheduled = true
+        // Continue on the next main-queue turn so the ordering transaction has
+        // finished without relying on a display interval.
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window,
+                self.window === window,
+                self.observedWindow === window
+            else { return }
+
+            self.readinessScheduled = false
+            guard window.isVisible else { return }
+            self.onReady()
+            self.stopWaiting()
+        }
+    }
+
 }

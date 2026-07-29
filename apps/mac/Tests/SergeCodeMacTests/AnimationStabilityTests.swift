@@ -53,9 +53,51 @@ struct AnimationStabilityTests {
 @Suite("Window presentation readiness")
 @MainActor
 struct WindowPresentationReadyTests {
+    private enum WaitError: Error {
+        case timedOut
+        case signaledUnexpectedly
+    }
+
+    private static func waitForSignal(
+        _ stream: AsyncStream<Void>,
+        timeout: Duration = .seconds(1)
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await _ in stream { return }
+                throw WaitError.timedOut
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw WaitError.timedOut
+            }
+            _ = try await group.next()
+            group.cancelAll()
+        }
+    }
+
+    private static func expectNoSignal(
+        _ stream: AsyncStream<Void>,
+        timeout: Duration = .milliseconds(250)
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await _ in stream {
+                    throw WaitError.signaledUnexpectedly
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+            }
+            _ = try await group.next()
+            group.cancelAll()
+        }
+    }
+
     @Test("signals only after the containing window is visible")
     func waitsForVisibleWindow() async throws {
         var signalCount = 0
+        let (readiness, continuation) = AsyncStream<Void>.makeStream()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 40, height: 40),
             styleMask: .borderless,
@@ -63,6 +105,7 @@ struct WindowPresentationReadyTests {
             defer: false)
         let probe = WindowPresentationReadyView {
             signalCount += 1
+            continuation.yield()
         }
         window.contentView = probe
         defer {
@@ -70,17 +113,17 @@ struct WindowPresentationReadyTests {
             window.contentView = nil
         }
 
-        try await Task.sleep(for: .milliseconds(40))
         #expect(signalCount == 0)
 
         window.orderFront(nil)
-        try await Task.sleep(for: .milliseconds(50))
+        try await Self.waitForSignal(readiness)
         #expect(signalCount == 1)
     }
 
     @Test("cancels the signal when the probe leaves its window")
     func cancelsWhenDetached() async throws {
         var signalCount = 0
+        let (readiness, continuation) = AsyncStream<Void>.makeStream()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 40, height: 40),
             styleMask: .borderless,
@@ -88,13 +131,14 @@ struct WindowPresentationReadyTests {
             defer: false)
         let probe = WindowPresentationReadyView {
             signalCount += 1
+            continuation.yield()
         }
         window.contentView = probe
         window.contentView = nil
         defer { window.orderOut(nil) }
 
         window.orderFront(nil)
-        try await Task.sleep(for: .milliseconds(50))
+        try await Self.expectNoSignal(readiness)
         #expect(signalCount == 0)
     }
 }
