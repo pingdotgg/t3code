@@ -22,12 +22,33 @@ import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<CheckpointRollbackExecutionError>()(
   "CheckpointRollbackExecutionError",
   {
+    reason: Schema.Literals([
+      "rollback-target-invalid",
+      "active-provider-changed",
+      "provider-turn-unavailable",
+      "unexpected-failure",
+    ]),
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     checkpointId: CheckpointId,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "rollback-target-invalid":
+        return `Rollback target ${this.checkpointId} for provider thread ${this.providerThreadId} on thread ${this.threadId} is incomplete or invalid.`;
+      case "active-provider-changed":
+        return `Active provider changed before rollback target ${this.checkpointId} could execute on thread ${this.threadId}.`;
+      case "provider-turn-unavailable":
+        return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
+      case "unexpected-failure":
+        return `Failed to execute rollback target ${this.checkpointId} on provider thread ${this.providerThreadId} for thread ${this.threadId}.`;
+    }
+  }
+}
+
+const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
 
 export interface CheckpointRollbackServiceV2Shape {
   readonly execute: (input: {
@@ -85,10 +106,10 @@ export const layer: Layer.Layer<
         checkpoint.status !== "ready"
       ) {
         return yield* new CheckpointRollbackExecutionError({
+          reason: "rollback-target-invalid",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
           checkpointId: input.checkpointId,
-          cause: "The persisted rollback target is incomplete or no longer valid.",
         });
       }
       if (
@@ -96,10 +117,10 @@ export const layer: Layer.Layer<
         providerThread.providerInstanceId !== projection.thread.modelSelection.instanceId
       ) {
         return yield* new CheckpointRollbackExecutionError({
+          reason: "active-provider-changed",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
           checkpointId: input.checkpointId,
-          cause: "The active provider changed before the rollback could execute.",
         });
       }
 
@@ -145,10 +166,10 @@ export const layer: Layer.Layer<
               );
               if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
                 return yield* new CheckpointRollbackExecutionError({
+                  reason: "provider-turn-unavailable",
                   threadId: input.threadId,
                   providerThreadId: input.providerThreadId,
                   checkpointId: input.checkpointId,
-                  cause: "The provider rollback turn is unavailable.",
                 });
               }
               return {
@@ -251,9 +272,10 @@ export const layer: Layer.Layer<
       execute: (input) =>
         execute(input).pipe(
           Effect.mapError((cause) =>
-            Schema.is(CheckpointRollbackExecutionError)(cause)
+            isCheckpointRollbackExecutionError(cause)
               ? cause
               : new CheckpointRollbackExecutionError({
+                  reason: "unexpected-failure",
                   threadId: input.threadId,
                   providerThreadId: input.providerThreadId,
                   checkpointId: input.checkpointId,
