@@ -549,6 +549,58 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps Codex subagent lifecycle details into a visible tool event", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const item = {
+        type: "collabAgentToolCall" as const,
+        id: "collab_1",
+        tool: "spawnAgent" as const,
+        status: "inProgress" as const,
+        senderThreadId: "parent-thread",
+        receiverThreadIds: ["child-thread"],
+        prompt: "Inspect the event pipeline",
+        agentsStates: {
+          "child-thread": { status: "running" as const, message: "Reading the adapter" },
+        },
+      };
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-started"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab_1"),
+        payload: {
+          startedAtMs: 1_778_000_000_000,
+          threadId: "parent-thread",
+          turnId: "turn-1",
+          item,
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.started") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.itemType, "collab_agent_tool_call");
+      NodeAssert.equal(firstEvent.value.payload.title, "Subagent task");
+      NodeAssert.equal(firstEvent.value.payload.status, "inProgress");
+      NodeAssert.equal(firstEvent.value.payload.detail, "Inspect the event pipeline");
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.data, {
+        startedAtMs: 1_778_000_000_000,
+        threadId: "parent-thread",
+        turnId: "turn-1",
+        item,
+      });
+    }),
+  );
+
   it.effect("maps completed plan items to canonical proposed-plan completion events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

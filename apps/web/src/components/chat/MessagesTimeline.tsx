@@ -25,6 +25,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
+  type WorkLogEntry,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
@@ -51,6 +52,7 @@ import {
   HammerIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
+  PanelRightOpenIcon,
   PaintbrushIcon,
   MinusIcon,
   SquarePenIcon,
@@ -135,6 +137,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenSubagent: (entry: WorkLogEntry) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
 }
@@ -166,6 +169,7 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenSubagent: (entry: WorkLogEntry) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -196,6 +200,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  onOpenSubagent,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -391,6 +396,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenSubagent,
       onToggleTurnFold,
       onToggleWorkGroup,
     }),
@@ -405,6 +411,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenSubagent,
       onToggleTurnFold,
       onToggleWorkGroup,
     ],
@@ -1946,6 +1953,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { t } = useI18n();
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
+  const { onOpenSubagent } = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -1960,7 +1968,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot, t);
-  const canExpand = expandedBody !== null;
+  const opensSubagentPanel = workEntry.itemType === "collab_agent_tool_call";
+  const canExpand = expandedBody !== null && !opensSubagentPanel;
+  const isInteractive = opensSubagentPanel || canExpand;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -1985,16 +1995,23 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||
     (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
-  const rowToggleProps = canExpand
+  const activateRow = () => {
+    if (opensSubagentPanel) {
+      onOpenSubagent(workEntry);
+      return;
+    }
+    setExpanded((value) => !value);
+  };
+  const rowToggleProps = isInteractive
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
         "aria-label": displayText,
-        onClick: () => setExpanded((v) => !v),
+        onClick: activateRow,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setExpanded((v) => !v);
+            activateRow();
           }
         },
       }
@@ -2004,7 +2021,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     <div
       className={cn(
         "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
-        canExpand &&
+        isInteractive &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       {...rowToggleProps}
@@ -2028,9 +2045,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
             <span
               className="flex size-4 shrink-0 items-center justify-center"
-              aria-hidden={!canExpand}
+              aria-hidden={!isInteractive}
             >
-              {canExpand ? (
+              {opensSubagentPanel ? (
+                <PanelRightOpenIcon className="size-3 shrink-0 opacity-70" aria-hidden />
+              ) : canExpand ? (
                 <ChevronDownIcon
                   className={cn(
                     "size-3 shrink-0 opacity-70 transition-transform duration-200",

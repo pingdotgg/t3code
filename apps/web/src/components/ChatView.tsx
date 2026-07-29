@@ -79,7 +79,9 @@ import {
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  type WorkLogEntry,
 } from "../session-logic";
+import { deriveSubagentActivity, subagentEntryKey } from "../subagentActivity";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   buildPendingUserInputAnswers,
@@ -127,6 +129,7 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { SubagentPanel } from "./SubagentPanel";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -1726,6 +1729,14 @@ function ChatViewContent(props: ChatViewProps) {
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const activeSubagentEntry = useMemo(() => {
+    if (activeRightPanelSurface?.kind !== "subagent") return null;
+    return (
+      workLogEntries.find(
+        (entry) => subagentEntryKey(entry) === activeRightPanelSurface.resourceId,
+      ) ?? null
+    );
+  }, [activeRightPanelSurface, workLogEntries]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -2829,6 +2840,20 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !contextPanelAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "context");
   }, [activeThreadRef, contextPanelAvailable]);
+  const openSubagentSurface = useCallback(
+    (entry: WorkLogEntry) => {
+      if (!activeThreadRef) return;
+      const activity = deriveSubagentActivity(entry);
+      useRightPanelStore
+        .getState()
+        .openSubagent(
+          activeThreadRef,
+          subagentEntryKey(entry),
+          activity?.title ?? t("panel.subagent"),
+        );
+    },
+    [activeThreadRef, t],
+  );
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4877,6 +4902,8 @@ function ChatViewContent(props: ChatViewProps) {
           threadId={activeThreadRef.threadId}
         />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "subagent" ? (
+      <SubagentPanel entry={activeSubagentEntry} allEntries={workLogEntries} />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -4979,6 +5006,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
+                onOpenSubagent={openSubagentSurface}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}

@@ -709,6 +709,61 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("keeps and merges a Codex subagent started event", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "codex-subagent-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Subagent task started",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent task",
+          detail: "Inspect the context tab",
+          data: {
+            threadId: "parent-thread",
+            item: {
+              id: "call-codex-1",
+              type: "collabAgentToolCall",
+              receiverThreadIds: ["child-thread"],
+              agentsStates: { "child-thread": { status: "running" } },
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "codex-subagent-completed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "completed",
+          title: "Subagent task",
+          detail: "Inspect the context tab",
+          data: {
+            threadId: "parent-thread",
+            item: {
+              id: "call-codex-1",
+              type: "collabAgentToolCall",
+              receiverThreadIds: ["child-thread"],
+              agentsStates: { "child-thread": { status: "completed", message: "Done" } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "codex-subagent-completed",
+      itemType: "collab_agent_tool_call",
+      toolCallId: "call-codex-1",
+      toolLifecycleStatus: "completed",
+    });
+  });
+
   it("preserves the title and call id for an in-progress OpenCode subagent", () => {
     const [entry] = deriveWorkLogEntries([
       makeActivity({

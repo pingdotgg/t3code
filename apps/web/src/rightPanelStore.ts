@@ -22,8 +22,14 @@ export const RIGHT_PANEL_KINDS = [
   "preview",
   "terminal",
   "context",
+  "subagent",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
+
+type SingletonRightPanelKind = Exclude<
+  RightPanelKind,
+  "file" | "preview" | "terminal" | "subagent"
+>;
 
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
@@ -39,7 +45,12 @@ export type RightPanelSurface =
   | { id: "diff"; kind: "diff" }
   | { id: "files"; kind: "files" }
   | { id: "context"; kind: "context" }
-  | { id: "context"; kind: "context" }
+  | {
+      id: `subagent:${string}`;
+      kind: "subagent";
+      resourceId: string;
+      title: string;
+    }
   | {
       id: `file:${string}`;
       kind: "file";
@@ -50,7 +61,7 @@ export type RightPanelSurface =
   | { id: "plan"; kind: "plan" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 8;
+const RIGHT_PANEL_STORAGE_VERSION = 9;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -60,10 +71,14 @@ export interface ThreadRightPanelState {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  open: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "subagent">,
+  ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  openSubagent: (ref: ScopedThreadRef, resourceId: string, title: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -82,7 +97,10 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
+  toggle: (
+    ref: ScopedThreadRef,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "subagent">,
+  ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -92,9 +110,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   surfaces: [],
 };
 
-const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal">,
-): RightPanelSurface => {
+const singletonSurface = (kind: SingletonRightPanelKind): RightPanelSurface => {
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
@@ -130,6 +146,13 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+});
+
+const subagentSurface = (resourceId: string, title: string): RightPanelSurface => ({
+  id: `subagent:${encodeURIComponent(resourceId)}`,
+  kind: "subagent",
+  resourceId,
+  title,
 });
 
 const upsertSurface = (
@@ -303,6 +326,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
             upsertSurface(current, terminalSurface(terminalId)),
           ),
+        })),
+      openSubagent: (ref, resourceId, title) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const surface = subagentSurface(resourceId, title);
+            const exists = current.surfaces.some((entry) => entry.id === surface.id);
+            return {
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: exists
+                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
+                : [...current.surfaces, surface],
+            };
+          }),
         })),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
         set((state) => ({

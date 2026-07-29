@@ -7,6 +7,7 @@ import {
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
@@ -823,37 +824,32 @@ describe("orchestration projector", () => {
     expect(thread?.latestTurn?.turnId).toBe("turn-1");
   });
 
-  it("does not fallback-retain messages tied to removed turn IDs", async () => {
+  effectIt.effect("does not fallback-retain messages tied to removed turn IDs", () => {
     const createdAt = "2026-02-26T12:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
 
-    const afterCreate = await Effect.runPromise(
-      projectEvent(
-        model,
-        makeEvent({
-          sequence: 1,
-          type: "thread.created",
-          aggregateKind: "thread",
-          aggregateId: "thread-revert",
-          occurredAt: createdAt,
-          commandId: "cmd-create-revert",
-          payload: {
-            threadId: "thread-revert",
-            projectId: "project-1",
-            title: "demo",
-            modelSelection: {
-              provider: ProviderDriverKind.make("codex"),
-              model: "gpt-5.3-codex",
-            },
-            runtimeMode: "full-access",
-            branch: null,
-            worktreePath: null,
-            createdAt,
-            updatedAt: createdAt,
-          },
-        }),
-      ),
-    );
+    const createEvent = makeEvent({
+      sequence: 1,
+      type: "thread.created",
+      aggregateKind: "thread",
+      aggregateId: "thread-revert",
+      occurredAt: createdAt,
+      commandId: "cmd-create-revert",
+      payload: {
+        threadId: "thread-revert",
+        projectId: "project-1",
+        title: "demo",
+        modelSelection: {
+          provider: ProviderDriverKind.make("codex"),
+          model: "gpt-5.3-codex",
+        },
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    });
 
     const events: ReadonlyArray<OrchestrationEvent> = [
       makeEvent({
@@ -960,55 +956,50 @@ describe("orchestration projector", () => {
       }),
     ];
 
-    const afterRevert = await events.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
-      (statePromise, event) =>
-        // eslint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing async reducer is outside this UI-only change.
-        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
-      Promise.resolve(afterCreate),
-    );
+    return Effect.gen(function* () {
+      const afterCreate = yield* projectEvent(model, createEvent);
+      let afterRevert = afterCreate;
+      for (const event of events) {
+        afterRevert = yield* projectEvent(afterRevert, event);
+      }
 
-    const thread = afterRevert.threads[0];
-    expect(
-      thread?.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        turnId: message.turnId,
-      })),
-    ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
+      const thread = afterRevert.threads[0];
+      expect(
+        thread?.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          turnId: message.turnId,
+        })),
+      ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
+    });
   });
 
-  it("caps message and checkpoint retention for long-lived threads", async () => {
+  effectIt.effect("caps message and checkpoint retention for long-lived threads", () => {
     const createdAt = "2026-03-01T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
 
-    // eslint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing async test is outside this UI-only change.
-    const afterCreate = await Effect.runPromise(
-      projectEvent(
-        model,
-        makeEvent({
-          sequence: 1,
-          type: "thread.created",
-          aggregateKind: "thread",
-          aggregateId: "thread-capped",
-          occurredAt: createdAt,
-          commandId: "cmd-create-capped",
-          payload: {
-            threadId: "thread-capped",
-            projectId: "project-1",
-            title: "capped",
-            modelSelection: {
-              provider: ProviderDriverKind.make("codex"),
-              model: "gpt-5-codex",
-            },
-            runtimeMode: "full-access",
-            branch: null,
-            worktreePath: null,
-            createdAt,
-            updatedAt: createdAt,
-          },
-        }),
-      ),
-    );
+    const createEvent = makeEvent({
+      sequence: 1,
+      type: "thread.created",
+      aggregateKind: "thread",
+      aggregateId: "thread-capped",
+      occurredAt: createdAt,
+      commandId: "cmd-create-capped",
+      payload: {
+        threadId: "thread-capped",
+        projectId: "project-1",
+        title: "capped",
+        modelSelection: {
+          provider: ProviderDriverKind.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    });
 
     const messageEvents: ReadonlyArray<OrchestrationEvent> = Array.from(
       { length: 2_100 },
@@ -1031,14 +1022,6 @@ describe("orchestration projector", () => {
             updatedAt: `2026-03-01T10:00:${String(index % 60).padStart(2, "0")}.000Z`,
           },
         }),
-    );
-    const afterMessages = await messageEvents.reduce<
-      Promise<ReturnType<typeof createEmptyReadModel>>
-    >(
-      (statePromise, event) =>
-        // eslint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing async reducer is outside this UI-only change.
-        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
-      Promise.resolve(afterCreate),
     );
 
     const checkpointEvents: ReadonlyArray<OrchestrationEvent> = Array.from(
@@ -1063,21 +1046,26 @@ describe("orchestration projector", () => {
           },
         }),
     );
-    const finalState = await checkpointEvents.reduce<
-      Promise<ReturnType<typeof createEmptyReadModel>>
-    >(
-      (statePromise, event) =>
-        // eslint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Existing async reducer is outside this UI-only change.
-        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
-      Promise.resolve(afterMessages),
-    );
 
-    const thread = finalState.threads[0];
-    expect(thread?.messages).toHaveLength(2_000);
-    expect(thread?.messages[0]?.id).toBe("msg-100");
-    expect(thread?.messages.at(-1)?.id).toBe("msg-2099");
-    expect(thread?.checkpoints).toHaveLength(500);
-    expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
-    expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
+    return Effect.gen(function* () {
+      const afterCreate = yield* projectEvent(model, createEvent);
+      let afterMessages = afterCreate;
+      for (const event of messageEvents) {
+        afterMessages = yield* projectEvent(afterMessages, event);
+      }
+
+      let finalState = afterMessages;
+      for (const event of checkpointEvents) {
+        finalState = yield* projectEvent(finalState, event);
+      }
+
+      const thread = finalState.threads[0];
+      expect(thread?.messages).toHaveLength(2_000);
+      expect(thread?.messages[0]?.id).toBe("msg-100");
+      expect(thread?.messages.at(-1)?.id).toBe("msg-2099");
+      expect(thread?.checkpoints).toHaveLength(500);
+      expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
+      expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
+    });
   });
 });

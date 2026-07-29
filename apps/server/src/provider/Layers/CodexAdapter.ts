@@ -247,7 +247,7 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
     return "file_change";
   if (type.includes("mcp")) return "mcp_tool_call";
   if (type.includes("dynamic tool")) return "dynamic_tool_call";
-  if (type.includes("collab")) return "collab_agent_tool_call";
+  if (type.includes("collab") || type.includes("sub agent")) return "collab_agent_tool_call";
   if (type.includes("web search")) return "web_search";
   if (type.includes("image")) return "image_view";
   if (type.includes("review entered")) return "review_entered";
@@ -278,6 +278,8 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
       return "MCP tool call";
     case "dynamic_tool_call":
       return "Tool call";
+    case "collab_agent_tool_call":
+      return "Subagent task";
     case "web_search":
       return "Web search";
     case "image_view":
@@ -297,6 +299,7 @@ function itemDetail(item: CodexLifecycleItem): string | undefined {
     "text" in item ? item.text : undefined,
     "path" in item ? item.path : undefined,
     "prompt" in item ? item.prompt : undefined,
+    "agentPath" in item ? item.agentPath : undefined,
   ];
   for (const candidate of candidates) {
     const trimmed = typeof candidate === "string" ? trimText(candidate) : undefined;
@@ -304,6 +307,30 @@ function itemDetail(item: CodexLifecycleItem): string | undefined {
     return trimmed;
   }
   return undefined;
+}
+
+function itemLifecycleStatus(
+  item: CodexLifecycleItem,
+  lifecycle: "item.started" | "item.updated" | "item.completed",
+): "inProgress" | "completed" | "failed" {
+  if ("status" in item) {
+    switch (item.status) {
+      case "failed":
+      case "errored":
+        return "failed";
+      case "inProgress":
+      case "running":
+      case "pending":
+      case "pendingInit":
+        return "inProgress";
+      case "completed":
+        return "completed";
+    }
+  }
+  if ("success" in item && item.success === false) {
+    return "failed";
+  }
+  return lifecycle === "item.completed" ? "completed" : "inProgress";
 }
 
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
@@ -488,19 +515,14 @@ function mapItemLifecycle(
   }
 
   const detail = itemDetail(item);
-  const status =
-    lifecycle === "item.started"
-      ? "inProgress"
-      : lifecycle === "item.completed"
-        ? "completed"
-        : undefined;
+  const status = itemLifecycleStatus(item, lifecycle);
 
   return {
     ...runtimeEventBase(event, canonicalThreadId),
     type: lifecycle,
     payload: {
       itemType,
-      ...(status ? { status } : {}),
+      status,
       ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
       ...(event.payload !== undefined ? { data: event.payload } : {}),

@@ -1,6 +1,7 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
+  Bot,
   ClipboardList,
   FileDiff,
   Files,
@@ -229,6 +230,8 @@ function surfaceTitle(
       );
     case "plan":
       return t("panel.plan");
+    case "subagent":
+      return surface.title || t("panel.subagent");
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return t("panel.browser");
@@ -292,6 +295,8 @@ function SurfaceIcon({
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
       return <ClipboardList className="size-3.5 shrink-0" />;
+    case "subagent":
+      return <Bot className="size-3.5 shrink-0" />;
   }
 }
 
