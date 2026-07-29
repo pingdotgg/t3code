@@ -109,6 +109,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     <div
       className={cn(
         "panel-glass overflow-hidden rounded-[20px]",
+        props.mode === "popover" && "panel-glass-opaque",
         props.mode === "inline" ? "max-h-full" : "max-h-[calc(100dvh-6.5rem)]",
       )}
       data-thread-details-card
