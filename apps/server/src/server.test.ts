@@ -67,6 +67,7 @@ import { vi } from "vite-plus/test";
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import * as ServerConfig from "./config.ts";
+import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import { makeRoutesLayer } from "./server.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -752,6 +753,7 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
+      Layer.provide(HttpResponseCompression.layerNode),
       Layer.provide(layerConfig),
     );
 
@@ -1194,6 +1196,40 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assert.deepEqual(body, {
         ...testEnvironmentDescriptor,
+        advertisedEndpoints: [expectedDirectAdvertisedEndpoint(port)],
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("compresses large JSON responses through the composed routes", () =>
+    Effect.gen(function* () {
+      const descriptor = {
+        ...testEnvironmentDescriptor,
+        label: "Test environment".repeat(100),
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverEnvironment: {
+            getDescriptor: Effect.succeed(descriptor),
+          },
+        },
+      });
+
+      const url = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const response = yield* fetchEffect(url, {
+        headers: {
+          "accept-encoding": "gzip",
+        },
+      });
+      const body = yield* responseJsonEffect<typeof descriptor>(response);
+      const server = yield* HttpServer.HttpServer;
+      const port = (server.address as HttpServer.TcpAddress).port;
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["content-encoding"], "gzip");
+      assert.equal(response.headers.vary, "Accept-Encoding");
+      assert.deepEqual(body, {
+        ...descriptor,
         advertisedEndpoints: [expectedDirectAdvertisedEndpoint(port)],
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
