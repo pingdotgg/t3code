@@ -10,6 +10,8 @@ import type {
   ModelSelection,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
+  OrchestrationV2ProviderFailure,
+  OrchestrationV2ProviderRetry,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
@@ -71,7 +73,7 @@ import {
   type ProviderContinuationRequest,
   ProviderContinuationRequests,
 } from "../ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -771,6 +773,31 @@ export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRo
   },
 );
 
+export function parseCodexRetryProgress(
+  message: string,
+): Pick<OrchestrationV2ProviderRetry, "attempt" | "maxAttempts"> | null {
+  const match = /\b(\d+)\s*\/\s*(\d+)\b/u.exec(message);
+  if (match?.[1] === undefined || match[2] === undefined) {
+    return null;
+  }
+  const attempt = Number.parseInt(match[1], 10);
+  const maxAttempts = Number.parseInt(match[2], 10);
+  if (attempt < 1 || maxAttempts < 1) {
+    return null;
+  }
+  return { attempt, maxAttempts };
+}
+
+function codexErrorInfoCode(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  return Object.keys(value)[0] ?? null;
+}
+
 interface ActiveCodexTurnContext {
   readonly input: ProviderAdapterV2TurnInput;
   readonly projectionAppThread: OrchestrationV2AppThread;
@@ -786,6 +813,13 @@ interface ActiveCodexTurnContext {
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
+}
+
+interface ActiveCodexProviderRetry {
+  readonly retry: OrchestrationV2ProviderRetry;
+  readonly failure: OrchestrationV2ProviderFailure;
+  readonly startedAt: DateTime.Utc;
+  readonly itemOrdinal: number;
 }
 
 /** Snapshot of a still-running commandExecution item for interrupt/fail terminalization. */
@@ -1418,6 +1452,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const nextProviderTurnOrdinals = yield* Ref.make(new Map<string, number>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
         const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
+        const providerRetries = yield* Ref.make(
+          new Map<ProviderTurnId, ActiveCodexProviderRetry>(),
+        );
         const planDeltas = yield* Ref.make(new Map<string, string>());
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
@@ -3745,6 +3782,73 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
+        yield* client.handleServerNotification("error", (payload) =>
+          Effect.gen(function* () {
+            if (!payload.willRetry) {
+              return;
+            }
+            const context = yield* awaitActiveTurn(payload.turnId);
+            if (context === undefined) {
+              return;
+            }
+            const updatedAt = yield* DateTime.now;
+            const previous = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
+            const progress = parseCodexRetryProgress(payload.error.message);
+            const retry: OrchestrationV2ProviderRetry = {
+              attempt: progress?.attempt ?? (previous?.retry.attempt ?? 0) + 1,
+              maxAttempts: progress?.maxAttempts ?? previous?.retry.maxAttempts ?? null,
+              retryDelayMs: null,
+            };
+            const code = codexErrorInfoCode(payload.error.codexErrorInfo);
+            const additionalDetails = payload.error.additionalDetails?.trim();
+            const failure = makeProviderFailure({
+              message:
+                additionalDetails === undefined || additionalDetails.length === 0
+                  ? payload.error.message
+                  : additionalDetails,
+              code,
+              class:
+                code?.startsWith("http") === true || code?.startsWith("responseStream") === true
+                  ? "transport_error"
+                  : "provider_error",
+              retryable: true,
+            });
+            const itemOrdinal =
+              previous?.itemOrdinal ??
+              (yield* resolveItemOrdinal(context, `terminal-failure:${context.providerTurnId}`));
+            const state: ActiveCodexProviderRetry = {
+              retry,
+              failure,
+              startedAt: previous?.startedAt ?? updatedAt,
+              itemOrdinal,
+            };
+            yield* Ref.update(providerRetries, (current) => {
+              const updated = new Map(current);
+              updated.set(context.providerTurnId, state);
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: makeProviderRetryTurnItem({
+                idAllocator,
+                driver: CODEX_PROVIDER,
+                threadId: context.projectionThreadId,
+                runId: context.projectionRunId,
+                nodeId: context.providerNodeId,
+                providerThreadId: context.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                itemOrdinal,
+                failure,
+                retry,
+                status: "running",
+                startedAt: state.startedAt,
+                updatedAt,
+              }),
+            });
+          }).pipe(Effect.orDie),
+        );
+
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -4469,6 +4573,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             readonly context: ActiveCodexTurnContext;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
+            readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
             if (terminalStatus === "failed") {
@@ -4483,10 +4588,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   `terminal-failure:${input.context.providerTurnId}`,
                 ),
                 status: terminalStatus,
-                failure: makeProviderFailure({
-                  message: input.failureMessage,
-                  class: "provider_error",
-                }),
+                failure:
+                  input.failureMessage === undefined && input.providerRetry !== undefined
+                    ? input.providerRetry.failure
+                    : makeProviderFailure({
+                        message: input.failureMessage,
+                        class: "provider_error",
+                      }),
+                ...(input.providerRetry === undefined
+                  ? {}
+                  : {
+                      retry: input.providerRetry.retry,
+                      retryStartedAt: input.providerRetry.startedAt,
+                    }),
                 threadDisposition: "reusable",
               };
             }
@@ -4509,6 +4623,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             readonly nativeTurnId: string;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
+            readonly providerRetry?: ActiveCodexProviderRetry;
           }) {
             const event = yield* makeRootTerminalEvent(input);
             const hasActiveDescendants = Array.from((yield* Ref.get(activeTurns)).values()).some(
@@ -4562,6 +4677,39 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const current = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
               if (current !== input.context) {
                 return false;
+              }
+              const providerRetry = yield* Ref.modify(providerRetries, (current) => {
+                const retry = current.get(input.context.providerTurnId);
+                if (retry === undefined) {
+                  return [undefined, current] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(input.context.providerTurnId);
+                return [retry, updated] as const;
+              });
+              if (
+                providerRetry !== undefined &&
+                (input.status !== "failed" || input.context.subagent !== null)
+              ) {
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CODEX_PROVIDER,
+                  turnItem: makeProviderRetryTurnItem({
+                    idAllocator,
+                    driver: CODEX_PROVIDER,
+                    threadId: input.context.projectionThreadId,
+                    runId: input.context.projectionRunId,
+                    nodeId: input.context.providerNodeId,
+                    providerThreadId: input.context.providerThread.id,
+                    providerTurnId: input.context.providerTurnId,
+                    itemOrdinal: providerRetry.itemOrdinal,
+                    failure: providerRetry.failure,
+                    retry: providerRetry.retry,
+                    status: providerTurnStatusToTerminal(input.status),
+                    startedAt: providerRetry.startedAt,
+                    updatedAt: input.completedAt,
+                  }),
+                });
               }
               if (input.status !== "completed") {
                 yield* Ref.update(terminalizedNonCompletedNativeTurns, (current) => {
@@ -4659,7 +4807,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 );
               }
               if (input.context.subagent === null) {
-                yield* emitOrDeferRootTerminal(input);
+                yield* emitOrDeferRootTerminal({
+                  ...input,
+                  ...(providerRetry === undefined ? {} : { providerRetry }),
+                });
               }
               const waiter = (yield* Ref.get(turnWaiters)).get(input.nativeTurnId);
               if (waiter !== undefined) {

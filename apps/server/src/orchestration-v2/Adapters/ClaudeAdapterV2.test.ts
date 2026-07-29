@@ -107,6 +107,9 @@ function makeClaudeTestAppThread(input: {
     createdAt: input.now,
     updatedAt: input.now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
     deletedAt: null,
   };
 }
@@ -979,6 +982,9 @@ describe("ClaudeAdapterV2 native fork", () => {
             createdAt: now,
             updatedAt: now,
             archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
             deletedAt: null,
           },
           threadId: targetThreadId,
@@ -1153,6 +1159,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly subtype?: string;
     readonly isError?: boolean;
     readonly errors?: ReadonlyArray<string>;
+    readonly apiErrorStatus?: number;
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -1176,6 +1183,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       session_id: WAKE_NATIVE_SESSION,
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.errors === undefined ? {} : { errors: input.errors }),
+      ...(input.apiErrorStatus === undefined ? {} : { api_error_status: input.apiErrorStatus }),
     });
   const turnOneResult = makeResultFrame({
     uuid: "00000000-0000-4000-8000-000000000102",
@@ -1302,6 +1310,125 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("projects API retries and resolves the same item after recovery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-api-retry"),
+            text: "Open github.com.",
+            attachments: [],
+          }),
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "api_retry",
+            attempt: 2,
+            max_retries: 10,
+            retry_delay_ms: 1_500,
+            error_status: 529,
+            error: "overloaded",
+            uuid: "00000000-0000-4000-8000-000000000201",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const retryItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.retry !== undefined
+              ? [event.turnItem]
+              : [],
+          );
+        yield* awaitUntil(() => retryItems().length === 1, "Claude retry item");
+        const runningRetry = retryItems()[0];
+        assert.equal(runningRetry?.status, "running");
+        assert.equal(runningRetry?.failure.code, "api_error_529");
+        assert.deepEqual(runningRetry?.retry, {
+          attempt: 2,
+          maxAttempts: 10,
+          retryDelayMs: 1_500,
+        });
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000202",
+            result: "Opened GitHub.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "recovered Claude turn");
+        yield* awaitUntil(() => retryItems().length === 2, "resolved Claude retry item");
+        const recoveredRetry = retryItems()[1];
+        assert.equal(recoveredRetry?.id, runningRetry?.id);
+        assert.equal(recoveredRetry?.status, "completed");
+        assert.equal(recoveredRetry?.title, "Provider recovered");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("carries exhausted retry progress into the terminal provider error", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-api-retry-exhausted"),
+            text: "Open github.com.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "api_retry",
+            attempt: 10,
+            max_retries: 10,
+            retry_delay_ms: 38_010,
+            error_status: 529,
+            error: "overloaded",
+            uuid: "00000000-0000-4000-8000-000000000203",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000204",
+            result: "Claude is temporarily overloaded.",
+            isError: true,
+            apiErrorStatus: 529,
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "failed Claude turn");
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.deepEqual(terminal.retry, {
+          attempt: 10,
+          maxAttempts: 10,
+          retryDelayMs: 38_010,
+        });
+        assert.isDefined(terminal.retryStartedAt);
+        assert.equal(terminal.failure.code, "api_error_529");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
 
   it.effect("buffers wake output and requests a single continuation run", () =>
     Effect.scoped(

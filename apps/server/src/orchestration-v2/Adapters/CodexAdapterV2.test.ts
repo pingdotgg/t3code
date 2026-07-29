@@ -835,6 +835,9 @@ function makeCodexTestAppThread(input: {
     createdAt: input.now,
     updatedAt: input.now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
     deletedAt: null,
   };
 }
@@ -1111,6 +1114,87 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
         event.type === "message.updated" && event.message.role === "assistant",
     );
+
+  it.effect("projects retryable app-server errors and resolves the same item after recovery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-provider-api-retry";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt: "Open github.com.",
+            }),
+            {
+              type: "emit_inbound",
+              label: "error/retry",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... 2/5",
+                    additionalDetails: "The response stream disconnected.",
+                    codexErrorInfo: {
+                      responseStreamDisconnected: { httpStatusCode: 529 },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-codex-provider-api-retry"),
+            text: "Open github.com.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "Codex retry recovery");
+
+        const retryItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "error" &&
+          event.turnItem.retry !== undefined
+            ? [event.turnItem]
+            : [],
+        );
+        assert.lengthOf(retryItems, 2);
+        assert.equal(retryItems[0]?.status, "running");
+        assert.equal(retryItems[0]?.failure.code, "responseStreamDisconnected");
+        assert.deepEqual(retryItems[0]?.retry, {
+          attempt: 2,
+          maxAttempts: 5,
+          retryDelayMs: null,
+        });
+        assert.equal(retryItems[1]?.id, retryItems[0]?.id);
+        assert.equal(retryItems[1]?.status, "completed");
+        assert.equal(retryItems[1]?.title, "Provider recovered");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
 
   const finalAnswerTranscript = (
     scenario: string,

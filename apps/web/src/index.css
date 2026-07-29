@@ -768,6 +768,31 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     isolation: isolate;
   }
 
+  .chat-composer-queue-strip {
+    --chat-composer-queue-outline: rgb(0 0 0 / 8%);
+    --chat-composer-queue-surface: var(--card);
+
+    isolation: isolate;
+  }
+
+  .chat-composer-queue-strip::before {
+    pointer-events: none;
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-queue-outline);
+    border-radius: 16px 16px 0 0;
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-queue-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    box-shadow: 0 -10px 28px -24px rgb(0 0 0 / 45%);
+    content: "";
+  }
+
   .chat-composer-context-strip::before {
     position: absolute;
     z-index: -1;
@@ -784,6 +809,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
     --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
     --chat-composer-highlight: rgb(255 255 255 / 3%);
+  }
+
+  .dark .chat-composer-queue-strip {
+    --chat-composer-queue-outline: rgb(255 255 255 / 7%);
+    --chat-composer-queue-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+  }
+
+  .dark .chat-composer-queue-strip::before {
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 3%),
+      0 -12px 28px -24px rgb(0 0 0 / 80%);
   }
 
   .dark .chat-composer-glass-host {
@@ -903,8 +939,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   }
 
-  .panel-glass-opaque::before {
-    background: var(--popover);
+  .panel-glass-elevated::before {
+    background: color-mix(
+      in srgb,
+      var(--popover) 50%,
+      color-mix(in srgb, var(--background) var(--glass-opacity), transparent)
+    );
   }
 
   .dialog-glass {
