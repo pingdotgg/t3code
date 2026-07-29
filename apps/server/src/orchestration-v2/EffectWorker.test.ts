@@ -24,6 +24,7 @@ import {
   executorLayer,
   isNonRetryableProviderTurnControlFailure,
   layerWithOptions as effectWorkerLayerWithOptions,
+  OrchestrationEffectExecutionError,
   OrchestrationEffectExecutorV2,
   OrchestrationEffectWorkerError,
   OrchestrationEffectWorkerV2,
@@ -373,6 +374,81 @@ it.effect("requeues a replay-safe claim when success settlement fails", () =>
 
     assert.isTrue(Exit.isFailure(exit));
     assert.equal(yield* Ref.get(retries), 1);
+    assert.equal(yield* Ref.get(terminalizations), 0);
+  }),
+);
+
+it.effect("keeps a process-bound executor failure retryable when retry settlement fails", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const effectId = "effect:worker-process-bound-retry-settlement-failure";
+    const workerId = "worker-process-bound-retry-settlement-failure";
+    const claimedEffect: OrchestrationEffectV2 = {
+      id: effectId,
+      commandId: CommandId.make("command:worker-process-bound-retry-settlement-failure"),
+      threadId: ThreadId.make("thread:worker-process-bound-retry-settlement-failure"),
+      request: {
+        type: "provider-turn.start",
+        runId: RunId.make("run:worker-process-bound-retry-settlement-failure"),
+      },
+      status: "running",
+      attemptCount: 1,
+      availableAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const retryAttempts = yield* Ref.make(0);
+    const terminalizations = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimedEffect)),
+      get: () => Effect.succeed(Option.some(claimedEffect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      retry: () =>
+        Ref.updateAndGet(retryAttempts, (count) => count + 1).pipe(
+          Effect.flatMap((attempt) =>
+            attempt === 1
+              ? Effect.fail(
+                  new EffectOutboxError({
+                    operation: "retry",
+                    effectId,
+                    cause: "simulated retry settlement failure",
+                  }),
+                )
+              : Effect.succeed(true),
+          ),
+        ),
+      fail: () => Ref.update(terminalizations, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        execute: () =>
+          Effect.fail(
+            new OrchestrationEffectExecutionError({
+              effectId,
+              effectType: claimedEffect.request.type,
+              cause: "simulated provider execution failure",
+            }),
+          ),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    const exit = yield* OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(workerLayer),
+      Effect.exit,
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.equal(yield* Ref.get(retryAttempts), 2);
     assert.equal(yield* Ref.get(terminalizations), 0);
   }),
 );
