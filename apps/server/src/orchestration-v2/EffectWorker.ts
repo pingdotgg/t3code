@@ -493,38 +493,42 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)));
         }
 
-        return yield* Effect.gen(function* () {
-          const error = Cause.pretty(exit.cause);
-          const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
-          yield* Effect.logWarning("Orchestration effect execution failed", {
-            effectId: effect.id,
-            effectType: effect.request.type,
-            attemptCount: effect.attemptCount,
-            nonRetryable,
-            error,
-          });
-          // Prefer succeed for terminal interrupt races so the outbox does not
-          // keep a failed interrupt around; fail only when we must not retry.
-          const updated = nonRetryable
-            ? yield* outbox.succeed({ effectId: effect.id, workerId })
-            : effect.attemptCount >= maxAttempts
-              ? yield* outbox.fail({ effectId: effect.id, workerId, error })
-              : yield* outbox.retry({
+        const error = Cause.pretty(exit.cause);
+        const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
+        yield* Effect.logWarning("Orchestration effect execution failed", {
+          effectId: effect.id,
+          effectType: effect.request.type,
+          attemptCount: effect.attemptCount,
+          nonRetryable,
+          error,
+        });
+        // Prefer succeed for terminal interrupt races so the outbox does not
+        // keep a failed interrupt around; fail only when we must not retry.
+        const updated = nonRetryable
+          ? yield* outbox
+              .succeed({ effectId: effect.id, workerId })
+              .pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)))
+          : effect.attemptCount >= maxAttempts
+            ? yield* outbox
+                .fail({ effectId: effect.id, workerId, error })
+                .pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)))
+            : yield* outbox
+                .retry({
                   effectId: effect.id,
                   workerId,
                   error,
                   delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
-                });
-          if (!updated) {
-            if (yield* wasCancelled(effect.id)) return true;
-            return yield* new OrchestrationEffectWorkerError({
-              operation: "reschedule",
-              effectId: effect.id,
-              cause: "The worker no longer owns the effect lease.",
-            });
-          }
-          return true;
-        }).pipe(Effect.onError((cause) => recoverClaimAfterExecutionStarted(effect, cause)));
+                })
+                .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
+        if (!updated) {
+          if (yield* wasCancelled(effect.id)) return true;
+          return yield* new OrchestrationEffectWorkerError({
+            operation: "reschedule",
+            effectId: effect.id,
+            cause: "The worker no longer owns the effect lease.",
+          });
+        }
+        return true;
       }).pipe(
         Effect.mapError((cause) =>
           isOrchestrationEffectWorkerError(cause)
