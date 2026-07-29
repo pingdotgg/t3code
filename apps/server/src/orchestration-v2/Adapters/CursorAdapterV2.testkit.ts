@@ -726,6 +726,8 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
   readonly transcriptPrompts?: ReadonlyArray<string>;
   readonly modelSelection: ModelSelection;
   readonly cwd: string;
+  /** Stable fixture cwd used to sanitize runtime-only workspace paths in recorded updates. */
+  readonly transcriptCwd?: string;
   readonly interactionMode?: "default" | "plan";
   readonly apiKey?: string;
   readonly interruptAfterToolStart?: boolean;
@@ -788,7 +790,7 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
   });
 
   const replacements: ReadonlyArray<readonly [string, string]> = [
-    [input.cwd, `/tmp/cursor-replay-${input.scenario}`],
+    [input.cwd, input.transcriptCwd ?? `/tmp/cursor-replay-${input.scenario}`],
   ];
 
   try {

@@ -214,7 +214,7 @@ function flushInbound(): void {
     const entry = transcript.entries[cursor];
     if (entry === undefined || entry.type === "expect_outbound") return;
     if (entry.type === "runtime_exit") {
-      if (entry.status !== "success") {
+      if (entry.status !== "success" && entry.status !== "cancelled") {
         stopWithFailure(`Recorded runtime exit was ${entry.status ?? "unknown"}`, entry.error);
         return;
       }

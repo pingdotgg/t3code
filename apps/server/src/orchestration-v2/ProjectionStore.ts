@@ -744,7 +744,7 @@ export function threadShellFromProjection(
   const latestRun = projection.runs.at(-1) ?? null;
   const activeRun =
     projection.runs
-      .filter(isBlockingRunForShell)
+      .filter(isInterruptibleRunForShell)
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const pendingRuntimeRequest =
     projection.runtimeRequests
@@ -824,13 +824,8 @@ export function threadShellFromProjection(
   };
 }
 
-function isBlockingRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
-  return (
-    run.status === "preparing" ||
-    run.status === "starting" ||
-    run.status === "running" ||
-    run.status === "waiting"
-  );
+function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
+  return run.status === "preparing" || run.status === "starting" || run.status === "running";
 }
 
 type ShellThreadState = {
@@ -2088,7 +2083,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT r.run_id
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
-                  AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+                  AND r.status IN ('preparing', 'starting', 'running')
                 ORDER BY r.ordinal DESC, r.run_id DESC
                 LIMIT 1
               ) AS active_run_id,
