@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
   deriveThreadActivityRun,
-  deriveThreadInterruptibleRunId,
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { useCallback, useEffect, useMemo } from "react";
@@ -151,7 +150,7 @@ export function useThreadComposerState() {
   }, [selectedThreadActivityRun, selectedThreadSessionActivity, selectedThreadShell]);
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
-  const interruptibleRunId = deriveThreadInterruptibleRunId(selectedThreadProjection?.projection);
+  const interruptibleRunId = selectedThreadRuntime?.activeRunId ?? null;
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {

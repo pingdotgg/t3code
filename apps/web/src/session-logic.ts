@@ -411,15 +411,17 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         toolTitle: title ?? "Command",
         toolData: item,
       };
-    case "file_change":
+    case "file_change": {
+      const detail = item.diffStr ?? item.newStr;
       return {
         ...common,
         label: title ?? `Changed ${item.fileName}`,
         changedFiles: [item.fileName],
-        ...(item.diffStr ? { detail: item.diffStr } : {}),
+        ...(detail ? { detail } : {}),
         toolTitle: title ?? "File change",
         toolData: item,
       };
+    }
     case "file_search":
       return {
         ...common,
@@ -486,6 +488,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
   readonly attachmentUrlById?: ReadonlyMap<string, string>;
   readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
   readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
+  readonly plans?: ReadonlyArray<OrchestrationV2PlanArtifact>;
 }): TimelineEntry[] {
   const committedMessageIds = new Set<string>();
   const entries: TimelineEntry[] = [];
@@ -493,6 +496,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
     (input.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
   const nodeById = new Map((input.nodes ?? []).map((node) => [node.id, node] as const));
+  const planById = new Map((input.plans ?? []).map((plan) => [plan.id, plan] as const));
 
   const resolveAttempt = (item: OrchestrationV2TurnItem): TimelineAttempt | undefined => {
     if (item.nodeId === null || item.runId === null) return undefined;
@@ -551,11 +555,12 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
     }
 
     if (item.type === "proposed_plan") {
+      const plan = planById.get(item.planId);
       const proposedPlan = {
         id: item.planId,
         runId: item.runId,
         planMarkdown: item.markdown,
-        status: "active" as const,
+        status: plan?.kind === "proposed_plan" ? plan.status : ("active" as const),
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
       };

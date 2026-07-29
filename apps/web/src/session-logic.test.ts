@@ -304,6 +304,80 @@ describe("V2 session presentation", () => {
     }
   });
 
+  it("uses projected plan status and file contents in timeline entries", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const threadId = ThreadId.make("thread-timeline-artifacts");
+    const runId = RunId.make("run-timeline-artifacts");
+    const nodeId = NodeId.make("node-timeline-artifacts");
+    const planId = PlanId.make("plan-timeline-artifacts");
+    const base = {
+      threadId,
+      runId,
+      nodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    };
+    const planItem = {
+      ...base,
+      id: TurnItemId.make("item-proposed-plan"),
+      ordinal: 0,
+      type: "proposed_plan" as const,
+      planId,
+      markdown: "Finished plan",
+      streaming: false,
+    } satisfies OrchestrationV2TurnItem;
+    const fileItem = {
+      ...base,
+      id: TurnItemId.make("item-file-change"),
+      ordinal: 1,
+      type: "file_change" as const,
+      fileName: "src/example.ts",
+      newStr: "export const answer = 42;\n",
+    } satisfies OrchestrationV2TurnItem;
+    const visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = [
+      planItem,
+      fileItem,
+    ].map((item, position) => ({
+      position,
+      visibility: "local",
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+      item,
+    }));
+
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems,
+      optimisticMessages: [],
+      plans: [
+        {
+          id: planId,
+          threadId,
+          runId,
+          nodeId,
+          kind: "proposed_plan",
+          markdown: planItem.markdown,
+          status: "completed",
+        },
+      ],
+    });
+
+    expect(entries[0]?.kind).toBe("proposed-plan");
+    if (entries[0]?.kind === "proposed-plan") {
+      expect(entries[0].proposedPlan.status).toBe("completed");
+    }
+    expect(entries[1]?.kind).toBe("work");
+    if (entries[1]?.kind === "work") {
+      expect(entries[1].entry.detail).toBe(fileItem.newStr);
+    }
+  });
+
   it("resolves attempt identity through V2 execution nodes", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-attempts");

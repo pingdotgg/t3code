@@ -55,11 +55,27 @@ export function decideProviderSessionTransition(input: {
   const instanceChanged = current.modelSelection.instanceId !== target.modelSelection.instanceId;
   const runtimeChanged = current.runtimeMode !== target.runtimeMode;
   const workspaceChanged = current.workspace !== target.workspace;
+  const selectionChanged = !modelSelectionsEqual(current.modelSelection, target.modelSelection);
+  if (selectionChanged && !instanceChanged) {
+    switch (input.selectionTransition?.type) {
+      case "create_with_handoff":
+        return { type: "create_with_handoff" };
+      case "reject":
+        return { type: "reject", reason: input.selectionTransition.reason };
+      case undefined:
+        return {
+          type: "reject",
+          reason: "The provider adapter did not classify the selection change.",
+        };
+      case "apply_on_next_turn":
+      case "restart_session":
+        break;
+    }
+  }
   if (instanceChanged || runtimeChanged || workspaceChanged) {
     return { type: "restart_and_resume" };
   }
 
-  const selectionChanged = !modelSelectionsEqual(current.modelSelection, target.modelSelection);
   if (selectionChanged) {
     switch (input.selectionTransition?.type) {
       case "apply_on_next_turn":
@@ -71,10 +87,7 @@ export function decideProviderSessionTransition(input: {
       case "reject":
         return { type: "reject", reason: input.selectionTransition.reason };
       case undefined:
-        return {
-          type: "reject",
-          reason: "The provider adapter did not classify the selection change.",
-        };
+        return { type: "restart_and_resume" };
     }
   }
 

@@ -12,6 +12,7 @@ import { buildThreadRoutePath } from "../../lib/routes";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import { ThreadActivityInspector } from "./ThreadActivityInspector";
+import { threadWorkLogOverflowNoun } from "./thread-work-log-labels";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
   duration: 180,
@@ -179,6 +180,7 @@ export function ThreadWorkLog(props: {
   }
 
   const onlyToolRows = rows.every((row) => row.toolLike);
+  const overflowNoun = threadWorkLogOverflowNoun(onlyToolRows, hiddenCount);
 
   return (
     <View className="-mx-1 mb-1 px-1 py-0">
@@ -307,6 +309,41 @@ export function ThreadWorkLog(props: {
           );
         })}
       </View>
+
+      {hasOverflow ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: props.expanded }}
+          accessibilityLabel={
+            props.expanded
+              ? `Show fewer ${overflowNoun}`
+              : `Show ${hiddenCount} previous ${overflowNoun}`
+          }
+          hitSlop={4}
+          onPress={() => {
+            triggerDisclosureFeedback();
+            props.onToggleGroup();
+          }}
+          style={({ pressed }) => ({
+            backgroundColor: pressed ? pressedBackground : "transparent",
+          })}
+          className="min-h-9 flex-row items-center gap-1.5 rounded-md px-0.5 py-0.5"
+        >
+          <View className="h-5 w-5 items-center justify-center">
+            <SymbolView
+              name={props.expanded ? "chevron.up" : "chevron.down"}
+              size={13}
+              tintColor={props.iconSubtleColor}
+              type="monochrome"
+            />
+          </View>
+          <Text className="font-t3-medium text-xs text-foreground opacity-80">
+            {props.expanded
+              ? `Show fewer ${overflowNoun}`
+              : `+${hiddenCount} previous ${overflowNoun}`}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -320,17 +357,7 @@ export function ThreadWorkGroupToggle(props: {
 }) {
   const colorScheme = useColorScheme();
   const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
-  const noun = props.onlyToolActivities
-    ? props.hiddenCount === 1
-      ? "tool call"
-      : "tool calls"
-    : props.hiddenCount === 1
-      ? "log entry"
-      : "log entries";
-  const collapsedLabel = `Show ${props.hiddenCount} previous ${noun}`;
-  const expandedLabel = props.onlyToolActivities
-    ? "Show fewer tool calls"
-    : "Show fewer log entries";
+  const noun = threadWorkLogOverflowNoun(props.onlyToolActivities, props.hiddenCount);
 
   return (
     <View className="-mx-1 mb-1 px-1 py-0">

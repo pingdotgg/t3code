@@ -446,6 +446,7 @@ export function terminateLinuxCgroupLease(
       detail: `Failed to ${name} ACP cgroup ${lease.path}`,
     });
   return Effect.gen(function* () {
+    let lastRemovalFailure: { readonly cause: unknown } | null = null;
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (!lease.exists()) return;
       try {
@@ -470,23 +471,29 @@ export function terminateLinuxCgroupLease(
         return yield* failure("read state for", cause);
       }
       if (populated) {
+        lastRemovalFailure = null;
         yield* Effect.sleep("10 millis");
         continue;
       }
       try {
         lease.remove();
+        lastRemovalFailure = null;
       } catch (cause) {
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
         if (code === "ENOENT" && !lease.exists()) return;
         if (code !== "EBUSY" && code !== "ENOTEMPTY" && code !== "ENOENT") {
           return yield* failure("remove", cause);
         }
+        lastRemovalFailure = { cause };
       }
       if (!lease.exists()) return;
       yield* Effect.sleep("10 millis");
     }
+    if (lastRemovalFailure !== null) {
+      return yield* failure("remove", lastRemovalFailure.cause);
+    }
     return yield* new AcpProcessGroupTerminationError({
-      detail: `ACP cgroup ${lease.path} remained populated after cgroup.kill`,
+      detail: `ACP cgroup ${lease.path} remained present after cgroup cleanup`,
     });
   }).pipe(withWallClock);
 }
