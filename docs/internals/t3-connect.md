@@ -229,36 +229,26 @@ codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
 The current mobile UI uses Clerk's native authentication view. If a future mobile browser OAuth
 flow uses a custom redirect URI, add that exact URI to the same allowlist.
 
-## Enable Waitlist Access
+## Sign-in Surfaces
 
-For a private beta where people should request access, use **Clerk Dashboard > Waitlist**:
+Signed-in users manage T3 Connect under **Connections**. The settings sidebar also has dedicated
+controls, rendered by `SettingsSidebarNav.tsx`: `T3ConnectSidebarSignIn` in the footer shows a
+**Sign in to T3 Connect** button while signed out, and `T3ConnectSidebarAvatar` shows a Clerk
+`UserButton` account control while signed in. Both are gated on cloud public configuration.
+Desktop renders the same web bundle, so it has them too. The waitlist enrollment flow from the
+private beta was removed when Connect went GA; sign-up is open unless a Clerk restriction below is
+enabled.
 
-1. Toggle on **Enable waitlist** and save.
-2. Review requests on the same page and select **Invite** or **Deny**.
+## Restricting Sign-ups: Known-User Allowlist
 
-Approved signed-in users manage T3 Connect under **Connections**. The settings sidebar also has
-dedicated controls, rendered by `SettingsSidebarNav.tsx`: `T3ConnectSidebarSignIn` in the footer
-shows a **Sign in to T3 Connect** button while signed out (opening Clerk's waitlist), and
-`T3ConnectSidebarAvatar` shows a Clerk `UserButton` account control while signed in. Both are gated
-on cloud public configuration. Desktop renders the same web bundle, so it has them too.
-
-On mobile, signed-out users open **Settings > T3 Account** to reach `/settings/waitlist` within the
-Settings form sheet. It submits enrollment through Clerk's `useWaitlist()` flow because the prebuilt
-`<Waitlist />` component is web-only in the Expo SDK. Approved users can use **Sign in** from that
-screen.
-
-## Alternative: Known-User Allowlist
-
-For a closed beta where all permitted users are known in advance, use an allowlist instead of a
-request-and-approval waitlist:
-
-To restrict the beta to permitted email addresses or domains:
+For a closed deployment where all permitted users are known in advance, restrict sign-up to
+permitted email addresses or domains:
 
 1. In **Clerk Dashboard > Restrictions > Allowlist**, add each permitted email address or email
    domain.
 2. Enable the allowlist and save.
 3. Alternatively, enable **Restricted mode** when all new users must be explicitly invited or
-   manually created without a waitlist request flow.
+   manually created.
 
 Do not enable an empty allowlist: it blocks all new sign-ups.
 
