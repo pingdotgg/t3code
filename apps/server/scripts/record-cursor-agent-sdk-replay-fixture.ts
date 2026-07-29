@@ -24,6 +24,7 @@ import {
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import {
   cursorReplayPromptsForWorkspace,
+  cursorReplayTranscriptCwd,
   shouldSeedCursorReplayWorkspace,
 } from "./cursorReplayRecordingWorkspace.ts";
 
@@ -158,6 +159,7 @@ if (!apiKey) {
 
 const recording = RECORDINGS[scenario];
 const workspace = await prepareWorkspace(scenario);
+const transcriptCwd = cursorReplayTranscriptCwd(scenario);
 const outputPath = readArgValue("--out") ?? new URL(recording.output, import.meta.url).pathname;
 
 try {
@@ -184,6 +186,7 @@ try {
       model: process.env.T3_CURSOR_REPLAY_MODEL ?? CURSOR_MODEL_SELECTION.model,
     },
     cwd: workspace.cwd,
+    ...(transcriptCwd === undefined ? {} : { transcriptCwd }),
     apiKey,
     ...("interactionMode" in recording ? { interactionMode: recording.interactionMode } : {}),
     ...("interruptAfterToolStart" in recording
