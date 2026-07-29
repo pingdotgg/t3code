@@ -34,11 +34,6 @@ struct AutoReviewProgressOverlay: View {
                         .asymmetric(
                             insertion: .opacity.combined(with: .move(edge: .bottom)),
                             removal: .opacity))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        AutoReviewProgressPresentation.accessibilityLabel(for: phase))
-                    .accessibilityHint(
-                        activeThreadID == nil ? "" : "Opens the active auto-fixer thread")
                     #if DEBUG
                         .probeSurface(
                             UIProbeSurfaces.autoReviewProgress,
@@ -80,8 +75,14 @@ private struct AutoReviewProgressCard: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open the auto-fixer thread")
+                .accessibilityLabel(
+                    AutoReviewProgressPresentation.accessibilityLabel(for: phase))
+                .accessibilityHint("Opens the active auto-fixer thread")
             } else {
                 cardContent
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        AutoReviewProgressPresentation.accessibilityLabel(for: phase))
             }
         }
         .onHover { isHovering = $0 }
