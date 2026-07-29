@@ -1,22 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveClerkAuthRedirectUrl } from "./authRedirect";
+import { resolveClerkSignInProps } from "./authRedirect";
 
-describe("resolveClerkAuthRedirectUrl", () => {
-  it("preserves the current browser URL", () => {
+describe("resolveClerkSignInProps", () => {
+  it("returns to the current browser URL on the web", () => {
     const href = "https://app.t3.codes/connect?state=state-1#details";
-    expect(resolveClerkAuthRedirectUrl(href, false)).toBe(href);
+    expect(resolveClerkSignInProps(href, false)).toEqual({ forceRedirectUrl: href });
   });
 
-  it("uses the allowlisted packaged desktop callback", () => {
-    expect(resolveClerkAuthRedirectUrl("t3code://app/continue#/settings/general", true)).toBe(
-      "t3code://app/",
-    );
+  it("omits the redirect override on packaged desktop", () => {
+    expect(resolveClerkSignInProps("t3code://app/#/settings/general", true)).toEqual({});
   });
 
-  it("uses the allowlisted development desktop callback", () => {
-    expect(resolveClerkAuthRedirectUrl("t3code-dev://app/continue#/settings/general", true)).toBe(
-      "t3code-dev://app/",
-    );
+  it("omits the redirect override on development desktop", () => {
+    expect(resolveClerkSignInProps("t3code-dev://app/#/settings/general", true)).toEqual({});
   });
 });
