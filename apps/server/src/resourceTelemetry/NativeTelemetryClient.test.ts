@@ -1,5 +1,6 @@
 import type { HostPowerSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -9,9 +10,11 @@ import * as Semaphore from "effect/Semaphore";
 
 import {
   NativeTelemetryRequestTimedOut,
+  NativeTelemetryStreamClosed,
   canCommandNativeTelemetrySidecar,
   canRequestNativeTelemetryRetry,
   commitCollectionControlUpdate,
+  nativeTelemetrySupervisorFailureMessage,
   retainRecentNativeTelemetryFailures,
   resolveNativeSampleIntervalMs,
   synchronizeCollectionControlOnStart,
@@ -97,6 +100,22 @@ describe("NativeTelemetryRequestTimedOut", () => {
     );
     expect("cause" in historyTimeout).toBe(false);
     expect("cause" in sampleTimeout).toBe(false);
+  });
+});
+
+describe("native telemetry supervisor failures", () => {
+  it("distinguishes a closed event stream from a process exit", () => {
+    expect(new NativeTelemetryStreamClosed().message).toBe(
+      "Resource monitor event stream closed unexpectedly.",
+    );
+  });
+
+  it("keeps defect details out of the caller-visible health message", () => {
+    const secret = "credential=do-not-expose";
+    const message = nativeTelemetrySupervisorFailureMessage(Cause.die(new Error(secret)));
+
+    expect(message).toBe("Resource monitor supervisor stopped unexpectedly.");
+    expect(message).not.toContain(secret);
   });
 });
 
