@@ -1172,12 +1172,35 @@ describe("SourceControlPanelService", () => {
         left: { kind: "branch", refName: "feature/left" },
         right: { kind: "working-tree" },
       });
+      yield* service.compare({
+        cwd: "/repo",
+        left: { kind: "working-tree" },
+        right: { kind: "working-tree" },
+      });
 
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [
-          ["diff", "--no-ext-diff", "--patch", "--minimal", "--reverse", "feature/right"],
-          ["diff", "--no-ext-diff", "--patch", "--minimal", "feature/left"],
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            "--reverse",
+            "feature/right",
+          ],
+          [
+            "diff",
+            "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--minimal",
+            "feature/left",
+          ],
+          ["diff", "--patch", "--no-color", "--no-ext-diff", "--no-textconv", "--minimal"],
         ],
       );
     }).pipe(

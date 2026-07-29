@@ -122,6 +122,13 @@ const COMMIT_HOOK_NATIVE_DEPENDENCY_FAILURE_DETAIL =
   "The Git pre-commit hook could not load a required native dependency. Reinstall the repository dependencies and try again.";
 const COMMIT_HOOK_FAILURE_DETAIL =
   "The Git pre-commit hook failed. Run the repository pre-commit hook in a terminal for details.";
+const REVIEW_DIFF_OUTPUT_ARGS = [
+  "--patch",
+  "--no-color",
+  "--no-ext-diff",
+  "--no-textconv",
+  "--minimal",
+] as const;
 type CommitFailureHint = "hook-failed" | "native-dependency";
 
 function commitFailureHintFromOutputLine(line: string): CommitFailureHint | null {
@@ -324,9 +331,7 @@ export function makeSourceControlPanelActions(
       const patch = yield* run("vcs.panel.readCommitFileDiff", input.cwd, [
         "show",
         "--format=",
-        "--no-ext-diff",
-        "--patch",
-        "--minimal",
+        ...REVIEW_DIFF_OUTPUT_ARGS,
         source.sha,
         "--",
         ...diffPaths,
@@ -336,9 +341,7 @@ export function makeSourceControlPanelActions(
     if (source.kind === "compare") {
       const patch = yield* run("vcs.panel.readCompareFileDiff", input.cwd, [
         "diff",
-        "--no-ext-diff",
-        "--patch",
-        "--minimal",
+        ...REVIEW_DIFF_OUTPUT_ARGS,
         `${source.baseRef}...${source.refName}`,
         "--",
         ...diffPaths,
@@ -348,9 +351,7 @@ export function makeSourceControlPanelActions(
     if (source.kind === "stash") {
       let patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
         "diff",
-        "--no-ext-diff",
-        "--patch",
-        "--minimal",
+        ...REVIEW_DIFF_OUTPUT_ARGS,
         "--find-renames=20%",
         `${source.stashRef}^1`,
         source.stashRef,
@@ -364,9 +365,7 @@ export function makeSourceControlPanelActions(
           [
             "show",
             "--format=",
-            "--no-ext-diff",
-            "--patch",
-            "--minimal",
+            ...REVIEW_DIFF_OUTPUT_ARGS,
             `${source.stashRef}^3`,
             "--",
             ...diffPaths,
@@ -378,17 +377,8 @@ export function makeSourceControlPanelActions(
     }
 
     const args = source.staged
-      ? [
-          "diff",
-          "--cached",
-          "--no-ext-diff",
-          "--patch",
-          "--minimal",
-          "--find-renames=20%",
-          "--",
-          ...diffPaths,
-        ]
-      : ["diff", "--no-ext-diff", "--patch", "--minimal", "--find-renames=20%", "--", ...diffPaths];
+      ? ["diff", "--cached", ...REVIEW_DIFF_OUTPUT_ARGS, "--find-renames=20%", "--", ...diffPaths]
+      : ["diff", ...REVIEW_DIFF_OUTPUT_ARGS, "--find-renames=20%", "--", ...diffPaths];
     let patch =
       !source.staged && input.originalPath
         ? yield* withTemporaryIntentToAddIndex(
@@ -408,18 +398,7 @@ export function makeSourceControlPanelActions(
       patch = yield* run(
         "vcs.panel.readUntrackedFileDiff",
         input.cwd,
-        [
-          "diff",
-          "--no-index",
-          "--patch",
-          "--no-color",
-          "--no-ext-diff",
-          "--no-textconv",
-          "--minimal",
-          "--",
-          "/dev/null",
-          input.path,
-        ],
+        ["diff", "--no-index", ...REVIEW_DIFF_OUTPUT_ARGS, "--", "/dev/null", input.path],
         { allowNonZeroExit: true },
       );
     }
@@ -908,15 +887,8 @@ export function makeSourceControlPanelActions(
       const range = left && right ? `${left}..${right}` : left || right;
       const reverse = input.left.kind === "working-tree" && input.right.kind !== "working-tree";
       const args = range
-        ? [
-            "diff",
-            "--no-ext-diff",
-            "--patch",
-            "--minimal",
-            ...(reverse ? ["--reverse"] : []),
-            range,
-          ]
-        : ["diff"];
+        ? ["diff", ...REVIEW_DIFF_OUTPUT_ARGS, ...(reverse ? ["--reverse"] : []), range]
+        : ["diff", ...REVIEW_DIFF_OUTPUT_ARGS];
       return run("vcs.panel.compare", input.cwd, args).pipe(
         Effect.map((patch): VcsPanelCompareResult => ({ patch })),
       );

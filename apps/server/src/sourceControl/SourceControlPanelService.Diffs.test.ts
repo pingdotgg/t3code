@@ -387,8 +387,10 @@ describe("SourceControlPanelService", () => {
           [
             "diff",
             "--cached",
-            "--no-ext-diff",
             "--patch",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
             "--minimal",
             "--find-renames=20%",
             "--",
@@ -432,8 +434,10 @@ describe("SourceControlPanelService", () => {
             operation: "vcs.panel.readFileDiff",
             args: [
               "diff",
-              "--no-ext-diff",
               "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
               "--minimal",
               "--find-renames=20%",
               "--",
@@ -473,6 +477,72 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("disables user-configured rendering for ref-backed Review patches", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/commit.ts",
+        source: { kind: "commit", sha: "abc123" },
+      });
+      yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/compare.ts",
+        source: {
+          kind: "compare",
+          baseRef: "main",
+          refName: "feature/source-control",
+        },
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => ({ operation: call.operation, args: call.args })),
+        [
+          {
+            operation: "vcs.panel.readCommitFileDiff",
+            args: [
+              "show",
+              "--format=",
+              "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--minimal",
+              "abc123",
+              "--",
+              "src/commit.ts",
+            ],
+          },
+          {
+            operation: "vcs.panel.readCompareFileDiff",
+            args: [
+              "diff",
+              "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--minimal",
+              "main...feature/source-control",
+              "--",
+              "src/compare.ts",
+            ],
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success("patch");
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("reads tracked stash file diffs against the stash base", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
@@ -493,8 +563,10 @@ describe("SourceControlPanelService", () => {
             operation: "vcs.panel.readStashFileDiff",
             args: [
               "diff",
-              "--no-ext-diff",
               "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
               "--minimal",
               "--find-renames=20%",
               "stash@{0}^1",
@@ -541,8 +613,10 @@ describe("SourceControlPanelService", () => {
             operation: "vcs.panel.readStashFileDiff",
             args: [
               "diff",
-              "--no-ext-diff",
               "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
               "--minimal",
               "--find-renames=20%",
               "stash@{1}^1",
@@ -557,8 +631,10 @@ describe("SourceControlPanelService", () => {
             args: [
               "show",
               "--format=",
-              "--no-ext-diff",
               "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
               "--minimal",
               "stash@{1}^3",
               "--",
@@ -614,8 +690,10 @@ describe("SourceControlPanelService", () => {
             operation: "vcs.panel.readFileDiff",
             args: [
               "diff",
-              "--no-ext-diff",
               "--patch",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
               "--minimal",
               "--find-renames=20%",
               "--",
