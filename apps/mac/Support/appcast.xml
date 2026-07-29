@@ -6,6 +6,15 @@
         <language>en</language>
         <!-- CI will inject release items here -->
         <item>
+            <title>0.8.0</title>
+            <pubDate>Wed, 29 Jul 2026 07:39:10 +0000</pubDate>
+            <sparkle:version>26</sparkle:version>
+            <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.8.0/SurgeCode-0.8.0.zip" length="155898672" type="application/octet-stream" sparkle:edSignature="5wgUBUozOGs8YWqiCdlVtyX9oCgSU/FDaYYOmGeR82y1r0ai1euvcpRK6qQmSuWtToCA5wOuSvKsXx4DG73FAg=="/>
+        </item>
+        <item>
             <title>0.7.0</title>
             <pubDate>Wed, 29 Jul 2026 04:58:09 +0000</pubDate>
             <sparkle:version>25</sparkle:version>
@@ -22,15 +31,6 @@
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.6.0/SurgeCode-0.6.0.zip" length="155715509" type="application/octet-stream" sparkle:edSignature="9/G3fsR18jtMYSmLmwu7wvugLuhjTXOEIbNyHfOtk7c1ibsU9fGz3ELHB4mJiAMCXfXyPX1z6ROsJg1NLAFPBg=="/>
-        </item>
-        <item>
-            <title>0.5.0</title>
-            <pubDate>Mon, 27 Jul 2026 16:21:36 +0000</pubDate>
-            <sparkle:version>23</sparkle:version>
-            <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/SergeSerb2/SergeCode/releases/download/v0.5.0/SurgeCode-0.5.0.zip" length="155562017" type="application/octet-stream" sparkle:edSignature="T2fXNT2Aqrz/2Uv5Y8jOZYPgAb1Mj6NU6rx5F6bHqx4IMDYVi8kAHnh7zUwScChnymbHvgGF68u1mJ2Ha3JSAw=="/>
         </item>
     </channel>
 </rss>
