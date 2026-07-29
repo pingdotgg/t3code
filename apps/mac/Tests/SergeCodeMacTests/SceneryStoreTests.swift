@@ -218,6 +218,32 @@ struct SceneryStoreWorldPoolTests {
         #expect(upgraded.palette == oldManifest.palette)
     }
 
+    @Test("rolling refresh preserves locations with no replacement photos")
+    func preservesLocationsWithoutReplacementPhotos() {
+        let previous = worldPool()
+        let preserved = SceneryStore.preservedPhotosDuringRefresh(
+            previous: previous,
+            batchNames: Set(["Kyoto, Japan", "Petra, Jordan"]),
+            replacementNames: [],
+            assignedIDs: [],
+            isGrowing: false)
+
+        #expect(preserved.map(\.id) == previous.map(\.id))
+    }
+
+    @Test("rolling refresh replaces only locations with new photos")
+    func replacesOnlyLocationsWithNewPhotos() {
+        let previous = worldPool()
+        let preserved = SceneryStore.preservedPhotosDuringRefresh(
+            previous: previous,
+            batchNames: Set(["Kyoto, Japan", "Petra, Jordan"]),
+            replacementNames: ["Petra, Jordan"],
+            assignedIDs: [],
+            isGrowing: false)
+
+        #expect(preserved.map(\.id) == ["w1", "w3"])
+    }
+
     @Test("peekNextScene returns the pending pick until assign commits, then re-samples")
     func pendingScenePreviewCommitConsistency() throws {
         let root = try tempRoot()

@@ -802,6 +802,24 @@ public final class SceneryStore {
 
     // MARK: - Pool refresh
 
+    /// Retains unassigned photos for locations that did not produce a new
+    /// result. Unsplash can return only IDs already in the pool, all of which
+    /// the builder filters out; treating that as a successful replacement
+    /// would shrink the pool on every rolling refresh.
+    static func preservedPhotosDuringRefresh(
+        previous: [SceneryPhoto],
+        batchNames: Set<String>,
+        replacementNames: Set<String>,
+        assignedIDs: Set<String>,
+        isGrowing: Bool
+    ) -> [SceneryPhoto] {
+        guard !isGrowing else { return previous }
+        let replacedNames = batchNames.intersection(replacementNames)
+        return previous.filter {
+            !replacedNames.contains($0.name) || assignedIDs.contains($0.id)
+        }
+    }
+
     private func refreshPool(for setId: String) async {
         guard let client else { return }
         guard let set = set(id: setId) else { return }
@@ -834,17 +852,16 @@ public final class SceneryStore {
                     locations: batch,
                     excludingPhotoIDs: Set(previous.map(\.id)))
             else { return }
-            let replacedNames = Set(batch.map(\.name))
             let assignedIDs = Set(
                 assignments.values
                     .filter { $0.resolvedSetId == setId }
                     .map(\.photoID))
-            let preserved =
-                isGrowing
-                ? previous
-                : previous.filter {
-                    !replacedNames.contains($0.name) || assignedIDs.contains($0.id)
-                }
+            let preserved = Self.preservedPhotosDuringRefresh(
+                previous: previous,
+                batchNames: Set(batch.map(\.name)),
+                replacementNames: Set(built.photos.map(\.name)),
+                assignedIDs: assignedIDs,
+                isGrowing: isGrowing)
             var seen = Set<String>()
             refreshed = (preserved + built.photos).filter { seen.insert($0.id).inserted }
             refreshedTags = previousTags
