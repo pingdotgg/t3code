@@ -472,19 +472,24 @@ describe("reconcileRetainedMountedThreadIds", () => {
 });
 
 describe("shouldWriteThreadErrorToCurrentServerThread", () => {
-  it("requires the environment, route thread, and target thread to match", () => {
+  it("writes errors for a shell-derived active server thread", () => {
     const routeThreadRef = { environmentId, threadId };
 
     expect(
       shouldWriteThreadErrorToCurrentServerThread({
-        serverThread: { environmentId, id: threadId },
+        activeServerThread: { environmentId, id: threadId },
         routeThreadRef,
         targetThreadId: threadId,
       }),
     ).toBe(true);
+  });
+
+  it("requires an active server thread matching the environment, route, and target", () => {
+    const routeThreadRef = { environmentId, threadId };
+
     expect(
       shouldWriteThreadErrorToCurrentServerThread({
-        serverThread: null,
+        activeServerThread: null,
         routeThreadRef,
         targetThreadId: threadId,
       }),

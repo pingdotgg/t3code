@@ -274,6 +274,7 @@ import {
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -1204,6 +1205,7 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [routeServerThreadShell, threadDetailLoading],
   );
+  const activeServerThread = serverThread ?? loadingServerThread;
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore(
     (store) => store.threadLastVisitedAtById[routeThreadKey],
@@ -1383,7 +1385,7 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
     : null;
   const fallbackDraftProject = useProject(fallbackDraftProjectRef);
-  const localDraftError = serverThread
+  const localDraftError = activeServerThread
     ? null
     : ((draftId ? localDraftErrorsByDraftId[draftId]?.message : null) ?? null);
   const localServerError = localServerErrorsByThreadKey[routeThreadKey]?.message ?? null;
@@ -1392,7 +1394,7 @@ function ChatViewContent(props: ChatViewProps) {
   // a failed send would silently disappear on promotion. When both keys hold
   // an entry, the most recent write wins.
   useEffect(() => {
-    if (!serverThread || !draftId) {
+    if (!activeServerThread || !draftId) {
       return;
     }
     const pendingDraftEntry = localDraftErrorsByDraftId[draftId];
@@ -1421,7 +1423,7 @@ function ChatViewContent(props: ChatViewProps) {
         [routeThreadKey]: pendingDraftEntry,
       };
     });
-  }, [draftId, localDraftErrorsByDraftId, routeThreadKey, serverThread]);
+  }, [activeServerThread, draftId, localDraftErrorsByDraftId, routeThreadKey]);
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -1436,7 +1438,6 @@ function ChatViewContent(props: ChatViewProps) {
   // Promotion is data-driven: the draft route keeps rendering while the
   // server thread (same pre-allocated ref) starts, so live state must not
   // depend on which route is mounted.
-  const activeServerThread = serverThread ?? loadingServerThread;
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
   const threadError = isServerThread
@@ -2506,10 +2507,11 @@ function ChatViewContent(props: ChatViewProps) {
       const nextError = sanitizeThreadErrorMessage(error);
       const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
       if (
-        serverThread &&
-        targetThreadId === routeThreadRef.threadId &&
-        serverThread.environmentId === routeThreadRef.environmentId &&
-        serverThread.id === targetThreadId
+        shouldWriteThreadErrorToCurrentServerThread({
+          activeServerThread,
+          routeThreadRef,
+          targetThreadId,
+        })
       ) {
         setLocalServerErrorsByThreadKey((existing) => {
           if ((existing[routeThreadKey]?.message ?? null) === nextError) {
@@ -2533,7 +2535,7 @@ function ChatViewContent(props: ChatViewProps) {
         };
       });
     },
-    [draftId, routeThreadKey, routeThreadRef, serverThread],
+    [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
 
   const focusComposer = useCallback(() => {
