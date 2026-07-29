@@ -596,6 +596,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           createdAt: now,
           updatedAt: now,
           archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
           session: null,
           latestUserMessageAt: now,
           hasPendingApprovals: false,
@@ -636,6 +638,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             readEvents: () => Stream.empty,
             dispatch: () => Effect.succeed({ sequence: 1 }),
             streamDomainEvents: Stream.fromQueue(events),
+            latestSequence: Effect.succeed(0),
           } satisfies OrchestrationEngineShape),
           Layer.succeed(ProjectionSnapshotQuery, {
             getThreadOwnerById: () => Effect.succeed(Option.some("plugin:test")),

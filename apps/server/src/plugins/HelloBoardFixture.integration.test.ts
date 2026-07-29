@@ -415,7 +415,7 @@ layer("hello-board fixture plugin", (it) => {
 
           yield* buildFixture(outDir);
           yield* linkHostPluginExternals(config.pluginsDir);
-          yield* runMigrations({ toMigrationInclusive: 34 });
+          yield* runMigrations({ toMigrationInclusive: 36 });
 
           const marketplaceUrl = new URL(`file://${path.join(outDir, "marketplace.json")}`).href;
           const source = yield* handlers.addSource({ url: marketplaceUrl });

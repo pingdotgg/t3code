@@ -254,11 +254,14 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
         } satisfies PluginSettingsGetResult;
       }
       const draft = yield* settingsStore.readDraft(input.pluginId);
+      const settingsSchema = declared.value.schema as unknown as Parameters<
+        typeof fingerprintSettingsSchema
+      >[0];
       // An upgrade can change the schema under stored values. Compare the shape
       // that produced them against the current one and flag a mismatch, so the
       // form can say "these need attention" and repair them. The data is NOT
       // discarded — the user may need to read it to reconstruct the new values.
-      const currentFingerprint = fingerprintSettingsSchema(declared.value.schema);
+      const currentFingerprint = fingerprintSettingsSchema(settingsSchema);
       const staleShape =
         draft.schemaFingerprint !== null && draft.schemaFingerprint !== currentFingerprint;
 
@@ -293,6 +296,9 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
           ),
         );
       }
+      const settingsSchema = declared.value.schema as unknown as Parameters<
+        typeof fingerprintSettingsSchema
+      >[0];
 
       // Decode server-side even though the form already validated: the client is
       // not trusted, and a bad write would land config the plugin cannot read.
@@ -327,7 +333,7 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
       // which meant every gap in its vocabulary was a silent leak — a defect found
       // twice, in two different wrappers. Failing closed turns the next unmodelled
       // shape into a rejected save instead of a persisted undeclared key.
-      const stripped = stripUndeclaredSettings(encoded, declared.value.schema);
+      const stripped = stripUndeclaredSettings(encoded, settingsSchema);
       if (stripped._tag === "Unsupported") {
         yield* Effect.logWarning("plugin settings strip unsupported", {
           pluginId: input.pluginId,
@@ -349,7 +355,7 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
         .write({
           pluginId: input.pluginId,
           values: canonical,
-          schemaFingerprint: fingerprintSettingsSchema(declared.value.schema),
+          schemaFingerprint: fingerprintSettingsSchema(settingsSchema),
           expectedRevision: input.expectedRevision,
         })
         .pipe(

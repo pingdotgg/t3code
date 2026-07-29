@@ -771,50 +771,46 @@ const buildAppUnderTest = (options?: {
       ),
     );
 
+    const pluginTestLayer = Layer.mergeAll(
+      Layer.succeed(
+        PluginCatalog.PluginCatalog,
+        PluginCatalog.PluginCatalog.of({
+          list: Effect.succeed([]),
+        }),
+      ),
+      Layer.succeed(
+        PluginRpcDispatcher.PluginRpcDispatcher,
+        PluginRpcDispatcher.PluginRpcDispatcher.of({
+          call: () => Effect.die("PluginRpcDispatcher not stubbed in this test"),
+          subscribe: () => Stream.die("PluginRpcDispatcher not stubbed in this test"),
+        }),
+      ),
+      Layer.succeed(
+        PluginManagementRpcHandlers.PluginManagementRpcHandlers,
+        PluginManagementRpcHandlers.PluginManagementRpcHandlers.of({
+          listSources: Effect.succeed({ sources: [] }),
+          addSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+          removeSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+          catalog: () => Effect.succeed({ entries: [], errors: [] }),
+          beginInstall: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+          confirmInstall: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+          abortInstall: () => Effect.void,
+          setEnabled: () => Effect.void,
+          uninstall: () => Effect.void,
+          beginUpgrade: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+          confirmUpgrade: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
+          checkUpdates: Effect.succeed({ updates: [] }),
+          settingsGet: () => Effect.die("not used"),
+          settingsSet: () => Effect.die("not used"),
+        }),
+      ),
+      PluginHttpRegistry.layer,
+      PluginLockfileStore.layer,
+    );
+
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
-      Layer.provide(
-        Layer.succeed(
-          PluginCatalog.PluginCatalog,
-          PluginCatalog.PluginCatalog.of({
-            list: Effect.succeed([]),
-          }),
-        ),
-      ),
-      Layer.provide(
-        Layer.succeed(
-          PluginRpcDispatcher.PluginRpcDispatcher,
-          PluginRpcDispatcher.PluginRpcDispatcher.of({
-            call: () => Effect.die("PluginRpcDispatcher not stubbed in this test"),
-            subscribe: () => Stream.die("PluginRpcDispatcher not stubbed in this test"),
-          }),
-        ),
-      ),
-      Layer.provide(
-        Layer.succeed(
-          PluginManagementRpcHandlers.PluginManagementRpcHandlers,
-          PluginManagementRpcHandlers.PluginManagementRpcHandlers.of({
-            listSources: Effect.succeed({ sources: [] }),
-            addSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
-            removeSource: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
-            catalog: () => Effect.succeed({ entries: [], errors: [] }),
-            beginInstall: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
-            confirmInstall: () =>
-              Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
-            abortInstall: () => Effect.void,
-            setEnabled: () => Effect.void,
-            uninstall: () => Effect.void,
-            beginUpgrade: () => Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
-            confirmUpgrade: () =>
-              Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
-            checkUpdates: Effect.succeed({ updates: [] }),
-            settingsGet: () => Effect.die("not used"),
-            settingsSet: () => Effect.die("not used"),
-          }),
-        ),
-      ),
-      Layer.provideMerge(PluginHttpRegistry.layer),
-      Layer.provide(PluginLockfileStore.layer),
+      Layer.provide(pluginTestLayer),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,

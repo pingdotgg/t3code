@@ -33,7 +33,7 @@ const migration = (
 });
 
 const setup = Effect.gen(function* () {
-  yield* runMigrations({ toMigrationInclusive: 34 });
+  yield* runMigrations({ toMigrationInclusive: 36 });
   return yield* PluginMigratorModule.PluginMigrator;
 });
 

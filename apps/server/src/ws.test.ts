@@ -43,6 +43,8 @@ const threadShell = {
   createdAt: now,
   updatedAt: now,
   archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
   session: null,
   latestUserMessageAt: now,
   hasPendingApprovals: false,

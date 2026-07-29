@@ -292,6 +292,13 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateBoardProposal: () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateBoardProposal",
+          detail: "generateBoardProposal not configured for git tests",
+        }),
+      ),
     ...overrides,
   };
 
@@ -340,12 +347,16 @@ function createTextGeneration(
             }),
         ),
       ),
-    generateBoardProposal: () =>
-      Effect.fail(
-        new TextGenerationError({
-          operation: "generateBoardProposal",
-          detail: "generateBoardProposal not configured for git tests",
-        }),
+    generateBoardProposal: (input) =>
+      implementation.generateBoardProposal(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateBoardProposal",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
       ),
   };
 }

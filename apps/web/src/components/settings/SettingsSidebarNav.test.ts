@@ -8,11 +8,13 @@ describe("SettingsSidebarNav plugin entries", () => {
   it("keeps the core settings navigation unchanged when no plugins register pages", () => {
     expect(getSettingsNavItems(EMPTY_PLUGIN_UI_REGISTRY_SNAPSHOT).map((item) => item.to)).toEqual([
       "/settings/general",
+      "/settings/appearance",
       "/settings/keybindings",
       "/settings/providers",
       "/settings/plugins",
       "/settings/source-control",
       "/settings/connections",
+      "/settings/beta",
       "/settings/archived",
     ]);
   });
@@ -32,11 +34,13 @@ describe("SettingsSidebarNav plugin entries", () => {
       }).map((item) => item.to),
     ).toEqual([
       "/settings/general",
+      "/settings/appearance",
       "/settings/keybindings",
       "/settings/providers",
       "/settings/plugins",
       "/settings/source-control",
       "/settings/connections",
+      "/settings/beta",
       "/settings/archived",
       "/settings/fixture-plugin/general",
     ]);

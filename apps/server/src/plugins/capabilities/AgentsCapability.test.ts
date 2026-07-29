@@ -306,6 +306,7 @@ agentsIt("AgentsCapability", (it) => {
               return { sequence: dispatched.length };
             }),
           streamDomainEvents: Stream.empty,
+          latestSequence: Effect.succeed(0),
         },
         snapshots: {
           getThreadOwnerById: () => Effect.succeed(Option.some("plugin:agent-plugin" as any)),
@@ -752,6 +753,7 @@ agentsIt("AgentsCapability", (it) => {
               return { sequence: dispatched.length };
             }),
           streamDomainEvents: Stream.fromQueue(events),
+          latestSequence: Effect.succeed(0),
         },
         snapshots: {
           getThreadOwnerById: () => Effect.succeed(Option.some("plugin:agent-plugin" as any)),
@@ -790,6 +792,7 @@ agentsIt("AgentsCapability", (it) => {
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 1 }),
           streamDomainEvents: Stream.empty,
+          latestSequence: Effect.succeed(0),
         },
         snapshots: {} as any,
         turns: {} as any,
@@ -855,6 +858,7 @@ agentsIt("AgentsCapability", (it) => {
               return { sequence: dispatched.length };
             }),
           streamDomainEvents: Stream.empty,
+          latestSequence: Effect.succeed(0),
         },
         snapshots: {
           // Thread does not exist yet — the path that used to forward prep.

@@ -805,7 +805,7 @@ const startService = (input: {
     // Exponential backoff capped at 30s so a flapping service keeps
     // retrying at a bounded cadence instead of backing off forever.
     Effect.repeat(
-      Schedule.either(Schedule.exponential("250 millis"), Schedule.spaced("30 seconds")),
+      Schedule.min([Schedule.exponential("250 millis"), Schedule.spaced("30 seconds")]),
     ),
   );
 

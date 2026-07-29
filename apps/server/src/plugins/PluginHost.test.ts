@@ -419,6 +419,14 @@ const makeLockEntry = (overrides: Partial<PluginLockfilePlugin> = {}): PluginLoc
   ...overrides,
 });
 
+const pluginEffectImports = `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const Effect = require("effect/Effect");
+const Schema = require("effect/Schema");
+const Stream = require("effect/Stream");
+`;
+
 const pluginEntrySource = () => `
 import { createRequire } from "node:module";
 const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
@@ -706,7 +714,7 @@ layer("PluginHost", (it) => {
       const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
       const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
 
-      yield* runMigrations({ toMigrationInclusive: 34 });
+      yield* runMigrations({ toMigrationInclusive: 36 });
       yield* installPlugin({ pluginId });
 
       process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
@@ -753,7 +761,7 @@ layer("PluginHost", (it) => {
         const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
         const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
 
-        yield* runMigrations({ toMigrationInclusive: 34 });
+        yield* runMigrations({ toMigrationInclusive: 36 });
         yield* installPlugin({ pluginId });
         const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
         process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
@@ -860,7 +868,7 @@ layer("PluginHost", (it) => {
         const host = yield* PluginHostModule.PluginHost;
         const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
 
-        yield* runMigrations({ toMigrationInclusive: 34 });
+        yield* runMigrations({ toMigrationInclusive: 36 });
         // Seed a prior crashCount so we can prove it is NOT reset yet (the delayed
         // reset is gated behind a long stability window that never elapses here).
         yield* installPlugin({
@@ -927,7 +935,7 @@ layer("PluginHost", (it) => {
       const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
       const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
 
-      yield* runMigrations({ toMigrationInclusive: 34 });
+      yield* runMigrations({ toMigrationInclusive: 36 });
       yield* installPlugin({ pluginId, entrySource: "throw new Error('boom');" });
 
       yield* host.start;
@@ -1149,7 +1157,7 @@ layer("PluginHost", (it) => {
       const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
       const emptyEntry = "export default { register() { return {}; } };";
 
-      yield* runMigrations({ toMigrationInclusive: 34 });
+      yield* runMigrations({ toMigrationInclusive: 36 });
       // Both the current (1.0.0) and staged (2.0.0) version dirs must exist so
       // the post-promotion load of 2.0.0 succeeds.
       yield* installPlugin({ pluginId, entrySource: emptyEntry, lockEntry: { version: "1.0.0" } });
@@ -1621,14 +1629,14 @@ layer("PluginHost settings validation", (it) => {
   // Settings schema the host form cannot render: Number has no numeric control, so
   // it would be drawn as a text box and every write it produced would fail.
   const unrenderableEntry = `
-import * as Schema from "effect/Schema";
+${pluginEffectImports}
 export default {
   settings: { schema: Schema.Struct({ retries: Schema.Number }) },
   register() { return {}; },
 };
 `;
   const renderableEntry = `
-import * as Schema from "effect/Schema";
+${pluginEffectImports}
 export default {
   settings: { schema: Schema.Struct({ baseUrl: Schema.String }) },
   register() { return {}; },
@@ -1768,7 +1776,7 @@ export default {
   // the current code no longer has (stale settings/repair form, writes validated
   // against a removed schema).
   const schemalessFailingEntry = `
-import * as Effect from "effect/Effect";
+${pluginEffectImports}
 export default {
   register() {
     return Effect.fail(new Error("register boom"));
@@ -1828,8 +1836,7 @@ layer("PluginHost disable rollback", (it) => {
   // A plugin that registers one tool, so the catalog has an active final name to
   // observe after a failed disable.
   const toolEntry = `
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+${pluginEffectImports}
 export default {
   register() {
     return {
@@ -2065,7 +2072,7 @@ export default {
 
 layer("PluginHost provider contribution", (it) => {
   const providerEntry = `
-import * as Schema from "effect/Schema";
+${pluginEffectImports}
 export default {
   register() {
     return {
@@ -2118,7 +2125,7 @@ export default {
 
 layer("PluginHost policy hooks", (it) => {
   const policyEntry = `
-import * as Effect from "effect/Effect";
+${pluginEffectImports}
 export default {
   register() {
     return {
@@ -2181,7 +2188,7 @@ layer("PluginHost policy teardown", (it) => {
   // asserting on `deniedBy` made it VACUOUS (it passed with the finalizer deleted).
   // Isolation is the only framing that is honest.
   const policyEntry = `
-import * as Effect from "effect/Effect";
+${pluginEffectImports}
 export default {
   register() {
     return {
@@ -2235,9 +2242,7 @@ layer("PluginHost settings capability", (it) => {
   // this schema succeeds and yields the default. Without the guard the plugin is
   // handed `https://default.example` as if the user had configured it.
   const settingsEntry = `
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
+${pluginEffectImports}
 import * as NodeFs from "node:fs";
 
 export const schema = Schema.Struct({
