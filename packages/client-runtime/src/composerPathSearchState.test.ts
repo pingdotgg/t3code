@@ -1,5 +1,5 @@
 import { assert, beforeEach, it, vi } from "vitest";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 
 import {
@@ -24,13 +24,13 @@ function flushAsyncWork(): Promise<void> {
 
 const TARGET = {
   environmentId: "env-local" as EnvironmentId,
-  cwd: "/repo",
+  threadId: "thread-1" as ThreadId,
   query: "src",
 };
 
 it("derives null keys for inactive path searches", () => {
   assert.strictEqual(getComposerPathSearchTargetKey({ ...TARGET, query: "" }), null);
-  assert.strictEqual(getComposerPathSearchTargetKey({ ...TARGET, cwd: null }), null);
+  assert.strictEqual(getComposerPathSearchTargetKey({ ...TARGET, threadId: null }), null);
   assert.strictEqual(getComposerPathSearchTargetKey({ ...TARGET, environmentId: null }), null);
 });
 
@@ -179,7 +179,7 @@ it("returns the empty snapshot for inactive targets", () => {
   });
 
   assert.deepStrictEqual(
-    manager.getSnapshot({ environmentId: null, cwd: null, query: null }),
+    manager.getSnapshot({ environmentId: null, threadId: null, query: null }),
     EMPTY_COMPOSER_PATH_SEARCH_STATE,
   );
 });

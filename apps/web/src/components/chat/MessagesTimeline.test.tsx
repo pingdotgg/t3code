@@ -175,6 +175,110 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-message-id="message-continuation"');
   });
 
+  it("renders preview annotations as context and keeps their screenshots out of regular images", () => {
+    const messageText = [
+      "Fix the heading.",
+      "",
+      "<preview_annotation>",
+      "Preview annotation:",
+      "Id: annotation-1",
+      "Page: Welcome",
+      "Comment: Make it bolder.",
+      "Targets: 1 selected element.",
+      "Requested visual changes:",
+      "- font-size: 32px → 40px",
+      "The attached screenshot is the annotated preview crop.",
+      "</preview_annotation>",
+    ].join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...buildUserTimelineEntry(messageText),
+            message: {
+              ...buildUserTimelineEntry(messageText).message,
+              attachments: [
+                {
+                  id: "annotation-1",
+                  type: "image",
+                  name: "preview-annotation-annotation-1.png",
+                  mimeType: "image/png",
+                  sizeBytes: 1,
+                  previewUrl: "data:image/png;base64,annotation",
+                },
+                {
+                  id: "regular",
+                  type: "image",
+                  name: "regular.png",
+                  mimeType: "image/png",
+                  sizeBytes: 1,
+                  previewUrl: "data:image/png;base64,regular",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Make it bolder.");
+    expect(markup).toContain("1 selected element.");
+    expect(markup).toContain("regular.png");
+    expect(markup).not.toContain("<preview_annotation>");
+  });
+
+  it("matches sparse preview annotation screenshots by annotation ID", () => {
+    const annotation = (id: string, comment: string) =>
+      [
+        "<preview_annotation>",
+        "Preview annotation:",
+        `Id: ${id}`,
+        "Page: Welcome",
+        `Comment: ${comment}`,
+        "Targets: 1 selected element.",
+        "The attached screenshot is the annotated preview crop.",
+        "</preview_annotation>",
+      ].join("\n");
+    const messageText = [
+      "Fix both annotations.",
+      "",
+      annotation("annotation-1", "First annotation without an image."),
+      "",
+      annotation("annotation-2", "Second annotation with an image."),
+    ].join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...buildUserTimelineEntry(messageText),
+            message: {
+              ...buildUserTimelineEntry(messageText).message,
+              attachments: [
+                {
+                  id: "annotation-2",
+                  type: "image",
+                  name: "preview-annotation-annotation-2.png",
+                  mimeType: "image/png",
+                  sizeBytes: 1,
+                  previewUrl: "data:image/png;base64,annotation-2",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup.indexOf("First annotation without an image.")).toBeLessThan(
+      markup.indexOf("Annotated preview crop"),
+    );
+    expect(markup.indexOf("Annotated preview crop")).toBeLessThan(
+      markup.indexOf("Second annotation with an image."),
+    );
+  });
+
   it("renders collapse controls for long user messages", async () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

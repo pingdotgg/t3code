@@ -1,5 +1,5 @@
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
@@ -14,6 +14,7 @@ const MAX_HIGHLIGHT_PRELOAD_CHARACTERS = 256 * 1024;
 function preloadKey(input: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly relativePath: string;
 }): string {
   return JSON.stringify([input.environmentId, input.cwd, input.relativePath]);
@@ -22,6 +23,7 @@ function preloadKey(input: {
 export function preloadWorkspaceFileContents(input: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly relativePath: string;
   readonly theme: ReviewDiffTheme;
 }): void {
@@ -38,7 +40,7 @@ export function preloadWorkspaceFileContents(input: {
     appAtomRegistry,
     projectEnvironment.readFile({
       environmentId: input.environmentId,
-      input: { cwd: input.cwd, relativePath: input.relativePath },
+      input: { threadId: input.threadId, relativePath: input.relativePath },
     }),
     {
       label: "workspace file preload",

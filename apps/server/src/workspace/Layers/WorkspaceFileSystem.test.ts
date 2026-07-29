@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { symlink } from "node:fs/promises";
 import { it, describe, expect } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
@@ -130,6 +131,66 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
           .stat(escapedPath)
           .pipe(Effect.catch(() => Effect.succeed(null)));
         expect(escapedStat).toBeNull();
+      }),
+    );
+  });
+  describe("readFile", () => {
+    it.effect("reads files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "docs/preview.html", "<h1>Preview</h1>");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "docs/preview.html",
+        });
+
+        expect(result).toEqual({
+          relativePath: "docs/preview.html",
+          contents: "<h1>Preview</h1>",
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("limits file previews to the first 1 MB", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "large.txt", `${"a".repeat(1024 * 1024)}tail`);
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "large.txt",
+        });
+
+        expect(result.contents).toHaveLength(1024 * 1024);
+        expect(result.contents.endsWith("tail")).toBe(false);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("rejects a symbolic link that escapes the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const workspaceRoot = yield* makeTempDir;
+        const outsideRoot = yield* makeTempDir;
+        yield* writeTextFile(outsideRoot, "secret.txt", "secret");
+
+        yield* Effect.promise(() => symlink(outsideRoot, `${workspaceRoot}/linked`));
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd: workspaceRoot,
+            relativePath: "linked/secret.txt",
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          operation: "workspaceFileSystem.readFile",
+          detail: "Workspace file path cannot traverse symbolic links",
+        });
       }),
     );
   });

@@ -619,6 +619,67 @@ describe("resolveShortcutCommand", () => {
   });
 });
 
+describe("preview shortcuts", () => {
+  const previewBindings = compile([
+    { shortcut: modShortcut("j", { shiftKey: true }), command: "preview.toggle" },
+    {
+      shortcut: modShortcut("r"),
+      command: "preview.refresh",
+      whenAst: whenIdentifier("previewFocus"),
+    },
+    {
+      shortcut: modShortcut("l"),
+      command: "preview.focusUrl",
+      whenAst: whenIdentifier("previewFocus"),
+    },
+    {
+      shortcut: modShortcut("="),
+      command: "preview.zoomIn",
+      whenAst: whenIdentifier("previewFocus"),
+    },
+    {
+      shortcut: modShortcut("-"),
+      command: "preview.zoomOut",
+      whenAst: whenIdentifier("previewFocus"),
+    },
+    {
+      shortcut: modShortcut("0"),
+      command: "preview.resetZoom",
+      whenAst: whenIdentifier("previewFocus"),
+    },
+  ]);
+
+  it("keeps preview actions scoped to preview focus except its global toggle", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "j", ctrlKey: true, shiftKey: true }), previewBindings, {
+        platform: "Linux",
+        context: { previewFocus: false },
+      }),
+      "preview.toggle",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "r", ctrlKey: true }), previewBindings, {
+        platform: "Linux",
+        context: { previewFocus: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "r", ctrlKey: true }), previewBindings, {
+        platform: "Linux",
+        context: { previewFocus: true },
+      }),
+      "preview.refresh",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "0", ctrlKey: true }), previewBindings, {
+        platform: "Linux",
+        context: { previewFocus: true },
+      }),
+      "preview.resetZoom",
+    );
+  });
+});
+
 describe("formatShortcutLabel", () => {
   it("formats labels for macOS", () => {
     assert.strictEqual(

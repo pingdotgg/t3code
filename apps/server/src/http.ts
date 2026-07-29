@@ -11,6 +11,7 @@ import {
 } from "effect/unstable/http";
 import { OtlpTracer } from "effect/unstable/observability";
 
+import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
   normalizeAttachmentRelativePath,
@@ -185,6 +186,48 @@ export const attachmentsRouteLayer = HttpRouter.add(
       ),
     );
   }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+);
+
+export const assetRouteLayer = HttpRouter.add(
+  "GET",
+  `${ASSET_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const suffix = url.value.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+    const separatorIndex = suffix.indexOf("/");
+    if (separatorIndex <= 0) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const asset = yield* resolveAsset(
+      suffix.slice(0, separatorIndex),
+      suffix.slice(separatorIndex + 1),
+    );
+    if (!asset) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const data = yield* fileSystem
+      .readFile(asset.path)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!data) {
+      return HttpServerResponse.text("Internal Server Error", { status: 500 });
+    }
+    return HttpServerResponse.uint8Array(data, {
+      status: 200,
+      contentType: Mime.getType(asset.path) ?? "application/octet-stream",
+      headers: {
+        "Cache-Control": "private, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }),
 );
 
 export const projectFaviconRouteLayer = HttpRouter.add(

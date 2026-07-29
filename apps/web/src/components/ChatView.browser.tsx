@@ -8,6 +8,7 @@ import {
   type EnvironmentApi,
   type MessageId,
   type OrchestrationReadModel,
+  type PreviewSessionSnapshot,
   type ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -54,6 +55,9 @@ import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
+import { resetPreviewStateForTests, applyPreviewServerSnapshot } from "../previewStateStore";
+import { useRightPanelStore } from "../rightPanelStore";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 
@@ -93,6 +97,24 @@ const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
 const ADD_PROJECT_SUBMENU_PLACEHOLDER = "Enter path (e.g. ~/projects/my-app)";
+
+function createPreviewSnapshot(
+  tabId = "preview-browser-test",
+  threadId: ThreadId = THREAD_ID,
+): PreviewSessionSnapshot {
+  return {
+    threadId,
+    tabId,
+    navStatus: {
+      _tag: "Success",
+      url: "http://localhost:4173/dashboard",
+      title: "Local dashboard",
+    },
+    canGoBack: false,
+    canGoForward: false,
+    updatedAt: NOW_ISO,
+  };
+}
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -206,6 +228,7 @@ function createMockEnvironmentApi(input: {
     filesystem: {
       browse: input.browse,
     },
+    assets: {} as EnvironmentApi["assets"],
     preview: {} as EnvironmentApi["preview"],
     git: {} as EnvironmentApi["git"],
     workflow: {
@@ -1700,6 +1723,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       terminalEventEntriesByKey: {},
       nextTerminalEventId: 1,
     });
+    useRightPanelStore.setState({ byThreadKey: {} });
+    resetPreviewStateForTests();
   });
 
   afterEach(() => {
@@ -6437,6 +6462,321 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders all six right-panel surface branches and preserves browser sessions while switching", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithLongProposedPlan(),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.projectsReadFile) {
+          return {
+            relativePath: "src/index.ts",
+            contents: "export const rightPanel = true;",
+          };
+        }
+        if (body._tag === WS_METHODS.previewList) {
+          return { sessions: [createPreviewSnapshot()] };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const rightPanel = useRightPanelStore.getState();
+      const expectSurface = async (kind: string) => {
+        await vi.waitFor(() => {
+          expect(
+            document.querySelector(`[data-chat-view-right-panel-surface="${kind}"]`),
+          ).not.toBeNull();
+        });
+      };
+
+      rightPanel.open(THREAD_REF, "plan");
+      await expectSurface("plan");
+
+      applyPreviewServerSnapshot(THREAD_REF, createPreviewSnapshot());
+      rightPanel.openBrowser(THREAD_REF, "preview-browser-test");
+      await expectSurface("preview");
+
+      rightPanel.open(THREAD_REF, "diff");
+      await expectSurface("diff");
+
+      useTerminalStateStore.getState().newTerminal(THREAD_REF, "terminal-surface");
+      useTerminalStateStore.getState().setTerminalOpen(THREAD_REF, true);
+      rightPanel.openTerminal(THREAD_REF, "terminal-surface");
+      await expectSurface("terminal");
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll(".thread-terminal-drawer")).toHaveLength(1);
+      });
+
+      rightPanel.open(THREAD_REF, "files");
+      await expectSurface("files");
+      expect(document.querySelector("[data-right-panel-files-surface]")).not.toBeNull();
+
+      rightPanel.openFile(THREAD_REF, "src/index.ts");
+      await expectSurface("file");
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain("export const rightPanel = true;");
+      });
+
+      rightPanel.activateSurface(THREAD_REF, "browser:preview-browser-test");
+      await expectSurface("preview");
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.previewClose)).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("cleans up browser and terminal resources when closing all surfaces", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-resource-cleanup" as MessageId,
+        targetText: "resource cleanup",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.previewList) {
+          return { sessions: [createPreviewSnapshot()] };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      applyPreviewServerSnapshot(THREAD_REF, createPreviewSnapshot());
+      const terminalState = useTerminalStateStore.getState();
+      terminalState.newTerminal(THREAD_REF, "terminal-cleanup");
+      terminalState.setTerminalOpen(THREAD_REF, true);
+      const rightPanel = useRightPanelStore.getState();
+      rightPanel.openBrowser(THREAD_REF, "preview-browser-test");
+      rightPanel.openTerminal(THREAD_REF, "terminal-cleanup");
+      rightPanel.open(THREAD_REF, "files");
+
+      await page.getByLabelText("Actions for Files").click();
+      await page.getByRole("menuitem", { name: "Close all" }).click();
+
+      await vi.waitFor(() => {
+        expect(wsRequests.some((request) => request._tag === WS_METHODS.previewClose)).toBe(true);
+        expect(wsRequests.some((request) => request._tag === WS_METHODS.terminalClose)).toBe(true);
+        expect(useRightPanelStore.getState().byThreadKey[THREAD_KEY]?.isOpen).toBe(false);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("dispatches preview commands globally", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-preview-shortcut" as MessageId,
+        targetText: "preview shortcut",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "preview.toggle",
+              shortcut: {
+                key: "b",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "b",
+          ctrlKey: true,
+          metaKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(
+          document.querySelector('[data-chat-view-right-panel-surface="preview"]'),
+        ).not.toBeNull();
+      });
+
+      useRightPanelStore.getState().close(THREAD_REF);
+      await vi.waitFor(() => {
+        expect(document.querySelector("[data-chat-view-right-panel-surface]")).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("maximizes and restores the inline right panel", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-maximize-panel" as MessageId,
+        targetText: "maximize panel",
+      }),
+    });
+
+    try {
+      useRightPanelStore.getState().open(THREAD_REF, "files");
+      const maximizeButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('[aria-label="Maximize panel"]'),
+        "Unable to find maximize panel button.",
+      );
+      maximizeButton.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-right-panel-maximized="true"]')).not.toBeNull();
+      });
+      document.querySelector<HTMLButtonElement>('[aria-label="Restore panel size"]')?.click();
+      useRightPanelStore.getState().close(THREAD_REF);
+      await vi.waitFor(() => {
+        expect(document.querySelector("[data-chat-view-right-panel-surface]")).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the right panel as a responsive sheet on compact viewports", async () => {
+    const originalMatchMedia = window.matchMedia.bind(window);
+    const matchMediaSpy = vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+      if (query !== RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY) return originalMatchMedia(query);
+      return {
+        matches: true,
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => true,
+      };
+    });
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-responsive-sheet" as MessageId,
+        targetText: "responsive sheet",
+      }),
+    });
+
+    try {
+      useRightPanelStore.getState().open(THREAD_REF, "files");
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-slot="sheet-popup"]')).not.toBeNull();
+        expect(document.querySelector('[aria-label="Maximize panel"]')).toBeNull();
+        expect(document.querySelector('[aria-label="Restore panel size"]')).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+      matchMediaSpy.mockRestore();
+    }
+  });
+
+  it("opens a discovered localhost port from the Sidebar and focuses its thread", async () => {
+    const secondaryThreadId = ThreadId.make("thread-secondary-project");
+    const preview = createPreviewSnapshot("preview-discovered", THREAD_ID);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject({ includeArchivedSecondaryThread: false }),
+      initialPath: `/${LOCAL_ENVIRONMENT_ID}/${secondaryThreadId}`,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.previewOpen) return preview;
+        if (body._tag === WS_METHODS.previewList) return { sessions: [preview] };
+        return undefined;
+      },
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some((request) => request._tag === WS_METHODS.subscribeDiscoveredLocalServers),
+        ).toBe(true);
+      });
+      rpcHarness.emitStreamValue(WS_METHODS.subscribeDiscoveredLocalServers, {
+        servers: [
+          {
+            host: "127.0.0.1",
+            port: 4173,
+            url: "http://127.0.0.1:4173",
+            processName: "vite",
+            pid: 4173,
+            terminal: { threadId: THREAD_ID, terminalId: "default" },
+          },
+        ],
+        scannedAt: NOW_ISO,
+      });
+
+      await page.getByLabelText("Open localhost:4173").click();
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
+        expect(wsRequests.some((request) => request._tag === WS_METHODS.previewOpen)).toBe(true);
+        expect(useRightPanelStore.getState().byThreadKey[THREAD_KEY]?.surfaces).toContainEqual({
+          id: "browser:preview-discovered",
+          kind: "preview",
+          resourceId: "preview-discovered",
+        });
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("surfaces Sidebar discovered-port preview failures", async () => {
+    const secondaryThreadId = ThreadId.make("thread-secondary-project");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject({ includeArchivedSecondaryThread: false }),
+      initialPath: `/${LOCAL_ENVIRONMENT_ID}/${secondaryThreadId}`,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.previewOpen) {
+          return Promise.reject(new Error("Preview launch failed"));
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some((request) => request._tag === WS_METHODS.subscribeDiscoveredLocalServers),
+        ).toBe(true);
+      });
+      rpcHarness.emitStreamValue(WS_METHODS.subscribeDiscoveredLocalServers, {
+        servers: [
+          {
+            host: "127.0.0.1",
+            port: 4174,
+            url: "http://127.0.0.1:4174",
+            processName: "vite",
+            pid: 4174,
+            terminal: { threadId: THREAD_ID, terminalId: "default" },
+          },
+        ],
+        scannedAt: NOW_ISO,
+      });
+
+      await page.getByLabelText("Open localhost:4174").click();
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
+        expect(document.body.textContent).toContain("Unable to open preview");
+        expect(document.body.textContent).toContain("The preview could not be opened.");
+      });
     } finally {
       await mounted.cleanup();
     }

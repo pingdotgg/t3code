@@ -12,7 +12,7 @@ interface ClosePreviewSessionInput<E> {
   readonly closePreview: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: PreviewCloseInput;
-  }) => Promise<AtomCommandResult<void, E>>;
+  }) => Promise<AtomCommandResult<unknown, E>>;
   readonly snapshot: PreviewSessionSnapshot | null;
   readonly tabId: string;
   readonly threadRef: ScopedThreadRef;
@@ -24,7 +24,7 @@ interface ClosePreviewSessionInput<E> {
  */
 export async function closePreviewSession<E>(
   input: ClosePreviewSessionInput<E>,
-): Promise<AtomCommandResult<void, E>> {
+): Promise<AtomCommandResult<unknown, E>> {
   beginPreviewSessionClose(input.threadRef, input.tabId);
   const result = await input.closePreview({
     environmentId: input.threadRef.environmentId,

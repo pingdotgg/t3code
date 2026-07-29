@@ -9,7 +9,11 @@
 import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 
-import type { ProjectWriteFileInput, ProjectWriteFileResult } from "@t3tools/contracts";
+import type {
+  ProjectReadFileResult,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
+} from "@t3tools/contracts";
 import { WorkspacePathOutsideRootError } from "./WorkspacePaths.ts";
 
 export class WorkspaceFileSystemError extends Schema.TaggedErrorClass<WorkspaceFileSystemError>()(
@@ -23,10 +27,21 @@ export class WorkspaceFileSystemError extends Schema.TaggedErrorClass<WorkspaceF
   },
 ) {}
 
+export interface WorkspaceReadFileInput {
+  readonly cwd: string;
+  readonly relativePath: string;
+}
+
 /**
  * WorkspaceFileSystemShape - Service API for workspace-relative file operations.
  */
 export interface WorkspaceFileSystemShape {
+  readonly readFile: (
+    input: WorkspaceReadFileInput,
+  ) => Effect.Effect<
+    ProjectReadFileResult,
+    WorkspaceFileSystemError | WorkspacePathOutsideRootError
+  >;
   /**
    * Write a file relative to the workspace root.
    *

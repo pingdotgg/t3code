@@ -15,6 +15,7 @@ import { DesktopBrowserRuntime } from "../browser/DesktopBrowserRuntime";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { PreviewAutomationHosts } from "../components/preview/PreviewAutomationHosts";
+import { ElectronBrowserHost } from "../browser/ElectronBrowserHost";
 import {
   SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
@@ -113,6 +114,7 @@ function RootRouteView() {
         <EventRouter />
         <DesktopBrowserRuntime authenticated />
         <PreviewAutomationHosts />
+        <ElectronBrowserHost />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
         <WebSocketConnectionSurface>

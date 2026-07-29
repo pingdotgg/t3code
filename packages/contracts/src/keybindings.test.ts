@@ -41,6 +41,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
 
+    const parsedPreviewRefresh = yield* decode(KeybindingRule, {
+      key: "mod+r",
+      command: "preview.refresh",
+    });
+    assert.strictEqual(parsedPreviewRefresh.command, "preview.refresh");
+
+    const parsedPreviewZoom = yield* decode(KeybindingRule, {
+      key: "mod+=",
+      command: "preview.zoomIn",
+    });
+    assert.strictEqual(parsedPreviewZoom.command, "preview.zoomIn");
+
     const parsedCommandPalette = yield* decode(KeybindingRule, {
       key: "mod+k",
       command: "commandPalette.toggle",

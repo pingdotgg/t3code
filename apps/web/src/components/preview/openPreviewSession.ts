@@ -8,11 +8,15 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
-interface OpenPreviewSessionInput<E> {
-  openPreview: (input: {
+export interface OpenPreviewMutation<E> {
+  (input: {
     readonly environmentId: EnvironmentId;
     readonly input: PreviewOpenInput;
-  }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
+  }): Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
+}
+
+interface OpenPreviewSessionInput<E> {
+  openPreview: OpenPreviewMutation<E>;
   threadRef: ScopedThreadRef;
   url?: string;
 }

@@ -4,9 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
+  captureScreenshot: vi.fn(async () => ({ path: "/tmp/screenshot.png" })),
+  revealArtifact: vi.fn(),
+  copyArtifactToClipboard: vi.fn(),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
+  capture: null as ((record: boolean) => void) | null,
   emptyStateUrl: null as ((url: string) => void) | null,
   showEmptyState: false,
 }));
@@ -90,17 +94,26 @@ vi.mock("~/browser/browserSurfaceStore", () => ({
 }));
 
 vi.mock("~/components/ui/toast", () => ({
-  stackedThreadToast: vi.fn(),
-  toastManager: { add: vi.fn() },
+  stackedThreadToast: vi.fn((options) => options),
+  toastManager: { add: vi.fn(() => "toast-1"), update: vi.fn() },
 }));
 
 vi.mock("./previewBridge", () => ({
-  previewBridge: { navigate: mocks.navigate },
+  previewBridge: {
+    navigate: mocks.navigate,
+    captureScreenshot: mocks.captureScreenshot,
+    revealArtifact: mocks.revealArtifact,
+    copyArtifactToClipboard: mocks.copyArtifactToClipboard,
+  },
 }));
 
 vi.mock("./PreviewChromeRow", () => ({
-  PreviewChromeRow: (props: { onSubmit: (url: string) => void }) => {
+  PreviewChromeRow: (props: {
+    onSubmit: (url: string) => void;
+    onCapture?: (record: boolean) => void;
+  }) => {
     mocks.submittedUrl = props.onSubmit;
+    mocks.capture = props.onCapture ?? null;
     return null;
   },
 }));
@@ -127,6 +140,7 @@ describe("PreviewView navigation", () => {
     mocks.rememberPreviewUrl.mockClear();
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
+    mocks.capture = null;
     mocks.emptyStateUrl = null;
     mocks.showEmptyState = false;
   });
@@ -190,6 +204,43 @@ describe("PreviewView navigation", () => {
         threadId: "thread-1",
       },
       "http://172.25.85.75:5173/app?mode=test#top",
+    );
+  });
+
+  it("offers screenshot reveal, image copy, and path copy actions", async () => {
+    vi.stubGlobal("navigator", {
+      platform: "Win32",
+      clipboard: { writeText: vi.fn() },
+    });
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={{
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        }}
+        tabId="tab-1"
+        visible
+      />,
+    );
+
+    mocks.capture?.(false);
+
+    const { stackedThreadToast, toastManager } = await import("~/components/ui/toast");
+    await vi.waitFor(() => expect(toastManager.add).toHaveBeenCalled());
+    expect(stackedThreadToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Screenshot saved",
+        actionProps: expect.objectContaining({ children: "Copy image" }),
+        data: expect.objectContaining({
+          additionalActions: [
+            expect.objectContaining({
+              id: "copy-path",
+              props: expect.objectContaining({ children: "Copy path" }),
+            }),
+          ],
+          secondaryActionProps: expect.objectContaining({ children: "Reveal in File Explorer" }),
+        }),
+      }),
     );
   });
 });

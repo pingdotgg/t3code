@@ -188,7 +188,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("ships configurable thread navigation defaults", () =>
+  it.effect("ships configurable thread navigation and preview defaults", () =>
     Effect.sync(() => {
       const defaultsByCommand = new Map(
         DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
@@ -202,6 +202,12 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");
       assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
+      assert.equal(defaultsByCommand.get("preview.toggle"), "mod+shift+j");
+      assert.equal(defaultsByCommand.get("preview.refresh"), "mod+r");
+      assert.equal(defaultsByCommand.get("preview.focusUrl"), "mod+l");
+      assert.equal(defaultsByCommand.get("preview.zoomIn"), "mod++");
+      assert.equal(defaultsByCommand.get("preview.zoomOut"), "mod+-");
+      assert.equal(defaultsByCommand.get("preview.resetZoom"), "mod+0");
     }),
   );
 

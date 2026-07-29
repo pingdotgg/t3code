@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectListEntriesResult, ThreadId } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, useColorScheme, View, type NativeSyntheticEvent } from "react-native";
@@ -21,6 +21,7 @@ import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId | null;
   readonly headerInset: number;
   readonly projectName: string;
   readonly selectedPath: string | null;
@@ -42,14 +43,18 @@ export function ThreadFileNavigatorPane(props: {
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handlePreviewFile = useCallback(
     (relativePath: string) => {
+      if (props.threadId === null) {
+        return;
+      }
       preloadWorkspaceFileContents({
         cwd: props.cwd,
         environmentId: props.environmentId,
+        threadId: props.threadId,
         relativePath,
         theme: highlightTheme,
       });
     },
-    [highlightTheme, props.cwd, props.environmentId],
+    [highlightTheme, props.cwd, props.environmentId, props.threadId],
   );
   const nativeHeaderRightBarButtonItems = useMemo(
     () =>

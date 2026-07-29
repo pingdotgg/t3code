@@ -25,7 +25,7 @@ export function getPreviewPanelMaxWidth(viewportWidth: number): number {
  */
 export function PreviewPanelShell(props: {
   mode: PreviewPanelMode;
-  maximized?: boolean;
+  maximized?: boolean | undefined;
   children: ReactNode;
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";

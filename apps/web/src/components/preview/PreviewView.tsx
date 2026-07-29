@@ -29,7 +29,9 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
+import { openDiscoveredPort } from "./openDiscoveredPort";
 import { PreviewChromeRow } from "./PreviewChromeRow";
+import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
@@ -39,7 +41,6 @@ import {
 } from "~/browser/browserViewportActions";
 import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { PreviewUnreachable } from "./PreviewUnreachable";
-import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
@@ -80,6 +81,7 @@ export function PreviewView({
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
+  const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environment = useEnvironment(threadRef.environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
@@ -246,13 +248,73 @@ export function PreviewView({
         void stopBrowserRecording(tabId).then(
           (artifact) => {
             if (!artifact) return;
-            toastManager.add(
+            let pathCopied = false;
+            let toastId: ReturnType<typeof toastManager.add>;
+            const revealAction = {
+              children: revealInFileExplorerLabel(navigator.platform),
+              onClick: () => void bridge.revealArtifact(artifact.path),
+            };
+            const updateRecordingToast = (
+              type: "success" | "error" = "success",
+              title = "Recording saved",
+              description?: string,
+            ) => {
+              toastManager.update(
+                toastId,
+                stackedThreadToast({
+                  type,
+                  title,
+                  description,
+                  actionProps: revealAction,
+                  data: {
+                    secondaryActionProps: {
+                      children: pathCopied ? "Copied!" : "Copy path",
+                      disabled: pathCopied,
+                      onClick: copyPath,
+                    },
+                    secondaryActionVariant: "outline",
+                  },
+                }),
+              );
+            };
+            const copyPath = () => {
+              if (!navigator.clipboard?.writeText) {
+                updateRecordingToast(
+                  "error",
+                  "Unable to copy recording path",
+                  "Clipboard API unavailable.",
+                );
+                return;
+              }
+              void navigator.clipboard.writeText(artifact.path).then(
+                () => {
+                  pathCopied = true;
+                  updateRecordingToast();
+                  window.setTimeout(() => {
+                    pathCopied = false;
+                    updateRecordingToast();
+                  }, 2_000);
+                },
+                (error) => {
+                  updateRecordingToast(
+                    "error",
+                    "Unable to copy recording path",
+                    error instanceof Error ? error.message : "An error occurred.",
+                  );
+                },
+              );
+            };
+            toastId = toastManager.add(
               stackedThreadToast({
                 type: "success",
                 title: "Recording saved",
-                actionProps: {
-                  children: revealInFileExplorerLabel(navigator.platform),
-                  onClick: () => void bridge.revealArtifact(artifact.path),
+                actionProps: revealAction,
+                data: {
+                  secondaryActionProps: {
+                    children: "Copy path",
+                    onClick: copyPath,
+                  },
+                  secondaryActionVariant: "outline",
                 },
               }),
             );
@@ -287,6 +349,11 @@ export function PreviewView({
       }
       void bridge.captureScreenshot(tabId).then(
         (artifact) => {
+          const revealAction = {
+            children: revealInFileExplorerLabel(navigator.platform),
+            onClick: () => void bridge.revealArtifact(artifact.path),
+          };
+          let pathCopied = false;
           let imageCopied = false;
           let toastId: ReturnType<typeof toastManager.add>;
 
@@ -306,7 +373,48 @@ export function PreviewView({
                   disabled: imageCopied,
                   onClick: copyImage,
                 },
+                data: {
+                  additionalActions: [
+                    {
+                      id: "copy-path",
+                      props: {
+                        children: pathCopied ? "Copied!" : "Copy path",
+                        disabled: pathCopied,
+                        onClick: copyPath,
+                      },
+                    },
+                  ],
+                  secondaryActionProps: revealAction,
+                  secondaryActionVariant: "outline",
+                },
               }),
+            );
+          };
+          const copyPath = () => {
+            if (!navigator.clipboard?.writeText) {
+              updateScreenshotToast(
+                "error",
+                "Unable to copy screenshot path",
+                "Clipboard API unavailable.",
+              );
+              return;
+            }
+            void navigator.clipboard.writeText(artifact.path).then(
+              () => {
+                pathCopied = true;
+                updateScreenshotToast();
+                window.setTimeout(() => {
+                  pathCopied = false;
+                  updateScreenshotToast();
+                }, 2_000);
+              },
+              (error) => {
+                updateScreenshotToast(
+                  "error",
+                  "Unable to copy screenshot path",
+                  error instanceof Error ? error.message : "An error occurred.",
+                );
+              },
             );
           };
 
@@ -334,10 +442,22 @@ export function PreviewView({
             stackedThreadToast({
               type: "success",
               title: "Screenshot saved",
-              description: artifact.path,
               actionProps: {
                 children: "Copy image",
                 onClick: copyImage,
+              },
+              data: {
+                additionalActions: [
+                  {
+                    id: "copy-path",
+                    props: {
+                      children: "Copy path",
+                      onClick: copyPath,
+                    },
+                  },
+                ],
+                secondaryActionProps: revealAction,
+                secondaryActionVariant: "outline",
               },
             }),
           );
@@ -373,6 +493,7 @@ export function PreviewView({
       try {
         const annotation = await previewBridge.pickElement(tabId);
         if (!annotation) return;
+        addPreviewAnnotation(threadRef, annotation);
         const screenshotFile = await previewAnnotationScreenshotFile(annotation);
         if (screenshotFile && annotation.screenshot) {
           addImage(threadRef, {
@@ -408,7 +529,7 @@ export function PreviewView({
         }
       }
     })();
-  }, [addImage, tabId, threadRef]);
+  }, [addImage, addPreviewAnnotation, tabId, threadRef]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle
@@ -523,7 +644,16 @@ export function PreviewView({
             environmentId={threadRef.environmentId}
             configuredUrls={configuredUrls}
             recentlySeenUrls={previewState.recentlySeenUrls}
-            onOpenUrl={(next) => void handleOpenServerUrl(next)}
+            onOpenUrl={(url) => void handleOpenServerUrl(url)}
+            onOpenServer={(server) =>
+              tabId
+                ? void handleOpenServerUrl(server.url)
+                : void openDiscoveredPort({
+                    threadRef,
+                    port: server,
+                    openPreview: open,
+                  })
+            }
           />
         ) : null}
         {snapshot && desktopOverlay ? (

@@ -39,6 +39,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
+import { terminalLabelsById } from "../terminalLabels";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -50,6 +51,9 @@ import { readLocalApi } from "~/localApi";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
 import { CODE_FONT_STACKS } from "../hooks/useAppFont";
 import { useSettings } from "../hooks/useSettings";
+import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { previewEnvironment } from "~/state/preview";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -297,6 +301,7 @@ export function TerminalViewport({
   const terminalHydratedRef = useRef(false);
   const codeFont = useSettings((settings) => settings.codeFont);
   const codeFontSize = useSettings((settings) => settings.codeFontSize);
+  const openPreview = useAtomCommand(previewEnvironment.open);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -511,11 +516,27 @@ export function TerminalViewport({
               if (!latestTerminal) return;
 
               if (match.kind === "url") {
-                void localApi.shell.openExternal(match.text).catch((error: unknown) => {
+                if (!localApi) {
                   writeSystemMessage(
                     latestTerminal,
-                    error instanceof Error ? error.message : "Unable to open link",
+                    "Opening links is unavailable in this runtime.",
                   );
+                  return;
+                }
+                void openTerminalLinkInPreview({
+                  url: match.text,
+                  position: { x: event.clientX, y: event.clientY },
+                  threadRef,
+                  openPreview,
+                  localApi,
+                  fallbackToBrowser: () => {
+                    void localApi.shell.openExternal(match.text).catch((error: unknown) => {
+                      writeSystemMessage(
+                        latestTerminal,
+                        error instanceof Error ? error.message : "Unable to open link",
+                      );
+                    });
+                  },
                 });
                 return;
               }
@@ -775,7 +796,7 @@ export function TerminalViewport({
     };
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
-  }, [cwd, environmentId, runtimeEnv, terminalId, threadId]);
+  }, [cwd, environmentId, openPreview, runtimeEnv, terminalId, threadId, threadRef]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -830,6 +851,7 @@ interface ThreadTerminalDrawerProps {
   visible?: boolean;
   height: number;
   terminalIds: string[];
+  terminalLabels?: Readonly<Record<string, string>> | undefined;
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
@@ -884,6 +906,7 @@ export default function ThreadTerminalDrawer({
   visible = true,
   height,
   terminalIds,
+  terminalLabels,
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
@@ -1004,13 +1027,15 @@ export default function ThreadTerminalDrawer({
     resolvedTerminalGroups.length > 1 ||
     resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
-  const terminalLabelById = useMemo(
-    () =>
-      new Map(
-        normalizedTerminalIds.map((terminalId, index) => [terminalId, `Terminal ${index + 1}`]),
-      ),
-    [normalizedTerminalIds],
-  );
+  const terminalLabelById = useMemo(() => {
+    const defaultTerminalLabels = terminalLabelsById(normalizedTerminalIds);
+    return new Map(
+      normalizedTerminalIds.map((terminalId) => [
+        terminalId,
+        terminalLabels?.[terminalId] ?? defaultTerminalLabels[terminalId] ?? "Terminal",
+      ]),
+    );
+  }, [normalizedTerminalIds, terminalLabels]);
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel

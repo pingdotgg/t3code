@@ -70,11 +70,15 @@ export interface WsRpcClient {
     readonly onEvent: RpcStreamMethod<typeof WS_METHODS.subscribeTerminalEvents>;
   };
   readonly projects: {
+    readonly readFile: RpcUnaryMethod<typeof WS_METHODS.projectsReadFile>;
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
   };
   readonly filesystem: {
     readonly browse: RpcUnaryMethod<typeof WS_METHODS.filesystemBrowse>;
+  };
+  readonly assets: {
+    readonly createUrl: RpcUnaryMethod<typeof WS_METHODS.assetsCreateUrl>;
   };
   readonly preview: {
     readonly open: RpcUnaryMethod<typeof WS_METHODS.previewOpen>;
@@ -202,6 +206,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         ),
     },
     projects: {
+      readFile: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsReadFile](input)),
       searchEntries: (input) =>
         transport.request((client) => client[WS_METHODS.projectsSearchEntries](input)),
       writeFile: (input) =>
@@ -209,6 +215,10 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     },
     filesystem: {
       browse: (input) => transport.request((client) => client[WS_METHODS.filesystemBrowse](input)),
+    },
+    assets: {
+      createUrl: (input) =>
+        transport.request((client) => client[WS_METHODS.assetsCreateUrl](input)),
     },
     preview: {
       open: (input) => transport.request((client) => client[WS_METHODS.previewOpen](input)),

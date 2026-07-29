@@ -1508,7 +1508,7 @@ const projectSearchCommand = Command.make("search", {
     withProjectRpc(flags, flags.project, ({ project, client }) =>
       Effect.gen(function* () {
         const result = yield* client[WS_METHODS.projectsSearchEntries]({
-          cwd: project.workspaceRoot,
+          scope: { _tag: "project", projectId: project.id },
           query: flags.query,
           limit: flags.limit,
         });

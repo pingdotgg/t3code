@@ -310,6 +310,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         <ThreadFileNavigatorPane
           cwd={cwd}
           environmentId={environmentId}
+          threadId={threadId}
           headerInset={headerInset}
           projectName={projectName}
           selectedPath={null}
@@ -320,17 +321,18 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   );
   const handlePreviewFile = useCallback(
     (relativePath: string) => {
-      if (environmentId === null || cwd === null) {
+      if (environmentId === null || cwd === null || threadId === null) {
         return;
       }
       preloadWorkspaceFileContents({
         cwd,
         environmentId,
+        threadId,
         relativePath,
         theme: highlightTheme,
       });
     },
-    [cwd, environmentId, highlightTheme],
+    [cwd, environmentId, highlightTheme, threadId],
   );
   useEffect(() => {
     if (fileInspector.supported && cwd !== null && !revealedInspectorRef.current) {
@@ -474,10 +476,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath !== null &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
   const fileQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
+    environmentId !== null &&
+      cwd !== null &&
+      threadId !== null &&
+      relativePath !== null &&
+      needsFileContents
       ? projectEnvironment.readFile({
           environmentId,
-          input: { cwd, relativePath },
+          input: { threadId, relativePath },
         })
       : null,
   );
@@ -499,6 +505,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         <ThreadFileNavigatorPane
           cwd={cwd}
           environmentId={environmentId}
+          threadId={threadId}
           headerInset={headerInset}
           projectName={projectName}
           selectedPath={relativePath}

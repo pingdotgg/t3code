@@ -1,7 +1,7 @@
 import { SymbolView } from "expo-symbols";
 import { useState } from "react";
 import { Image, View } from "react-native";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useThemeColor } from "../lib/useThemeColor";
 import { useAssetUrl } from "../state/assets";
 
@@ -11,17 +11,15 @@ const loadedFaviconUrls = new Set<string>();
 /* ─── Component ──────────────────────────────────────────────────────── */
 export function ProjectFavicon(props: {
   readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
   readonly size?: number;
   readonly projectTitle: string;
-  readonly workspaceRoot?: string | null;
 }) {
   const size = props.size ?? 42;
-  const faviconUrl = useAssetUrl(
-    props.environmentId,
-    props.workspaceRoot === null || props.workspaceRoot === undefined
-      ? null
-      : { _tag: "project-favicon", cwd: props.workspaceRoot },
-  );
+  const faviconUrl = useAssetUrl(props.environmentId, {
+    _tag: "project-favicon",
+    projectId: props.projectId,
+  });
 
   return (
     <ProjectFaviconImage

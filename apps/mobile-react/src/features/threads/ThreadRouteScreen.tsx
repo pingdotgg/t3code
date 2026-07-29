@@ -412,6 +412,7 @@ function ThreadRouteContent(
         <ThreadFileNavigatorPane
           cwd={selectedThreadCwd}
           environmentId={selectedThread.environmentId}
+          threadId={selectedThread.id}
           headerInset={inspectorHeaderInset}
           projectName={selectedThreadProject?.title ?? "Files"}
           selectedPath={null}

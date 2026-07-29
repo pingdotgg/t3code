@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectSearchEntriesResult } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectSearchEntriesResult, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,13 +19,13 @@ export interface ComposerPathSearchState {
 
 export interface ComposerPathSearchTarget {
   readonly environmentId: EnvironmentId | null;
-  readonly cwd: string | null;
+  readonly threadId: ThreadId | null;
   readonly query: string | null;
 }
 
 export interface ComposerPathSearchClient {
   readonly searchEntries: (input: {
-    readonly cwd: string;
+    readonly scope: { readonly _tag: "thread"; readonly threadId: ThreadId };
     readonly query: string;
     readonly limit: number;
   }) => Promise<ProjectSearchEntriesResult>;
@@ -35,7 +35,7 @@ interface WatchedEntry {
   refCount: number;
   target: ComposerPathSearchTarget & {
     readonly environmentId: EnvironmentId;
-    readonly cwd: string;
+    readonly threadId: ThreadId;
   };
   teardown: () => void;
 }
@@ -74,11 +74,11 @@ export function normalizeComposerPathSearchQuery(query: string | null): string {
 
 export function getComposerPathSearchTargetKey(target: ComposerPathSearchTarget): string | null {
   const query = normalizeComposerPathSearchQuery(target.query);
-  if (target.environmentId === null || target.cwd === null || query.length === 0) {
+  if (target.environmentId === null || target.threadId === null || query.length === 0) {
     return null;
   }
 
-  return `${target.environmentId}:${target.cwd}:${query}`;
+  return `${target.environmentId}:${target.threadId}:${query}`;
 }
 
 function toSearchEntries(
@@ -135,14 +135,14 @@ export function createComposerPathSearchManager(config: {
     targetKey: string,
     target: ComposerPathSearchTarget & {
       readonly environmentId: EnvironmentId;
-      readonly cwd: string;
+      readonly threadId: ThreadId;
     },
     client: ComposerPathSearchClient,
     version: number,
   ): void {
     void client
       .searchEntries({
-        cwd: target.cwd,
+        scope: { _tag: "thread", threadId: target.threadId },
         query: normalizeComposerPathSearchQuery(target.query),
         limit,
       })
@@ -176,7 +176,7 @@ export function createComposerPathSearchManager(config: {
     options?: { readonly force?: boolean },
   ): void {
     const targetKey = getComposerPathSearchTargetKey(target);
-    if (targetKey === null || target.environmentId === null || target.cwd === null) {
+    if (targetKey === null || target.environmentId === null || target.threadId === null) {
       return;
     }
 
@@ -213,7 +213,7 @@ export function createComposerPathSearchManager(config: {
     const readyTarget = {
       ...target,
       environmentId: target.environmentId,
-      cwd: target.cwd,
+      threadId: target.threadId,
     };
 
     if (debounceMs <= 0) {
@@ -236,14 +236,14 @@ export function createComposerPathSearchManager(config: {
 
   function watch(target: ComposerPathSearchTarget): () => void {
     const targetKey = getComposerPathSearchTargetKey(target);
-    if (targetKey === null || target.environmentId === null || target.cwd === null) {
+    if (targetKey === null || target.environmentId === null || target.threadId === null) {
       return NOOP;
     }
 
     const readyTarget = {
       ...target,
       environmentId: target.environmentId,
-      cwd: target.cwd,
+      threadId: target.threadId,
     };
 
     const existing = watched.get(targetKey);

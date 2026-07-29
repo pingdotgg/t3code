@@ -94,9 +94,9 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       >
         <ProjectFavicon
           environmentId={props.project.environmentId}
+          projectId={props.project.id}
           size={compact ? 22 : 18}
           projectTitle={props.project.title}
-          workspaceRoot={props.project.workspaceRoot}
         />
         <Text
           className={

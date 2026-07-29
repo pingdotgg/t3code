@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { DiscoveredLocalServer, EnvironmentId } from "@t3tools/contracts";
 import { Globe, RadioTower } from "lucide-react";
 
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
@@ -10,14 +10,15 @@ interface Props {
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
   recentlySeenUrls?: ReadonlyArray<string> | undefined;
-  onOpenUrl: (url: string) => void;
+  onOpenUrl?: (url: string) => void;
+  onOpenServer: (server: DiscoveredLocalServer) => void;
 }
 
 export function PreviewEmptyState({
   environmentId,
   configuredUrls,
   recentlySeenUrls,
-  onOpenUrl,
+  onOpenServer,
 }: Props) {
   const servers = useDiscoveredLocalServers({
     environmentId,
@@ -52,7 +53,7 @@ export function PreviewEmptyState({
             <PreviewLocalServerCard
               key={`${server.host}:${server.port}`}
               server={server}
-              onOpen={() => onOpenUrl(server.url)}
+              onOpen={() => onOpenServer(server)}
             />
           ))}
         </div>

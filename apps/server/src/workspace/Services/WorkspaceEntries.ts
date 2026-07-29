@@ -12,9 +12,14 @@ import type { Effect } from "effect";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
-  ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+
+export interface WorkspaceEntriesSearchInput {
+  readonly cwd: string;
+  readonly query: string;
+  readonly limit: number;
+}
 
 export class WorkspaceEntriesError extends Schema.TaggedErrorClass<WorkspaceEntriesError>()(
   "WorkspaceEntriesError",
@@ -54,7 +59,7 @@ export interface WorkspaceEntriesShape {
    * provided query.
    */
   readonly search: (
-    input: ProjectSearchEntriesInput,
+    input: WorkspaceEntriesSearchInput,
   ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceEntriesError>;
 
   /**

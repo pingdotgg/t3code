@@ -37,6 +37,7 @@ import {
   GlobeIcon,
   HammerIcon,
   InfoIcon,
+  PaintbrushIcon,
   type LucideIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -68,6 +69,10 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
+import {
+  extractTrailingPreviewAnnotation,
+  type ParsedPreviewAnnotation,
+} from "~/lib/previewAnnotation";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 
@@ -413,13 +418,28 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           const userImages = row.message.attachments ?? [];
           const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
           const terminalContexts = displayedUserMessage.contexts;
+          const previewAnnotations: ParsedPreviewAnnotation[] = [];
+          let visibleText = displayedUserMessage.visibleText;
+          while (true) {
+            const extracted = extractTrailingPreviewAnnotation(visibleText);
+            if (!extracted.annotation) break;
+            previewAnnotations.unshift(extracted.annotation);
+            visibleText = extracted.promptText;
+          }
+          const previewImages = userImages.filter((image) =>
+            image.name.startsWith("preview-annotation-"),
+          );
+          const previewImagesByName = new Map(previewImages.map((image) => [image.name, image]));
+          const regularImages = userImages.filter(
+            (image) => !image.name.startsWith("preview-annotation-"),
+          );
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
           return (
             <div className="flex justify-end">
               <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
+                {regularImages.length > 0 && (
                   <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
+                    {regularImages.map(
                       (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
                         <div
                           key={image.id}
@@ -431,7 +451,7 @@ function TimelineRowContent(props: { row: TimelineRow }) {
                               className="h-full w-full cursor-zoom-in"
                               aria-label={`Preview ${image.name}`}
                               onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
+                                const preview = buildExpandedImagePreview(regularImages, image.id);
                                 if (!preview) return;
                                 ctx.onImageExpand(preview);
                               }}
@@ -452,9 +472,18 @@ function TimelineRowContent(props: { row: TimelineRow }) {
                     )}
                   </div>
                 )}
+                {previewAnnotations.map((annotation) => (
+                  <UserMessagePreviewAnnotationCard
+                    key={annotation.id}
+                    annotation={annotation}
+                    image={
+                      previewImagesByName.get(`preview-annotation-${annotation.id}.png`) ?? null
+                    }
+                  />
+                ))}
                 <CollapsibleUserMessageBody
                   rowId={row.id}
-                  text={displayedUserMessage.visibleText}
+                  text={visibleText}
                   terminalContexts={terminalContexts}
                   forceExpanded={ctx.activeChatFindRowId === row.id}
                   footer={
@@ -514,6 +543,10 @@ function TimelineRowContent(props: { row: TimelineRow }) {
                     text={messageText}
                     cwd={ctx.markdownCwd}
                     isStreaming={Boolean(row.message.streaming)}
+                    threadRef={{
+                      environmentId: ctx.activeThreadEnvironmentId,
+                      threadId: ctx.activeThreadId,
+                    }}
                   />
                 )}
                 <AssistantChangedFilesSection
@@ -663,6 +696,58 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function UserMessagePreviewAnnotationCard(props: {
+  annotation: ParsedPreviewAnnotation;
+  image: NonNullable<TimelineMessage["attachments"]>[number] | null;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div className="mb-2 flex max-w-full items-center overflow-hidden rounded-lg border border-border/70 bg-background/70">
+      {props.image?.previewUrl ? (
+        <button
+          type="button"
+          className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
+          aria-label={`Preview ${props.image.name}`}
+          onClick={() => {
+            if (!props.image) return;
+            const preview = buildExpandedImagePreview([props.image], props.image.id);
+            if (preview) ctx.onImageExpand(preview);
+          }}
+        >
+          <img
+            src={props.image.previewUrl}
+            alt="Annotated preview crop"
+            className="size-full object-cover"
+          />
+        </button>
+      ) : null}
+      <div className="min-w-0 px-2.5 py-2">
+        {props.annotation.comment ? (
+          <div className="max-w-80 truncate text-xs font-medium text-foreground/90">
+            {props.annotation.comment}
+          </div>
+        ) : null}
+        <div
+          className={cn(
+            "flex items-center gap-2 text-[10px] text-muted-foreground",
+            props.annotation.comment && "mt-1",
+          )}
+        >
+          {props.annotation.targetSummary ? (
+            <span className="truncate">{props.annotation.targetSummary}</span>
+          ) : null}
+          {props.annotation.styleChanges.length > 0 ? (
+            <span className="inline-flex shrink-0 items-center gap-1">
+              <PaintbrushIcon className="size-3" />
+              {props.annotation.styleChanges.length}
+            </span>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

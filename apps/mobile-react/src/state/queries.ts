@@ -26,7 +26,7 @@ export interface ThreadDetailView {
 
 export interface ComposerPathSearchTarget {
   readonly environmentId: EnvironmentId | null;
-  readonly cwd: string | null;
+  readonly threadId: ThreadId | null;
   readonly query: string | null;
 }
 
@@ -82,20 +82,20 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   const normalizedTarget = useMemo(
     () => ({
       environmentId: target.environmentId,
-      cwd: target.cwd,
+      threadId: target.threadId,
       query: normalizeComposerPathSearchQuery(target.query),
     }),
-    [target.cwd, target.environmentId, target.query],
+    [target.environmentId, target.query, target.threadId],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
     debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
+      debouncedTarget.threadId !== null &&
       debouncedTarget.query.length > 0
       ? projectEnvironment.searchEntries({
           environmentId: debouncedTarget.environmentId,
           input: {
-            cwd: debouncedTarget.cwd,
+            scope: { _tag: "thread", threadId: debouncedTarget.threadId },
             query: debouncedTarget.query,
             limit: COMPOSER_PATH_SEARCH_LIMIT,
           },

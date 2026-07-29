@@ -5,6 +5,7 @@ import {
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
+import { stackedThreadToast } from "./toastHelpers";
 
 describe("shouldHideCollapsedToastContent", () => {
   it("keeps a single visible toast readable", () => {
@@ -139,6 +140,23 @@ describe("shouldRenderThreadScopedToast", () => {
       ),
       true,
     );
+  });
+
+  describe("stackedThreadToast actions", () => {
+    it("preserves secondary and additional action slots", () => {
+      const toast = stackedThreadToast({
+        type: "success",
+        title: "Saved",
+        data: {
+          secondaryActionProps: { children: "Reveal" },
+          additionalActions: [{ id: "copy-path", props: { children: "Copy path" } }],
+        },
+      });
+
+      assert.equal(toast.data?.actionLayout, "stacked-end");
+      assert.equal(toast.data?.secondaryActionProps?.children, "Reveal");
+      assert.equal(toast.data?.additionalActions?.[0]?.props.children, "Copy path");
+    });
   });
 
   it("hides a scoped toast when the environment differs", () => {
