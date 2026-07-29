@@ -355,6 +355,135 @@ describe("environment RPC", () => {
     }),
   );
 
+  it.effect("grows the retry delay for consecutive expected failures", () =>
+    Effect.gen(function* () {
+      const domainError = new Error("thread not found yet");
+      const subscriptionCount = yield* Ref.make(0);
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Ref.update(subscriptionCount, (count) => count + 1).pipe(
+              Effect.as(Stream.fail(domainError)),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      const awaitSubscriptions = Effect.fn("TestEnvironmentRpc.awaitSubscriptions")(function* (
+        count: number,
+      ) {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if ((yield* Ref.get(subscriptionCount)) >= count) {
+            return;
+          }
+          yield* Effect.yieldNow;
+        }
+        return yield* Effect.die(new Error(`Expected ${count} subscriptions.`));
+      });
+      const settle = Effect.gen(function* () {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          yield* Effect.yieldNow;
+        }
+      });
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const subscriptionFiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        {
+          onExpectedFailure: () => Effect.void,
+          retryExpectedFailureAfter: (attempt) => 100 * 2 ** attempt,
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* awaitSubscriptions(1);
+      yield* settle;
+
+      // First failure retries after the base delay.
+      yield* TestClock.adjust("100 millis");
+      yield* awaitSubscriptions(2);
+      yield* settle;
+
+      // Second failure doubles the delay: the base delay alone must not
+      // resubscribe, the remaining half must.
+      yield* TestClock.adjust("100 millis");
+      yield* settle;
+      expect(yield* Ref.get(subscriptionCount)).toBe(2);
+
+      yield* TestClock.adjust("100 millis");
+      yield* awaitSubscriptions(3);
+      yield* Fiber.interrupt(subscriptionFiber);
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(3);
+    }),
+  );
+
+  it.effect("resets the retry delay after a delivered element", () =>
+    Effect.gen(function* () {
+      const domainError = new Error("thread not found yet");
+      const subscriptionCount = yield* Ref.make(0);
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
+              Effect.map((count) =>
+                count === 2
+                  ? Stream.make("event" as never).pipe(Stream.concat(Stream.fail(domainError)))
+                  : Stream.fail(domainError),
+              ),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      const awaitSubscriptions = Effect.fn("TestEnvironmentRpc.awaitSubscriptions")(function* (
+        count: number,
+      ) {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if ((yield* Ref.get(subscriptionCount)) >= count) {
+            return;
+          }
+          yield* Effect.yieldNow;
+        }
+        return yield* Effect.die(new Error(`Expected ${count} subscriptions.`));
+      });
+      const settle = Effect.gen(function* () {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          yield* Effect.yieldNow;
+        }
+      });
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const subscriptionFiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        {
+          onExpectedFailure: () => Effect.void,
+          retryExpectedFailureAfter: (attempt) => 100 * 2 ** attempt,
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* awaitSubscriptions(1);
+      yield* settle;
+
+      // The second subscription delivers an element before failing, which
+      // resets the backoff, so the third retry waits the base delay again.
+      yield* TestClock.adjust("100 millis");
+      yield* awaitSubscriptions(2);
+      yield* settle;
+
+      yield* TestClock.adjust("100 millis");
+      yield* awaitSubscriptions(3);
+      yield* Fiber.interrupt(subscriptionFiber);
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(3);
+    }),
+  );
+
   it.effect("does not classify subscription defects as expected failures", () =>
     Effect.gen(function* () {
       const defect = new Error("subscription invariant failed");
