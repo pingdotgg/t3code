@@ -324,7 +324,7 @@ function terminalWireLabel(session: TerminalSessionState): string {
 }
 
 /** Only a tracking mode makes a terminal emit reports; an encoding just shapes them. */
-const MOUSE_TRACKING_MODES: ReadonlyArray<number> = [1000, 1001, 1002, 1003];
+const MOUSE_TRACKING_MODES: ReadonlyArray<number> = [9, 1000, 1001, 1002, 1003];
 const MOUSE_ENCODING_MODES: ReadonlyArray<number> = [1006, 1015, 1016];
 const MOUSE_REPORTING_RESET = [...MOUSE_TRACKING_MODES, ...MOUSE_ENCODING_MODES]
   .map((mode) => `\u001b[?${mode}l`)
