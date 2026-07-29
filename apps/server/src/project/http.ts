@@ -9,10 +9,20 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
+  failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
-import { ProjectService } from "./ProjectService.ts";
+import { ProjectService, type ProjectServiceError } from "./ProjectService.ts";
+
+export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
+  cause: ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
+) {
+  if (cause._tag === "ProjectNotFoundError" || cause._tag === "ProjectConflictError") {
+    return yield* failEnvironmentInvalidRequest("invalid_command");
+  }
+  return yield* failEnvironmentInternal("project_mutation_failed", cause);
+});
 
 export const projectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -67,11 +77,7 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
                     commandId: mutation.commandId,
                     projectId: mutation.projectId,
                   });
-          return yield* startup
-            .enqueueCommand(operation)
-            .pipe(
-              Effect.catch((cause) => failEnvironmentInternal("project_mutation_failed", cause)),
-            );
+          return yield* startup.enqueueCommand(operation).pipe(Effect.catch(failProjectMutation));
         }),
       );
   }),
