@@ -392,6 +392,29 @@ describe("terminatePosixOwnedProcessTree", () => {
     }),
   );
 
+  it.live("reports persistent retryable removal failures as removal failures", () =>
+    Effect.gen(function* () {
+      const removeError = Object.assign(new Error("cgroup remains busy"), {
+        code: "EBUSY",
+      });
+      const lease: AcpLinuxCgroupLease = {
+        contains: () => false,
+        exists: () => true,
+        path: "/test/t3-acp-busy",
+        relativePath: "/test/t3-acp-busy",
+        kill: () => undefined,
+        populated: () => false,
+        remove: () => {
+          throw removeError;
+        },
+      };
+
+      const error = yield* Effect.flip(terminateLinuxCgroupLease(lease));
+      expect(error.detail).toBe("Failed to remove ACP cgroup /test/t3-acp-busy");
+      expect(error.cause).toBe(removeError);
+    }),
+  );
+
   it("sends TERM only to the exact captured root while it remains in the child cgroup", () => {
     const fixture = makeController({
       processes: [server(), identity(100, process.pid, 100, 100, "owned")],

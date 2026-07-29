@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 
 import {
   cursorReplayPromptsForWorkspace,
+  cursorReplayTranscriptCwd,
   shouldSeedCursorReplayWorkspace,
 } from "./cursorReplayRecordingWorkspace.ts";
 
@@ -32,4 +33,12 @@ it("never seeds files into an externally supplied workspace", () => {
       owned: true,
     }),
   );
+});
+
+it("canonicalizes read-only tool paths to the stable fixture workspace", () => {
+  assert.equal(
+    cursorReplayTranscriptCwd("tool_call_read_only"),
+    "/tmp/claude-replay-tool_call_read_only",
+  );
+  assert.equal(cursorReplayTranscriptCwd("simple"), undefined);
 });
