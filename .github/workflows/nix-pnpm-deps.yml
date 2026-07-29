@@ -1,0 +1,90 @@
+name: Nix pnpm dependency hash
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-pnpm-dependency-hash-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Check pnpm dependency hash
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: app_token
+        name: Mint release app token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Checkout default branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - id: update
+        name: Update pnpm dependency hash
+        shell: bash
+        run: |
+          nix run github:Mic92/nix-update/cf68051e7b7e08de6c707484cdcd1a53feb48e05 -- \
+            t3code \
+            --flake \
+            --version=skip \
+            --override-filename nix/package.nix \
+            --build
+
+          if git diff --quiet -- nix/package.nix; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: pull_request
+        name: Create or update dependency hash PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app_token.outputs.token }}
+          base: ${{ github.ref_name }}
+          branch: automation/nix-pnpm-dependency-hash-${{ github.ref_name }}
+          delete-branch: true
+          add-paths: nix/package.nix
+          commit-message: update nix pnpm dependency hash
+          title: update nix pnpm dependency hash
+          body: |
+            ## What Changed
+
+            - Updated the Nix pnpm dependency hash for the current lockfile.
+
+            ## Why
+
+            The committed hash did not match the dependency store generated from `pnpm-lock.yaml`.
+
+            ## Checklist
+
+            - [x] This PR is small and focused
+            - [x] I explained what changed and why
+
+      - name: Fail on dependency hash drift
+        if: steps.update.outputs.changed == 'true'
+        env:
+          PULL_REQUEST_URL: ${{ steps.pull_request.outputs.pull-request-url }}
+        run: |
+          echo "::error::The Nix pnpm dependency hash was stale. Repair PR: $PULL_REQUEST_URL"
+          exit 1
