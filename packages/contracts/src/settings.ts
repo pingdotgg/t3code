@@ -396,7 +396,7 @@ export const ChatGptBrowserSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Workspace access",
         description:
-          "What the connector may do: read (inspect files only), write (also edit files and apply patches), or full (also run shell commands). Edits and commands still follow the thread's runtime mode — in Approvals mode each one needs your approval in the timeline.",
+          "What the connector may do: read (inspect files only), write (also edit files and apply patches), or full (highest workspace mutation access). Public shell execution is currently disabled until a real OS-level sandbox is available. Edits still follow the thread's runtime mode — in Approvals mode each one needs your approval in the timeline.",
         providerSettingsForm: { clearWhenEmpty: "omit" },
       }),
     ),

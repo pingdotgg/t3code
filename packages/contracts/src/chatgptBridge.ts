@@ -52,7 +52,8 @@ export type WorkspaceRelativePath = typeof WorkspaceRelativePath.Type;
  *
  *   - `read`  — the five read-only tools.
  *   - `write` — adds file mutations (`workspace_write`/`_edit`/`_patch`).
- *   - `full`  — adds `workspace_bash`.
+ *   - `full`  — enables the highest workspace mutation access; shell execution
+ *               remains withheld until a real OS-level sandbox is available.
  *
  * Whether a granted mutation *executes* is a separate, per-operation decision:
  * the thread's runtime mode either auto-approves it or routes it through the

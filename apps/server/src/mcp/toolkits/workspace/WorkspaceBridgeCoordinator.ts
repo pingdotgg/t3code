@@ -96,12 +96,6 @@ let initialApprovalWait: Duration.Input = "20 seconds";
 const DEFAULT_WAIT_SECONDS = 20;
 /** Staged-operation bookkeeping cap; completed records are pruned first. */
 const MAX_TRACKED_OPERATIONS = 200;
-const DEFAULT_BASH_TIMEOUT_MS = 30_000;
-const MAX_BASH_TIMEOUT_MS = 180_000;
-/** Per-stream cap while the command runs. */
-const MAX_BASH_OUTPUT_BYTES = 262_144;
-/** Cap on the merged output echoed back to the model. */
-const MAX_BASH_RESULT_BYTES = 32_000;
 /** Cap on the detail body shown in an approval card. */
 const MAX_APPROVAL_DETAIL_CHARS = 1_600;
 
@@ -1097,75 +1091,16 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
 
   const bash: WorkspaceBridgeCoordinatorShape["bash"] = Effect.fn(
     "WorkspaceBridgeCoordinator.bash",
-  )(function* (scope, input) {
+  )(function* (scope, _input) {
     yield* requireCapability(scope, "bash");
-    const { root, runtimeMode } = yield* requireThread(scope);
-    const timeoutMs = Math.min(input.timeoutMs ?? DEFAULT_BASH_TIMEOUT_MS, MAX_BASH_TIMEOUT_MS);
-
-    return yield* stageMutation({
-      scope,
-      tool: "bash",
-      runtimeMode,
-      requestType: "exec_command_approval",
-      approvalDetail: truncateDetail(
-        `ChatGPT wants to run in ${NodePath.basename(root)}:\n\n$ ${input.command}`,
-      ),
-      execute: Effect.gen(function* () {
-        // `env -i` rebuilds the environment from scratch. The command's output
-        // is relayed to OpenAI, so the server's own environment — API keys,
-        // tokens, anything a dev shell exports — must not be observable from
-        // inside the command.
-        const output = yield* processRunner
-          .run({
-            command: "/usr/bin/env",
-            args: [
-              "-i",
-              `PATH=${process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin"}`,
-              `HOME=${process.env.HOME ?? root}`,
-              `TMPDIR=${process.env.TMPDIR ?? "/tmp"}`,
-              "TERM=dumb",
-              "NO_COLOR=1",
-              "CI=1",
-              "/bin/bash",
-              "-c",
-              input.command,
-            ],
-            cwd: root,
-            timeout: `${timeoutMs} millis`,
-            maxOutputBytes: MAX_BASH_OUTPUT_BYTES,
-            outputMode: "truncate",
-            timeoutBehavior: "timedOutResult",
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new WorkspaceBridgeError({
-                  reason: "invalid-input",
-                  description: `Could not run the command: ${cause.message}`,
-                }),
-            ),
-          );
-
-        if (output.timedOut) {
-          return {
-            summary: `Command timed out after ${Math.round(timeoutMs / 1000)}s: ${input.command}`,
-            exitCode: null,
-            output: "",
-            truncated: false,
-          };
-        }
-        const merged =
-          output.stderr.trim().length > 0
-            ? `${output.stdout}${output.stdout.endsWith("\n") || output.stdout.length === 0 ? "" : "\n"}[stderr]\n${output.stderr}`
-            : output.stdout;
-        const capped = truncateUtf8(merged, MAX_BASH_RESULT_BYTES);
-        return {
-          summary: `Ran \`${input.command}\` (exit ${output.code ?? "signal"})`,
-          exitCode: output.code === null ? null : Number(output.code),
-          output: capped.text,
-          truncated: capped.truncated || output.stdoutTruncated || output.stderrTruncated,
-        };
-      }),
+    // `cwd` is not a filesystem sandbox. Until the process runner can enforce
+    // an OS-level workspace sandbox, fail closed before staging approval or
+    // spawning a shell; full-access must not turn this into arbitrary host
+    // access for a public ChatGPT connector.
+    return yield* new WorkspaceBridgeError({
+      reason: "invalid-input",
+      description:
+        "workspace_bash is disabled because this server cannot yet sandbox shell filesystem and network access to the workspace. Use workspace_read/search/changes or apply a reviewed patch instead.",
     });
   });
 

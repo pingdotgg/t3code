@@ -156,7 +156,7 @@ export const WorkspacePatchTool = Tool.make("workspace_patch", {
 
 export const WorkspaceBashTool = Tool.make("workspace_bash", {
   description:
-    "Run one shell command in the workspace root (tests, linters, builds, git). Non-interactive only; runs with a minimal environment and a hard timeout. The exit code and combined output come back in the result — a non-zero exit is a normal result, not an error." +
+    "Shell execution is currently disabled for public connectors because the server cannot enforce an OS-level filesystem and network sandbox. Use workspace_read, workspace_search, workspace_changes, or workspace_patch instead." +
     APPROVAL_PROTOCOL,
   parameters: WorkspaceBashInput,
   success: WorkspaceMutationResult,

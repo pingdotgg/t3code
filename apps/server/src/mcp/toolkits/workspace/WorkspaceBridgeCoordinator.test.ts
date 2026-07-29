@@ -396,32 +396,15 @@ it.effect("full-access mode executes write, edit, and patch without approval", (
   ),
 );
 
-it.effect("bash runs in the worktree with a scrubbed environment", () =>
+it.effect("bash is disabled even in full-access mode", () =>
   withCoordinator(
     (coordinator) =>
       Effect.gen(function* () {
-        process.env["CHATGPT_BRIDGE_TEST_SECRET"] = "leak-me";
-        const result = yield* coordinator
-          .bash(fullScope, {
-            command: 'echo "v=${CHATGPT_BRIDGE_TEST_SECRET:-empty}"; pwd >/dev/null',
-          })
-          .pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                delete process.env["CHATGPT_BRIDGE_TEST_SECRET"];
-              }),
-            ),
-          );
-        expect(result.status).toBe("completed");
-        expect(result.exitCode).toBe(0);
-        // The server's environment must not be observable from inside the
-        // command — its output is relayed to OpenAI.
-        expect(result.output).toContain("v=empty");
-        expect(result.output).not.toContain("leak-me");
-
-        const failing = yield* coordinator.bash(fullScope, { command: "exit 3" });
-        expect(failing.status).toBe("completed");
-        expect(failing.exitCode).toBe(3);
+        const error = yield* coordinator
+          .bash(fullScope, { command: "cat $HOME/.ssh/*" })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("invalid-input");
+        expect(error.description).toContain("disabled");
       }),
     { runtimeMode: "full-access" },
   ),
@@ -437,12 +420,10 @@ it.effect("auto-accept-edits auto-approves file changes but not commands", () =>
         });
         expect(written.status).toBe("completed");
 
-        // No approval channel is registered, so a command that needs approval
-        // has nobody to ask.
         const command = yield* coordinator
           .bash(fullScope, { command: "echo hi" })
           .pipe(Effect.flip);
-        expect(command.reason).toBe("approval-unavailable");
+        expect(command.reason).toBe("invalid-input");
       }),
     { runtimeMode: "auto-accept-edits" },
   ),
@@ -482,33 +463,6 @@ it.live("approval-required defers the write until the user accepts", () =>
       expect(yield* fs.readFileString(NodePath.join(context.root, "approved.md"))).toBe(
         "after approval\n",
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
-  ),
-);
-
-it.live("a declined approval denies the operation and leaves the file alone", () =>
-  withCoordinator((coordinator, context) =>
-    Effect.gen(function* () {
-      coordinatorTesting.setInitialApprovalWait("30 millis");
-      const opened: Array<{ requestId: string }> = [];
-      registerWorkspaceApprovalChannel(threadId, {
-        emitOpened: (request) =>
-          Effect.sync(() => {
-            opened.push(request);
-          }),
-        emitResolved: () => Effect.void,
-      });
-
-      const pending = yield* coordinator.bash(fullScope, { command: "echo dangerous" });
-      expect(pending.status).toBe("pending-approval");
-      yield* resolveWorkspaceApproval(threadId, opened[0]!.requestId, "decline");
-
-      const settled = yield* coordinator.wait(fullScope, { operationId: pending.operationId });
-      expect(settled.status).toBe("denied");
-      expect(settled.summary).toContain("declined");
-
-      const fs = yield* FileSystem.FileSystem;
-      expect(yield* fs.exists(NodePath.join(context.root, "dangerous"))).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   ),
 );

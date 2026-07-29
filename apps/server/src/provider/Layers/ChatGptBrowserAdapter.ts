@@ -90,6 +90,7 @@ interface ChatGptSessionContext {
   activeTurnId: TurnId | undefined;
   activeTurnFiber: Fiber.Fiber<void, never> | undefined;
   stopped: boolean;
+  workspaceProviderSessionId: string | undefined;
   /**
    * Set when a workspace connector was issued and the model has not yet been
    * told about it. Cleared after the first turn carries the preamble, so the
@@ -100,6 +101,11 @@ interface ChatGptSessionContext {
 
 interface ChatGptAdapterOptions {
   readonly instanceId?: ProviderInstanceId;
+}
+
+interface IssuedWorkspaceConnector {
+  readonly url: string;
+  readonly providerSessionId: string;
 }
 
 function nowIso(): Effect.Effect<string> {
@@ -369,7 +375,7 @@ export function connectorSetupMessage(
 export function workspacePreamble(access: ChatGptBrowserSettings["workspaceBridgeAccess"]): string {
   const mutationSentence =
     access === "full"
-      ? "You can change the repository with `workspace_write`, `workspace_edit`, and `workspace_patch`, and run commands with `workspace_bash`. A mutation may return status pending-approval — the user is deciding in SergeCode; poll `workspace_wait` with the operationId instead of re-submitting."
+      ? "You can change the repository with `workspace_write`, `workspace_edit`, and `workspace_patch`. Public shell execution is disabled until SergeCode can enforce an OS-level workspace sandbox. A mutation may return status pending-approval — the user is deciding in SergeCode; poll `workspace_wait` with the operationId instead of re-submitting."
       : access === "write"
         ? "You can change the repository with `workspace_write`, `workspace_edit`, and `workspace_patch` (no shell access). A mutation may return status pending-approval — the user is deciding in SergeCode; poll `workspace_wait` with the operationId instead of re-submitting."
         : "The connector is read-only: propose changes as diffs or instructions rather than trying to apply them.";
@@ -562,7 +568,9 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
    * settings UI and then silently fail on every tool call. Better to show no
    * connector than a broken one.
    */
-  const issueWorkspaceConnector = (threadId: ThreadId): Effect.Effect<string | undefined> =>
+  const issueWorkspaceConnector = (
+    threadId: ThreadId,
+  ): Effect.Effect<IssuedWorkspaceConnector | undefined> =>
     Effect.gen(function* () {
       if (!settings.workspaceBridge) return undefined;
 
@@ -577,8 +585,20 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
       // that hostname, not whatever the managed tunnel scraped this boot.
       const publicBaseUrl =
         nonEmpty(settings.publicBaseUrl) ?? (yield* managedTunnelUrl(credential.config.endpoint));
-      if (!publicBaseUrl) return undefined;
-      return buildConnectorUrl({ publicBaseUrl, token: credential.token });
+      if (!publicBaseUrl) {
+        yield* McpSessionRegistry.revokeActiveMcpProviderSession(
+          credential.config.providerSessionId,
+        );
+        return undefined;
+      }
+      const url = buildConnectorUrl({ publicBaseUrl, token: credential.token });
+      if (!url) {
+        yield* McpSessionRegistry.revokeActiveMcpProviderSession(
+          credential.config.providerSessionId,
+        );
+        return undefined;
+      }
+      return { url, providerSessionId: credential.config.providerSessionId };
     }).pipe(
       // A connector is an enhancement, not a precondition for chatting. If
       // issuance fails the session still starts as a plain prompt bridge.
@@ -595,6 +615,17 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
       sessions.delete(threadId);
     }
   };
+
+  const revokeWorkspaceConnector = (session: ChatGptSessionContext) =>
+    session.workspaceProviderSessionId === undefined
+      ? Effect.void
+      : McpSessionRegistry.revokeActiveMcpProviderSession(session.workspaceProviderSessionId).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              session.workspaceProviderSessionId = undefined;
+            }),
+          ),
+        );
 
   const requireSession = (threadId: ThreadId) => {
     const session = sessions.get(threadId);
@@ -778,6 +809,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
       Array.from(sessions.values()),
       (session) =>
         Effect.gen(function* () {
+          yield* revokeWorkspaceConnector(session);
           yield* unregisterWorkspaceApprovalChannel(session.threadId);
           if (session.activeTurnFiber) {
             yield* Fiber.interrupt(session.activeTurnFiber).pipe(Effect.ignore);
@@ -853,6 +885,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           activeTurnFiber: undefined,
           stopped: false,
           pendingWorkspacePreamble: connectorUrl !== undefined,
+          workspaceProviderSessionId: connectorUrl?.providerSessionId,
         });
         // Register even when no connector URL exists: a stale connector from
         // an earlier session of this thread may still hold a valid token, and
@@ -875,7 +908,9 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
               itemType: "assistant_message",
               status: "completed",
               title: "Workspace connector",
-              data: { text: connectorSetupMessage(connectorUrl, settings.workspaceBridgeAccess) },
+              data: {
+                text: connectorSetupMessage(connectorUrl.url, settings.workspaceBridgeAccess),
+              },
             },
           });
         }
@@ -953,6 +988,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
         const session = sessions.get(threadId);
         if (!session) return;
         session.stopped = true;
+        yield* revokeWorkspaceConnector(session);
         yield* unregisterWorkspaceApprovalChannel(threadId);
         if (session.activeTurnFiber) {
           yield* Fiber.interrupt(session.activeTurnFiber).pipe(Effect.ignore);
@@ -992,6 +1028,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           const session = sessions.get(threadId);
           if (!session) return;
           session.stopped = true;
+          yield* revokeWorkspaceConnector(session);
           yield* unregisterWorkspaceApprovalChannel(threadId);
           if (session.activeTurnFiber) {
             yield* Fiber.interrupt(session.activeTurnFiber).pipe(Effect.ignore);
