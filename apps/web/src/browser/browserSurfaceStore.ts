@@ -59,12 +59,12 @@ export function selectBrowserSurfaceRenderState(
 ) {
   const current = state.byTabId[tabId];
   return {
-    byTabId: state.byTabId,
     backgroundCapture: (state.backgroundCaptureCountByTabId[tabId] ?? 0) > 0,
     content: current?.content ?? null,
     cornerRadius: current?.cornerRadius ?? 0,
     fitSourceContent: current?.fitSourceContent ?? false,
     fittedSourceContent: current?.fittedSourceContent ?? null,
+    rect: current?.rect ?? null,
     visible: current?.visible ?? false,
   };
 }
@@ -78,15 +78,13 @@ export function resolveBrowserSurfacePanelRect(
 }
 
 export function resolveBrowserSurfaceBackgroundCaptureRect(
-  byTabId: Readonly<Record<string, BrowserSurfacePresentation>>,
-  tabId: string,
+  presentedRect: BrowserSurfaceRect | null,
   viewport: { readonly width: number; readonly height: number },
 ): BrowserSurfaceRect {
   const viewportWidth =
     Number.isFinite(viewport.width) && viewport.width > 0 ? Math.round(viewport.width) : 1280;
   const viewportHeight =
     Number.isFinite(viewport.height) && viewport.height > 0 ? Math.round(viewport.height) : 800;
-  const presentedRect = resolveBrowserSurfacePanelRect(byTabId, tabId);
   if (presentedRect) {
     const width = Math.max(1, Math.min(Math.round(presentedRect.width), viewportWidth));
     const height = Math.max(1, Math.min(Math.round(presentedRect.height), viewportHeight));

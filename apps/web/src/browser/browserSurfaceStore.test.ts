@@ -35,23 +35,41 @@ describe("browserSurfaceStore", () => {
     ).toBeUndefined();
   });
 
-  it("selects stable inputs while a background capture rect is derived", () => {
+  it("selects only the current tab's stable render inputs", () => {
     const release = acquireBrowserSurfaceBackgroundCapture("tab-background");
     const state = useBrowserSurfaceStore.getState();
     const first = selectBrowserSurfaceRenderState(state, "tab-background");
-    const second = selectBrowserSurfaceRenderState(state, "tab-background");
+    useBrowserSurfaceStore.setState({
+      byTabId: {
+        ...state.byTabId,
+        unrelated: {
+          rect: { x: 10, y: 20, width: 300, height: 200 },
+          visible: true,
+          content: null,
+          fittedSourceContent: null,
+          fitSourceContent: false,
+          cornerRadius: 0,
+          updatedAt: 1,
+          owner: null,
+        },
+      },
+    });
+    const second = selectBrowserSurfaceRenderState(
+      useBrowserSurfaceStore.getState(),
+      "tab-background",
+    );
 
     expect(shallow(first, second)).toBe(true);
     expect(first).toEqual({
-      byTabId: state.byTabId,
       backgroundCapture: true,
       content: null,
       cornerRadius: 0,
       fitSourceContent: false,
       fittedSourceContent: null,
+      rect: null,
       visible: false,
     });
-    expect(first).not.toHaveProperty("rect");
+    expect(first).not.toHaveProperty("byTabId");
     release();
   });
 
@@ -164,7 +182,7 @@ describe("browserSurfaceStore", () => {
 
   it("stages a never-presented background tab inside the renderer viewport", () => {
     expect(
-      resolveBrowserSurfaceBackgroundCaptureRect({}, "never-presented", {
+      resolveBrowserSurfaceBackgroundCaptureRect(null, {
         width: 1440,
         height: 900,
       }),
@@ -178,7 +196,7 @@ describe("browserSurfaceStore", () => {
 
   it("fits background capture staging to a smaller renderer viewport", () => {
     expect(
-      resolveBrowserSurfaceBackgroundCaptureRect({}, "never-presented", {
+      resolveBrowserSurfaceBackgroundCaptureRect(null, {
         width: 800,
         height: 600,
       }),
@@ -193,19 +211,7 @@ describe("browserSurfaceStore", () => {
   it("clamps a stale presented rectangle to the current renderer viewport", () => {
     expect(
       resolveBrowserSurfaceBackgroundCaptureRect(
-        {
-          active: {
-            rect: { x: 1_000, y: 700, width: 900, height: 640 },
-            visible: true,
-            content: null,
-            fittedSourceContent: null,
-            fitSourceContent: false,
-            cornerRadius: 0,
-            updatedAt: 1,
-            owner: null,
-          },
-        },
-        "hidden",
+        { x: 1_000, y: 700, width: 900, height: 640 },
         { width: 800, height: 600 },
       ),
     ).toEqual({

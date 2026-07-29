@@ -13,7 +13,7 @@ import { readHostedPairingRequest } from "../../hostedPairing";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { claimPairingToken } from "./PairingRouteSurface.logic";
+import { claimPairingToken, createPairingSubmissionQueue } from "./PairingRouteSurface.logic";
 
 export function PairingPendingSurface() {
   return (
@@ -51,30 +51,41 @@ export function PairingRouteSurface({
   const [credential, setCredential] = useState(() => peekPairingTokenFromUrl() ?? "");
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionQueue] = useState(createPairingSubmissionQueue);
   const attemptedPairingTokensRef = useRef(new Set<string>());
+  const pendingSubmissionCountRef = useRef(0);
 
   const submitCredential = useCallback(
     async (nextCredential: string) => {
+      pendingSubmissionCountRef.current += 1;
       setIsSubmitting(true);
-      setErrorMessage("");
 
-      const submitError = await submitServerAuthCredential(nextCredential).then(
-        () => null,
-        (error) => errorMessageFromUnknown(error),
-      );
+      try {
+        await submissionQueue.run(async () => {
+          setErrorMessage("");
 
-      setIsSubmitting(false);
+          const submitError = await submitServerAuthCredential(nextCredential).then(
+            () => null,
+            (error) => errorMessageFromUnknown(error),
+          );
 
-      if (submitError) {
-        setErrorMessage(submitError);
-        return;
+          if (submitError) {
+            setErrorMessage(submitError);
+            return;
+          }
+
+          startTransition(() => {
+            onAuthenticated();
+          });
+        });
+      } finally {
+        pendingSubmissionCountRef.current -= 1;
+        if (pendingSubmissionCountRef.current === 0) {
+          setIsSubmitting(false);
+        }
       }
-
-      startTransition(() => {
-        onAuthenticated();
-      });
     },
-    [onAuthenticated],
+    [onAuthenticated, submissionQueue],
   );
 
   const handleSubmit = useCallback(

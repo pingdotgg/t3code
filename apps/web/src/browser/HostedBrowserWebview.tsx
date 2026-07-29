@@ -10,7 +10,6 @@ import { cn } from "~/lib/utils";
 
 import {
   resolveBrowserSurfaceBackgroundCaptureRect,
-  resolveBrowserSurfacePanelRect,
   selectBrowserSurfaceRenderState,
   useBrowserSurfaceStore,
 } from "./browserSurfaceStore";
@@ -72,11 +71,11 @@ export function HostedBrowserWebview(props: {
     fitSourceContent: surface.fitSourceContent,
     fittedSourceContent: surface.fittedSourceContent,
     rect: surface.backgroundCapture
-      ? resolveBrowserSurfaceBackgroundCaptureRect(surface.byTabId, runtimeTabId, {
+      ? resolveBrowserSurfaceBackgroundCaptureRect(surface.rect, {
           width: window.innerWidth,
           height: window.innerHeight,
         })
-      : resolveBrowserSurfacePanelRect(surface.byTabId, runtimeTabId),
+      : surface.rect,
     visible: surface.visible,
   };
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
