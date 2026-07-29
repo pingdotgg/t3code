@@ -5,58 +5,14 @@
  * information lives in the type system unless you choose a validating
  * constructor.
  *
- * **Mental model**
- *
- * - {@link Branded} is an existing value type plus a phantom {@link Brand}
- *   marker
- * - {@link nominal} creates constructors for purely nominal brands and
- *   performs no runtime validation
- * - {@link make} and {@link check} create constructors that validate input
- *   before returning the branded value
- * - A {@link Constructor} can throw, return `Option`, return `Result`, or act
- *   as a type guard through its `is` method
- * - {@link all} combines multiple brand constructors with the same base type so
- *   a value can carry several brands
- *
- * **Common tasks**
- *
- * - Distinguish identifiers with the same primitive representation, such as
- *   `UserId` and `OrderId`
- * - Constrain primitive values after validation, such as positive numbers,
- *   non-empty strings, or normalized tokens
- * - Keep public APIs precise without wrapping values in runtime classes
- *
- * **Quickstart**
- *
- * **Example** (Validated identifier)
- *
- * ```ts
- * import { Brand } from "effect"
- *
- * type UserId = Brand.Branded<number, "UserId">
- *
- * const UserId = Brand.make<UserId>(
- *   (n) => Number.isInteger(n) && n > 0 || "Expected a positive integer"
- * )
- *
- * const id = UserId(1)
- * ```
- *
- * **Gotchas**
- *
- * - Brands do not change the runtime value; `id` above is still a number at
- *   runtime
- * - {@link nominal} accepts every value of the base type, so use
- *   {@link make} or {@link check} at trust boundaries that need validation
- *
  * @since 2.0.0
  */
 import * as Arr from "./Array.ts"
 import * as Option from "./Option.ts"
 import * as Result from "./Result.ts"
 import type * as Schema from "./Schema.ts"
-import * as AST from "./SchemaAST.ts"
-import type * as Issue from "./SchemaIssue.ts"
+import * as SchemaAST from "./SchemaAST.ts"
+import type * as SchemaIssue from "./SchemaIssue.ts"
 import type * as Types from "./Types.ts"
 
 const TypeId = "~effect/Brand"
@@ -128,7 +84,7 @@ export interface Constructor<in out B extends Brand<any>> {
    *
    * @internal
    */
-  checks?: readonly [AST.Check<Brand.Unbranded<B>>, ...Array<AST.Check<Brand.Unbranded<B>>>] | undefined
+  checks?: readonly [SchemaAST.Check<Brand.Unbranded<B>>, ...Array<SchemaAST.Check<Brand.Unbranded<B>>>] | undefined
 }
 
 /**
@@ -148,7 +104,7 @@ export interface Constructor<in out B extends Brand<any>> {
  * @since 4.0.0
  */
 export class BrandError {
-  constructor(issue: Issue.Issue) {
+  constructor(issue: SchemaIssue.Issue) {
     this.issue = issue
   }
   /**
@@ -168,7 +124,7 @@ export class BrandError {
    *
    * @since 4.0.0
    */
-  readonly issue: Issue.Issue
+  readonly issue: SchemaIssue.Issue
   /**
    * Human-readable rendering of the validation issue.
    *
@@ -261,8 +217,10 @@ export type Branded<A, Key extends string> = A & Brand<Key>
  * **When to use**
  *
  * Use to create nominal types that allow distinguishing between two values
- * of the same type but with different meanings. If you also want to perform
- * some validation, see {@link make} or {@link check}.
+ * of the same type but with different meanings.
+ *
+ * @see {@link make} for constructing branded values with validation.
+ * @see {@link check} for constructing branded values from schema checks.
  *
  * @category constructors
  * @since 2.0.0
@@ -281,9 +239,9 @@ export function nominal<A extends Brand<any>>(): Constructor<A> {
  *
  * **When to use**
  *
- * Use when you want validation while constructing the branded type. If you
- * don't want to perform any validation but only distinguish between two values
- * of the same type but with different meanings, see {@link nominal}.
+ * Use when you want validation while constructing the branded type.
+ *
+ * @see {@link nominal} for a brand constructor that performs no validation.
  *
  * @category constructors
  * @since 4.0.0
@@ -291,7 +249,7 @@ export function nominal<A extends Brand<any>>(): Constructor<A> {
 export function make<A extends Brand<any>>(
   filter: (unbranded: Brand.Unbranded<A>) => Schema.FilterOutput
 ): Constructor<A> {
-  return check(AST.makeFilter(filter))
+  return check(SchemaAST.makeFilter(filter))
 }
 
 /**
@@ -315,12 +273,12 @@ export function make<A extends Brand<any>>(
  */
 export function check<A extends Brand<any>>(
   ...checks: readonly [
-    AST.Check<Brand.Unbranded<A>>,
-    ...Array<AST.Check<Brand.Unbranded<A>>>
+    SchemaAST.Check<Brand.Unbranded<A>>,
+    ...Array<SchemaAST.Check<Brand.Unbranded<A>>>
   ]
 ): Constructor<A> {
   const result = (input: Brand.Unbranded<A>): Result.Result<A, BrandError> => {
-    return Result.mapError(AST.runChecks(checks, input), (issue) => new BrandError(issue)) as any
+    return Result.mapError(SchemaAST.runChecks(checks, input), (issue) => new BrandError(issue)) as any
   }
   return Object.assign((input: Brand.Unbranded<A>) => Result.getOrThrow(result(input)), {
     option: (input: Brand.Unbranded<A>) => Option.getSuccess(result(input)),

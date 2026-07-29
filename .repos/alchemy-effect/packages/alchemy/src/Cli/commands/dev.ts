@@ -56,6 +56,7 @@ export const devCommand = Command.make(
         stderr: "inherit",
         env: {
           ALCHEMY_EXEC_OPTIONS: JSON.stringify(options),
+          ALCHEMY_DEV: "true",
           [SPAWNER_URL_ENV_KEY]: spawner.url,
         },
         extendEnv: true,

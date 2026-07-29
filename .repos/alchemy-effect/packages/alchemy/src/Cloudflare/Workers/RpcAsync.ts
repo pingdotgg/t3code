@@ -40,7 +40,7 @@ export type RpcAsync<Shape> = {
  * import type Backend from "./backend.ts";
  *
  * interface Env {
- *   BUCKET: R2Bucket;
+ *   BUCKET: Bucket;
  *   BACKEND: Service<Backend>;
  * }
  *
