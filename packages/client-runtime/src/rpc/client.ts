@@ -148,6 +148,50 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
   );
 }
 
+/**
+ * Sessions already reported as broken, so a burst of subscription failures
+ * asks the supervisor to reconnect once rather than once per subscription.
+ *
+ * An environment carries many durable subscriptions (the shell, the thread
+ * list, every open thread), and a dead transport tends to take all of them at
+ * the same moment. Each `retryNow` is a signal the supervisor acts on, and a
+ * signal delivered mid-establishment aborts that attempt -- so N unfiltered
+ * requests would abort N reconnects and stall recovery exactly when it is
+ * needed. Keyed on the session object so the entry dies with the session it
+ * describes, and so a later session can be reported in its own right.
+ */
+const sessionsReportedBroken = new WeakSet<RpcSession>();
+const sessionsRequestingRecovery = new WeakSet<RpcSession>();
+
+const requestSessionRecovery = Effect.fn("EnvironmentRpc.requestSessionRecovery")(function* (
+  supervisor: EnvironmentSupervisor["Service"],
+  session: RpcSession,
+) {
+  const current = yield* SubscriptionRef.get(supervisor.session);
+  if (!Option.isSome(current) || current.value !== session) {
+    return;
+  }
+
+  return yield* Effect.suspend(() => {
+    if (sessionsReportedBroken.has(session) || sessionsRequestingRecovery.has(session)) {
+      return Effect.void;
+    }
+    sessionsRequestingRecovery.add(session);
+    return supervisor.retryNow.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          sessionsReportedBroken.add(session);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          sessionsRequestingRecovery.delete(session);
+        }),
+      ),
+    );
+  });
+});
+
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   readonly onExpectedFailure?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
@@ -209,14 +253,29 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                                     reason._tag === "Fail" && isRpcClientError(reason.error),
                                 );
                               if (isTransportFailure) {
+                                // Draining here defers to the next session, but
+                                // nothing else guarantees one arrives: the
+                                // supervisor only replaces a session when the
+                                // socket reports closed or an
+                                // `application-active` probe fails. A stream
+                                // that dies while the session stays usable --
+                                // a half-open socket, or a failure confined to
+                                // this stream -- would otherwise leave the
+                                // subscription dead for the lifetime of the
+                                // session, silently, while unary calls on that
+                                // same session keep working. Ask the supervisor
+                                // to re-establish so the drain is a handoff
+                                // rather than a dead end.
                                 return Stream.fromEffect(
                                   Effect.logWarning(
-                                    "Durable RPC subscription lost its transport; waiting for the next session.",
+                                    "Durable RPC subscription lost its transport; requesting a new session.",
                                     {
                                       cause: Cause.pretty(cause),
                                       method: tag,
                                       environmentId: supervisor.target.environmentId,
                                     },
+                                  ).pipe(
+                                    Effect.andThen(requestSessionRecovery(supervisor, session)),
                                   ),
                                 ).pipe(Stream.drain);
                               }
