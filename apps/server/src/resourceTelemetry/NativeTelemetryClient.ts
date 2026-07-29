@@ -73,6 +73,18 @@ export class NativeTelemetryHandshakeTimedOut extends Schema.TaggedErrorClass<Na
   }
 }
 
+export class NativeTelemetryRequestTimedOut extends Schema.TaggedErrorClass<NativeTelemetryRequestTimedOut>()(
+  "NativeTelemetryRequestTimedOut",
+  {
+    operation: Schema.Literals(["readHistory", "sampleNow"]),
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Resource monitor '${this.operation}' request timed out after ${this.timeoutMs}ms.`;
+  }
+}
+
 export class NativeTelemetryProtocolMismatch extends Schema.TaggedErrorClass<NativeTelemetryProtocolMismatch>()(
   "NativeTelemetryProtocolMismatch",
   {
@@ -131,8 +143,10 @@ export class NativeTelemetryUnavailable extends Schema.TaggedErrorClass<NativeTe
 }
 
 export type NativeTelemetryClientError =
+  | ResourceMonitorBinary.ResourceMonitorBinaryError
   | NativeTelemetrySpawnFailed
   | NativeTelemetryHandshakeTimedOut
+  | NativeTelemetryRequestTimedOut
   | NativeTelemetryProtocolMismatch
   | NativeTelemetryDecodeFailed
   | NativeTelemetryCommandFailed
@@ -505,14 +519,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
 
   const runAttempt: Effect.Effect<void, NativeTelemetryClientError> = Effect.scoped(
     Effect.gen(function* () {
-      const executablePath = yield* binary.resolve.pipe(
-        Effect.mapError(
-          (error) =>
-            new NativeTelemetryUnavailable({
-              reason: error.message,
-            }),
-        ),
-      );
+      const executablePath = yield* binary.resolve;
       const command = ChildProcess.make(executablePath, [], {
         cwd: config.cwd,
         stdin: {
@@ -838,9 +845,9 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
               Option.match({
                 onNone: () =>
                   Effect.fail(
-                    new NativeTelemetryCommandFailed({
+                    new NativeTelemetryRequestTimedOut({
                       operation: "readHistory",
-                      cause: "history request timed out",
+                      timeoutMs: Duration.toMillis(HISTORY_REQUEST_TIMEOUT),
                     }),
                   ),
                 onSome: Effect.succeed,
@@ -893,9 +900,9 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
             Option.match({
               onNone: () =>
                 Effect.fail(
-                  new NativeTelemetryCommandFailed({
+                  new NativeTelemetryRequestTimedOut({
                     operation: "sampleNow",
-                    cause: "sample request timed out",
+                    timeoutMs: Duration.toMillis(SAMPLE_REQUEST_TIMEOUT),
                   }),
                 ),
               onSome: Effect.succeed,

@@ -8,6 +8,7 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import {
+  NativeTelemetryRequestTimedOut,
   canCommandNativeTelemetrySidecar,
   canRequestNativeTelemetryRetry,
   commitCollectionControlUpdate,
@@ -74,6 +75,28 @@ describe("canCommandNativeTelemetrySidecar", () => {
     expect(canCommandNativeTelemetrySidecar("degraded", true)).toBe(true);
     expect(canCommandNativeTelemetrySidecar("unavailable", true)).toBe(false);
     expect(canCommandNativeTelemetrySidecar("degraded", false)).toBe(false);
+  });
+});
+
+describe("NativeTelemetryRequestTimedOut", () => {
+  it("models history and sample request deadlines without a fabricated cause", () => {
+    const historyTimeout = new NativeTelemetryRequestTimedOut({
+      operation: "readHistory",
+      timeoutMs: 15_000,
+    });
+    const sampleTimeout = new NativeTelemetryRequestTimedOut({
+      operation: "sampleNow",
+      timeoutMs: 5_000,
+    });
+
+    expect(historyTimeout.message).toBe(
+      "Resource monitor 'readHistory' request timed out after 15000ms.",
+    );
+    expect(sampleTimeout.message).toBe(
+      "Resource monitor 'sampleNow' request timed out after 5000ms.",
+    );
+    expect("cause" in historyTimeout).toBe(false);
+    expect("cause" in sampleTimeout).toBe(false);
   });
 });
 

@@ -13,18 +13,6 @@ import * as Schema from "effect/Schema";
 
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 
-export class ProcessIdentityChanged extends Schema.TaggedErrorClass<ProcessIdentityChanged>()(
-  "ProcessIdentityChanged",
-  {
-    pid: Schema.Number,
-    startTimeMs: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `Process ${this.pid} no longer matches start time ${this.startTimeMs}.`;
-  }
-}
-
 export class ProcessSignalFailed extends Schema.TaggedErrorClass<ProcessSignalFailed>()(
   "ProcessSignalFailed",
   {
@@ -37,8 +25,6 @@ export class ProcessSignalFailed extends Schema.TaggedErrorClass<ProcessSignalFa
     return `Failed to signal process ${this.pid} with ${this.signal}.`;
   }
 }
-
-export type ProcessDiagnosticsError = ProcessIdentityChanged | ProcessSignalFailed;
 
 export class ProcessDiagnostics extends Context.Service<
   ProcessDiagnostics,
