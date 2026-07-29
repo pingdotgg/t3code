@@ -2,6 +2,7 @@ import type {
   NodeId,
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderFailureClass,
+  OrchestrationV2ProviderRetry,
   OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderThreadId,
@@ -121,6 +122,8 @@ export function makeProviderFailureTurnItem(input: {
   readonly providerTurnId: ProviderTurnId;
   readonly itemOrdinal: number;
   readonly failure: OrchestrationV2ProviderFailure;
+  readonly retry?: OrchestrationV2ProviderRetry;
+  readonly retryStartedAt?: DateTime.Utc;
   readonly occurredAt: DateTime.Utc;
 }): Extract<OrchestrationV2TurnItem, { readonly type: "error" }> {
   return {
@@ -138,10 +141,62 @@ export function makeProviderFailureTurnItem(input: {
     ordinal: input.itemOrdinal,
     status: "failed",
     title: "Provider error",
-    startedAt: input.occurredAt,
+    startedAt: input.retryStartedAt ?? input.occurredAt,
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,
     type: "error",
     failure: input.failure,
+    ...(input.retry === undefined ? {} : { retry: input.retry }),
+  };
+}
+
+export function makeProviderRetryTurnItem(input: {
+  readonly idAllocator: IdAllocatorV2Shape;
+  readonly driver: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly runId: RunId | null;
+  readonly nodeId: NodeId | null;
+  readonly providerThreadId: ProviderThreadId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly itemOrdinal: number;
+  readonly failure: OrchestrationV2ProviderFailure;
+  readonly retry: OrchestrationV2ProviderRetry;
+  readonly status: Extract<
+    OrchestrationV2TurnItem["status"],
+    "running" | "completed" | "failed" | "interrupted" | "cancelled"
+  >;
+  readonly startedAt: DateTime.Utc;
+  readonly updatedAt: DateTime.Utc;
+}): Extract<OrchestrationV2TurnItem, { readonly type: "error" }> {
+  const completed = input.status !== "running";
+  let title = "Provider retry";
+  if (input.status === "completed") {
+    title = "Provider recovered";
+  } else if (input.status === "failed") {
+    title = "Provider error";
+  } else if (input.status === "interrupted" || input.status === "cancelled") {
+    title = "Provider retry stopped";
+  }
+  return {
+    id: input.idAllocator.derive.turnItemFromProviderItem({
+      driver: input.driver,
+      nativeItemId: `terminal-failure:${input.providerTurnId}`,
+    }),
+    threadId: input.threadId,
+    runId: input.runId,
+    nodeId: input.nodeId,
+    providerThreadId: input.providerThreadId,
+    providerTurnId: input.providerTurnId,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: input.itemOrdinal,
+    status: input.status,
+    title,
+    startedAt: input.startedAt,
+    completedAt: completed ? input.updatedAt : null,
+    updatedAt: input.updatedAt,
+    type: "error",
+    failure: input.failure,
+    retry: input.retry,
   };
 }

@@ -55,6 +55,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    lastVisitedAt: null,
     snoozedUntil,
     snoozedAt,
     deletedAt: null,

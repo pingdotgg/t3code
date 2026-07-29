@@ -85,6 +85,42 @@ describe("thread workflows", () => {
     expect(state.canPromoteToSteer).toBe(true);
   });
 
+  it("removes only the promoted head from the visible queue", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      runs: [
+        {
+          id: "promoted",
+          status: "starting",
+          userMessageId: "message-promoted",
+          providerThreadId: "provider-thread",
+          ordinal: 2,
+          queuePosition: null,
+        },
+        {
+          id: "still-queued",
+          status: "queued",
+          userMessageId: "message-still-queued",
+          providerThreadId: "provider-thread",
+          ordinal: 3,
+          queuePosition: 2,
+        },
+      ],
+      messages: [
+        { id: "message-promoted", text: "Run now" },
+        { id: "message-still-queued", text: "Wait longer" },
+      ],
+      providerTurns: [],
+      providerThreads: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.activeRun?.id).toBe("promoted");
+    expect(state.queuedRuns.map(({ run, text }) => [run.id, text])).toEqual([
+      ["still-queued", "Wait longer"],
+    ]);
+  });
+
   it.each(["preparing", "starting", "waiting"] as const)(
     "does not promote queued work into a %s run",
     (status) => {
