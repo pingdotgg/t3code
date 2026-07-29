@@ -854,6 +854,17 @@ function shouldCollapseToolLifecycleEntries(
   ) {
     return false;
   }
+  const isPreviousStart =
+    previous.activityKind === "tool.started" || previous.activityKind === "subagent.started";
+  const isNextStart =
+    next.activityKind === "tool.started" || next.activityKind === "subagent.started";
+  if (
+    isPreviousStart &&
+    isNextStart &&
+    (!previous.toolCallId || !next.toolCallId || previous.toolCallId !== next.toolCallId)
+  ) {
+    return false;
+  }
   if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
     return true;
   }
@@ -884,7 +895,6 @@ function mergeDerivedWorkLogEntries(
   return {
     ...previous,
     ...next,
-    createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
@@ -922,6 +932,10 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   const itemType = entry.itemType ?? "";
   if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {
     return undefined;
+  }
+  if (entry.tone === "subagent" || entry.itemType === "collab_agent_tool_call") {
+    const parts = [normalizedLabel, detail].filter((p) => p.length > 0).sort();
+    return [itemType, ...parts].join("\u001f");
   }
   return [itemType, normalizedLabel, detail].join("\u001f");
 }
@@ -1147,7 +1161,11 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
-  return asTrimmedString(data?.toolCallId);
+  return (
+    asTrimmedString(data?.toolCallId) ??
+    asTrimmedString(payload?.itemId) ??
+    asTrimmedString(payload?.toolCallId)
+  );
 }
 
 function normalizeInlinePreview(value: string): string {

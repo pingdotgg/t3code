@@ -1969,11 +1969,22 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     const isRunning =
       workEntry.toolLifecycleStatus === "inProgress" || workEntry.toolLifecycleStatus === undefined;
     const isFailed = workEntry.toolLifecycleStatus === "failed";
+    const isDeclined = workEntry.toolLifecycleStatus === "declined";
+    const isStopped = workEntry.toolLifecycleStatus === "stopped";
+    const isDestructive = isFailed || isDeclined || isStopped;
     const rawName = workEntry.toolTitle || workEntry.label || "Subagent";
     const agentName = capitalizePhrase(
       normalizeCompactToolLabel(rawName).replace(/^collab_agent_tool_call$/i, "Subagent"),
     );
-    const statusText = isRunning ? "Working" : isFailed ? "Failed" : "Completed";
+    const statusText = isRunning
+      ? "Working"
+      : isFailed
+        ? "Failed"
+        : isDeclined
+          ? "Cancelled"
+          : isStopped
+            ? "Stopped"
+            : "Completed";
     const spinnerSyncDelay = useMemo(() => `-${Date.now() % 1000}ms`, []);
 
     return (
@@ -1989,10 +2000,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             <span
               className={cn(
                 "flex size-4 shrink-0 items-center justify-center rounded-full",
-                isFailed ? "bg-destructive/15 text-destructive" : "bg-success/15 text-success",
+                isDestructive ? "bg-destructive/15 text-destructive" : "bg-success/15 text-success",
               )}
             >
-              {isFailed ? (
+              {isDestructive ? (
                 <XIcon className="size-3" aria-hidden />
               ) : (
                 <CheckIcon className="size-3" aria-hidden />

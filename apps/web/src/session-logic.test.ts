@@ -1448,6 +1448,79 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
   });
 
+  it("does not collapse two distinct subagent.started activities with same label into one entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "sub-1-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        tone: "subagent",
+        kind: "subagent.started",
+        summary: "Research",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Research",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "sub-2-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        tone: "subagent",
+        kind: "subagent.started",
+        summary: "Research",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Research",
+          status: "inProgress",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.id).toBe("sub-1-start");
+    expect(entries[1]?.id).toBe("sub-2-start");
+  });
+
+  it("collapses subagent start and completion using itemId even if title/detail are transposed", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "sub-1-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        tone: "subagent",
+        kind: "subagent.started",
+        summary: "Inspect files",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          itemId: "subtask-42",
+          title: "Inspect files",
+          detail: "explorer",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "sub-1-fail",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        tone: "subagent",
+        kind: "subagent.completed",
+        summary: "explorer",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          itemId: "subtask-42",
+          title: "explorer",
+          detail: "Inspect files",
+          status: "failed",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("sub-1-fail");
+    expect(entries[0]?.toolLifecycleStatus).toBe("failed");
+    expect(entries[0]?.toolCallId).toBe("subtask-42");
+  });
+
   it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

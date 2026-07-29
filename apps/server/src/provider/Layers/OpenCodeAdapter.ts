@@ -680,10 +680,7 @@ export function makeOpenCodeAdapter(
       }
       const turnId = context.activeTurnId;
       sessions.delete(context.session.threadId);
-      // Emit lifecycle events BEFORE tearing down the scope. Both call sites
-      // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
-      // closing that scope triggers the fiber-interrupt finalizer, so any
-      // subsequent yield point would unwind and silently drop these emits.
+      yield* completeOpenSubtasks(context, turnId, "failed", null);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -809,12 +806,12 @@ export function makeOpenCodeAdapter(
         part: Extract<Part, { type: "subtask" }>,
         targetTurnId: TurnId | undefined,
         type: "item.started" | "item.completed",
-        status: "inProgress" | "completed" | "failed",
+        status: "inProgress" | "completed" | "failed" | "stopped",
         raw: unknown,
       ) {
         const desc = trimText(part.description);
-        const title = status === "failed" ? part.agent : (desc ?? part.agent);
-        const detail = status === "failed" ? desc : desc ? part.agent : undefined;
+        const title = desc ?? part.agent;
+        const detail = desc ? part.agent : undefined;
         yield* emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
@@ -830,6 +827,19 @@ export function makeOpenCodeAdapter(
             ...(detail ? { detail } : {}),
           },
         });
+      }
+
+      function* completeOpenSubtasks(
+        targetTurnId: TurnId | undefined,
+        status: "completed" | "failed" | "stopped",
+        raw: unknown,
+      ) {
+        for (const [partId, part] of context.partById.entries()) {
+          if (part.type === "subtask") {
+            context.partById.delete(partId);
+            yield* emitSubtaskEvent(part, targetTurnId, "item.completed", status, raw);
+          }
+        }
       }
 
       switch (event.type) {
@@ -928,49 +938,51 @@ export function makeOpenCodeAdapter(
           if (part.type === "tool") {
             const itemType = toToolLifecycleItemType(part.tool);
             const isSubagent = itemType === "collab_agent_tool_call";
-            const inputDesc =
-              typeof part.state.input === "object" &&
-              part.state.input &&
-              "description" in part.state.input
-                ? trimText(String(part.state.input.description))
-                : undefined;
-            const title =
-              part.state.title && part.state.title.toLowerCase() !== "task"
-                ? part.state.title
-                : (inputDesc ?? (isSubagent ? "Subagent" : part.tool));
-            const detail = isSubagent ? inputDesc : detailFromToolPart(part);
-            const payload = {
-              itemType,
-              ...(part.state.status === "error"
-                ? { status: "failed" as const }
-                : part.state.status === "completed"
-                  ? { status: "completed" as const }
-                  : { status: "inProgress" as const }),
-              ...(title ? { title } : {}),
-              ...(detail ? { detail } : {}),
-              data: {
-                tool: part.tool,
-                state: part.state,
-              },
-            };
-            const runtimeEvent: ProviderRuntimeEvent = {
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                itemId: part.callID,
-                createdAt: isSubagent ? undefined : toolStateCreatedAt(part),
-                raw: event,
-              })),
-              type:
-                part.state.status === "pending"
-                  ? "item.started"
-                  : part.state.status === "completed" || part.state.status === "error"
-                    ? "item.completed"
-                    : "item.updated",
-              payload,
-            };
             appendTurnItem(context, turnId, part);
-            yield* emit(runtimeEvent);
+            if (!isSubagent) {
+              const inputDesc =
+                typeof part.state.input === "object" &&
+                part.state.input &&
+                "description" in part.state.input
+                  ? trimText(String(part.state.input.description))
+                  : undefined;
+              const title =
+                part.state.title && part.state.title.toLowerCase() !== "task"
+                  ? part.state.title
+                  : (inputDesc ?? part.tool);
+              const detail = detailFromToolPart(part);
+              const payload = {
+                itemType,
+                ...(part.state.status === "error"
+                  ? { status: "failed" as const }
+                  : part.state.status === "completed"
+                    ? { status: "completed" as const }
+                    : { status: "inProgress" as const }),
+                ...(title ? { title } : {}),
+                ...(detail ? { detail } : {}),
+                data: {
+                  tool: part.tool,
+                  state: part.state,
+                },
+              };
+              const runtimeEvent: ProviderRuntimeEvent = {
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  itemId: part.callID,
+                  createdAt: toolStateCreatedAt(part),
+                  raw: event,
+                })),
+                type:
+                  part.state.status === "pending"
+                    ? "item.started"
+                    : part.state.status === "completed" || part.state.status === "error"
+                      ? "item.completed"
+                      : "item.updated",
+                payload,
+              };
+              yield* emit(runtimeEvent);
+            }
           }
 
           if (part.type === "subtask" && !context.emittedSubtaskPartIds.has(part.id)) {
@@ -1111,6 +1123,7 @@ export function makeOpenCodeAdapter(
 
           if (event.properties.status.type === "idle" && turnId) {
             context.activeTurnId = undefined;
+            yield* completeOpenSubtasks(turnId, "completed", event);
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -1132,12 +1145,7 @@ export function makeOpenCodeAdapter(
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
 
-          for (const [partId, part] of context.partById.entries()) {
-            if (part.type === "subtask") {
-              context.partById.delete(partId);
-              yield* emitSubtaskEvent(part, activeTurnId, "item.completed", "failed", event);
-            }
-          }
+          yield* completeOpenSubtasks(activeTurnId, "failed", event);
 
           yield* updateProviderSession(
             context,
@@ -1670,6 +1678,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
+        yield* completeOpenSubtasks(context, context.activeTurnId, "stopped", null);
         const stopped = yield* stopOpenCodeContext(context);
         sessions.delete(threadId);
         if (!stopped) {
