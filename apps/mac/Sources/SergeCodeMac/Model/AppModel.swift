@@ -2013,6 +2013,17 @@ public final class AppModel {
         return runnable.first
     }
 
+    /// General Quick Chat threads intentionally have no repository workflow:
+    /// their host-local folder is only a neutral place for provider sessions.
+    /// Keep this policy centralized so composer and header affordances cannot
+    /// disagree about whether PR and Git actions belong on a thread.
+    public func supportsRepositoryWorkflow(for thread: ChatThread) -> Bool {
+        guard let project = projects.first(where: { $0.id == thread.projectID }) else {
+            return true
+        }
+        return !GeneralWorkspace.isGeneralProjectPath(project.path)
+    }
+
     /// Reuse or create the host-local General project at
     /// `GeneralWorkspace.resolvedPath`.
     public func ensureGeneralProject() async -> Project? {

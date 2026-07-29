@@ -115,8 +115,10 @@ struct ChatHeaderView: View {
 
             Spacer(minLength: 8)
 
-            GitStrip(model: model, threadID: thread.id, density: density)
-                .id(thread.id)
+            if model.supportsRepositoryWorkflow(for: thread) {
+                GitStrip(model: model, threadID: thread.id, density: density)
+                    .id(thread.id)
+            }
 
             transcriptActions
 
