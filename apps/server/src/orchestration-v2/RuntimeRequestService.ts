@@ -17,11 +17,36 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 export class RuntimeRequestResponseExecutionError extends Schema.TaggedErrorClass<RuntimeRequestResponseExecutionError>()(
   "RuntimeRequestResponseExecutionError",
   {
+    reason: Schema.Literals([
+      "request-missing",
+      "request-not-ready",
+      "request-not-resumable",
+      "provider-session-not-active",
+      "unexpected-failure",
+    ]),
     threadId: ThreadId,
+    providerSessionId: ProviderSessionId,
     requestId: RuntimeRequestId,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "request-missing":
+        return `Runtime request ${this.requestId} no longer exists on thread ${this.threadId}.`;
+      case "request-not-ready":
+        return `Runtime request ${this.requestId} on thread ${this.threadId} is not ready for response execution.`;
+      case "request-not-resumable":
+        return `Runtime request ${this.requestId} on thread ${this.threadId} is not resumable on provider session ${this.providerSessionId}.`;
+      case "provider-session-not-active":
+        return `Provider session ${this.providerSessionId} is not active for runtime request ${this.requestId} on thread ${this.threadId}.`;
+      case "unexpected-failure":
+        return `Failed to respond to runtime request ${this.requestId} on thread ${this.threadId} via provider session ${this.providerSessionId}.`;
+    }
+  }
+}
+
+const isRuntimeRequestResponseExecutionError = Schema.is(RuntimeRequestResponseExecutionError);
 
 export interface RuntimeRequestServiceV2Shape {
   readonly respond: (input: {
@@ -57,18 +82,20 @@ export const layer: Layer.Layer<
           );
           if (request === undefined) {
             return yield* new RuntimeRequestResponseExecutionError({
+              reason: "request-missing",
               threadId: input.threadId,
+              providerSessionId: input.providerSessionId,
               requestId: input.requestId,
-              cause: "The runtime request no longer exists.",
             });
           }
           // Dispatch validates the request while it is pending, then persists the
           // resolved projection before this effect is executed.
           if (request.status !== "resolved") {
             return yield* new RuntimeRequestResponseExecutionError({
+              reason: "request-not-ready",
               threadId: input.threadId,
+              providerSessionId: input.providerSessionId,
               requestId: input.requestId,
-              cause: "The runtime request is not ready for response execution.",
             });
           }
           if (
@@ -76,17 +103,19 @@ export const layer: Layer.Layer<
             request.responseCapability.providerSessionId !== input.providerSessionId
           ) {
             return yield* new RuntimeRequestResponseExecutionError({
+              reason: "request-not-resumable",
               threadId: input.threadId,
+              providerSessionId: input.providerSessionId,
               requestId: input.requestId,
-              cause: "The runtime request is not resumable on the recorded provider session.",
             });
           }
           const session = yield* sessions.get(input.providerSessionId);
           if (Option.isNone(session)) {
             return yield* new RuntimeRequestResponseExecutionError({
+              reason: "provider-session-not-active",
               threadId: input.threadId,
+              providerSessionId: input.providerSessionId,
               requestId: input.requestId,
-              cause: `Provider session ${input.providerSessionId} is not active.`,
             });
           }
           yield* session.value.respondToRuntimeRequest({
@@ -96,10 +125,12 @@ export const layer: Layer.Layer<
           });
         }).pipe(
           Effect.mapError((cause) =>
-            Schema.is(RuntimeRequestResponseExecutionError)(cause)
+            isRuntimeRequestResponseExecutionError(cause)
               ? cause
               : new RuntimeRequestResponseExecutionError({
+                  reason: "unexpected-failure",
                   threadId: input.threadId,
+                  providerSessionId: input.providerSessionId,
                   requestId: input.requestId,
                   cause,
                 }),

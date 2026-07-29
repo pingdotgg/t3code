@@ -568,8 +568,14 @@ describe("CodexAdapterV2 native protocol logging", () => {
           },
         },
       });
+      yield* protocolLogger({
+        direction: "incoming",
+        stage: "raw",
+        payload:
+          '{"method":"thread/event","params":{"http_headers":{"Authorization":"Bearer secret-codex-token"}}}\n',
+      });
 
-      assert.equal(writes.length, 1);
+      assert.equal(writes.length, 2);
       assert.equal(writes[0]?.threadId, threadId);
       assert.deepEqual(writes[0]?.event, {
         provider: "codex",
@@ -587,6 +593,19 @@ describe("CodexAdapterV2 native protocol logging", () => {
               usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
             },
           },
+        },
+      });
+      assert.equal(writes[1]?.threadId, threadId);
+      assert.deepEqual(writes[1]?.event, {
+        provider: "codex",
+        protocol: "codex.app-server",
+        kind: "protocol",
+        providerSessionId,
+        event: {
+          direction: "incoming",
+          stage: "raw",
+          payload:
+            '{"method":"thread/event","params":{"http_headers":{"Authorization":"[REDACTED]"}}}',
         },
       });
     }),
