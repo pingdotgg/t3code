@@ -424,6 +424,29 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   return "ready";
 }
 
+/** The v2 card's status label and its hover actions share one slot, so they
+    must never be visible together. Both class strings live here because the
+    invariant is a pairing, not two independent styles: every variant that
+    promotes the actions has to fade the label out, and taking the label out
+    of flow without fading it leaves "Working" stacked on top of Settle.
+    Written as literals — Tailwind scans source text, so these cannot be
+    assembled from a shared list of variants. */
+export function resolveSidebarV2StatusSlotClassNames(input: { snoozeMenuOpen: boolean }): {
+  statusClassName: string;
+  actionsClassName: string;
+} {
+  return {
+    statusClassName: cn(
+      "self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-focus-within/v2-status-slot:opacity-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
+      input.snoozeMenuOpen && "absolute right-0 opacity-0",
+    ),
+    actionsClassName: cn(
+      "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity group-focus-within/v2-status-slot:static group-focus-within/v2-status-slot:opacity-100 group-hover/v2-row:static group-hover/v2-row:opacity-100",
+      input.snoozeMenuOpen && "static opacity-100",
+    ),
+  };
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 export function parseTimestampMs(isoDate: string): number {

@@ -113,6 +113,7 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
+  resolveSidebarV2StatusSlotClassNames,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
@@ -648,6 +649,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   useEffect(() => {
     if (!showSnoozeButton) setSnoozeMenuOpen(false);
   }, [showSnoozeButton]);
+  const statusSlotClassNames = resolveSidebarV2StatusSlotClassNames({ snoozeMenuOpen });
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
       if (pr?.url) openPrLink(event, pr.url);
@@ -890,25 +892,25 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   the hidden state out of flow lets the project label reclaim
                   space without either state overlapping it. */}
               <span className="group/v2-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
-                <span
-                  className={cn(
-                    "self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
-                    snoozeMenuOpen && "absolute right-0 opacity-0",
-                  )}
-                >
+                <span className={statusSlotClassNames.statusClassName}>
+                  {/* Baseline, not center: an inline-flex takes its baseline
+                      from the first item, so the leading icon used to drag the
+                      label 2px above the project title and the duration next
+                      to it. The icon opts out with self-center and rides the
+                      text's line box instead. */}
                   {topStatus ? (
                     <span
                       className={cn(
-                        "inline-flex items-center gap-1 font-medium",
+                        "inline-flex items-baseline gap-1 font-medium",
                         topStatus.className,
                       )}
                     >
                       {topStatus.icon === "working" ? (
-                        <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                        <CircleDashedIcon aria-hidden className="size-4 shrink-0 self-center" />
                       ) : topStatus.icon === "done" ? (
-                        <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+                        <CircleCheckIcon aria-hidden className="size-4 shrink-0 self-center" />
                       ) : topStatus.icon === "woke" ? (
-                        <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                        <AlarmClockIcon aria-hidden className="size-4 shrink-0 self-center" />
                       ) : null}
                       {/* The label alone is the live region: a role="status"
                           wrapper around the ticking duration would make
@@ -925,12 +927,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   )}
                 </span>
                 {props.settlementSupported || showSnoozeButton ? (
-                  <span
-                    className={cn(
-                      "absolute inset-y-0 right-0 flex items-stretch opacity-0 transition-opacity focus-within:static focus-within:opacity-100 group-hover/v2-row:static group-hover/v2-row:opacity-100",
-                      snoozeMenuOpen && "static opacity-100",
-                    )}
-                  >
+                  <span className={statusSlotClassNames.actionsClassName}>
                     {showSnoozeButton ? (
                       <SnoozePopoverButton
                         open={snoozeMenuOpen}
