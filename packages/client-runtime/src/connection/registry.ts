@@ -652,10 +652,14 @@ export const make = Effect.gen(function* () {
       ),
     ),
   );
-  yield* connectivity.changes.pipe(
-    Stream.runForEach((status) => SubscriptionRef.set(networkStatus, status)),
-    Effect.forkScoped,
-  );
+  // `networkStatus` feeds the connection UI and readiness checks, so it has to
+  // recover from a transition dropped while the app was suspended just like the
+  // supervisors do. Otherwise a reconnected environment still reads as offline.
+  yield* Connectivity.followNetworkStatus({
+    connectivity,
+    wakeups,
+    apply: (status) => SubscriptionRef.set(networkStatus, status),
+  });
 
   return EnvironmentRegistry.of({
     entries,
