@@ -59,6 +59,7 @@ import {
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import {
+  ProviderAdapterProtocolError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
@@ -998,6 +999,10 @@ describe("AcpAdapterV2", () => {
 
       assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
       assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
+      assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
+      assert.isFalse(
+        runtime.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+      );
 
       const sourceProviderThread = yield* runtime.ensureThread({
         threadId: sourceThreadId,
@@ -1037,6 +1042,66 @@ describe("AcpAdapterV2", () => {
           },
         ],
       });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("fails missing native ACP session ids through the typed start-turn error channel", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-missing-native-thread");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+      const threadId = ThreadId.make("thread-acp-missing-native-thread");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-missing-native-thread"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const error = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: { ...providerThread, nativeThreadRef: null },
+            instanceId,
+            runtimePolicy,
+            now,
+          }),
+        )
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterTurnStartError");
+      assert.instanceOf(error.cause, ProviderAdapterProtocolError);
+      assert.include(String(error.cause), "missing its ACP session id");
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
