@@ -99,6 +99,8 @@ interface ActiveRecording {
   readonly mimeType: string;
   readonly startedAt: string;
   readonly startupSettled: Promise<void>;
+  /** Server-scoped tab id the runtime tab currently maps to. */
+  readonly serverTabId: string;
   lifecycle: BrowserRecordingLifecycle;
 }
 
@@ -118,6 +120,17 @@ export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
 
 export function readActiveBrowserRecordingTabId(): string | null {
   return active?.tabId ?? null;
+}
+
+/**
+ * Recordings are keyed by runtime tab id, but automation callers address tabs
+ * by their server id, so expose both sides of the active mapping.
+ */
+export function readActiveBrowserRecordingTarget(): {
+  readonly runtimeTabId: string;
+  readonly serverTabId: string;
+} | null {
+  return active ? { runtimeTabId: active.tabId, serverTabId: active.serverTabId } : null;
 }
 
 const preferredMimeType = (): string => {
@@ -195,7 +208,7 @@ const waitForRecordingStartupToSettle = async (recording: ActiveRecording): Prom
 const isStartupWaitTimeout = (error: unknown): error is BrowserRecordingOperationError =>
   isBrowserRecordingOperationError(error) && error.operation === "wait-startup";
 
-export async function startBrowserRecording(tabId: string): Promise<string> {
+export async function startBrowserRecording(tabId: string, serverTabId?: string): Promise<string> {
   const bridge = previewBridge;
   if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
   if (active) {
@@ -254,6 +267,7 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
     mimeType,
     startedAt,
     startupSettled,
+    serverTabId: serverTabId ?? tabId,
     lifecycle: { phase: "starting" },
   };
   active = recording;

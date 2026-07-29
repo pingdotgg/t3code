@@ -8,8 +8,10 @@ interface PreviewAutomationSessionIndex {
 export function needsPreviewAutomationSessionSync(
   state: PreviewAutomationSessionIndex,
   requestedTabId: string | undefined,
+  hasCurrentConnectionSession = true,
 ): boolean {
   return (
+    !hasCurrentConnectionSession ||
     Object.keys(state.sessions).length === 0 ||
     requestedTabId === undefined ||
     state.sessions[requestedTabId] === undefined

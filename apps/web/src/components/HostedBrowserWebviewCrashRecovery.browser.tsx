@@ -101,6 +101,7 @@ const props = {
     threadId: ThreadId.make("thread-id"),
   },
   tabId: "preview-tab",
+  runtimeTabId: "runtime-preview-tab",
   initialUrl: "https://example.com",
   viewport: { _tag: "fill" } as const,
   zoomFactor: 1,
@@ -110,7 +111,9 @@ it("keeps a scheduled crash recovery through preview config revalidation", async
   const screen = await render(<HostedBrowserWebview {...props} />);
 
   try {
-    const crashedWebview = document.querySelector("webview[data-preview-tab='preview-tab']");
+    const crashedWebview = document.querySelector(
+      "webview[data-preview-tab='runtime-preview-tab']",
+    );
     if (!(crashedWebview instanceof HTMLElement)) {
       throw new Error("Expected the preview webview to mount");
     }
@@ -124,9 +127,11 @@ it("keeps a scheduled crash recovery through preview config revalidation", async
     await screen.rerender(<HostedBrowserWebview {...props} zoomFactor={1.1} />);
 
     await expect
-      .poll(() => document.querySelector("webview[data-preview-tab='preview-tab']"))
+      .poll(() => document.querySelector("webview[data-preview-tab='runtime-preview-tab']"))
       .not.toBe(crashedWebview);
-    const recoveredWebview = document.querySelector("webview[data-preview-tab='preview-tab']");
+    const recoveredWebview = document.querySelector(
+      "webview[data-preview-tab='runtime-preview-tab']",
+    );
     expect(recoveredWebview).toHaveAttribute("src", "https://example.com");
   } finally {
     await screen.unmount();

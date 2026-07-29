@@ -26,6 +26,7 @@ import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments"
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
@@ -98,6 +99,11 @@ export function PreviewView({
   }, []);
 
   const tabId = requestedTabId ?? previewState.activeTabId;
+  // Desktop resources (webview, surface rects, recordings) are keyed by the
+  // runtime id so a server restart cannot alias them onto reused tab ids.
+  const runtimeTabId = tabId
+    ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
+    : null;
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
@@ -120,15 +126,15 @@ export function PreviewView({
       : undefined;
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const panelRect = useBrowserSurfaceStore((state) =>
-    tabId ? (state.byTabId[tabId]?.rect ?? null) : null,
+    runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
   const navigateToResolvedUrl = useCallback(
     async (resolvedUrl: string) => {
-      if (tabId && previewBridge) {
+      if (runtimeTabId && previewBridge) {
         // Drive the webview imperatively; `usePreviewBridge` mirrors the
         // resolved URL back to the server so other clients stay in sync.
-        await previewBridge.navigate(tabId, resolvedUrl);
+        await previewBridge.navigate(runtimeTabId, resolvedUrl);
         rememberPreviewUrl(threadRef, resolvedUrl);
       } else {
         await openPreviewSession({
@@ -138,7 +144,7 @@ export function PreviewView({
         });
       }
     },
-    [open, tabId, threadRef],
+    [open, runtimeTabId, threadRef],
   );
 
   const handleSubmitUrl = useCallback(
@@ -164,20 +170,20 @@ export function PreviewView({
   );
 
   const handleRefresh = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.refresh(tabId);
-  }, [tabId]);
+    if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
+  }, [runtimeTabId]);
 
   const handleZoomIn = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.zoomIn(tabId);
-  }, [tabId]);
+    if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);
+  }, [runtimeTabId]);
 
   const handleZoomOut = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.zoomOut(tabId);
-  }, [tabId]);
+    if (previewBridge && runtimeTabId) void previewBridge.zoomOut(runtimeTabId);
+  }, [runtimeTabId]);
 
   const handleResetZoom = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.resetZoom(tabId);
-  }, [tabId]);
+    if (previewBridge && runtimeTabId) void previewBridge.resetZoom(runtimeTabId);
+  }, [runtimeTabId]);
 
   const handleViewportChange = useCallback(
     async (nextViewport: PreviewViewportSetting) => {
@@ -205,32 +211,32 @@ export function PreviewView({
   );
 
   const handleToggleDeviceToolbar = () => {
-    if (!tabId) return;
+    if (!runtimeTabId) return;
     if (viewport._tag !== "fill") {
-      void commitBrowserViewportChange(tabId, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
+      void commitBrowserViewportChange(runtimeTabId, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
       return;
     }
 
     const responsiveSize = panelRect
       ? resolveResponsiveBrowserViewportSize(panelRect, desktopOverlay?.zoomFactor)
       : { width: 1024, height: 768 };
-    void commitBrowserViewportChange(tabId, { _tag: "freeform", ...responsiveSize }).catch(
+    void commitBrowserViewportChange(runtimeTabId, { _tag: "freeform", ...responsiveSize }).catch(
       () => undefined,
     );
   };
 
   useEffect(() => {
-    if (!tabId) return;
-    return subscribeBrowserViewportChange(tabId, handleViewportChange);
-  }, [handleViewportChange, tabId]);
+    if (!runtimeTabId) return;
+    return subscribeBrowserViewportChange(runtimeTabId, handleViewportChange);
+  }, [handleViewportChange, runtimeTabId]);
 
   const handleBack = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.goBack(tabId);
-  }, [tabId]);
+    if (previewBridge && runtimeTabId) void previewBridge.goBack(runtimeTabId);
+  }, [runtimeTabId]);
 
   const handleForward = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.goForward(tabId);
-  }, [tabId]);
+    if (previewBridge && runtimeTabId) void previewBridge.goForward(runtimeTabId);
+  }, [runtimeTabId]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!url) return;
@@ -241,11 +247,11 @@ export function PreviewView({
 
   const handleCapture = useCallback(
     (record: boolean) => {
-      if (!previewBridge || !tabId) return;
+      if (!previewBridge || !runtimeTabId || !tabId) return;
       const bridge = previewBridge;
-      const recordingThisTab = activeRecordingTabId === tabId;
+      const recordingThisTab = activeRecordingTabId === runtimeTabId;
       if (recordingThisTab) {
-        void stopBrowserRecording(tabId).then(
+        void stopBrowserRecording(runtimeTabId).then(
           (artifact) => {
             if (!artifact) return;
             let pathCopied = false;
@@ -338,7 +344,7 @@ export function PreviewView({
           });
           return;
         }
-        void startBrowserRecording(tabId).catch((error) => {
+        void startBrowserRecording(runtimeTabId, tabId).catch((error) => {
           toastManager.add({
             type: "error",
             title: "Unable to start recording",
@@ -347,7 +353,7 @@ export function PreviewView({
         });
         return;
       }
-      void bridge.captureScreenshot(tabId).then(
+      void bridge.captureScreenshot(runtimeTabId).then(
         (artifact) => {
           const revealAction = {
             children: revealInFileExplorerLabel(navigator.platform),
@@ -471,13 +477,13 @@ export function PreviewView({
         },
       );
     },
-    [activeRecordingTabId, tabId],
+    [activeRecordingTabId, runtimeTabId, tabId],
   );
 
   const handlePickElement = useCallback(() => {
-    if (!previewBridge || !tabId) return;
+    if (!previewBridge || !runtimeTabId) return;
     if (pickActiveRef.current) {
-      void previewBridge.cancelPickElement(tabId).catch(() => undefined);
+      void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       return;
     }
     // Snapshot whatever the user was focused on (typically the chat
@@ -491,7 +497,7 @@ export function PreviewView({
     setPickActive(true);
     void (async () => {
       try {
-        const annotation = await previewBridge.pickElement(tabId);
+        const annotation = await previewBridge.pickElement(runtimeTabId);
         if (!annotation) return;
         addPreviewAnnotation(threadRef, annotation);
         const screenshotFile = await previewAnnotationScreenshotFile(annotation);
@@ -529,7 +535,7 @@ export function PreviewView({
         }
       }
     })();
-  }, [addImage, addPreviewAnnotation, tabId, threadRef]);
+  }, [addImage, addPreviewAnnotation, runtimeTabId, threadRef]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle
@@ -538,12 +544,12 @@ export function PreviewView({
     return () => {
       if (!pickActiveRef.current) return;
       pickActiveRef.current = false;
-      if (previewBridge && tabId) {
-        void previewBridge.cancelPickElement(tabId).catch(() => undefined);
+      if (previewBridge && runtimeTabId) {
+        void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
       if (isMountedRef.current) setPickActive(false);
     };
-  }, [tabId]);
+  }, [runtimeTabId]);
 
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.
@@ -593,7 +599,7 @@ export function PreviewView({
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
-        recording={tabId !== null && activeRecordingTabId === tabId}
+        recording={runtimeTabId !== null && activeRecordingTabId === runtimeTabId}
         onPickElement={previewBridge && tabId ? handlePickElement : undefined}
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page
@@ -607,7 +613,7 @@ export function PreviewView({
           <>
             {previewBridge ? (
               <PreviewMoreMenu
-                tabId={tabId}
+                tabId={runtimeTabId}
                 hasWebContents={desktopOverlay !== null}
                 zoomFactor={desktopOverlay?.zoomFactor ?? 1}
                 colorScheme={desktopOverlay?.colorScheme ?? "system"}
@@ -631,10 +637,10 @@ export function PreviewView({
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {tabId && snapshot && !showEmptyState ? (
+        {runtimeTabId && snapshot && !showEmptyState ? (
           <BrowserSurfaceSlot
-            key={tabId}
-            tabId={tabId}
+            key={runtimeTabId}
+            tabId={runtimeTabId}
             visible={visible && !isUnreachable}
             className="absolute inset-0 h-full w-full"
           />
@@ -659,9 +665,9 @@ export function PreviewView({
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
         ) : null}
-        {tabId && desktopOverlay && !showEmptyState && !isUnreachable ? (
+        {runtimeTabId && desktopOverlay && !showEmptyState && !isUnreachable ? (
           <AgentBrowserCursor
-            tabId={tabId}
+            tabId={runtimeTabId}
             zoomFactor={desktopOverlay.zoomFactor}
             controller={controller}
           />

@@ -1,7 +1,21 @@
+export interface BrowserRecordingStopTarget {
+  readonly runtimeTabId: string;
+  readonly serverTabId: string;
+}
+
 export function resolveBrowserRecordingStopTarget(
-  activeTabId: string | null,
-  requestedTabId?: string,
-): string | null {
-  if (activeTabId === null) return null;
-  return requestedTabId === undefined || requestedTabId === activeTabId ? activeTabId : null;
+  activeTarget: BrowserRecordingStopTarget | null,
+  requestedRuntimeTabId?: string,
+): BrowserRecordingStopTarget | null {
+  if (activeTarget === null) return null;
+  return requestedRuntimeTabId === undefined || requestedRuntimeTabId === activeTarget.runtimeTabId
+    ? activeTarget
+    : null;
+}
+
+export function rewriteBrowserRecordingArtifactTabId<T extends { readonly tabId: string }>(
+  artifact: T,
+  target: BrowserRecordingStopTarget,
+): Omit<T, "tabId"> & { readonly tabId: string } {
+  return { ...artifact, tabId: target.serverTabId };
 }

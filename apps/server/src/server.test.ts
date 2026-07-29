@@ -499,7 +499,7 @@ const buildAppUnderTest = (options?: {
           resize: () => Effect.die("Not implemented in server test."),
           refresh: () => Effect.void,
           close: () => Effect.void,
-          list: () => Effect.succeed({ sessions: [] }),
+          list: () => Effect.succeed({ sessions: [], serverEpoch: "test-epoch", revision: 0 }),
           events: Stream.empty,
         }),
       ),

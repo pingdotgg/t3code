@@ -34,6 +34,14 @@ describe("preview automation target selection", () => {
     expect(needsPreviewAutomationSessionSync(state, "tab-missing")).toBe(true);
   });
 
+  it("refreshes an explicit cached tab until the current connection is synchronized", () => {
+    const active = snapshot("tab-active");
+    const state = { snapshot: active, sessions: { [active.tabId]: active } };
+
+    expect(needsPreviewAutomationSessionSync(state, active.tabId, false)).toBe(true);
+    expect(needsPreviewAutomationSessionSync(state, active.tabId, true)).toBe(false);
+  });
+
   it("does not report the active tab under an unknown requested tab id", () => {
     const active = snapshot("tab-active");
     expect(

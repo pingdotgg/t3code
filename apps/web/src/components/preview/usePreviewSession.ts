@@ -48,22 +48,19 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
       if (!AsyncResult.isSuccess(result)) return;
-      if (result.value.sessions.length > 0) {
-        recoveringUrl = null;
-        recoveryId += 1;
-        reconcilePreviewServerSessions(threadRef, result.value.sessions);
-        return;
-      }
-
       const localSnapshot = readThreadPreviewState(threadRef).snapshot;
       const recoverableUrl =
         localSnapshot && localSnapshot.navStatus._tag !== "Idle"
           ? localSnapshot.navStatus.url
           : null;
-      if (!recoverableUrl) {
-        applyPreviewServerSnapshot(threadRef, null);
+      reconcilePreviewServerSessions(threadRef, result.value);
+      if (result.value.sessions.length > 0) {
+        recoveringUrl = null;
+        recoveryId += 1;
         return;
       }
+
+      if (!recoverableUrl) return;
       if (recoveringUrl === recoverableUrl) return;
 
       recoveringUrl = recoverableUrl;
