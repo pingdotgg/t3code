@@ -1,13 +1,16 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
+import { ThreadDetailLoadingState } from "../components/ThreadDetailLoadingState";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
+  useProject,
   useThreadDetail,
   useThreadShell,
   useThreadStatus,
@@ -24,6 +27,11 @@ function ChatThreadRouteView() {
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
   );
   const serverThreadShell = useThreadShell(threadRef);
+  const serverThreadProject = useProject(
+    serverThreadShell === null
+      ? null
+      : scopeProjectRef(serverThreadShell.environmentId, serverThreadShell.projectId),
+  );
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
@@ -68,17 +76,24 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread, serverThreadStarted, threadRef]);
 
-  if (!threadRef || renderState !== "ready") {
+  if (!threadRef) {
     return null;
   }
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ChatView
-        environmentId={threadRef.environmentId}
-        threadId={threadRef.threadId}
-        routeKind="server"
-      />
+      {renderState === "ready" ? (
+        <ChatView
+          environmentId={threadRef.environmentId}
+          threadId={threadRef.threadId}
+          routeKind="server"
+        />
+      ) : renderState === "loading" ? (
+        <ThreadDetailLoadingState
+          projectTitle={serverThreadProject?.title ?? null}
+          threadTitle={serverThreadShell?.title ?? null}
+        />
+      ) : null}
     </SidebarInset>
   );
 }
