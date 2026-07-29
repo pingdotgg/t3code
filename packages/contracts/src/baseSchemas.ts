@@ -43,6 +43,8 @@ export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
+export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
+export type RpcClientId = typeof RpcClientId.Type;
 
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;
