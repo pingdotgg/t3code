@@ -33,6 +33,38 @@ export function resolveNewDraftStartFromOrigin(input: {
   return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
 }
 
+export interface NewThreadWorkspaceDefaults {
+  readonly envMode: DraftThreadEnvMode;
+  /** The resolved preference, before it is gated on the mode being "worktree". */
+  readonly newWorktreesStartFromOrigin: boolean;
+  readonly startFromOrigin: boolean;
+}
+
+/**
+ * Per-project New threads settings win over the global ones, one key at a
+ * time: `null` on either project key means "Global", so a project can pin the
+ * mode while still following the global start-from-origin choice.
+ */
+export function resolveNewThreadWorkspaceDefaults(input: {
+  readonly global: {
+    readonly defaultThreadEnvMode: DraftThreadEnvMode;
+    readonly newWorktreesStartFromOrigin: boolean;
+  };
+  readonly project: {
+    readonly defaultThreadEnvMode: DraftThreadEnvMode | null;
+    readonly newWorktreesStartFromOrigin: boolean | null;
+  } | null;
+}): NewThreadWorkspaceDefaults {
+  const envMode = input.project?.defaultThreadEnvMode ?? input.global.defaultThreadEnvMode;
+  const newWorktreesStartFromOrigin =
+    input.project?.newWorktreesStartFromOrigin ?? input.global.newWorktreesStartFromOrigin;
+  return {
+    envMode,
+    newWorktreesStartFromOrigin,
+    startFromOrigin: resolveNewDraftStartFromOrigin({ envMode, newWorktreesStartFromOrigin }),
+  };
+}
+
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {

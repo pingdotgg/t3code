@@ -21,6 +21,15 @@ export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
 /**
+ * Where a thread's work happens: the project checkout itself, or a dedicated
+ * Git worktree. Lives here rather than in settings.ts because both the server
+ * settings and the per-project settings schemas need it, and settings.ts
+ * already imports project.ts.
+ */
+export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
+export type ThreadEnvMode = typeof ThreadEnvMode.Type;
+
+/**
  * Construct a branded identifier. Enforces non-empty trimmed strings
  */
 const makeEntityId = <Brand extends string>(brand: Brand) => {

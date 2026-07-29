@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   resolveThreadActionProjectRef,
   resolveNewDraftStartFromOrigin,
+  resolveNewThreadWorkspaceDefaults,
   startNewThreadFromContext,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
@@ -36,6 +37,51 @@ describe("chatThreadActions", () => {
         newWorktreesStartFromOrigin: true,
       }),
     ).toBe(false);
+  });
+
+  it("falls back to the global new-thread defaults when the project sets neither", () => {
+    const global = { defaultThreadEnvMode: "worktree", newWorktreesStartFromOrigin: true } as const;
+
+    expect(resolveNewThreadWorkspaceDefaults({ global, project: null })).toEqual({
+      envMode: "worktree",
+      newWorktreesStartFromOrigin: true,
+      startFromOrigin: true,
+    });
+    expect(
+      resolveNewThreadWorkspaceDefaults({
+        global,
+        project: { defaultThreadEnvMode: null, newWorktreesStartFromOrigin: null },
+      }),
+    ).toEqual({
+      envMode: "worktree",
+      newWorktreesStartFromOrigin: true,
+      startFromOrigin: true,
+    });
+  });
+
+  it("lets a project pin one new-thread key while inheriting the other", () => {
+    expect(
+      resolveNewThreadWorkspaceDefaults({
+        global: { defaultThreadEnvMode: "local", newWorktreesStartFromOrigin: false },
+        project: { defaultThreadEnvMode: "worktree", newWorktreesStartFromOrigin: null },
+      }),
+    ).toEqual({
+      envMode: "worktree",
+      newWorktreesStartFromOrigin: false,
+      startFromOrigin: false,
+    });
+
+    expect(
+      resolveNewThreadWorkspaceDefaults({
+        global: { defaultThreadEnvMode: "worktree", newWorktreesStartFromOrigin: true },
+        project: { defaultThreadEnvMode: "local", newWorktreesStartFromOrigin: true },
+      }),
+    ).toEqual({
+      envMode: "local",
+      newWorktreesStartFromOrigin: true,
+      // Start-from-origin stays gated on the resolved mode being "worktree".
+      startFromOrigin: false,
+    });
   });
 
   it("prefers the active thread project when resolving thread actions", () => {

@@ -13,6 +13,7 @@ import type {
   OrchestrationProposedPlan,
   OrchestrationSession,
   OrchestrationThreadActivity,
+  ProjectSettings,
   ScopedProjectRef,
   ScopedThreadRef,
   ServerConfig,
@@ -216,6 +217,19 @@ export function useThreadSession(ref: ScopedThreadRef | null): OrchestrationSess
 
 export function readProject(ref: ScopedProjectRef): EnvironmentProject | null {
   return appAtomRegistry.get(environmentProjects.projectAtom(ref));
+}
+
+/** One project's persisted settings, read from the environment that owns it.
+    Null before that environment's config lands, or when the project has no
+    saved settings there. Goes through the mounted config map rather than
+    `serverEnvironment.settingsValueAtom`: that family is derived from a
+    subscription atom, so a cold imperative read of it yields null even when
+    the config is already loaded. */
+export function readProjectSettings(ref: ScopedProjectRef): ProjectSettings | null {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(ref.environmentId)?.settings
+      .projectSettings[ref.projectId] ?? null
+  );
 }
 
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {

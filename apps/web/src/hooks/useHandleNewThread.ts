@@ -21,8 +21,11 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { readThreadShell, useProjects, useThread } from "../state/entities";
-import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { readProjectSettings, readThreadShell, useProjects, useThread } from "../state/entities";
+import {
+  resolveNewDraftStartFromOrigin,
+  resolveNewThreadWorkspaceDefaults,
+} from "../lib/chatThreadActions";
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget, type ThreadRouteTargetParams } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -30,11 +33,13 @@ import { useClientSettings } from "./useSettings";
 
 export function useNewThreadHandler() {
   const projects = useProjects();
-  // New-thread defaults are a user preference, and the settings UI only ever
-  // edits the primary environment's settings.json. Reading the target
+  // Global new-thread defaults are a user preference, and the settings UI only
+  // ever edits the primary environment's settings.json. Reading the target
   // environment's own settings here would silently reset remote projects to
   // the decoded defaults ("local" mode, current branch), since nothing can
-  // set those values on a remote server.
+  // set those values on a remote server. The per-project override is different:
+  // it is edited on (and persisted by) the project's own environment, so it is
+  // read from there.
   const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
@@ -65,6 +70,15 @@ export function useNewThreadHandler() {
         setModelSelection,
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
+      // Per-project New threads settings override the global ones key by key;
+      // a project left on "Global" resolves to exactly the old behavior.
+      const workspaceDefaults = resolveNewThreadWorkspaceDefaults({
+        global: {
+          defaultThreadEnvMode: primaryServerSettings.defaultThreadEnvMode,
+          newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+        },
+        project: readProjectSettings(projectRef),
+      });
       // A new thread carries the user's *working mode* from the thread being
       // viewed: model (including options like reasoning effort and context
       // window), permission mode, and interaction mode. Branch, worktree, and
@@ -174,7 +188,6 @@ export function useNewThreadHandler() {
           // preserved. When the draft is already open and no options were
           // passed, leave it alone entirely — the user may have just picked a
           // branch in the composer.
-          const defaultEnvMode = primaryServerSettings.defaultThreadEnvMode;
           const workspaceContext = hasExplicitWorkspaceOption
             ? {
                 ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
@@ -187,11 +200,8 @@ export function useNewThreadHandler() {
               : {
                   branch: null,
                   worktreePath: null,
-                  envMode: defaultEnvMode,
-                  startFromOrigin: resolveNewDraftStartFromOrigin({
-                    envMode: defaultEnvMode,
-                    newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
-                  }),
+                  envMode: workspaceDefaults.envMode,
+                  startFromOrigin: workspaceDefaults.startFromOrigin,
                 };
           if (workspaceContext) {
             setDraftThreadContext(reusableStoredDraftThread.draftId, {
@@ -285,7 +295,7 @@ export function useNewThreadHandler() {
       const draftId = newDraftId();
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
-      const initialEnvMode = options?.envMode ?? primaryServerSettings.defaultThreadEnvMode;
+      const initialEnvMode = options?.envMode ?? workspaceDefaults.envMode;
       return (async () => {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
@@ -297,7 +307,7 @@ export function useNewThreadHandler() {
             options?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({
               envMode: initialEnvMode,
-              newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+              newWorktreesStartFromOrigin: workspaceDefaults.newWorktreesStartFromOrigin,
             }),
           runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),

@@ -310,6 +310,8 @@ describe("serverSettings helpers", () => {
             DEBUG: "1",
           },
           disabledProviderInstanceIds: [],
+          defaultThreadEnvMode: null,
+          newWorktreesStartFromOrigin: null,
         },
       },
     };
@@ -324,6 +326,8 @@ describe("serverSettings helpers", () => {
               API_BASE_URL: "https://api.example.test",
             },
             disabledProviderInstanceIds: [],
+            defaultThreadEnvMode: null,
+            newWorktreesStartFromOrigin: null,
           },
         },
       }).projectSettings[projectId]?.actionEnvironment,
@@ -339,6 +343,8 @@ describe("serverSettings helpers", () => {
             automaticGitFetchInterval: null,
             actionEnvironment: {},
             disabledProviderInstanceIds: [],
+            defaultThreadEnvMode: null,
+            newWorktreesStartFromOrigin: null,
           },
         },
       }).projectSettings[projectId]?.actionEnvironment,
@@ -353,12 +359,16 @@ describe("serverSettings helpers", () => {
       automaticGitFetchInterval: null,
       actionEnvironment: { DEBUG: "1" },
       disabledProviderInstanceIds: [],
+      defaultThreadEnvMode: null,
+      newWorktreesStartFromOrigin: null,
     };
     const entryB = {
       remoteOverride: null,
       automaticGitFetchInterval: null,
       actionEnvironment: { API_BASE_URL: "https://api.example.test" },
       disabledProviderInstanceIds: [],
+      defaultThreadEnvMode: null,
+      newWorktreesStartFromOrigin: null,
     };
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

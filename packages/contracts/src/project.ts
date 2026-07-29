@@ -1,6 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { NonNegativeInt, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadEnvMode,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import { ModelSelection, ProjectScript } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -273,6 +279,14 @@ export const ProjectSettings = Schema.Struct({
   disabledProviderInstanceIds: Schema.Array(ProviderInstanceId).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  // null means "follow the global New threads settings" — the project only
+  // pins a mode once the user explicitly picks one here.
+  defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  newWorktreesStartFromOrigin: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type ProjectSettings = typeof ProjectSettings.Type;
 
@@ -281,6 +295,8 @@ export const ProjectSettingsPatch = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.NullOr(ProjectAutomaticGitFetchIntervalMs)),
   actionEnvironment: Schema.optionalKey(ProjectActionEnvironment),
   disabledProviderInstanceIds: Schema.optionalKey(Schema.Array(ProviderInstanceId)),
+  defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
+  newWorktreesStartFromOrigin: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
 });
 export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;
 

@@ -575,6 +575,8 @@ const buildAppUnderTest = (options?: {
               automaticGitFetchInterval: null,
               actionEnvironment: {},
               disabledProviderInstanceIds: [],
+              defaultThreadEnvMode: null,
+              newWorktreesStartFromOrigin: null,
             }),
           streamChanges: Stream.empty,
           ...options?.layers?.serverSettings,
@@ -4938,6 +4940,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           automaticGitFetchInterval: null,
           actionEnvironment: {},
           disabledProviderInstanceIds: [],
+          defaultThreadEnvMode: null,
+          newWorktreesStartFromOrigin: null,
         });
         assert.equal(details.detected.gitRoot, "/tmp/default-project");
         assert.equal(details.detected.branch, "main");
@@ -4986,6 +4990,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 automaticGitFetchInterval: null,
                 actionEnvironment: {},
                 disabledProviderInstanceIds: [],
+                defaultThreadEnvMode: null,
+                newWorktreesStartFromOrigin: null,
               }),
           },
           gitVcsDriver: {
@@ -5056,6 +5062,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 automaticGitFetchInterval: null,
                 actionEnvironment: {},
                 disabledProviderInstanceIds: [],
+                defaultThreadEnvMode: null,
+                newWorktreesStartFromOrigin: null,
               }),
           },
           gitVcsDriver: {
@@ -5164,6 +5172,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         automaticGitFetchInterval: null,
         actionEnvironment: { DEPLOY_ENV: "staging" },
         disabledProviderInstanceIds: [ProviderInstanceId.make("codex")],
+        defaultThreadEnvMode: null,
+        newWorktreesStartFromOrigin: null,
       };
       const patch = {
         remoteOverride: {
@@ -5172,6 +5182,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
         actionEnvironment: { DEPLOY_ENV: "staging" },
         disabledProviderInstanceIds: [ProviderInstanceId.make("codex")],
+        defaultThreadEnvMode: null,
+        newWorktreesStartFromOrigin: null,
       };
       const providers = [
         {
@@ -5297,6 +5309,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   automaticGitFetchInterval: null,
                   actionEnvironment: {},
                   disabledProviderInstanceIds: [],
+                  defaultThreadEnvMode: null,
+                  newWorktreesStartFromOrigin: null,
                 };
               }),
           },
@@ -5417,6 +5431,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     automaticGitFetchInterval: null,
                     actionEnvironment: {},
                     disabledProviderInstanceIds: [defaultModelSelection.instanceId],
+                    defaultThreadEnvMode: null,
+                    newWorktreesStartFromOrigin: null,
                   },
                 },
               }),
@@ -5485,6 +5501,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   automaticGitFetchInterval: null,
                   actionEnvironment: {},
                   disabledProviderInstanceIds: [ProviderInstanceId.make("claudeAgent")],
+                  defaultThreadEnvMode: null,
+                  newWorktreesStartFromOrigin: null,
                 },
               },
             }),

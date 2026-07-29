@@ -129,6 +129,24 @@ describe("ProjectDetails", () => {
     expect(decoded.settings.automaticGitFetchInterval).toBeNull();
     expect(decoded.settings.actionEnvironment).toEqual({});
     expect(decoded.settings.disabledProviderInstanceIds).toEqual([]);
+    // Projects saved before per-project new-thread defaults existed decode to
+    // "follow the global settings".
+    expect(decoded.settings.defaultThreadEnvMode).toBeNull();
+    expect(decoded.settings.newWorktreesStartFromOrigin).toBeNull();
+  });
+
+  it("keeps per-project new-thread overrides through a decode", () => {
+    const decoded = decodeProjectDetails({
+      ...baseProjectDetails,
+      settings: {
+        ...baseProjectDetails.settings,
+        defaultThreadEnvMode: "worktree",
+        newWorktreesStartFromOrigin: false,
+      },
+    });
+
+    expect(decoded.settings.defaultThreadEnvMode).toBe("worktree");
+    expect(decoded.settings.newWorktreesStartFromOrigin).toBe(false);
   });
 
   it("rejects action environment keys reserved for T3Code runtime variables", () => {

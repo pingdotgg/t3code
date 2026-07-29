@@ -4,6 +4,7 @@ import type {
   ProjectDetails,
   ProviderInstanceId,
   SourceControlProviderKind,
+  ThreadEnvMode,
 } from "@t3tools/contracts";
 
 export interface ProjectSettingsDraft {
@@ -18,6 +19,8 @@ export interface ProjectSettingsDraft {
   readonly automaticGitFetchInterval?: number | null;
   readonly actionEnvironment?: ProjectActionEnvironment;
   readonly disabledProviderInstanceIds?: ProviderInstanceId[];
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
+  readonly newWorktreesStartFromOrigin?: boolean | null;
 }
 
 export type ProjectSettingsDraftKey = keyof Omit<ProjectSettingsDraft, "projectKey">;
@@ -61,6 +64,10 @@ const draftKeyMatchesDetails = (
         draft.disabledProviderInstanceIds,
         details.settings.disabledProviderInstanceIds,
       );
+    case "defaultThreadEnvMode":
+      return draft.defaultThreadEnvMode === details.settings.defaultThreadEnvMode;
+    case "newWorktreesStartFromOrigin":
+      return draft.newWorktreesStartFromOrigin === details.settings.newWorktreesStartFromOrigin;
   }
 };
 

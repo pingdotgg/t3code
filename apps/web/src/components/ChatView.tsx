@@ -2413,6 +2413,13 @@ function ChatViewContent(props: ChatViewProps) {
       ? (serverConfig.settings.projectSettings[activeProject.id]?.actionEnvironment ??
         EMPTY_ACTION_ENVIRONMENT)
       : EMPTY_ACTION_ENVIRONMENT;
+  // The project's own "Start from origin" choice wins over the global one, so
+  // flipping the composer into worktree mode keeps the project's preference
+  // instead of silently falling back to the app-wide default.
+  const newWorktreesStartFromOrigin =
+    (activeProject && serverConfig
+      ? serverConfig.settings.projectSettings[activeProject.id]?.newWorktreesStartFromOrigin
+      : null) ?? primaryServerSettings.newWorktreesStartFromOrigin;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -3881,7 +3888,7 @@ function ChatViewContent(props: ChatViewProps) {
     ? (draftThread?.startFromOrigin ?? false)
     : canOverrideServerThreadEnvMode
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
-        primaryServerSettings.newWorktreesStartFromOrigin)
+        newWorktreesStartFromOrigin)
       : false;
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
@@ -5505,7 +5512,7 @@ function ChatViewContent(props: ChatViewProps) {
           envMode: mode,
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
-            newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+            newWorktreesStartFromOrigin,
           }),
           ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
         });
@@ -5517,7 +5524,7 @@ function ChatViewContent(props: ChatViewProps) {
       composerDraftTarget,
       draftThread?.worktreePath,
       isLocalDraftThread,
-      primaryServerSettings.newWorktreesStartFromOrigin,
+      newWorktreesStartFromOrigin,
       setPendingServerThreadEnvMode,
       scheduleComposerFocus,
       setDraftThreadContext,

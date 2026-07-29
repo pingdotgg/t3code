@@ -24,6 +24,7 @@ import type {
   ProjectSettingsPatch,
   SidebarProjectGroupingMode,
   SourceControlProviderKind,
+  ThreadEnvMode,
 } from "@t3tools/contracts";
 import { DEFAULT_MODEL, EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -118,6 +119,10 @@ const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
 const DEFAULT_PROJECT_MODEL_SELECTION = createDefaultModelSelection();
 const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL_MS = Duration.toMillis(Duration.seconds(30));
 const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
+const THREAD_ENV_MODE_LABELS: Record<ThreadEnvMode, string> = {
+  local: "Local",
+  worktree: "New worktree",
+};
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -172,6 +177,8 @@ function draftKeysForSettingsPatch(patch: ProjectSettingsPatch): ProjectSettings
   if ("automaticGitFetchInterval" in patch) keys.push("automaticGitFetchInterval");
   if ("actionEnvironment" in patch) keys.push("actionEnvironment");
   if ("disabledProviderInstanceIds" in patch) keys.push("disabledProviderInstanceIds");
+  if ("defaultThreadEnvMode" in patch) keys.push("defaultThreadEnvMode");
+  if ("newWorktreesStartFromOrigin" in patch) keys.push("newWorktreesStartFromOrigin");
   return keys;
 }
 
@@ -395,6 +402,17 @@ function ProjectRouteView() {
   const automaticGitFetchIntervalSeconds = millisecondsToSeconds(
     automaticGitFetchInterval ?? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL_MS,
   );
+  // null on either key means "Global": new threads follow the primary
+  // environment's settings, which is where the global defaults are edited.
+  const projectThreadEnvMode =
+    currentDraft && "defaultThreadEnvMode" in currentDraft
+      ? currentDraft.defaultThreadEnvMode
+      : (details?.settings.defaultThreadEnvMode ?? null);
+  const projectNewWorktreesStartFromOrigin =
+    currentDraft && "newWorktreesStartFromOrigin" in currentDraft
+      ? currentDraft.newWorktreesStartFromOrigin
+      : (details?.settings.newWorktreesStartFromOrigin ?? null);
+  const effectiveThreadEnvMode = projectThreadEnvMode ?? primarySettings.defaultThreadEnvMode;
   const actionEnvironment =
     currentDraft?.actionEnvironment ??
     details?.settings.actionEnvironment ??
@@ -657,6 +675,33 @@ function ProjectRouteView() {
     },
     [automaticGitFetchInterval, commitProjectSettings, stageDraft],
   );
+
+  const commitDefaultThreadEnvMode = useCallback(
+    (nextMode: ThreadEnvMode | null) => {
+      if (nextMode === projectThreadEnvMode) return;
+      stageDraft({ defaultThreadEnvMode: nextMode });
+      void commitProjectSettings({ defaultThreadEnvMode: nextMode });
+    },
+    [commitProjectSettings, projectThreadEnvMode, stageDraft],
+  );
+
+  const commitNewWorktreesStartFromOrigin = useCallback(
+    (nextStartFromOrigin: boolean | null) => {
+      if (nextStartFromOrigin === projectNewWorktreesStartFromOrigin) return;
+      stageDraft({ newWorktreesStartFromOrigin: nextStartFromOrigin });
+      void commitProjectSettings({ newWorktreesStartFromOrigin: nextStartFromOrigin });
+    },
+    [commitProjectSettings, projectNewWorktreesStartFromOrigin, stageDraft],
+  );
+
+  const resetThreadWorkspaceDefaults = useCallback(() => {
+    if (projectThreadEnvMode === null && projectNewWorktreesStartFromOrigin === null) return;
+    stageDraft({ defaultThreadEnvMode: null, newWorktreesStartFromOrigin: null });
+    void commitProjectSettings({
+      defaultThreadEnvMode: null,
+      newWorktreesStartFromOrigin: null,
+    });
+  }, [commitProjectSettings, projectNewWorktreesStartFromOrigin, projectThreadEnvMode, stageDraft]);
 
   const commitActionEnvironment = useCallback(
     (nextEnvironment: ProjectActionEnvironment) => {
@@ -1232,6 +1277,82 @@ function ProjectRouteView() {
                     }
                   />
                   <ProjectSettingRow
+                    title="New threads"
+                    description="Pick the workspace mode for new threads in this project. Global follows the app-wide New threads setting."
+                    resetAction={
+                      projectDetails.data.settings.defaultThreadEnvMode !== null ||
+                      projectDetails.data.settings.newWorktreesStartFromOrigin !== null ? (
+                        <SettingResetButton
+                          label="new threads"
+                          onClick={resetThreadWorkspaceDefaults}
+                        />
+                      ) : null
+                    }
+                    control={
+                      <Select
+                        value={projectThreadEnvMode ?? "global"}
+                        onValueChange={(value) => {
+                          if (value === "global") {
+                            commitDefaultThreadEnvMode(null);
+                            return;
+                          }
+                          if (value === "local" || value === "worktree") {
+                            commitDefaultThreadEnvMode(value);
+                          }
+                        }}
+                      >
+                        <SelectTrigger
+                          className="w-full sm:w-44"
+                          aria-label="New thread workspace mode"
+                        >
+                          <SelectValue>
+                            {projectThreadEnvMode === null
+                              ? `Global (${THREAD_ENV_MODE_LABELS[primarySettings.defaultThreadEnvMode]})`
+                              : THREAD_ENV_MODE_LABELS[projectThreadEnvMode]}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="end" alignItemWithTrigger={false}>
+                          <SelectItem hideIndicator value="global">
+                            Global
+                          </SelectItem>
+                          <SelectItem hideIndicator value="local">
+                            {THREAD_ENV_MODE_LABELS.local}
+                          </SelectItem>
+                          <SelectItem hideIndicator value="worktree">
+                            {THREAD_ENV_MODE_LABELS.worktree}
+                          </SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    }
+                  />
+                  {effectiveThreadEnvMode === "worktree" ? (
+                    <ProjectSettingRow
+                      className="bg-muted/20 sm:pl-9"
+                      title="Start from origin"
+                      description="Creates the worktree from the latest matching branch on origin instead of your local branch."
+                      resetAction={
+                        projectDetails.data.settings.newWorktreesStartFromOrigin !== null ? (
+                          <SettingResetButton
+                            label="start new worktrees from origin"
+                            onClick={() => commitNewWorktreesStartFromOrigin(null)}
+                          />
+                        ) : null
+                      }
+                      control={
+                        <Switch
+                          checked={
+                            projectNewWorktreesStartFromOrigin ??
+                            primarySettings.newWorktreesStartFromOrigin
+                          }
+                          onCheckedChange={(checked) =>
+                            commitNewWorktreesStartFromOrigin(Boolean(checked))
+                          }
+                          aria-label="Start new worktrees from origin in this project"
+                        />
+                      }
+                    />
+                  ) : null}
+                  <ProjectSettingRow
                     title="Path"
                     description="Local folder used for this project."
                     control={<ProjectPathLink path={projectDetails.data.workspaceRoot} />}
@@ -1679,6 +1800,7 @@ function ProjectSettingRow({
   resetAction,
   children,
   align = "center",
+  className,
 }: {
   title: string;
   description?: ReactNode;
@@ -1687,11 +1809,12 @@ function ProjectSettingRow({
   resetAction?: ReactNode;
   children?: ReactNode;
   align?: "center" | "start";
+  className?: string;
 }) {
   const hasChildren = Boolean(children);
   const alignStart = align === "start" || hasChildren || description !== undefined;
   return (
-    <div className="min-w-0 rounded-lg px-3 py-2 sm:px-4">
+    <div className={cn("min-w-0 rounded-lg px-3 py-2 sm:px-4", className)}>
       <div
         className={cn(
           "flex min-w-0 flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:gap-8",

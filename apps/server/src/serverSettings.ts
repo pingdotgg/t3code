@@ -68,6 +68,8 @@ export const emptyProjectSettings: ProjectSettings = {
   automaticGitFetchInterval: null,
   actionEnvironment: {},
   disabledProviderInstanceIds: [],
+  defaultThreadEnvMode: null,
+  newWorktreesStartFromOrigin: null,
 };
 
 const normalizeServerSettings = (

@@ -21,6 +21,8 @@ const projectDetails = (overrides: Partial<ProjectDetails> = {}) =>
       automaticGitFetchInterval: null,
       actionEnvironment: {},
       disabledProviderInstanceIds: [],
+      defaultThreadEnvMode: null,
+      newWorktreesStartFromOrigin: null,
     },
     detected: {
       gitRoot: null,
@@ -55,6 +57,8 @@ describe("project settings commit state", () => {
             automaticGitFetchInterval: 60_000,
             actionEnvironment: {},
             disabledProviderInstanceIds: [],
+            defaultThreadEnvMode: null,
+            newWorktreesStartFromOrigin: null,
           },
         }),
         pendingKeys,
