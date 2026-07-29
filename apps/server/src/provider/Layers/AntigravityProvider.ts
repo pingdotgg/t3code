@@ -101,7 +101,7 @@ const checkAntigravityAccountAuth = (
     let discoveredEmail: string | undefined = undefined;
     let discoveredPlanType: AntigravityPlanType = "unknown";
 
-    yield* Effect.catchAll(
+    yield* Effect.catch(
       Effect.gen(function* () {
         const exists = yield* fs.exists(logDir);
         if (exists) {
