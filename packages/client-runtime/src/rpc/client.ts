@@ -42,6 +42,7 @@ type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 export type EnvironmentSubscriptionRpcTag =
   | typeof ORCHESTRATION_WS_METHODS.subscribeShell
   | typeof ORCHESTRATION_WS_METHODS.subscribeThread
+  | typeof ORCHESTRATION_WS_METHODS.subscribeThreadWithDelta
   | typeof WS_METHODS.subscribeAuthAccess
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
@@ -156,9 +157,13 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
 
-export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
-  tag: TTag,
-  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+export interface EnvironmentSubscriptionRequest<TTag extends EnvironmentSubscriptionRpcTag> {
+  readonly tag: TTag;
+  readonly input: EnvironmentRpcInput<TTag>;
+}
+
+export function subscribeDynamicRequest<TTag extends EnvironmentSubscriptionRpcTag>(
+  makeRequest: (session: RpcSession) => Effect.Effect<EnvironmentSubscriptionRequest<TTag>>,
   options?: SubscriptionOptions<TTag>,
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,
@@ -183,21 +188,21 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
             Option.match({
               onNone: () => Stream.empty,
               onSome: (session) => {
-                const method = session.client[tag] as (
-                  input: EnvironmentRpcInput<TTag>,
-                ) => Stream.Stream<
-                  EnvironmentRpcStreamValue<TTag>,
-                  EnvironmentRpcStreamFailure<TTag>
-                >;
                 const subscribeToSession = (): Stream.Stream<
                   EnvironmentRpcStreamValue<TTag>,
                   EnvironmentRpcStreamFailure<TTag>
                 > =>
                   Stream.suspend(() =>
                     Stream.unwrap(
-                      makeInput(session).pipe(
-                        Effect.map((input) =>
-                          method(input).pipe(
+                      makeRequest(session).pipe(
+                        Effect.map((request) => {
+                          const method = session.client[request.tag] as (
+                            input: EnvironmentRpcInput<TTag>,
+                          ) => Stream.Stream<
+                            EnvironmentRpcStreamValue<TTag>,
+                            EnvironmentRpcStreamFailure<TTag>
+                          >;
+                          return method(request.input).pipe(
                             Stream.catchCause((cause) => {
                               const hasOnlyExpectedFailures =
                                 cause.reasons.length > 0 &&
@@ -214,7 +219,7 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                                     "Durable RPC subscription lost its transport; waiting for the next session.",
                                     {
                                       cause: Cause.pretty(cause),
-                                      method: tag,
+                                      method: request.tag,
                                       environmentId: supervisor.target.environmentId,
                                     },
                                   ),
@@ -241,8 +246,11 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                               }
                               return Stream.failCause(cause);
                             }),
-                          ),
-                        ),
+                            Stream.withSpan("EnvironmentRpc.subscribe", {
+                              attributes: { "rpc.method": request.tag },
+                            }),
+                          );
+                        }),
                       ),
                     ),
                   );
@@ -253,10 +261,27 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
         );
       }),
     ),
-  ).pipe(
-    Stream.withSpan("EnvironmentRpc.subscribe", {
-      attributes: { "rpc.method": tag },
-    }),
+  );
+}
+
+export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
+  tag: TTag,
+  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  EnvironmentRpcStreamValue<TTag>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  return subscribeDynamicRequest(
+    (session) =>
+      makeInput(session).pipe(
+        Effect.map((input) => ({
+          tag,
+          input,
+        })),
+      ),
+    options,
   );
 }
 

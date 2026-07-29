@@ -2,8 +2,8 @@ import {
   ORCHESTRATION_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
+  type OrchestrationThreadDeltaStreamItem,
   type OrchestrationThreadDetailSnapshot,
-  type OrchestrationThreadStreamItem,
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -20,7 +20,7 @@ import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import { subscribeDynamic } from "../rpc/client.ts";
+import { subscribeDynamicRequest } from "../rpc/client.ts";
 import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
@@ -180,8 +180,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   const applyItem = Effect.fn("EnvironmentThreadState.applyItem")(function* (
-    item: OrchestrationThreadStreamItem,
+    item: OrchestrationThreadDeltaStreamItem,
   ) {
+    if (item.kind === "not-found") {
+      yield* setDeleted();
+      return;
+    }
+
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
       yield* SubscriptionRef.update(state, (current) =>
@@ -241,13 +246,20 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   yield* setSynchronizing;
   yield* Effect.forkScoped(
-    subscribeDynamic(
-      ORCHESTRATION_WS_METHODS.subscribeThread,
-      Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
-        const supportsCompletionMarker = yield* session.initialConfig.pipe(
-          Effect.map((config) => config.threadResumeCompletionMarker === true),
-          Effect.orElseSucceed(() => false),
+    subscribeDynamicRequest(
+      Effect.fn("EnvironmentThreadState.makeSubscriptionRequest")(function* (session) {
+        const subscriptionCapabilities = yield* session.initialConfig.pipe(
+          Effect.map((config) => ({
+            completionMarker: config.threadResumeCompletionMarker === true,
+            threadDeltaSubscription:
+              config.environment?.capabilities.threadDeltaSubscription === true,
+          })),
+          Effect.orElseSucceed(() => ({
+            completionMarker: false,
+            threadDeltaSubscription: false,
+          })),
         );
+        const supportsCompletionMarker = subscriptionCapabilities.completionMarker;
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
@@ -285,9 +297,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
 
         return {
-          threadId,
-          ...(canResume ? { afterSequence: sequence } : {}),
-          ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          tag: subscriptionCapabilities.threadDeltaSubscription
+            ? ORCHESTRATION_WS_METHODS.subscribeThreadWithDelta
+            : ORCHESTRATION_WS_METHODS.subscribeThread,
+          input: {
+            threadId,
+            ...(canResume ? { afterSequence: sequence } : {}),
+            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          },
         };
       }),
       {

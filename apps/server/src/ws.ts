@@ -31,6 +31,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type OrchestrationSubscribeThreadInput,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
@@ -294,6 +295,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // past this gap a single O(active-threads) snapshot is cheaper and bounded.
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
+const THREAD_DELTA_SUBSCRIPTION_MAX_GAP = 1_000;
 
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
@@ -302,6 +304,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.subscribeThreadWithDelta, AuthOrchestrationReadScope],
   [WS_METHODS.serverProbe, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
@@ -1026,6 +1029,122 @@ const makeWsRpcLayer = (
           );
       };
 
+      const loadThreadSnapshot = Effect.fn("Ws.loadThreadSnapshot")(function* (threadId: ThreadId) {
+        const snapshot = yield* projectionSnapshotQuery.getThreadDetailSnapshot(threadId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationGetSnapshotError({
+                message: `Failed to load thread ${threadId}`,
+                cause,
+              }),
+          ),
+        );
+
+        return Option.map(snapshot, projectThreadDetailSnapshot);
+      });
+
+      const makeThreadSubscription = Effect.fn("Ws.makeThreadSubscription")(function* (input: {
+        readonly request: OrchestrationSubscribeThreadInput;
+        readonly maxReplayGap: number | null;
+      }) {
+        const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
+          event.aggregateKind === "thread" &&
+          event.aggregateId === input.request.threadId &&
+          isThreadDetailEvent(event);
+
+        const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+          Stream.filter(isThisThreadDetailEvent),
+          Stream.map((event) => ({
+            kind: "event" as const,
+            event: projectActivityEvent(event),
+          })),
+        );
+
+        // Attach live delivery before reading either replay or snapshot state.
+        // Otherwise an event published while the snapshot is loading is lost.
+        const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+        yield* Effect.forkScoped(
+          liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+        );
+        const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+        const synchronizedThenLive =
+          input.request.requestCompletionMarker === true
+            ? Stream.concat(
+                Stream.fromEffect(Queue.offer(liveBuffer, { kind: "synchronized" as const })).pipe(
+                  Stream.drain,
+                ),
+                bufferedLiveStream,
+              )
+            : bufferedLiveStream;
+
+        if (input.request.afterSequence !== undefined) {
+          const afterSequence = input.request.afterSequence;
+          if (input.maxReplayGap !== null) {
+            const headSequence = yield* orchestrationEngine.latestSequence;
+            const replayGap = headSequence - afterSequence;
+            if (replayGap < 0 || replayGap > input.maxReplayGap) {
+              const snapshot = yield* loadThreadSnapshot(input.request.threadId);
+              if (Option.isNone(snapshot)) {
+                return Stream.concat(
+                  Stream.make({ kind: "not-found" as const }),
+                  synchronizedThenLive,
+                );
+              }
+              return Stream.concat(
+                Stream.make({ kind: "snapshot" as const, snapshot: snapshot.value }),
+                synchronizedThenLive,
+              );
+            }
+
+            const catchUpStream = orchestrationEngine.readEvents(afterSequence, replayGap).pipe(
+              Stream.filter(isThisThreadDetailEvent),
+              Stream.map((event) => ({
+                kind: "event" as const,
+                event: projectActivityEvent(event),
+              })),
+              Stream.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: `Failed to replay thread ${input.request.threadId} events`,
+                    cause,
+                  }),
+              ),
+            );
+            return Stream.concat(catchUpStream, synchronizedThenLive);
+          }
+
+          const catchUpStream = orchestrationEngine
+            .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
+            .pipe(
+              Stream.filter(isThisThreadDetailEvent),
+              Stream.map((event) => ({
+                kind: "event" as const,
+                event: projectActivityEvent(event),
+              })),
+              Stream.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: `Failed to replay thread ${input.request.threadId} events`,
+                    cause,
+                  }),
+              ),
+            );
+          return Stream.concat(catchUpStream, synchronizedThenLive);
+        }
+
+        const snapshot = yield* loadThreadSnapshot(input.request.threadId);
+        if (Option.isNone(snapshot)) {
+          return yield* new OrchestrationGetSnapshotError({
+            message: `Thread ${input.request.threadId} was not found`,
+            cause: input.request.threadId,
+          });
+        }
+        return Stream.concat(
+          Stream.make({ kind: "snapshot" as const, snapshot: snapshot.value }),
+          synchronizedThenLive,
+        );
+      });
+
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
@@ -1289,110 +1408,22 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
-            Effect.gen(function* () {
-              const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
-                event.aggregateKind === "thread" &&
-                event.aggregateId === input.threadId &&
-                isThreadDetailEvent(event);
-
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(isThisThreadDetailEvent),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event: projectActivityEvent(event),
-                })),
-              );
-
-              // Attach live delivery before reading either replay or snapshot state.
-              // Otherwise an event published while the snapshot is loading is lost.
-              const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
-              yield* Effect.forkScoped(
-                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
-              );
-              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
-
-              // When the client already loaded the snapshot over HTTP it passes
-              // that snapshot's sequence, and we resume the live subscription by
-              // replaying persisted events after it instead of re-sending the
-              // (potentially multi-KB) snapshot frame over the socket.
-              //
-              // The live PubSub subscription must be attached *before* draining
-              // the catch-up replay, otherwise events published during the replay
-              // window are dropped (they are past the persisted tail the replay
-              // read, but the live stream is not yet subscribed). So fork the
-              // live stream into a buffer bound to this stream's scope, then emit
-              // catch-up followed by the buffered/ongoing live events. Overlapping
-              // events are deduped by sequence on the client.
-              //
-              // Read the full range after the cursor (not the store's default
-              // page-bounded limit): the range is normally tiny (a fresh HTTP
-              // snapshot sequence) and the per-thread filter runs after reading,
-              // so a global cap could otherwise omit this thread's events.
-              if (input.afterSequence !== undefined) {
-                const afterSequence = input.afterSequence;
-                const catchUpStream = orchestrationEngine
-                  .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
-                  .pipe(
-                    Stream.filter(isThisThreadDetailEvent),
-                    Stream.map((event) => ({
-                      kind: "event" as const,
-                      event: projectActivityEvent(event),
-                    })),
-                    Stream.mapError(
-                      (cause) =>
-                        new OrchestrationGetSnapshotError({
-                          message: `Failed to replay thread ${input.threadId} events`,
-                          cause,
-                        }),
-                    ),
-                  );
-                const afterCatchUp =
-                  input.requestCompletionMarker === true
-                    ? Stream.concat(
-                        Stream.fromEffect(
-                          Queue.offer(liveBuffer, { kind: "synchronized" as const }),
-                        ).pipe(Stream.drain),
-                        bufferedLiveStream,
-                      )
-                    : bufferedLiveStream;
-                return Stream.concat(catchUpStream, afterCatchUp);
-              }
-
-              const snapshot = yield* projectionSnapshotQuery
-                .getThreadDetailSnapshot(input.threadId)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: `Failed to load thread ${input.threadId}`,
-                        cause,
-                      }),
-                  ),
-                );
-
-              if (Option.isNone(snapshot)) {
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
-                });
-              }
-
-              const afterSnapshot =
-                input.requestCompletionMarker === true
-                  ? Stream.concat(
-                      Stream.fromEffect(
-                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
-                      ).pipe(Stream.drain),
-                      bufferedLiveStream,
-                    )
-                  : bufferedLiveStream;
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshot: projectThreadDetailSnapshot(snapshot.value),
-                }),
-                afterSnapshot,
-              );
+            makeThreadSubscription({ request: input, maxReplayGap: null }).pipe(
+              Effect.map((stream) =>
+                Stream.filter(
+                  stream,
+                  (item): item is OrchestrationThreadStreamItem => item.kind !== "not-found",
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeThreadWithDelta]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeThreadWithDelta,
+            makeThreadSubscription({
+              request: input,
+              maxReplayGap: THREAD_DELTA_SUBSCRIPTION_MAX_GAP,
             }),
             { "rpc.aggregate": "orchestration" },
           ),

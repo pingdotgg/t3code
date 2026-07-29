@@ -10,6 +10,19 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 - Exception: upstream actualization PRs may preserve upstream commit structure when that makes future syncs easier to audit.
 - Staged formatting tolerates chunks containing only ignored files so large upstream actualization commits can pass the pre-commit hook.
 
+### Protocol Compatibility
+
+- Fork protocol extensions use separate extension RPC methods and additive optional capabilities.
+- Existing upstream RPC methods keep their upstream request, response, and behavior contracts so upstream clients remain compatible with the fork backend.
+- Fork clients call a fork RPC only when the backend advertises its capability and otherwise retain the upstream RPC path.
+- Fork backends keep the upstream RPC handler alongside each fork extension.
+
+### Thread Delta Subscription
+
+- Fork backends advertise `threadDeltaSubscription` and expose `orchestration.subscribeThread.withDelta` alongside the upstream thread subscription.
+- Fork clients use the fork subscription only when advertised. Upstream backends therefore continue receiving the upstream subscription.
+- The fork subscription replays gaps of at most 1,000 orchestration events and sends a fresh thread snapshot for larger or invalid gaps. If the thread no longer exists, it sends `not-found` so clients clear stale cached state.
+
 ### Release And CI
 
 - Fork workflows create/update a daily stable release PR while main-branch pushes produce nightly releases.

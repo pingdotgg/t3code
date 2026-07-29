@@ -29,6 +29,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  subscribeThreadWithDelta: "orchestration.subscribeThread.withDelta",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -1377,6 +1378,14 @@ export const OrchestrationThreadStreamItem = Schema.Union([
   }),
 ]);
 export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem.Type;
+
+export const OrchestrationThreadDeltaStreamItem = Schema.Union([
+  OrchestrationThreadStreamItem,
+  Schema.Struct({
+    kind: Schema.Literal("not-found"),
+  }),
+]);
+export type OrchestrationThreadDeltaStreamItem = typeof OrchestrationThreadDeltaStreamItem.Type;
 
 export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
 export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;
