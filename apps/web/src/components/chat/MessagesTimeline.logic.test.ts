@@ -786,3 +786,230 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(repeated.result[0]).toBe(initial.result[0]);
   });
 });
+
+describe("workspace handoff rows", () => {
+  const handoffOrigin = (role: "marker" | "continuation") =>
+    ({
+      kind: "workspace-handoff",
+      role,
+      branch: "feature/handoff",
+      worktreePath: "/tmp/handoff",
+    }) as never;
+
+  // Shared entry references: row stability is only meaningful when the inputs
+  // are themselves unchanged, which is how the store feeds the timeline.
+  const handoffTimelineEntries = [
+    {
+      id: "user-1-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:00Z",
+      message: {
+        id: "user-1" as never,
+        role: "user",
+        text: "Move this work to a new worktree",
+        turnId: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        streaming: false,
+      },
+    },
+    {
+      id: "work-a-entry",
+      kind: "work",
+      createdAt: "2026-01-01T00:00:03Z",
+      entry: {
+        id: "work-a",
+        createdAt: "2026-01-01T00:00:03Z",
+        label: "Create worktree",
+        tone: "tool",
+      },
+    },
+    {
+      id: "marker-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:05Z",
+      message: {
+        id: "marker-1" as never,
+        role: "system",
+        text: "Moved to feature/handoff (/tmp/handoff)",
+        origin: handoffOrigin("marker"),
+        turnId: null,
+        createdAt: "2026-01-01T00:00:05Z",
+        streaming: false,
+      },
+    },
+    {
+      id: "work-b-entry",
+      kind: "work",
+      createdAt: "2026-01-01T00:00:06Z",
+      entry: {
+        id: "work-b",
+        createdAt: "2026-01-01T00:00:06Z",
+        label: "Record handoff",
+        tone: "tool",
+      },
+    },
+    {
+      id: "assistant-1-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:10Z",
+      message: {
+        id: "assistant-1" as never,
+        role: "assistant",
+        text: "Creating the workspace.",
+        turnId: "turn-1" as never,
+        createdAt: "2026-01-01T00:00:10Z",
+        completedAt: "2026-01-01T00:00:11Z",
+        streaming: false,
+      },
+    },
+    {
+      id: "continuation-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:13Z",
+      message: {
+        id: "continuation-1" as never,
+        role: "user",
+        text: "Continue the task from the previous user request in the newly bound workspace.",
+        origin: handoffOrigin("continuation"),
+        turnId: null,
+        createdAt: "2026-01-01T00:00:13Z",
+        streaming: false,
+      },
+    },
+    {
+      id: "work-c-entry",
+      kind: "work",
+      createdAt: "2026-01-01T00:00:15Z",
+      entry: {
+        id: "work-c",
+        createdAt: "2026-01-01T00:00:15Z",
+        label: "Edit files",
+        tone: "tool",
+      },
+    },
+    {
+      id: "assistant-2-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:20Z",
+      message: {
+        id: "assistant-2" as never,
+        role: "assistant",
+        text: "Done in the new worktree.",
+        turnId: "turn-2" as never,
+        createdAt: "2026-01-01T00:00:20Z",
+        completedAt: "2026-01-01T00:00:21Z",
+        streaming: false,
+      },
+    },
+  ] as never;
+
+  const deriveHandoffRows = () =>
+    deriveMessagesTimelineRows({
+      timelineEntries: handoffTimelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+  it("renders the marker as a transition row and hides the boilerplate continuation", () => {
+    const rows = deriveHandoffRows();
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "message",
+      "reasoning",
+      "message",
+      "workspace-handoff",
+      "reasoning",
+      "message",
+    ]);
+    expect(rows.some((row) => row.id === "continuation-entry")).toBe(false);
+
+    const markerRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "workspace-handoff" }> =>
+        row.kind === "workspace-handoff",
+    );
+    expect(markerRow?.origin.branch).toBe("feature/handoff");
+    expect(markerRow?.origin.worktreePath).toBe("/tmp/handoff");
+  });
+
+  it("defers the mid-turn marker past the turn it was requested in", () => {
+    const rows = deriveHandoffRows();
+
+    const markerIndex = rows.findIndex((row) => row.kind === "workspace-handoff");
+    const preHandoffAssistantIndex = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === "assistant-1",
+    );
+
+    // The marker is emitted mid-turn but must not split that turn's work: the
+    // pre-handoff tool activity still collapses into a single reasoning group.
+    const reasoningRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "reasoning" }> =>
+        row.kind === "reasoning",
+    );
+    expect(reasoningRow?.rows.map((row) => row.id)).toEqual(["work-a-entry", "work-b-entry"]);
+    expect(markerIndex).toBeGreaterThan(preHandoffAssistantIndex);
+  });
+
+  it("moves the suppressed continuation revert anchor onto the marker", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: handoffTimelineEntries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map([["continuation-1" as never, 2]]),
+    });
+
+    const markerRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "workspace-handoff" }> =>
+        row.kind === "workspace-handoff",
+    );
+    expect(markerRow?.revertMessageId).toBe("continuation-1");
+    expect(markerRow?.revertTurnCount).toBe(2);
+  });
+
+  it("gives the post-handoff assistant row the same anchor as its reasoning row", () => {
+    const rows = deriveHandoffRows();
+
+    const markerRow = rows.find((row) => row.kind === "workspace-handoff");
+    const postHandoffAssistant = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.id === "assistant-2",
+    );
+
+    // The hidden continuation must not become the anchor: it is a user-role
+    // message the user never sees, so measuring from it would show a duration
+    // that corresponds to nothing on screen.
+    expect(postHandoffAssistant?.durationStart).toBe(markerRow?.createdAt);
+    expect(postHandoffAssistant?.durationStart).not.toBe("2026-01-01T00:00:13Z");
+  });
+
+  it("anchors the post-handoff elapsed time to the move, not the original request", () => {
+    const rows = deriveHandoffRows();
+
+    const reasoningRows = rows.filter(
+      (row): row is Extract<(typeof rows)[number], { kind: "reasoning" }> =>
+        row.kind === "reasoning",
+    );
+    // Measured from the marker (00:00:05) to the post-handoff response
+    // (00:00:20), not from the original user message at 00:00:00.
+    expect(reasoningRows.at(-1)?.workedFor).toBe("15s");
+  });
+
+  it("keeps the marker row referentially stable across recomputation", () => {
+    const findMarker = (state: ReturnType<typeof computeStableMessagesTimelineRows>) =>
+      state.result.find((row) => row.kind === "workspace-handoff");
+
+    const initial = computeStableMessagesTimelineRows(deriveHandoffRows(), {
+      byId: new Map(),
+      result: [],
+    });
+    const repeated = computeStableMessagesTimelineRows(deriveHandoffRows(), initial);
+
+    expect(findMarker(repeated)).toBe(findMarker(initial));
+  });
+});

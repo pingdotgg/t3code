@@ -32,6 +32,7 @@ import {
   CircleAlertIcon,
   DiffIcon,
   EyeIcon,
+  GitBranchIcon,
   GitForkIcon,
   GlobeIcon,
   HammerIcon,
@@ -600,6 +601,47 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           />
         </div>
       )}
+
+      {row.kind === "workspace-handoff" &&
+        (() => {
+          const revertMessageId = row.revertMessageId;
+          const canRevertAgentWork =
+            revertMessageId !== undefined && typeof row.revertTurnCount === "number";
+          return (
+            <div className="group/handoff mx-1 flex items-center gap-2 text-[length:var(--app-status-line-font-size)] text-muted-foreground">
+              <span className="h-px flex-1 bg-border/60" aria-hidden="true" />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <GitBranchIcon className="size-3 shrink-0" aria-hidden="true" />
+                      <span className="shrink-0">Moved to</span>
+                      <span className="truncate font-medium text-foreground/80">
+                        {row.origin.branch}
+                      </span>
+                    </span>
+                  }
+                />
+                <TooltipPopup>{row.origin.worktreePath}</TooltipPopup>
+              </Tooltip>
+              {canRevertAgentWork && (
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
+                  onClick={() => ctx.onRevertUserMessage(revertMessageId)}
+                  title="Revert to this workspace move"
+                  aria-label="Revert to this workspace move"
+                  className="opacity-0 transition-opacity focus-visible:opacity-100 group-hover/handoff:opacity-100"
+                >
+                  <Undo2Icon className="size-3" />
+                </Button>
+              )}
+              <span className="h-px flex-1 bg-border/60" aria-hidden="true" />
+            </div>
+          );
+        })()}
 
       {row.kind === "working" && (
         <div className="py-0.5 pl-1.5">

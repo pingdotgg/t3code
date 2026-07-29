@@ -10,6 +10,22 @@ interface QueuedMessagesPanelProps {
   onDeleteQueuedTurn: (queuedTurnId: QueuedTurnId) => void;
 }
 
+/**
+ * A healthy workspace-handoff continuation is T3 plumbing, not a message the
+ * user wrote: editing its boilerplate is meaningless and deleting it would
+ * strand the thread in a newly bound worktree with nothing left to run. Failed
+ * ones stay visible so the stalled handoff is recoverable.
+ */
+function isHiddenQueuedTurn(queuedTurn: OrchestrationQueuedTurn): boolean {
+  return queuedTurn.origin?.kind === "workspace-handoff" && queuedTurn.failedAt === null;
+}
+
+function queuedTurnLabel(queuedTurn: OrchestrationQueuedTurn): string | null {
+  return queuedTurn.origin?.kind === "workspace-handoff"
+    ? `Continue in ${queuedTurn.origin.branch}`
+    : queuedTurn.message.text;
+}
+
 function attachmentLabel(queuedTurn: OrchestrationQueuedTurn): string | null {
   const imageCount = queuedTurn.message.attachments.length;
   if (imageCount === 0) {
@@ -26,7 +42,12 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   const [editingId, setEditingId] = useState<QueuedTurnId | null>(null);
   const [editingText, setEditingText] = useState("");
 
-  if (queuedTurns.length === 0) {
+  // Labels track the real dispatch position: a hidden handoff continuation is
+  // still queued ahead of the user's own messages and runs before them.
+  const visibleQueuedTurns = queuedTurns.flatMap((queuedTurn, queueIndex) =>
+    isHiddenQueuedTurn(queuedTurn) ? [] : [{ queuedTurn, queueIndex }],
+  );
+  if (visibleQueuedTurns.length === 0) {
     return null;
   }
 
@@ -47,11 +68,11 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   return (
     <div className="composer-input-font border-b border-border/55 px-3 py-2">
       <ul className="flex flex-col gap-0.5">
-        {queuedTurns.map((queuedTurn, index) => {
+        {visibleQueuedTurns.map(({ queuedTurn, queueIndex }) => {
           const isEditing = editingId === queuedTurn.id;
           const isPaused = queuedTurn.failedAt !== null;
           const meta = attachmentLabel(queuedTurn);
-          const label = index === 0 ? "Up next" : `Queued ${index + 1}`;
+          const label = queueIndex === 0 ? "Up next" : `Queued ${queueIndex + 1}`;
           return (
             <li
               key={queuedTurn.id}
@@ -110,7 +131,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                     {isPaused ? "Paused" : label}
                   </span>
                   <div className="min-w-0 flex-1 truncate text-foreground/85">
-                    {queuedTurn.message.text || (meta ?? "Queued message")}
+                    {queuedTurnLabel(queuedTurn) || (meta ?? "Queued message")}
                     {meta ? (
                       <span className="composer-input-font-secondary ml-2 text-muted-foreground">
                         {meta}

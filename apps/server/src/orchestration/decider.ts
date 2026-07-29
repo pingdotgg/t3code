@@ -137,6 +137,7 @@ function buildTurnStartEvents(input: {
   readonly commandId: OrchestrationCommand["commandId"];
   readonly threadId: MessageSentPayload["threadId"];
   readonly message: Pick<MessageSentPayload, "messageId" | "text" | "attachments">;
+  readonly origin?: MessageSentPayload["origin"];
   readonly modelSelection: TurnStartRequestedPayload["modelSelection"];
   readonly titleSeed: TurnStartRequestedPayload["titleSeed"];
   readonly runtimeMode: TurnStartRequestedPayload["runtimeMode"];
@@ -164,6 +165,7 @@ function buildTurnStartEvents(input: {
       role: "user",
       text: input.message.text,
       attachments: input.message.attachments,
+      ...(input.origin !== undefined ? { origin: input.origin } : {}),
       turnId: null,
       streaming: false,
       createdAt: input.at,
@@ -663,11 +665,41 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      const handoffOrigin = {
+        kind: "workspace-handoff",
+        role: "marker",
+        branch: command.branch,
+        worktreePath: command.worktreePath,
+      } as const;
+      // The marker is the invariant of a handoff: it records the workspace move
+      // whether the thread continues on a generated continuation or on a turn
+      // the user had already queued.
+      const markerEvent: PlannedOrchestrationEvent = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.markerMessageId,
+          role: "system",
+          text: `Moved to ${command.branch} (${command.worktreePath})`,
+          origin: handoffOrigin,
+          turnId: null,
+          streaming: false,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
       if (firstQueuedTurn !== undefined) {
-        return metaUpdatedEvent;
+        return [metaUpdatedEvent, markerEvent];
       }
       return [
         metaUpdatedEvent,
+        markerEvent,
         {
           ...withEventBase({
             aggregateKind: "thread",
@@ -678,7 +710,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           type: "thread.queued-turn-created",
           payload: {
             threadId: command.threadId,
-            queuedTurn: command.continuation,
+            // The origin is derived here, not trusted from the caller: it is
+            // what suppresses the boilerplate bubble, so an untagged or
+            // mistagged continuation would re-expose it or render a second
+            // divider. It must also agree with the marker it accompanies.
+            queuedTurn: {
+              ...command.continuation,
+              origin: { ...handoffOrigin, role: "continuation" },
+            },
           },
         },
       ];
@@ -967,6 +1006,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           text: queuedTurn.message.text,
           attachments: queuedTurn.message.attachments,
         },
+        ...(queuedTurn.origin !== undefined ? { origin: queuedTurn.origin } : {}),
         modelSelection: queuedTurn.modelSelection,
         titleSeed: queuedTurn.titleSeed,
         runtimeMode: queuedTurn.runtimeMode,

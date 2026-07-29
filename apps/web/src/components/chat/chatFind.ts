@@ -61,6 +61,9 @@ function collectTimelineRowSearchText(row: MessagesTimelineRow): string {
     case "proposed-plan":
       return collectProposedPlanSearchText(row.proposedPlan);
 
+    case "workspace-handoff":
+      return normalizeSearchText(`${row.origin.branch}\n${row.origin.worktreePath}`);
+
     case "reasoning":
       return "";
 

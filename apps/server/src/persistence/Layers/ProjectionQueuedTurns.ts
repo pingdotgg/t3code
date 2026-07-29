@@ -1,4 +1,4 @@
-import { ChatAttachment, ModelSelection } from "@t3tools/contracts";
+import { ChatAttachment, MessageOrigin, ModelSelection } from "@t3tools/contracts";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -15,6 +15,7 @@ import {
 const ProjectionQueuedTurnDbRowSchema = ProjectionQueuedTurn.mapFields(
   Struct.assign({
     attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
+    origin: Schema.NullOr(Schema.fromJsonString(MessageOrigin)),
     modelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   }),
 );
@@ -40,6 +41,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         message_id,
         text,
         attachments_json,
+        origin_json,
         model_selection_json,
         title_seed,
         runtime_mode,
@@ -57,6 +59,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         ${row.messageId},
         ${row.text},
         ${JSON.stringify(row.attachments)},
+        ${row.origin === null ? null : JSON.stringify(row.origin)},
         ${row.modelSelection === null ? null : JSON.stringify(row.modelSelection)},
         ${row.titleSeed},
         ${row.runtimeMode},
@@ -74,6 +77,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         message_id = excluded.message_id,
         text = excluded.text,
         attachments_json = excluded.attachments_json,
+        origin_json = excluded.origin_json,
         model_selection_json = excluded.model_selection_json,
         title_seed = excluded.title_seed,
         runtime_mode = excluded.runtime_mode,
@@ -97,6 +101,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         message_id AS "messageId",
         text,
         attachments_json AS "attachments",
+        origin_json AS "origin",
         model_selection_json AS "modelSelection",
         title_seed AS "titleSeed",
         runtime_mode AS "runtimeMode",
@@ -123,6 +128,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         message_id AS "messageId",
         text,
         attachments_json AS "attachments",
+        origin_json AS "origin",
         model_selection_json AS "modelSelection",
         title_seed AS "titleSeed",
         runtime_mode AS "runtimeMode",

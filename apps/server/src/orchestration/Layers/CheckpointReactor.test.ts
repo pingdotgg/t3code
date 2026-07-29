@@ -1092,6 +1092,7 @@ describe("CheckpointReactor", () => {
         threadId,
         branch: "handoff",
         worktreePath: handoffCwd,
+        markerMessageId: MessageId.make("message-handoff-marker"),
         continuation: {
           id: QueuedTurnId.make("queued-turn-handoff"),
           threadId,

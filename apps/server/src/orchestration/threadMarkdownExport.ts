@@ -134,6 +134,36 @@ function formatMessage(message: OrchestrationMessage, index: number): string {
     .join("\n");
 }
 
+/**
+ * A workspace handoff spans two turns because the provider must restart in the
+ * new checkout, but the move is one event. Render the marker as a transition
+ * and drop the continuation that carries it: its text is fixed T3 boilerplate,
+ * so exporting it as a user turn reproduces exactly the message the chat UI
+ * hides. Continuations still queued (including failed ones) are untouched here
+ * and stay in the queued-turns section for recovery context.
+ */
+function isHandoffContinuation(message: OrchestrationMessage): boolean {
+  return message.origin?.kind === "workspace-handoff" && message.origin.role === "continuation";
+}
+
+function isHandoffMarker(message: OrchestrationMessage): boolean {
+  return message.origin?.kind === "workspace-handoff" && message.origin.role === "marker";
+}
+
+function formatWorkspaceHandoff(message: OrchestrationMessage): string {
+  const origin = message.origin;
+  return [
+    "### Workspace moved",
+    "",
+    formatTable([
+      ["Branch", origin?.kind === "workspace-handoff" ? origin.branch : null],
+      ["Worktree path", origin?.kind === "workspace-handoff" ? origin.worktreePath : null],
+      ["Message ID", message.id],
+      ["Created", message.createdAt],
+    ]),
+  ].join("\n");
+}
+
 function groupMessagesByTurn(messages: ReadonlyArray<OrchestrationMessage>): Array<{
   readonly turnId: TurnId | null;
   readonly messages: OrchestrationMessage[];
@@ -220,6 +250,9 @@ function formatQueuedTurns(
           ["Runtime mode", turn.runtimeMode],
           ["Interaction mode", turn.interactionMode],
           ["Model selection", stringifyMetadata(turn.modelSelection)],
+          // Kept rather than hidden: a failed handoff continuation is the
+          // recovery context for a thread stranded in a new worktree.
+          ["Origin", stringifyMetadata(turn.origin)],
           ["Source proposed plan", stringifyMetadata(turn.sourceProposedPlan)],
           ["Attachment count", turn.message.attachments.length],
         ]),
@@ -255,7 +288,9 @@ export function formatThreadMarkdownExport(input: {
   const checkpointsByTurnId = new Map(
     thread.checkpoints.map((checkpoint) => [checkpoint.turnId, checkpoint]),
   );
-  const messageGroups = groupMessagesByTurn(thread.messages);
+  const messageGroups = groupMessagesByTurn(
+    thread.messages.filter((message) => !isHandoffContinuation(message)),
+  );
 
   return [
     `# ${thread.title}`,
@@ -302,26 +337,37 @@ export function formatThreadMarkdownExport(input: {
     "",
     messageGroups.length === 0
       ? "_No messages._"
-      : messageGroups
-          .map((group, groupIndex) => {
-            const checkpoint = group.turnId ? checkpointsByTurnId.get(group.turnId) : undefined;
-            return [
-              `### Turn ${groupIndex + 1}${group.turnId ? `: ${group.turnId}` : ": no turn id"}`,
-              "",
-              ...(detail.includeDiffs
-                ? [
-                    checkpoint
-                      ? formatCheckpoint(checkpoint)
-                      : "_No checkpoint metadata for this turn._",
-                    "",
-                  ]
-                : []),
-              ...group.messages.map((message, messageIndex) =>
-                formatMessage(message, messageIndex),
-              ),
-            ].join("\n");
-          })
-          .join("\n\n"),
+      : (() => {
+          let turnNumber = 0;
+          return messageGroups
+            .map((group) => {
+              // A marker carries no turn of its own, so it renders as a
+              // transition between turns rather than consuming a turn number.
+              if (group.messages.every(isHandoffMarker)) {
+                return group.messages.map(formatWorkspaceHandoff).join("\n\n");
+              }
+              turnNumber += 1;
+              const checkpoint = group.turnId ? checkpointsByTurnId.get(group.turnId) : undefined;
+              return [
+                `### Turn ${turnNumber}${group.turnId ? `: ${group.turnId}` : ": no turn id"}`,
+                "",
+                ...(detail.includeDiffs
+                  ? [
+                      checkpoint
+                        ? formatCheckpoint(checkpoint)
+                        : "_No checkpoint metadata for this turn._",
+                      "",
+                    ]
+                  : []),
+                ...group.messages.map((message, messageIndex) =>
+                  isHandoffMarker(message)
+                    ? formatWorkspaceHandoff(message)
+                    : formatMessage(message, messageIndex),
+                ),
+              ].join("\n");
+            })
+            .join("\n\n");
+        })(),
     "",
   ].join("\n");
 }

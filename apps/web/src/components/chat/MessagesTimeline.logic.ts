@@ -1,6 +1,6 @@
 import { formatElapsed, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type TurnId } from "@t3tools/contracts";
+import { type MessageId, type TurnId, type WorkspaceHandoffOrigin } from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 
@@ -36,6 +36,14 @@ type BaseMessagesTimelineRow =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
+    }
+  | {
+      kind: "workspace-handoff";
+      id: string;
+      createdAt: string;
+      origin: WorkspaceHandoffOrigin;
+      revertMessageId?: MessageId | undefined;
+      revertTurnCount?: number | undefined;
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
@@ -128,6 +136,7 @@ export function deriveMessagesTimelineRows(input: {
   >();
   let nullTurnResponseIndex = 0;
   let lastDurationBoundary: string | null = null;
+  const pendingHandoffRows: Extract<BaseMessagesTimelineRow, { kind: "workspace-handoff" }>[] = [];
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
@@ -177,6 +186,46 @@ export function deriveMessagesTimelineRows(input: {
     }
     const durationStart = lastDurationBoundary ?? message.createdAt;
 
+    // Workspace handoffs render as a single transition marker. The marker
+    // message is emitted mid-turn, when the provider calls the handoff tool, so
+    // it is deferred to the next turn boundary rather than splitting the turn's
+    // work in half. The continuation that resumes the task in the new worktree
+    // is T3 boilerplate: it stays a turn boundary but never becomes a bubble,
+    // and it hands its revert anchor to the marker so the post-handoff turn
+    // remains revertable.
+    if (message.origin?.kind === "workspace-handoff") {
+      if (message.origin.role === "marker") {
+        pendingHandoffRows.push({
+          kind: "workspace-handoff",
+          id: timelineEntry.id,
+          createdAt: timelineEntry.createdAt,
+          origin: message.origin,
+        });
+      } else {
+        const revertTurnCount = input.revertTurnCountByUserMessageId.get(message.id);
+        const lastPendingRow = pendingHandoffRows.at(-1);
+        if (lastPendingRow) {
+          if (revertTurnCount !== undefined) {
+            lastPendingRow.revertMessageId = message.id;
+            lastPendingRow.revertTurnCount = revertTurnCount;
+          }
+          // The continuation already moved the boundary as a user message, but
+          // it is never rendered. Anchor elapsed time to the marker instead so
+          // the post-handoff turn does not report a duration measured from a
+          // row the user cannot see.
+          lastDurationBoundary = lastPendingRow.createdAt;
+        }
+        nextRows.push(...pendingHandoffRows);
+        pendingHandoffRows.length = 0;
+      }
+      continue;
+    }
+
+    if (message.role === "user" && pendingHandoffRows.length > 0) {
+      nextRows.push(...pendingHandoffRows);
+      pendingHandoffRows.length = 0;
+    }
+
     const messageRow: Extract<BaseMessagesTimelineRow, { kind: "message" }> = {
       kind: "message",
       id: timelineEntry.id,
@@ -208,6 +257,8 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
+
+  nextRows.push(...pendingHandoffRows);
 
   if (input.isWorking) {
     nextRows.push({
@@ -256,6 +307,16 @@ function collapseReasoningRows(
       collapsedRows.push(row);
       userIndex = collapsedRows.length - 1;
       reasoningRows = [];
+      continue;
+    }
+
+    // The handoff is a turn boundary, so the following response's elapsed time
+    // is measured from the move rather than from the pre-handoff user message.
+    if (row.kind === "workspace-handoff") {
+      collapsedRows.push(...reasoningRows);
+      reasoningRows = [];
+      collapsedRows.push(row);
+      userIndex = collapsedRows.length - 1;
       continue;
     }
 
@@ -341,6 +402,17 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   switch (a.kind) {
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
+
+    case "workspace-handoff": {
+      const bh = b as typeof a;
+      return (
+        a.origin.branch === bh.origin.branch &&
+        a.origin.worktreePath === bh.origin.worktreePath &&
+        a.revertMessageId === bh.revertMessageId &&
+        a.revertTurnCount === bh.revertTurnCount &&
+        a.createdAt === bh.createdAt
+      );
+    }
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;

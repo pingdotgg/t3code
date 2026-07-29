@@ -177,4 +177,100 @@ describe("thread markdown export", () => {
     expect(conciseMarkdown).not.toContain("- Add settings\n- Add RPC");
     expect(conciseMarkdown).not.toContain("Ran formatter");
   });
+
+  it("renders a workspace handoff as one transition instead of a fake user turn", () => {
+    const threadId = ThreadId.make("thread-handoff");
+    const thread: OrchestrationThread = {
+      id: threadId,
+      projectId: ProjectId.make("project-1"),
+      title: "Handoff chat",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "full-access",
+      pendingRuntimeMode: null,
+      interactionMode: "default",
+      branch: "feature/handoff",
+      worktreePath: "/tmp/handoff",
+      latestTurn: null,
+      createdAt: "2026-06-01T07:00:00.000Z",
+      updatedAt: "2026-06-01T07:01:05.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      messages: [
+        {
+          id: MessageId.make("message-user-1"),
+          role: "user",
+          text: "Move this to a new worktree.",
+          attachments: [],
+          turnId: TurnId.make("turn-1"),
+          streaming: false,
+          createdAt: "2026-06-01T07:01:00.000Z",
+          updatedAt: "2026-06-01T07:01:00.000Z",
+        },
+        {
+          id: MessageId.make("message-marker"),
+          role: "system",
+          text: "Moved to feature/handoff (/tmp/handoff)",
+          origin: {
+            kind: "workspace-handoff",
+            role: "marker",
+            branch: "feature/handoff",
+            worktreePath: "/tmp/handoff",
+          },
+          attachments: [],
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-06-01T07:01:02.000Z",
+          updatedAt: "2026-06-01T07:01:02.000Z",
+        },
+        {
+          id: MessageId.make("message-continuation"),
+          role: "user",
+          text: "Continue the task from the previous user request in the newly bound workspace.",
+          origin: {
+            kind: "workspace-handoff",
+            role: "continuation",
+            branch: "feature/handoff",
+            worktreePath: "/tmp/handoff",
+          },
+          attachments: [],
+          turnId: TurnId.make("turn-2"),
+          streaming: false,
+          createdAt: "2026-06-01T07:01:03.000Z",
+          updatedAt: "2026-06-01T07:01:03.000Z",
+        },
+        {
+          id: MessageId.make("message-assistant-2"),
+          role: "assistant",
+          text: "Done in the new worktree.",
+          attachments: [],
+          turnId: TurnId.make("turn-2"),
+          streaming: false,
+          createdAt: "2026-06-01T07:01:04.000Z",
+          updatedAt: "2026-06-01T07:01:04.000Z",
+        },
+      ],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    };
+
+    const markdown = formatThreadMarkdownExport({
+      thread,
+      project: null,
+      exportedAt: new Date("2026-06-01T07:49:33.574Z"),
+    });
+
+    expect(markdown).toContain("### Workspace moved");
+    expect(markdown).toContain("| Branch | feature/handoff |");
+    expect(markdown).not.toContain("Continue the task from the previous user request");
+    // The work that happened after the move is still exported, and the move
+    // itself does not consume a turn number.
+    expect(markdown).toContain("Done in the new worktree.");
+    expect(markdown).toContain("### Turn 1: turn-1");
+    expect(markdown).toContain("### Turn 2: turn-2");
+  });
 });

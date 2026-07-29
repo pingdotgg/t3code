@@ -3,6 +3,7 @@ import {
   EventId,
   IsoDateTime,
   MessageId,
+  MessageOrigin,
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
@@ -73,12 +74,14 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    origin: Schema.NullOr(Schema.fromJsonString(MessageOrigin)),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionQueuedTurnDbRowSchema = ProjectionQueuedTurn.mapFields(
   Struct.assign({
     attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
+    origin: Schema.NullOr(Schema.fromJsonString(MessageOrigin)),
     modelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   }),
 );
@@ -332,6 +335,7 @@ function mapQueuedTurnRow(
       text: row.text,
       attachments: row.attachments,
     },
+    ...(row.origin !== null ? { origin: row.origin } : {}),
     ...(row.modelSelection !== null ? { modelSelection: row.modelSelection } : {}),
     ...(row.titleSeed !== null ? { titleSeed: row.titleSeed } : {}),
     runtimeMode: row.runtimeMode,
@@ -470,6 +474,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          origin_json AS "origin",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -508,6 +513,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           message_id AS "messageId",
           text,
           attachments_json AS "attachments",
+          origin_json AS "origin",
           model_selection_json AS "modelSelection",
           title_seed AS "titleSeed",
           runtime_mode AS "runtimeMode",
@@ -809,6 +815,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          origin_json AS "origin",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -849,6 +856,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           message_id AS "messageId",
           text,
           attachments_json AS "attachments",
+          origin_json AS "origin",
           model_selection_json AS "modelSelection",
           title_seed AS "titleSeed",
           runtime_mode AS "runtimeMode",
@@ -1207,6 +1215,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   role: row.role,
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+                  ...(row.origin !== null ? { origin: row.origin } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
                   createdAt: row.createdAt,
@@ -1941,10 +1950,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };
-          if (row.attachments !== null) {
-            return Object.assign(message, { attachments: row.attachments });
-          }
-          return message;
+          return Object.assign(
+            message,
+            row.attachments !== null ? { attachments: row.attachments } : {},
+            row.origin !== null ? { origin: row.origin } : {},
+          );
         }),
         proposedPlans: proposedPlanRows.map((row) => ({
           id: row.planId,

@@ -247,6 +247,7 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     turnId: message.turnId,
     createdAt: message.createdAt,
     streaming: message.streaming,
+    ...(message.origin !== undefined ? { origin: message.origin } : {}),
     ...(message.streaming ? {} : { completedAt: message.updatedAt }),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
   };

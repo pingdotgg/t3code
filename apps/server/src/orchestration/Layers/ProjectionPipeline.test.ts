@@ -5,6 +5,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  QueuedTurnId,
   ThreadId,
   TurnId,
   ProviderInstanceId,
@@ -30,6 +31,7 @@ import {
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
@@ -2554,7 +2556,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-latest-turn-ses
 
 const engineLayer = it.layer(
   OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -2664,5 +2666,105 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         },
       ]);
     }),
+  );
+
+  it.effect(
+    "persists workspace handoff origin onto the marker and the dispatched continuation",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const createdAt = new Date().toISOString();
+        const threadId = ThreadId.make("thread-handoff-origin");
+        const origin = {
+          kind: "workspace-handoff",
+          role: "continuation",
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff-origin",
+        } as const;
+
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-handoff-origin-project"),
+          projectId: ProjectId.make("project-handoff-origin"),
+          title: "Handoff Origin",
+          workspaceRoot: "/tmp/project-handoff-origin",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        });
+
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-handoff-origin-thread"),
+          threadId,
+          projectId: ProjectId.make("project-handoff-origin"),
+          title: "Handoff Origin",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+
+        yield* engine.dispatch({
+          type: "thread.workspace.handoff",
+          commandId: CommandId.make("cmd-handoff-origin"),
+          threadId,
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff-origin",
+          markerMessageId: MessageId.make("message-handoff-origin-marker"),
+          continuation: {
+            id: QueuedTurnId.make("queued-turn-handoff-origin"),
+            threadId,
+            message: {
+              messageId: MessageId.make("message-handoff-origin-continuation"),
+              role: "user",
+              text: "continue in workspace",
+              attachments: [],
+            },
+            origin,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt,
+            updatedAt: createdAt,
+            failedAt: null,
+            failureMessage: null,
+          },
+        });
+
+        const queuedSnapshot = yield* snapshotQuery.getSnapshot();
+        const queuedThread = queuedSnapshot.threads.find((entry) => entry.id === threadId);
+        assert.deepEqual(queuedThread?.queuedTurns?.[0]?.origin, origin);
+        assert.equal(queuedThread?.branch, "feature/handoff");
+
+        yield* engine.dispatch({
+          type: "thread.queued-turn.dispatch",
+          commandId: CommandId.make("cmd-handoff-origin-dispatch"),
+          threadId,
+          queuedTurnId: QueuedTurnId.make("queued-turn-handoff-origin"),
+          dispatchedAt: createdAt,
+        });
+
+        const snapshot = yield* snapshotQuery.getSnapshot();
+        const thread = snapshot.threads.find((entry) => entry.id === threadId);
+        const marker = thread?.messages.find(
+          (message) => message.id === "message-handoff-origin-marker",
+        );
+        const continuation = thread?.messages.find(
+          (message) => message.id === "message-handoff-origin-continuation",
+        );
+
+        assert.equal(marker?.role, "system");
+        assert.deepEqual(marker?.origin, { ...origin, role: "marker" });
+        assert.equal(continuation?.role, "user");
+        assert.deepEqual(continuation?.origin, origin);
+      }),
   );
 });

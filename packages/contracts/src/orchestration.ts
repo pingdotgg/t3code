@@ -223,11 +223,28 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+/**
+ * Marks messages that T3 authored on behalf of a workspace handoff rather than
+ * the user: the transition marker itself and the boilerplate continuation turn
+ * that resumes the task in the newly bound worktree.
+ */
+export const WorkspaceHandoffOrigin = Schema.Struct({
+  kind: Schema.Literal("workspace-handoff"),
+  role: Schema.Literals(["marker", "continuation"]),
+  branch: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+});
+export type WorkspaceHandoffOrigin = typeof WorkspaceHandoffOrigin.Type;
+
+export const MessageOrigin = WorkspaceHandoffOrigin;
+export type MessageOrigin = typeof MessageOrigin.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  origin: Schema.optional(MessageOrigin),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
@@ -275,6 +292,7 @@ export const OrchestrationQueuedTurn = Schema.Struct({
   id: QueuedTurnId,
   threadId: ThreadId,
   message: QueuedTurnMessage,
+  origin: Schema.optional(MessageOrigin),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -583,6 +601,7 @@ const ThreadWorkspaceHandoffCommand = Schema.Struct({
   threadId: ThreadId,
   branch: TrimmedNonEmptyString,
   worktreePath: TrimmedNonEmptyString,
+  markerMessageId: MessageId,
   continuation: OrchestrationQueuedTurn,
 });
 
@@ -1134,6 +1153,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  origin: Schema.optional(MessageOrigin),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,

@@ -2084,6 +2084,7 @@ const chatHandoffCommand = Command.make("handoff", {
           threadId: thread.id,
           branch: flags.branch,
           worktreePath: flags.worktree,
+          markerMessageId: MessageId.make(crypto.randomUUID()),
           continuation: {
             id: QueuedTurnId.make(crypto.randomUUID()),
             threadId: thread.id,

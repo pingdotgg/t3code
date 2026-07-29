@@ -113,6 +113,7 @@ describe("decider queued turns", () => {
           threadId,
           branch: "feature/handoff",
           worktreePath: "/tmp/handoff",
+          markerMessageId: MessageId.make("message-handoff-marker"),
           continuation: {
             id: queuedTurnId,
             threadId,
@@ -137,6 +138,7 @@ describe("decider queued turns", () => {
     const events = Array.isArray(result) ? result : [result];
     expect(events.map((event) => event.type)).toEqual([
       "thread.meta-updated",
+      "thread.message-sent",
       "thread.queued-turn-created",
     ]);
     expect(events[0]?.payload).toMatchObject({
@@ -146,9 +148,85 @@ describe("decider queued turns", () => {
     });
     expect(events[1]?.payload).toMatchObject({
       threadId,
+      messageId: "message-handoff-marker",
+      role: "system",
+      origin: {
+        kind: "workspace-handoff",
+        role: "marker",
+        branch: "feature/handoff",
+        worktreePath: "/tmp/handoff",
+      },
+    });
+    expect(events[2]?.payload).toMatchObject({
+      threadId,
       queuedTurn: {
         id: queuedTurnId,
         message: { text: "continue in workspace" },
+        // Derived by the decider even though the caller supplied no origin.
+        origin: {
+          kind: "workspace-handoff",
+          role: "continuation",
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff",
+        },
+      },
+    });
+  });
+
+  it("derives the continuation origin instead of trusting the caller", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-handoff");
+    const queuedTurnId = asQueuedTurnId("queued-turn-handoff");
+    const readModel = await makeThreadReadModel({ now, threadId });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.workspace.handoff",
+          commandId: CommandId.make("cmd-workspace-handoff"),
+          threadId,
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff",
+          markerMessageId: MessageId.make("message-handoff-marker"),
+          continuation: {
+            id: queuedTurnId,
+            threadId,
+            message: {
+              messageId: asMessageId("message-handoff"),
+              role: "user",
+              text: "continue in workspace",
+              attachments: [],
+            },
+            // A schema-valid but wrong tag: the marker role would render the
+            // continuation as a second divider, and a stale branch would label
+            // the move with a workspace the thread is not bound to.
+            origin: {
+              kind: "workspace-handoff",
+              role: "marker",
+              branch: "stale/branch",
+              worktreePath: "/tmp/stale",
+            },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: now,
+            updatedAt: now,
+            failedAt: null,
+            failureMessage: null,
+          },
+        },
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events[2]?.payload).toMatchObject({
+      queuedTurn: {
+        origin: {
+          kind: "workspace-handoff",
+          role: "continuation",
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff",
+        },
       },
     });
   });
@@ -189,6 +267,7 @@ describe("decider queued turns", () => {
           threadId,
           branch: "feature/handoff",
           worktreePath: "/tmp/handoff",
+          markerMessageId: MessageId.make("message-handoff-marker"),
           continuation: {
             id: asQueuedTurnId("queued-turn-synthetic"),
             threadId,
@@ -210,7 +289,15 @@ describe("decider queued turns", () => {
       }),
     );
 
-    expect(result).toMatchObject({ type: "thread.meta-updated" });
+    const reuseEvents = Array.isArray(result) ? result : [result];
+    expect(reuseEvents.map((event) => event.type)).toEqual([
+      "thread.meta-updated",
+      "thread.message-sent",
+    ]);
+    expect(reuseEvents[1]?.payload).toMatchObject({
+      role: "system",
+      origin: { kind: "workspace-handoff", role: "marker", branch: "feature/handoff" },
+    });
   });
 
   it("dispatches a queued turn as a user message and turn start", async () => {
@@ -279,6 +366,80 @@ describe("decider queued turns", () => {
       queuedTurnId,
       messageId: asMessageId("message-queued-1"),
       dispatchedAt,
+    });
+  });
+
+  it("carries a handoff continuation origin onto the dispatched user message", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const dispatchedAt = "2026-03-01T00:00:01.000Z";
+    const threadId = asThreadId("thread-handoff-dispatch");
+    const queuedTurnId = asQueuedTurnId("queued-turn-continuation");
+    const readModel = await makeThreadReadModel({ now, threadId });
+    const handoffEvents = (await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.workspace.handoff",
+          commandId: CommandId.make("cmd-handoff-dispatch"),
+          threadId,
+          branch: "feature/handoff",
+          worktreePath: "/tmp/handoff",
+          markerMessageId: MessageId.make("message-handoff-marker"),
+          continuation: {
+            id: queuedTurnId,
+            threadId,
+            message: {
+              messageId: asMessageId("message-continuation"),
+              role: "user",
+              text: "continue in workspace",
+              attachments: [],
+            },
+            origin: {
+              kind: "workspace-handoff",
+              role: "continuation",
+              branch: "feature/handoff",
+              worktreePath: "/tmp/handoff",
+            },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: now,
+            updatedAt: now,
+            failedAt: null,
+            failureMessage: null,
+          },
+        },
+        readModel,
+      }),
+    )) as ReadonlyArray<OrchestrationEvent>;
+
+    let projected = readModel;
+    let sequence = 1;
+    for (const event of handoffEvents) {
+      sequence += 1;
+      projected = await Effect.runPromise(projectEvent(projected, { ...event, sequence }));
+    }
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.dispatch",
+          commandId: CommandId.make("cmd-handoff-dispatch-turn"),
+          threadId,
+          queuedTurnId,
+          dispatchedAt,
+        },
+        readModel: projected,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events[0]?.payload).toMatchObject({
+      messageId: asMessageId("message-continuation"),
+      role: "user",
+      origin: {
+        kind: "workspace-handoff",
+        role: "continuation",
+        branch: "feature/handoff",
+      },
     });
   });
 });
