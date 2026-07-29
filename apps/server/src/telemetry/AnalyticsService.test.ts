@@ -48,7 +48,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: true,
           T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "",
+          T3CODE_POSTHOG_HOST: "http://localhost",
           T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
         }),
       );
@@ -93,7 +93,9 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       );
       assert.equal(batchRequests.length, 3);
       assert.equal(
-        batchRequests.every((request) => request.path === "/batch/" || request.path === "/batch"),
+        batchRequests.every(
+          (request) => request.path.endsWith("/batch/") || request.path.endsWith("/batch"),
+        ),
         true,
       );
       const deliveredIndexes = batchRequests.flatMap((request) =>

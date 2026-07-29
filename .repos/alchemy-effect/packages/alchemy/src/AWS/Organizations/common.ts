@@ -55,9 +55,7 @@ export const retryOrganizations = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         error?._tag === "TooManyRequestsException" ||
         error?._tag === "ServiceException" ||
         error?._tag === "FinalizingOrganizationException",
-      schedule: Schedule.exponential(200).pipe(
-        Schedule.both(Schedule.recurs(8)),
-      ),
+      schedule: Schedule.max([Schedule.exponential(200), Schedule.recurs(8)]),
     }),
   );
 
@@ -67,7 +65,7 @@ export const createManagedTags = Effect.fn(function* (
 ) {
   return {
     ...(yield* createInternalTags(id)),
-    ...(tags ?? {}),
+    ...tags,
   };
 });
 

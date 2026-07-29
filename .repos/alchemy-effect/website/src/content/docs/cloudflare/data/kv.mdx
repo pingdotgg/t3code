@@ -1,0 +1,200 @@
+---
+title: KV
+description: Cloudflare Workers KV is edge key-value storage — create a namespace, bind it into a Worker with read/write-scoped bindings, and get/put values with metadata.
+---
+
+Workers KV is Cloudflare's key-value store: values addressed by key,
+replicated globally, with eventually-consistent, low-latency reads at
+the edge. In alchemy a namespace is a one-line resource, and Workers
+reach it through typed, access-scoped bindings.
+
+Reach for KV when reads dominate and a little staleness is fine —
+config, feature flags, sessions, cached API responses, redirects. If
+you need relational queries, use [D1](/cloudflare/data/d1); if you need
+strongly-consistent state coordinated per object, use
+[Durable Object storage](/cloudflare/compute/durable-objects).
+
+## Create a namespace
+
+```typescript
+// src/cache.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Cache = Cloudflare.KV.Namespace("Cache");
+```
+
+Yield it inside your Stack:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Cache } from "./src/cache.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const cache = yield* Cache;
+
+    return { namespaceId: cache.namespaceId };
+  }),
+);
+```
+
+No name required — alchemy generates a unique title from the app,
+stage, and logical ID. Pass `title` to control it:
+
+```typescript
+export const Cache = Cloudflare.KV.Namespace("Cache", {
+  title: "my-app-cache",
+});
+```
+
+## Bind it to a Worker
+
+Bind the namespace in the Worker's init phase and use the typed
+client in the runtime handlers. This Worker stores a value on
+`PUT /?key=` and serves it back on `GET /?key=`:
+
+```typescript
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Cache } from "./cache.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const kv = yield* Cloudflare.KV.ReadWriteNamespace(Cache);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://localhost");
+        const key = url.searchParams.get("key") ?? "";
+
+        if (request.method === "PUT") {
+          const body = yield* request.text;
+          yield* kv.put(key, body);
+          return HttpServerResponse.empty({ status: 204 });
+        }
+
+        const value = yield* kv.get(key);
+        if (value === null) {
+          return HttpServerResponse.text("Not found", { status: 404 });
+        }
+        return HttpServerResponse.text(value);
+      }).pipe(
+        Effect.catchTag("NamespaceError", (error) =>
+          Effect.succeed(
+            HttpServerResponse.text(error.message, { status: 500 }),
+          ),
+        ),
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
+);
+```
+
+KV operations can fail with a typed `NamespaceError` — Effect keeps
+it in the type system until you handle it, here with
+`Effect.catchTag`.
+
+## Typed reads
+
+`get` defaults to text; pass a type to parse JSON, or an array of
+keys for a bulk read:
+
+```typescript
+const text = yield* kv.get("greeting"); // string | null
+const config = yield* kv.get<Config>("config", "json"); // Config | null
+const many = yield* kv.get(["a", "b"], "text"); // Map<string, string | null>
+```
+
+`arrayBuffer` and `stream` types are also supported for binary
+values.
+
+## Metadata and expiry
+
+`put` accepts per-key metadata and a TTL; `getWithMetadata` reads
+both back in one call:
+
+```typescript
+yield* kv.put("session:abc", token, {
+  metadata: { userId: "u_123" },
+  expirationTtl: 3600, // seconds — minimum 60
+});
+
+const { value, metadata } = yield* kv.getWithMetadata<{
+  userId: string;
+}>("session:abc");
+```
+
+## List keys
+
+`list` pages through keys, optionally filtered by prefix:
+
+```typescript
+const result = yield* kv.list({ prefix: "session:" });
+const keys = result.keys.map((k) => k.name);
+```
+
+Each entry carries its `name` and any metadata stored alongside the
+value.
+
+## Delete
+
+```typescript
+yield* kv.delete("session:abc");
+```
+
+KV is eventually consistent — a fresh write or delete can take a
+short while to become visible to reads at other edge locations.
+
+## Read, Write, ReadWrite
+
+The namespace capability is split by access level so each Worker
+gets least privilege:
+
+- `Cloudflare.KV.ReadNamespace` — `get`, `getWithMetadata`, `list`.
+- `Cloudflare.KV.WriteNamespace` — `put`, `delete`.
+- `Cloudflare.KV.ReadWriteNamespace` — both.
+
+Each level has two interchangeable implementations you provide as a
+layer on the Worker:
+
+- **`*NamespaceBinding`** (`ReadNamespaceBinding`,
+  `WriteNamespaceBinding`, `ReadWriteNamespaceBinding`) — a native
+  KV binding on the Worker, the default choice.
+- **`*NamespaceHttp`** (`ReadNamespaceHttp`, `WriteNamespaceHttp`,
+  `ReadWriteNamespaceHttp`) — the same client over Cloudflare's HTTP
+  API. Alchemy mints an API token scoped to Workers KV Storage
+  read/write and binds it into the Worker — for when a native
+  binding isn't available.
+
+Your runtime code depends only on the capability
+(`ReadNamespace(Cache)` etc.) — swapping the implementation layer
+doesn't touch the handlers.
+
+## Where next
+
+Related:
+
+- [Workers](/cloudflare/compute/workers) — how namespaces get read and
+  written.
+- [D1](/cloudflare/data/d1) — serverless SQLite when you need relational
+  queries.
+- [Durable Objects](/cloudflare/compute/durable-objects) —
+  strongly-consistent per-object state.
+
+Reference:
+
+- [Namespace API reference](/providers/cloudflare/kv/namespace)

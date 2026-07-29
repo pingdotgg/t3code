@@ -8,11 +8,20 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Alert, Linking, Platform, ScrollView, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   reportAtomCommandResult,
   settleAsyncResult,
@@ -37,6 +46,7 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -156,7 +166,7 @@ function ConfiguredSettingsRouteScreen() {
   const environmentCount = connections.length;
   const accountLabel = useMemo(() => {
     if (!isLoaded) return "Checking";
-    if (!isSignedIn) return "Request access";
+    if (!isSignedIn) return "Sign in";
     return user?.primaryEmailAddress?.emailAddress ?? "Signed in";
   }, [isLoaded, isSignedIn, user?.primaryEmailAddress?.emailAddress]);
 
@@ -263,13 +273,13 @@ function ConfiguredSettingsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Request T3 Connect access",
-      "Live Activity updates require approved T3 Connect access so relay can deliver updates to this device.",
+      "Sign in to T3 Connect",
+      "Live Activity updates require T3 Connect so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Continue",
-          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" }),
+          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
         },
       ],
     );
@@ -431,7 +441,8 @@ function ConfiguredSettingsRouteScreen() {
   const openAccount = useCallback(() => {
     if (!isLoaded) return;
     if (!isSignedIn) {
-      navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" });
+      expandClerkSheet();
+      navigation.navigate("SettingsSheet", { screen: "SettingsAuth" });
       return;
     }
     expandClerkSheet();
@@ -546,11 +557,8 @@ function GeneralSettingsSection() {
  * the counterpart of web's Settings → Beta backed by mobile preferences.
  */
 function BetaSettingsSection() {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const threadListV2Enabled = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value.threadListV2Enabled === true
-    : false;
+  const threadListV2Enabled = useThreadListV2Enabled();
 
   return (
     <View className="gap-3">
@@ -570,8 +578,12 @@ function BetaSettingsSection() {
   );
 }
 
+type UpdateCheckState = "idle" | "checking" | "downloading" | "restarting" | "current";
+
 function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
+  const [updateState, setUpdateState] = useState<UpdateCheckState>("idle");
+  const updateInFlight = useRef(false);
 
   const version = Constants.expoConfig?.version ?? "0.0.0";
   // Fall back to "production" to match resolveAppVariant in app.config.ts, so a
@@ -590,28 +602,138 @@ function AppSettingsSection() {
         : null
     : null;
 
+  const busy =
+    updateState === "checking" || updateState === "downloading" || updateState === "restarting";
+
+  // "Up to date" is a transient acknowledgement, not a state worth persisting —
+  // drop back to the bundle label so the row keeps answering "what am I running?".
+  useEffect(() => {
+    if (updateState !== "current") return;
+    const timer = setTimeout(() => setUpdateState("idle"), 3000);
+    return () => clearTimeout(timer);
+  }, [updateState]);
+
+  const checkForUpdate = useCallback(async () => {
+    // `disabled={busy}` only takes effect on the next render, so two taps in the
+    // same frame would both get through. The ref closes that window.
+    if (updateInFlight.current) return;
+    updateInFlight.current = true;
+    try {
+      await runUpdateCheck(setUpdateState);
+    } finally {
+      updateInFlight.current = false;
+    }
+  }, []);
+
+  const statusLabel =
+    updateState === "checking"
+      ? "Checking…"
+      : updateState === "downloading"
+        ? "Downloading…"
+        : updateState === "restarting"
+          ? "Restarting…"
+          : updateState === "current"
+            ? "Up to date"
+            : bundleLabel;
+
+  const versionRow = (
+    <View className="flex-row items-center gap-4 p-4">
+      <SymbolView
+        name="info.circle"
+        size={22}
+        tintColor={icon}
+        type="monochrome"
+        weight="regular"
+      />
+      <Text className="flex-1 text-lg text-foreground">Version</Text>
+      <View className="items-end">
+        <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
+        {statusLabel ? (
+          <Text className="text-xs text-foreground-muted/70">{statusLabel}</Text>
+        ) : null}
+      </View>
+      {Updates.isEnabled ? (
+        <View className="w-[22px] items-center">
+          {busy ? (
+            <ActivityIndicator color={icon} size="small" />
+          ) : (
+            <SymbolView
+              name="arrow.clockwise"
+              size={18}
+              tintColor={icon}
+              type="monochrome"
+              weight="semibold"
+            />
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+
   return (
     <SettingsSection title="App">
       <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
       <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
-      <View className="flex-row items-center gap-4 p-4">
-        <SymbolView
-          name="info.circle"
-          size={22}
-          tintColor={icon}
-          type="monochrome"
-          weight="regular"
-        />
-        <Text className="flex-1 text-lg text-foreground">Version</Text>
-        <View className="items-end">
-          <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
-          {bundleLabel ? (
-            <Text className="text-xs text-foreground-muted/70">{bundleLabel}</Text>
-          ) : null}
-        </View>
-      </View>
+      {Updates.isEnabled ? (
+        <Pressable
+          accessibilityLabel="Check for updates"
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => void checkForUpdate()}
+        >
+          {versionRow}
+        </Pressable>
+      ) : (
+        versionRow
+      )}
     </SettingsSection>
   );
+}
+
+async function runUpdateCheck(setUpdateState: (state: UpdateCheckState) => void): Promise<void> {
+  setUpdateState("checking");
+  const check = await settlePromise(() => Updates.checkForUpdateAsync());
+  if (check._tag === "Failure") {
+    reportUpdateFailure(check, "Could not check for updates.");
+    setUpdateState("idle");
+    return;
+  }
+  // A rollback directive (`eas update:rollback`) arrives as isAvailable: false
+  // with isRollBackToEmbedded: true — there is nothing newer to install, but the
+  // running OTA still has to be dropped for the embedded bundle.
+  if (!check.value.isAvailable && !check.value.isRollBackToEmbedded) {
+    setUpdateState("current");
+    return;
+  }
+
+  setUpdateState("downloading");
+  const fetched = await settlePromise(() => Updates.fetchUpdateAsync());
+  if (fetched._tag === "Failure") {
+    reportUpdateFailure(fetched, "Could not download the update.");
+    setUpdateState("idle");
+    return;
+  }
+  // isNew is always false for a rollback, so it can't be the sole gate here either.
+  if (!fetched.value.isNew && !fetched.value.isRollBackToEmbedded) {
+    setUpdateState("current");
+    return;
+  }
+
+  setUpdateState("restarting");
+  // reloadAsync never resolves on success — the JS context is torn down — so
+  // reaching the failure branch below is the only way this returns.
+  const reloaded = await settlePromise(() => Updates.reloadAsync());
+  if (reloaded._tag === "Failure") {
+    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.");
+    setUpdateState("idle");
+  }
+}
+
+function reportUpdateFailure(result: AtomCommandResult<unknown, unknown>, fallback: string): void {
+  reportAtomCommandResult(result, { label: "app update check" });
+  if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+  const error = squashAtomCommandFailure(result);
+  Alert.alert("Update failed", error instanceof Error ? error.message : fallback);
 }
 
 function capitalize(value: string): string {

@@ -13,7 +13,10 @@ export const extractValue = (v: string | Redacted.Redacted<string>): string =>
   typeof v === "string" ? v : Redacted.value(v);
 
 export const withKvsRegion = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.provideService(AwsRegion, KVS_REGION as any));
+  // The distilled Region service value is `Effect<RegionName>`, not a raw
+  // string — providing a bare string makes the client `yield*` a string and
+  // crash. Wrap in Effect.succeed (same as ACM/ECRPublic/WAFv2/GlobalAccelerator).
+  effect.pipe(Effect.provideService(AwsRegion, Effect.succeed(KVS_REGION)));
 
 export const withKvsRegionFn =
   <Args extends any[], A, E, R>(
@@ -27,12 +30,16 @@ const isKvsNotReady = (error: unknown) => {
   return tag === "ResourceNotFoundException" || tag === "ConflictException";
 };
 
-const cappedKvsRetrySchedule = Schedule.exponential("100 millis").pipe(
-  Schedule.both(Schedule.recurs(24)),
-  Schedule.map(([duration]) =>
-    Duration.isGreaterThan(duration, Duration.seconds(2))
-      ? Duration.seconds(2)
-      : duration,
+const cappedKvsRetrySchedule = Schedule.max([
+  Schedule.exponential("100 millis"),
+  Schedule.recurs(24),
+]).pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(
+      Duration.isGreaterThan(duration, Duration.seconds(2))
+        ? Duration.seconds(2)
+        : duration,
+    ),
   ),
 );
 
