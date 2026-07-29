@@ -4,6 +4,8 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import {
@@ -90,6 +92,11 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
+import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
+import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
+import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -106,6 +113,10 @@ import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale"
 // already closes the websocket gracefully. Do not add an artificial drain before
 // those finalizers get a chance to run.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
+const ResourceAttributionLayerLive = ResourceAttribution.layer;
+const ApplicationObservabilityLive = ObservabilityLive.pipe(
+  Layer.provideMerge(ResourceAttributionLayerLive),
+);
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -117,6 +128,35 @@ const PtyAdapterLive = Layer.unwrap(
       return NodePtyAdapter.layer;
     }
   }),
+);
+
+const ServerSettingsLayerLive = ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer));
+
+const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
+  Layer.provide(ResourceMonitorBinary.layer),
+);
+const DesktopTelemetryReceiverLayerLive = DesktopTelemetryReceiver.layer.pipe(
+  Layer.provideMerge(ServerSettingsLayerLive),
+);
+
+const ResourceTelemetryLayerLive = ResourceTelemetry.layer.pipe(
+  Layer.provideMerge(NativeTelemetryLayerLive),
+  Layer.provideMerge(DesktopTelemetryReceiverLayerLive),
+);
+
+const HostPowerMonitorLayerLive = HostPowerMonitor.layer.pipe(
+  Layer.provide(DesktopTelemetryReceiverLayerLive),
+);
+
+const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
+  Layer.provide(HostPowerMonitorLayerLive),
+  Layer.provideMerge(ServerSettingsLayerLive),
+);
+
+const ResourceDiagnosticsLayerLive = Layer.mergeAll(
+  ResourceTelemetryLayerLive,
+  ProcessDiagnostics.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
+  ProcessResourceMonitor.layer.pipe(Layer.provide(ResourceTelemetryLayerLive)),
 );
 
 const RelayClientLive = Layer.unwrap(
@@ -184,7 +224,7 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 // `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
 // by looking up the default `ProviderInstance` per driver in the instance
 // registry. Adapter construction itself moved inside each driver's
-// `create()`; `ProviderEventLoggersLive` owns the shared native/canonical
+// `create()`; `ProviderEventLoggers.layer` owns the shared native/canonical
 // NDJSON writers and is provided at the outer runtime layer so both
 // `ProviderService` and the per-instance drivers read the same logger pair.
 const ProviderLayerLive = ProviderServiceLive.pipe(
@@ -298,6 +338,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
+  Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
@@ -318,14 +359,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `ProviderService` (canonical stream, written after event normalization).
   // Provided once at the runtime level so every consumer sees the same
   // logger instances.
-  Layer.provideMerge(ProviderEventLoggers.ProviderEventLoggersLive),
+  Layer.provideMerge(ProviderEventLoggers.layer),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-  Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
@@ -345,8 +385,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
-  Layer.provideMerge(ProcessDiagnostics.layer),
-  Layer.provideMerge(ProcessResourceMonitor.layer),
+  Layer.provideMerge(BackgroundLayerLive),
+  Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
@@ -522,7 +562,7 @@ export const makeServerLayer = Layer.unwrap(
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpResponseCompressionLive),
       Layer.provideMerge(HttpServerLive),
-      Layer.provide(ObservabilityLive),
+      Layer.provide(ApplicationObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(VcsProcess.layer),
       Layer.provideMerge(PlatformServicesLive),

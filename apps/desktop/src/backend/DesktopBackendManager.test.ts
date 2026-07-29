@@ -1,14 +1,17 @@
 import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
+  DesktopTelemetryControlMessage,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -21,9 +24,14 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 
 const decodeDesktopBackendBootstrap = Schema.decodeEffect(
   Schema.fromJsonString(DesktopBackendBootstrap),
+);
+const isBackendProcessError = Schema.is(DesktopBackendManager.BackendProcessError);
+const encodeDesktopTelemetryControl = Schema.encodeSync(
+  Schema.fromJsonString(DesktopTelemetryControlMessage),
 );
 
 const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -41,6 +49,8 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     desktopBootstrapToken: "token",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    desktopTelemetryFd: 4,
+    desktopTelemetryControlFd: 5,
   },
   bootstrapDelivery: "fd3",
   extendEnv: true,
@@ -52,14 +62,16 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
 const configWithObservability: DesktopBackendBootstrapValue = {
   ...baseConfig.bootstrap,
   tailscaleServeEnabled: true,
+  desktopTelemetryFd: 4,
   otlpTracesUrl: "http://127.0.0.1:4318/v1/traces",
 };
 
 function makeProcess(options?: {
-  readonly stdout?: Stream.Stream<Uint8Array>;
-  readonly stderr?: Stream.Stream<Uint8Array>;
-  readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly stdout?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
+  readonly stderr?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
+  readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>;
   readonly kill?: ChildProcessSpawner.ChildProcessHandle["kill"];
+  readonly getOutputFd?: ChildProcessSpawner.ChildProcessHandle["getOutputFd"];
 }): ChildProcessSpawner.ChildProcessHandle {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
@@ -71,7 +83,7 @@ function makeProcess(options?: {
     kill: options?.kill ?? (() => Effect.void),
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
+    getOutputFd: options?.getOutputFd ?? (() => Stream.empty),
     unref: Effect.succeed(Effect.void),
   });
 }
@@ -112,7 +124,14 @@ interface MakeInstanceInput {
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
-  readonly configResolve?: Effect.Effect<DesktopBackendManager.DesktopBackendStartConfig>;
+  readonly configResolve?: Effect.Effect<
+    DesktopBackendManager.DesktopBackendStartConfig,
+    PlatformError.PlatformError
+  >;
+  readonly desktopTelemetryStream?: Stream.Stream<Uint8Array>;
+  readonly desktopTelemetryPublisher?: Partial<
+    DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
+  >;
 }
 
 // Helper that constructs a primary backend instance using the factory
@@ -122,8 +141,11 @@ interface MakeInstanceInput {
 // to drive the instance's lifecycle.
 function makeTestInstance(input: MakeInstanceInput) {
   const stubLog: DesktopObservability.DesktopBackendOutputLogShape = {
-    writeSessionBoundary: () => Effect.void,
+    beginSession: () => Effect.void,
     writeOutputChunk: () => Effect.void,
+    persistFailureSnapshot: () => Effect.void,
+    persistFailure: () => Effect.void,
+    discardSession: Effect.void,
     ...input.backendOutputLog,
   };
   const servicesLayer = Layer.mergeAll(
@@ -135,6 +157,16 @@ function makeTestInstance(input: MakeInstanceInput) {
     Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
       forInstance: () => Effect.succeed(stubLog),
     } satisfies DesktopObservability.DesktopBackendOutputLogFactory["Service"]),
+    Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
+      latest: Effect.succeed(Option.none()),
+      changes: Stream.empty,
+      encoded: input.desktopTelemetryStream ?? Stream.empty,
+      handleControl: () => Effect.void,
+      handleControlForSource: (_sourceId, message) =>
+        (input.desktopTelemetryPublisher?.handleControl ?? (() => Effect.void))(message),
+      removeControlSource: () => Effect.void,
+      ...input.desktopTelemetryPublisher,
+    }),
   );
 
   const instance = DesktopBackendManager.makeBackendInstance({
@@ -150,11 +182,12 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
-  it.effect("spawns the backend with fd3 bootstrap JSON and reports HTTP readiness", () =>
+  it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
     Effect.scoped(
       Effect.gen(function* () {
         let spawnedCommand: ChildProcess.Command | undefined;
         let bootstrapJson = "";
+        let telemetryJson = "";
         let readyCount = 0;
         const ready = yield* Deferred.make<void>();
         const exited = yield* Queue.unbounded<void>();
@@ -168,6 +201,10 @@ describe("DesktopBackendManager", () => {
                 const fd3 = command.options.additionalFds?.fd3;
                 if (fd3?.type === "input" && fd3.stream) {
                   bootstrapJson = yield* fd3.stream.pipe(Stream.decodeText(), Stream.mkString);
+                }
+                const fd4 = command.options.additionalFds?.fd4;
+                if (fd4?.type === "input" && fd4.stream) {
+                  telemetryJson = yield* fd4.stream.pipe(Stream.decodeText(), Stream.mkString);
                 }
               }
 
@@ -184,12 +221,14 @@ describe("DesktopBackendManager", () => {
             bootstrap: configWithObservability,
           },
           spawnerLayer,
+          desktopTelemetryStream: Stream.encodeText(
+            Stream.make('{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n'),
+          ),
           onReady: Effect.sync(() => {
             readyCount += 1;
           }).pipe(Effect.andThen(Deferred.succeed(ready, void 0)), Effect.asVoid),
           backendOutputLog: {
-            writeSessionBoundary: ({ phase }) =>
-              phase === "END" ? Queue.offer(exited, void 0).pipe(Effect.asVoid) : Effect.void,
+            persistFailure: () => Queue.offer(exited, void 0).pipe(Effect.asVoid),
           },
         });
 
@@ -210,13 +249,397 @@ describe("DesktopBackendManager", () => {
         assert.equal(spawnedCommand.options.stderr, "pipe");
         assert.equal(spawnedCommand.options.killSignal, "SIGTERM");
         assert.isDefined(spawnedCommand.options.forceKillAfter);
+        assert.equal(spawnedCommand.options.additionalFds?.fd4?.type, "input");
+        assert.equal(spawnedCommand.options.additionalFds?.fd5?.type, "output");
         assert.equal(
           Duration.toMillis(Duration.fromInputUnsafe(spawnedCommand.options.forceKillAfter)),
           2_000,
         );
 
         assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
+        assert.equal(
+          telemetryJson,
+          '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
+        );
       }),
+    ),
+  );
+
+  it.effect("preserves the readiness timeout cause and process context", () =>
+    Effect.gen(function* () {
+      const requested = yield* Deferred.make<HttpClientRequest.HttpClientRequest>();
+      const layer = Layer.merge(
+        TestClock.layer(),
+        httpClientLayer((request) =>
+          Deferred.succeed(requested, request).pipe(Effect.andThen(Effect.never)),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const readiness = yield* DesktopBackendManager.waitForHttpReady({
+          executablePath: baseConfig.executablePath,
+          entryPath: baseConfig.entryPath,
+          cwd: baseConfig.cwd,
+          httpBaseUrl: baseConfig.httpBaseUrl,
+          timeout: Duration.millis(50),
+        }).pipe(Effect.flip, Effect.forkChild);
+
+        const request = yield* Deferred.await(requested);
+        assert.equal(request.url, "http://127.0.0.1:3773/.well-known/t3/environment");
+
+        yield* TestClock.adjust(Duration.millis(50));
+        const error = yield* Fiber.join(readiness);
+
+        assert.instanceOf(error, DesktopBackendManager.BackendReadinessTimeoutError);
+        assert.equal(error.executablePath, "/electron");
+        assert.equal(error.entryPath, "/server/bin.mjs");
+        assert.equal(error.cwd, "/server");
+        assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+        assert.equal(error.readinessUrl.href, "http://127.0.0.1:3773/.well-known/t3/environment");
+        assert.equal(error.timeoutMs, 50);
+        assert.isDefined(error.cause);
+        assert.equal(
+          error.message,
+          "Timed out after 50ms waiting for desktop backend readiness at http://127.0.0.1:3773/.well-known/t3/environment.",
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("reports bootstrap encoding failures with stable process context", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+      );
+      const error = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        bootstrap: {
+          ...baseConfig.bootstrap,
+          port: 0,
+        },
+      }).pipe(
+        Effect.flip,
+        Effect.scoped,
+        Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)),
+      );
+
+      if (error._tag !== "BackendProcessBootstrapEncodeError") {
+        return assert.fail(`Expected bootstrap encode error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.isDefined(error.cause);
+      assert.equal(
+        error.message,
+        "Failed to encode the desktop backend bootstrap payload for /server/bin.mjs.",
+      );
+      assert.isTrue(isBackendProcessError(error));
+    }),
+  );
+
+  it.effect("preserves spawn failures without deriving their message from the cause", () =>
+    Effect.gen(function* () {
+      const spawnCause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "ChildProcessSpawner",
+        method: "spawn",
+        pathOrDescriptor: baseConfig.executablePath,
+        description: "low-level detail that must not become the public message",
+      });
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.fail(spawnCause)),
+      );
+      const error = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+      }).pipe(
+        Effect.flip,
+        Effect.scoped,
+        Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)),
+      );
+
+      if (error._tag !== "BackendProcessSpawnError") {
+        return assert.fail(`Expected backend spawn error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.strictEqual(error.cause, spawnCause);
+      assert.equal(
+        error.message,
+        "Failed to spawn desktop backend entry /server/bin.mjs with /electron.",
+      );
+      assert.notInclude(error.message, spawnCause.message);
+      assert.isTrue(isBackendProcessError(error));
+    }),
+  );
+
+  it.effect("preserves exit-status failures without copying their detail into the message", () =>
+    Effect.gen(function* () {
+      const exitCause = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "ChildProcess",
+        method: "exitCode",
+        description: "exit-status-secret-sentinel",
+      });
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              exitCode: Effect.fail(exitCause),
+            }),
+          ),
+        ),
+      );
+      const error = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+      }).pipe(
+        Effect.flip,
+        Effect.scoped,
+        Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)),
+      );
+
+      if (error._tag !== "BackendProcessExitStatusError") {
+        return assert.fail(`Expected backend exit-status error, received ${error._tag}`);
+      }
+      assert.equal(error.pid, 123);
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.strictEqual(error.cause, exitCause);
+      assert.equal(error.message, "Failed to read the exit status of desktop backend process 123.");
+      assert.notInclude(error.message, "exit-status-secret-sentinel");
+      assert.isTrue(isBackendProcessError(error));
+    }),
+  );
+
+  it.effect("reports output stream failures with process and stream context", () =>
+    Effect.gen(function* () {
+      const outputCause = PlatformError.systemError({
+        _tag: "BadResource",
+        module: "ChildProcess",
+        method: "stdout",
+        description: "output-stream-secret-sentinel",
+      });
+      const reported = yield* Deferred.make<DesktopBackendManager.BackendProcessOutputError>();
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              stdout: Stream.fail(outputCause),
+              exitCode: Deferred.await(reported).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            }),
+          ),
+        ),
+      );
+
+      const exit = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        onOutputFailure: (error) => Deferred.succeed(reported, error).pipe(Effect.asVoid),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)));
+      const error = yield* Deferred.await(reported);
+
+      assert.equal(exit.code.pipe(Option.getOrUndefined), 0);
+      if (error._tag !== "BackendProcessOutputReadError") {
+        return assert.fail(`Expected output read error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.equal(error.pid, 123);
+      assert.equal(error.streamName, "stdout");
+      assert.strictEqual(error.cause, outputCause);
+      assert.equal(error.message, "Failed to read stdout from desktop backend process 123.");
+      assert.notInclude(error.message, "output-stream-secret-sentinel");
+    }),
+  );
+
+  it.effect("reports output handler failures separately from stream read failures", () =>
+    Effect.gen(function* () {
+      const chunk = new TextEncoder().encode("backend output");
+      const nextChunk = new TextEncoder().encode("still draining");
+      const outputCause = new Error("output-handler-secret-sentinel");
+      const reported = yield* Deferred.make<DesktopBackendManager.BackendProcessOutputError>();
+      const drained = yield* Deferred.make<void>();
+      let outputCount = 0;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              stdout: Stream.make(chunk, nextChunk),
+              exitCode: Deferred.await(drained).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            }),
+          ),
+        ),
+      );
+
+      const exit = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        onOutput: () => {
+          outputCount += 1;
+          return outputCount === 1
+            ? Effect.fail(outputCause)
+            : Deferred.succeed(drained, void 0).pipe(Effect.asVoid);
+        },
+        onOutputFailure: (error) => Deferred.succeed(reported, error).pipe(Effect.asVoid),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)));
+      const error = yield* Deferred.await(reported);
+
+      assert.equal(exit.code.pipe(Option.getOrUndefined), 0);
+      if (error._tag !== "BackendProcessOutputHandlingError") {
+        return assert.fail(`Expected output handling error, received ${error._tag}`);
+      }
+      assert.equal(error.executablePath, "/electron");
+      assert.equal(error.entryPath, "/server/bin.mjs");
+      assert.equal(error.cwd, "/server");
+      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
+      assert.equal(error.pid, 123);
+      assert.equal(error.streamName, "stdout");
+      assert.equal(error.chunkByteLength, chunk.byteLength);
+      assert.strictEqual(error.cause, outputCause);
+      assert.equal(
+        error.message,
+        `Failed to handle ${chunk.byteLength} bytes from stdout of desktop backend process 123.`,
+      );
+      assert.notInclude(error.message, "output-handler-secret-sentinel");
+      assert.equal(outputCount, 2);
+    }),
+  );
+
+  it.effect("reports child exit before waiting for trailing output to drain", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const exitObserved = yield* Deferred.make<void>();
+        const finishOutputDrain = yield* Deferred.make<void>();
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                stdout: Stream.fromEffect(
+                  Deferred.await(finishOutputDrain).pipe(
+                    Effect.as(new TextEncoder().encode("trailing output\n")),
+                  ),
+                ),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+              }),
+            ),
+          ),
+        );
+
+        const runFiber = yield* DesktopBackendManager.runBackendProcess({
+          ...baseConfig,
+          desktopTelemetryStream: Stream.empty,
+          onExitObserved: () => Deferred.succeed(exitObserved, void 0).pipe(Effect.asVoid),
+        }).pipe(
+          Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)),
+          Effect.forkChild,
+        );
+
+        yield* Deferred.await(exitObserved);
+        assert.isUndefined(runFiber.pollUnsafe());
+
+        yield* Deferred.succeed(finishOutputDrain, void 0);
+        assert.equal((yield* Fiber.join(runFiber)).code.pipe(Option.getOrUndefined), 1);
+      }),
+    ),
+  );
+
+  it.effect("continues routing desktop telemetry control messages after an invalid line", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handled = yield* Deferred.make<boolean>();
+        const controlMessage = encodeDesktopTelemetryControl({
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: true,
+        });
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                getOutputFd: (fd) =>
+                  fd === 5
+                    ? Stream.encodeText(Stream.make(`not-json\n${controlMessage}\n`))
+                    : Stream.empty,
+                exitCode: Deferred.await(handled).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              }),
+            ),
+          ),
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          desktopTelemetryPublisher: {
+            handleControl: (message) =>
+              message.type === "setDiagnosticsDemand"
+                ? Deferred.succeed(handled, message.enabled).pipe(Effect.asVoid)
+                : Effect.void,
+          },
+        });
+
+        yield* instance.start;
+        assert.isTrue(yield* Deferred.await(handled));
+      }),
+    ),
+  );
+
+  it.effect("drains trailing child output before persisting an unexpected exit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const persistedOutput = yield* Deferred.make<ReadonlyArray<string>>();
+        const outputDrainStarted = yield* Deferred.make<void>();
+        const outputChunks = yield* Ref.make<Array<string>>([]);
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                stdout: Stream.fromEffect(
+                  Deferred.succeed(outputDrainStarted, void 0).pipe(
+                    Effect.andThen(Effect.sleep(Duration.seconds(1))),
+                    Effect.as(new TextEncoder().encode("trailing output\n")),
+                  ),
+                ),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+              }),
+            ),
+          ),
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+          backendOutputLog: {
+            writeOutputChunk: (_streamName, chunk) =>
+              Ref.update(outputChunks, (current) => [...current, new TextDecoder().decode(chunk)]),
+            persistFailure: () =>
+              Ref.get(outputChunks).pipe(
+                Effect.flatMap((chunks) => Deferred.succeed(persistedOutput, chunks)),
+                Effect.asVoid,
+              ),
+          },
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(outputDrainStarted);
+        yield* TestClock.adjust(Duration.seconds(1));
+
+        assert.deepEqual(yield* Deferred.await(persistedOutput), ["trailing output\n"]);
+      }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
 
@@ -256,8 +679,7 @@ describe("DesktopBackendManager", () => {
             readyCount += 1;
           }).pipe(Effect.andThen(Deferred.succeed(ready, void 0)), Effect.asVoid),
           backendOutputLog: {
-            writeSessionBoundary: ({ phase }) =>
-              phase === "END" ? Queue.offer(exited, void 0).pipe(Effect.asVoid) : Effect.void,
+            persistFailure: () => Queue.offer(exited, void 0).pipe(Effect.asVoid),
           },
         });
 
@@ -285,9 +707,15 @@ describe("DesktopBackendManager", () => {
         let startCount = 0;
         let closedCount = 0;
         const closed = yield* Deferred.make<void>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const finishTeardown = yield* Deferred.make<void>();
         const startedPids = yield* Queue.unbounded<number>();
         const ready = yield* Deferred.make<void>();
         const backendReadyFlag = yield* Ref.make(false);
+        let shutdownCount = 0;
+        let persistedFailureCount = 0;
+        let discardedSessionCount = 0;
+        let removedTelemetrySources = 0;
 
         const spawnerLayer = Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
@@ -296,9 +724,16 @@ describe("DesktopBackendManager", () => {
               const scope = yield* Scope.Scope;
               startCount += 1;
               yield* Queue.offer(startedPids, 123);
-              const close = Effect.sync(() => {
-                closedCount += 1;
-              }).pipe(Effect.andThen(Deferred.succeed(closed, void 0)), Effect.asVoid);
+              const close = Deferred.succeed(teardownStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(finishTeardown)),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    closedCount += 1;
+                  }),
+                ),
+                Effect.andThen(Deferred.succeed(closed, void 0)),
+                Effect.asVoid,
+              );
 
               yield* Scope.addFinalizer(scope, close);
 
@@ -316,7 +751,28 @@ describe("DesktopBackendManager", () => {
             Effect.andThen(Deferred.succeed(ready, void 0)),
             Effect.asVoid,
           ),
-          onShutdown: Ref.set(backendReadyFlag, false),
+          onShutdown: Ref.set(backendReadyFlag, false).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                shutdownCount += 1;
+              }),
+            ),
+          ),
+          backendOutputLog: {
+            persistFailure: () =>
+              Effect.sync(() => {
+                persistedFailureCount += 1;
+              }),
+            discardSession: Effect.sync(() => {
+              discardedSessionCount += 1;
+            }),
+          },
+          desktopTelemetryPublisher: {
+            removeControlSource: () =>
+              Effect.sync(() => {
+                removedTelemetrySources += 1;
+              }),
+          },
         });
         assert.isTrue(Option.isNone(yield* instance.currentConfig));
 
@@ -330,16 +786,232 @@ describe("DesktopBackendManager", () => {
         assert.equal(runningSnapshot.ready, true);
         assert.deepEqual(runningSnapshot.activePid, Option.some(123));
 
-        yield* instance.stop();
+        const stopFiber = yield* instance.stop().pipe(Effect.forkChild);
+        yield* Deferred.await(teardownStarted).pipe(Effect.timeout("1 second"));
+        assert.isFalse(yield* Ref.get(backendReadyFlag));
+        assert.equal(shutdownCount, 1);
+        yield* Deferred.succeed(finishTeardown, undefined);
+        yield* Fiber.join(stopFiber).pipe(Effect.timeout("1 second"));
         assert.equal(startCount, 1);
         assert.equal(closedCount, 1);
+        assert.equal(persistedFailureCount, 0);
+        assert.equal(discardedSessionCount, 1);
+        assert.equal(removedTelemetrySources, 1);
 
         const stoppedSnapshot = yield* instance.snapshot;
         assert.isFalse(yield* Ref.get(backendReadyFlag));
+        assert.equal(shutdownCount, 1);
         assert.equal(stoppedSnapshot.desiredRunning, false);
         assert.equal(stoppedSnapshot.ready, false);
         assert.equal(Option.isNone(stoppedSnapshot.activePid), true);
       }),
+    ),
+  );
+
+  it.effect("restarts when start is requested during stop teardown", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const finishTeardown = yield* Deferred.make<void>();
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              const closed = yield* Deferred.make<void>();
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              if (startCount === 1) {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishTeardown)),
+                    Effect.andThen(Deferred.succeed(closed, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+              } else {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+                );
+              }
+              return makeProcess({
+                exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        const stopFiber = yield* instance.stop().pipe(Effect.forkChild);
+        yield* Deferred.await(teardownStarted).pipe(Effect.timeout("1 second"));
+        yield* instance.start;
+        assert.equal((yield* instance.snapshot).desiredRunning, true);
+
+        yield* Deferred.succeed(finishTeardown, undefined);
+        yield* Fiber.join(stopFiber).pipe(Effect.timeout("1 second"));
+        yield* TestClock.adjust(Duration.millis(500));
+
+        assert.equal(yield* Queue.take(starts).pipe(Effect.timeout("1 second")), 2);
+        const restarted = yield* instance.snapshot;
+        assert.equal(restarted.desiredRunning, true);
+        assert.deepEqual(restarted.activePid, Option.some(123));
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("retries config resolution after a start request during stop teardown", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const finishTeardown = yield* Deferred.make<void>();
+        const configAttempts = yield* Ref.make(0);
+        let startCount = 0;
+
+        const configFailure = PlatformError.systemError({
+          _tag: "Unknown",
+          module: "DesktopBackendManager",
+          method: "configResolve",
+          description: "transient configuration failure",
+        });
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              const closed = yield* Deferred.make<void>();
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              if (startCount === 1) {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishTeardown)),
+                    Effect.andThen(Deferred.succeed(closed, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+              } else {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+                );
+              }
+              return makeProcess({
+                exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+        const configResolve = Ref.updateAndGet(configAttempts, (attempt) => attempt + 1).pipe(
+          Effect.flatMap((attempt) =>
+            attempt === 2 ? Effect.fail(configFailure) : Effect.succeed(baseConfig),
+          ),
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          configResolve,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        const stopFiber = yield* instance.stop().pipe(Effect.forkChild);
+        yield* Deferred.await(teardownStarted).pipe(Effect.timeout("1 second"));
+        yield* instance.start;
+        yield* Deferred.succeed(finishTeardown, undefined);
+        yield* Fiber.join(stopFiber).pipe(Effect.timeout("1 second"));
+
+        const pendingRestart = yield* instance.snapshot;
+        assert.equal(pendingRestart.desiredRunning, true);
+        assert.equal(pendingRestart.restartScheduled, true);
+
+        yield* TestClock.adjust(Duration.seconds(2));
+
+        assert.equal(yield* Queue.take(starts).pipe(Effect.timeout("1 second")), 2);
+        assert.equal(yield* Ref.get(configAttempts), 3);
+        assert.equal((yield* instance.snapshot).desiredRunning, true);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("keeps a timed-out run active until its process exits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const starts = yield* Queue.unbounded<number>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const finishTeardown = yield* Deferred.make<void>();
+        let startCount = 0;
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              const closed = yield* Deferred.make<void>();
+              startCount += 1;
+              yield* Queue.offer(starts, startCount);
+              if (startCount === 1) {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(finishTeardown)),
+                    Effect.andThen(Deferred.succeed(closed, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+              } else {
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+                );
+              }
+              return makeProcess({
+                exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+        });
+
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+
+        const stopFiber = yield* instance
+          .stop({ timeout: Duration.millis(100) })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(teardownStarted).pipe(Effect.timeout("1 second"));
+        yield* instance.start;
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Fiber.join(stopFiber).pipe(Effect.timeout("1 second"));
+
+        assert.equal(startCount, 1);
+        const timedOut = yield* instance.snapshot;
+        assert.equal(timedOut.desiredRunning, true);
+        assert.deepEqual(timedOut.activePid, Option.some(123));
+
+        yield* Deferred.succeed(finishTeardown, undefined);
+        yield* TestClock.adjust(Duration.millis(500));
+
+        assert.equal(yield* Queue.take(starts).pipe(Effect.timeout("1 second")), 2);
+      }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
 
@@ -383,6 +1055,7 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const starts = yield* Queue.unbounded<number>();
+        const failures = yield* Queue.unbounded<string>();
         let startCount = 0;
 
         const spawnerLayer = Layer.succeed(
@@ -402,11 +1075,15 @@ describe("DesktopBackendManager", () => {
         const instance = yield* makeTestInstance({
           spawnerLayer,
           httpClientLayer: httpClientLayer(() => Effect.never),
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
         });
 
         yield* instance.start;
 
         assert.equal(yield* Queue.take(starts), 1);
+        assert.equal(yield* Queue.take(failures), "pid=123 code=1");
 
         yield* TestClock.adjust(Duration.millis(499));
         assert.equal(yield* Queue.size(starts), 0);
@@ -657,6 +1334,13 @@ describe("DesktopBackendManager", () => {
         yield* instance.start;
 
         assert.equal(yield* Queue.take(starts), 1);
+        let restartScheduled = false;
+        while (!restartScheduled) {
+          restartScheduled = (yield* instance.snapshot).restartScheduled;
+          if (!restartScheduled) {
+            yield* Effect.yieldNow;
+          }
+        }
 
         yield* instance.start;
         assert.equal(yield* Queue.take(starts), 2);
