@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -12,8 +13,10 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -23,15 +26,18 @@ import {
   archivedThreadActionKey,
   archivedThreadSearchScore,
   archivedThreadTimestampValue,
+  backgroundActivitySharedPolicySettings,
   buildArchivedThreadGroups,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  hasChangedBackgroundActivitySettings,
   hasArchivedThreads,
   isProjectGroupingEnabled,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
   projectGroupingModeFromToggle,
   resolveArchivedProjectEnvironmentLabel,
+  resolveBackgroundActivityProfileOption,
   releaseArchivedThreadActionLock,
   runArchivedProjectThreadActions,
   tryAcquireArchivedThreadActionLock,
@@ -605,6 +611,109 @@ describe("archivedProjectBulkFailureDescription", () => {
     expect(
       archivedProjectBulkFailureDescription([AsyncResult.failure(Cause.interrupt(1))], 2),
     ).toBe("1 succeeded, 0 failed, 1 interrupted.");
+  });
+});
+
+describe("background activity settings restore", () => {
+  it("detects legacy interval values even when the structured setting is at its default", () => {
+    expect(
+      hasChangedBackgroundActivitySettings({
+        backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+        backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+        automaticGitFetchInterval: Duration.seconds(45),
+        providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
+      }),
+    ).toBe(true);
+    expect(
+      hasChangedBackgroundActivitySettings({
+        backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+        backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+        automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+        providerHealthRefreshInterval: Duration.minutes(7),
+      }),
+    ).toBe(true);
+    expect(hasChangedBackgroundActivitySettings(DEFAULT_UNIFIED_SETTINGS)).toBe(false);
+  });
+
+  it("detects a legacy profile override so restoring defaults clears it", () => {
+    expect(
+      hasChangedBackgroundActivitySettings({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        backgroundActivityProfile: "performance",
+      }),
+    ).toBe(true);
+  });
+
+  it("shows the effective legacy preset and marks custom legacy intervals as advanced", () => {
+    const performance = getBackgroundActivityPresetSettings("performance");
+    expect(
+      resolveBackgroundActivityProfileOption({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+        backgroundActivityProfile: "performance",
+        automaticGitFetchInterval: performance.automaticGitFetchInterval,
+        providerHealthRefreshInterval: performance.providerHealthRefreshInterval,
+      }),
+    ).toBe("performance");
+
+    expect(
+      resolveBackgroundActivityProfileOption({
+        ...DEFAULT_UNIFIED_SETTINGS,
+        backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+        backgroundActivityProfile: "performance",
+        automaticGitFetchInterval: Duration.seconds(45),
+        providerHealthRefreshInterval: Duration.minutes(7),
+      }),
+    ).toBe("advanced");
+  });
+
+  it("preserves advanced overrides when the shared policy changes", () => {
+    const automaticGitFetchInterval = Duration.seconds(42);
+    expect(
+      backgroundActivitySharedPolicySettings(
+        {
+          ...DEFAULT_UNIFIED_SETTINGS,
+          backgroundActivity: {
+            schemaVersion: 1,
+            profile: "custom",
+            baseProfile: "balanced",
+            overrides: {
+              automaticGitFetchInterval,
+              pauseWhenOnBattery: true,
+            },
+          },
+        },
+        "performance",
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "performance",
+      overrides: {
+        automaticGitFetchInterval,
+        pauseWhenOnBattery: true,
+      },
+    });
+  });
+
+  it("materializes legacy advanced overrides before changing the shared policy", () => {
+    const automaticGitFetchInterval = Duration.seconds(42);
+    expect(
+      backgroundActivitySharedPolicySettings(
+        {
+          ...DEFAULT_UNIFIED_SETTINGS,
+          automaticGitFetchInterval,
+        },
+        "battery-saver",
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      profile: "custom",
+      baseProfile: "battery-saver",
+      overrides: {
+        automaticGitFetchInterval,
+      },
+    });
   });
 });
 
