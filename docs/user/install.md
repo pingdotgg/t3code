@@ -46,13 +46,13 @@ yay -S t3code-bin
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                        | Default binary | Log in with          |
-| ---------- | ---------------------------------------------------------- | -------------- | -------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)       | `codex`        | `codex login`        |
-| Claude     | [Claude Code](https://claude.com/product/claude-code)      | `claude`       | `claude auth login`  |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                       | `cursor-agent` | `agent login`        |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                         | `grok`         | `grok login`         |
-| OpenCode   | [OpenCode](https://opencode.ai)                            | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                   | Default binary | Log in with           |
+| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
+| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
+| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
