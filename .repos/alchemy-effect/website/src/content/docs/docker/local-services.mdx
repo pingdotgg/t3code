@@ -1,0 +1,152 @@
+---
+title: "Local services: Postgres with containers, networks, and volumes"
+description: Run a local Postgres for development as alchemy resources — a pinned image, a named network and volume, a Redacted password, and a healthchecked container that converges on every deploy.
+---
+
+A Docker `Container` runs an image; a `Network` gives containers a
+stable DNS name to reach each other; a `Volume` keeps data alive
+across container replacements; a `RemoteImage` pins exactly which
+image you run. In alchemy all four are resources in your Stack, so
+your local dev dependencies get the same treatment as your cloud
+infrastructure: a reviewable diff on every change, one deploy that
+converges Docker to the declared state, and one destroy that tears
+it all down.
+
+You'll need a Docker daemon reachable from your CLI and the provider
+registered — see [Setup](/docker/setup) and the
+[Docker overview](/docker). The full program below is the checked-in
+[`examples/docker-postgres`](https://github.com/alchemy-run/alchemy/tree/main/examples/docker-postgres).
+
+## Pin the image
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as Docker from "alchemy/Docker";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "DockerPostgresExample",
+  {
+    providers: Layer.merge(Docker.providers(), Alchemy.RandomProvider()),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const image = yield* Docker.RemoteImage("postgres-image", {
+      name: "postgres",
+      tag: "18-alpine",
+      alwaysPull: false,
+    });
+    // ...
+  }),
+);
+```
+
+`RemoteImage` pulls `postgres:18-alpine` through your Docker CLI,
+and `alwaysPull: false` pins it — once the image is present locally,
+subsequent deploys diff to a no-op instead of re-pulling on every
+run. The Stack uses `Alchemy.localState()` because there's no cloud
+account behind these resources, and merges in
+`Alchemy.RandomProvider()` for the generated password below.
+
+## A network and a volume
+
+```typescript
+const network = yield* Docker.Network("app-network");
+const data = yield* Docker.Volume("postgres-data");
+```
+
+Neither needs any props — the engine generates unique physical names
+from the app, stage, and logical ID. Note that changing a `Network`
+or `Volume` prop (driver, labels, IPv6) is a replacement: the old
+one is deleted and a new one created, so treat a Volume's props as
+fixed once it holds data you care about.
+
+## A Redacted password
+
+```typescript
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
+
+const configuredPassword = yield* Config.redacted("POSTGRES_PASSWORD").pipe(
+  Config.option,
+);
+const password = yield* Option.match(configuredPassword, {
+  onSome: Effect.succeed,
+  onNone: () => Alchemy.makeRandom("PostgresPassword", { bytes: 16 }),
+});
+```
+
+If `POSTGRES_PASSWORD` is set in the environment it's used as-is;
+otherwise `Alchemy.makeRandom` generates a stable random secret
+(this is what `RandomProvider` in the Stack config is for). Either
+way the value is `Redacted`, and `Container` passes environment
+values to the daemon via the process environment — only the keys
+appear on the `docker` argv, so the secret never lands in shell
+history or a process listing.
+
+## The container
+
+```typescript
+const postgres = yield* Docker.Container("postgres", {
+  name: "alchemy-example-postgres",
+  image,
+  environment: {
+    POSTGRES_DB: "app",
+    POSTGRES_USER: "alchemy",
+    POSTGRES_PASSWORD: password,
+  },
+  ports: [{ external: 15432, internal: 5432 }],
+  volumes: [
+    { hostPath: data.name, containerPath: "/var/lib/postgresql/data" },
+  ],
+  networks: [{ name: network.name, aliases: ["postgres"] }],
+  healthcheck: {
+    cmd: ["CMD-SHELL", "pg_isready -U alchemy -d app"],
+    interval: "5 seconds",
+    timeout: "5 seconds",
+    retries: 10,
+  },
+  start: true,
+});
+```
+
+`image` accepts the `RemoteImage` resource directly — no manual ref
+plumbing. A `hostPath` set to a volume's name mounts the named
+volume rather than a host directory, the `postgres` network alias
+gives other containers on `app-network` a stable DNS name, the
+healthcheck intervals take Effect `Duration` strings like
+`"5 seconds"`, and `start: true` actually runs the container
+(the default creates it stopped).
+
+## Read the bound ports
+
+```typescript
+// as Stack outputs:
+return { container: postgres.name, hostPort: postgres.ports };
+
+// or live, from any Effect with the Docker provider:
+const runtime = yield* Docker.inspectContainer("alchemy-example-postgres");
+```
+
+The container's `ports` attribute is a record keyed by container
+port and protocol — here `"5432/tcp"` maps to `15432` — which is
+what your app's connection string needs; `Docker.inspectContainer`
+reads the same normalized attributes fresh from the daemon for any
+container by name, bound host ports included.
+
+## Where next
+
+- [Build & push an image](/docker/build-and-push) — build your own
+  image from a Dockerfile and push it to a registry.
+- [Docker overview](/docker) — all Docker resources at a glance,
+  including how adoption of pre-existing containers, networks, and
+  volumes is gated behind `adopt`.
+
+Reference:
+
+- [Container API reference](/providers/docker/container)
+- [RemoteImage API reference](/providers/docker/remoteimage)
+- [Image API reference](/providers/docker/image)
+- [Network API reference](/providers/docker/network)
+- [Volume API reference](/providers/docker/volume)

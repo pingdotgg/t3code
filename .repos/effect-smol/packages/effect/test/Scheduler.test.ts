@@ -1,8 +1,24 @@
-import { assert, describe, it } from "@effect/vitest"
-import { Effect } from "effect"
+import { assert, describe, it, vi } from "@effect/vitest"
+import { Effect, Exit } from "effect"
 import * as Scheduler from "effect/Scheduler"
 
 describe("Scheduler", () => {
+  it("runSyncExit does not create a dispatcher for synchronous effects", () => {
+    const makeDispatcher = vi.spyOn(Scheduler.MixedScheduler.prototype, "makeDispatcher")
+    const exit = Effect.runSyncExit(Effect.sync(() => 1))
+    const calls = makeDispatcher.mock.calls.length
+    makeDispatcher.mockRestore()
+
+    assert.deepStrictEqual(exit, Exit.succeed(1))
+    assert.strictEqual(calls, 0)
+  })
+
+  it("runSyncExit flushes dispatcher work after yielding", () => {
+    const exit = Effect.runSyncExit(Effect.as(Effect.yieldNow, 1))
+
+    assert.deepStrictEqual(exit, Exit.succeed(1))
+  })
+
   it.effect("MixedScheduler orders by priority (sync)", () =>
     Effect.sync(() => {
       const scheduler = new Scheduler.MixedScheduler("sync").makeDispatcher()

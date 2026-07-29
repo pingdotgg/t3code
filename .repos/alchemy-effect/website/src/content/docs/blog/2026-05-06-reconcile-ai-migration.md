@@ -10,7 +10,7 @@ excerpt: One prompt, fifty resources, run in parallel. Tests were the ground tru
 This post is about the part that surprised us: how
 unreasonably fast it was to actually do the migration.
 
-Alchemy has 50+ provider files in [`packages/alchemy/src/`](https://github.com/alchemy-run/alchemy-effect/tree/main/packages/alchemy/src).
+Alchemy has 50+ provider files in [`packages/alchemy/src/`](https://github.com/alchemy-run/alchemy/tree/main/packages/alchemy/src).
 The old shape was two functions per resource — `create` and
 `update` — both written defensively against each other's
 edge cases. The new shape is one function. Rewriting every
@@ -60,8 +60,8 @@ or what the other one already did. There is no other one.
 ## Tests were the ground truth
 
 Every provider already had test coverage:
-[`test/AWS/S3/Bucket.test.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/test/AWS/S3/Bucket.test.ts),
-[`test/AWS/DynamoDB/Table.test.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/test/AWS/DynamoDB/Table.test.ts),
+[`test/AWS/S3/Bucket.test.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/test/AWS/S3/Bucket.test.ts),
+[`test/AWS/DynamoDB/Table.test.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/test/AWS/DynamoDB/Table.test.ts),
 and so on. These weren't unit tests with mocked SDKs — they
 hit the real cloud, run through the full apply path, and
 assert on the actual state of the resource.
@@ -87,8 +87,8 @@ as an executable spec for the gap.
 ## The engine got the same treatment
 
 The provider-side change was the visible half. The other
-half was inside the engine — [`Plan.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Plan.ts)
-and [`Apply.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/src/Apply.ts) —
+half was inside the engine — [`Plan.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Plan.ts)
+and [`Apply.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Apply.ts) —
 which decide *which* provider function to call and route
 the lifecycle.
 
@@ -141,8 +141,8 @@ your head.
 ## Where to go next
 
 - [Part 1 — One reconcile, no create vs. update](/blog/2026-05-04-reconcile)
-- [PR #179](https://github.com/alchemy-run/alchemy-effect/issues/179)
+- [PR #179](https://github.com/alchemy-run/alchemy/issues/179)
   — the migration in one diff.
 - Per-resource test conventions:
-  [`test/AWS/DynamoDB/Table.test.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/test/AWS/DynamoDB/Table.test.ts),
-  [`test/Cloudflare/Workers/Worker.test.ts`](https://github.com/alchemy-run/alchemy-effect/blob/main/packages/alchemy/test/Cloudflare/Workers/Worker.test.ts).
+  [`test/AWS/DynamoDB/Table.test.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/test/AWS/DynamoDB/Table.test.ts),
+  [`test/Cloudflare/Workers/Worker.test.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/test/Cloudflare/Workers/Worker.test.ts).

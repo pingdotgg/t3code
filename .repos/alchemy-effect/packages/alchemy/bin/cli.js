@@ -89,7 +89,15 @@ process.on("uncaughtException", (error) => {
 
 // Substring match (not regex) — bun may wrap the line in ANSI color codes
 // when stderr is piped to a TTY-aware parent, so anchored regex is fragile.
+//
+// "directory mismatch for directory" is bun's known-benign internal warning
+// triggered by --tsconfig-override (oven-sh/bun#25730): the resolver openat()s
+// the tsconfig basename against a cached dir fd that isn't its parent, falls
+// back to an absolute open, and logs. Bun's own tsconfig-override tests
+// tolerate the same line. Only our dev path passes --tsconfig-override, which
+// is why published installs never see it.
 foregroundChild(runtime, args, {
   stderrFilter: (line) =>
-    !line.includes("is not in the project directory and will not be watched"),
+    !line.includes("is not in the project directory and will not be watched") &&
+    !line.includes("directory mismatch for directory"),
 });

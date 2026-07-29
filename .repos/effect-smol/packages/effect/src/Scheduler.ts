@@ -1,22 +1,11 @@
 /**
- * The `Scheduler` module defines the runtime scheduling services used by
- * Effect fibers. A scheduler decides how runnable tasks are enqueued, when they
- * are dispatched, and whether a fiber should yield after consuming its
- * operation budget.
+ * Controls how runnable Effect fiber tasks are dispatched.
  *
- * **Common tasks**
- *
- * - Use {@link Scheduler} to provide a custom runtime scheduler
- * - Use {@link MixedScheduler} for the default priority-aware scheduler
- * - Use {@link MaxOpsBeforeYield} to tune fairness for CPU-bound fibers
- * - Use {@link PreventSchedulerYield} only when a runtime should bypass yield checks
- *
- * **Gotchas**
- *
- * - Scheduler priorities affect the order of queued runtime tasks, not the
- *   semantic result of an `Effect`
- * - Disabling scheduler yields can improve throughput for controlled workloads,
- *   but it can also let long-running fibers monopolize the JavaScript thread
+ * A scheduler decides how tasks are queued, when queued tasks run, and when a
+ * fiber should pause so other work can continue. This module includes the
+ * scheduler service reference, the default `MixedScheduler`, dispatcher types
+ * for queued tasks, and references for tuning or disabling automatic scheduler
+ * yields.
  *
  * @since 2.0.0
  */
@@ -75,7 +64,8 @@ export interface SchedulerDispatcher {
  *
  * **When to use**
  *
- * Use to provide or override the scheduler used by the Effect runtime.
+ * Use when you need to replace scheduling behavior globally in tests or runtime
+ * setup, such as forcing deterministic task dispatch.
  *
  * **Details**
  *
@@ -179,7 +169,8 @@ export class MixedScheduler implements Scheduler {
    *
    * **When to use**
    *
-   * Use to create a dispatcher for enqueuing work through this scheduler.
+   * Use when you need a standalone dispatcher from a scheduler instance, for
+   * example in tests that enqueue tasks and then flush them deterministically.
    *
    * @since 4.0.0
    */
@@ -250,8 +241,8 @@ class MixedSchedulerDispatcher implements SchedulerDispatcher {
  *
  * **When to use**
  *
- * Use to tune scheduler fairness for CPU-bound fibers by changing the operation
- * budget that triggers a scheduler yield.
+ * Use to tune scheduler fairness for CPU-bound fibers by changing the scheduler
+ * operation budget that triggers a yield.
  *
  * **Details**
  *

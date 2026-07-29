@@ -326,21 +326,29 @@ jobs:
             platform: mac
             target: dmg
             arch: arm64
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
           - label: macOS x64
             runner: blacksmith-12vcpu-macos-26
             platform: mac
             target: dmg
             arch: x64
+            rust_target: x86_64-apple-darwin
+            resource_key: darwin-x64
           - label: Linux x64
             runner: blacksmith-32vcpu-ubuntu-2404
             platform: linux
             target: AppImage
             arch: x64
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
           - label: Windows x64
             runner: blacksmith-32vcpu-windows-2025
             platform: win
             target: nsis
             arch: x64
+            rust_target: x86_64-pc-windows-msvc
+            resource_key: win32-x64
           # - label: Windows arm64
           #   runner: windows-11-arm
           #   platform: win
@@ -359,6 +367,11 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
@@ -598,11 +611,31 @@ jobs:
           #   done
           # fi
 
+      - name: Collect resource monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_name="t3-resource-monitor"
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            binary_name="${binary_name}.exe"
+          fi
+          source_path="native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}"
+          target_dir="resource-monitor-publish/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "$source_path" "$target_dir/$binary_name"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
+          if-no-files-found: error
+
+      - name: Upload resource monitor
+        uses: actions/upload-artifact@v7
+        with:
+          name: resource-monitor-${{ matrix.resource_key }}
+          path: resource-monitor-publish/${{ matrix.resource_key }}/*
           if-no-files-found: error
 
   publish_cli:
@@ -658,6 +691,24 @@ jobs:
 
       - name: Build CLI package
         run: vp run --filter t3 build
+
+      - name: Download resource monitors
+        uses: actions/download-artifact@v8
+        with:
+          pattern: resource-monitor-*
+          path: ${{ runner.temp }}/resource-monitors
+
+      - name: Bundle resource monitors into CLI package
+        shell: bash
+        run: |
+          set -euo pipefail
+          for artifact_dir in "$RUNNER_TEMP"/resource-monitors/resource-monitor-*; do
+            resource_key="${artifact_dir##*/resource-monitor-}"
+            target_dir="apps/server/dist/resource-monitor/${resource_key}"
+            mkdir -p "$target_dir"
+            cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
+            chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
+          done
 
       - name: Publish CLI package
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
@@ -864,6 +915,7 @@ jobs:
           echo "Deploying hosted web app for $channel_name channel."
           deployment_url="$(
             vp dlx vercel@53.1.1 deploy \
+              --archive=tgz \
               --prod \
               --skip-domain \
               --yes \

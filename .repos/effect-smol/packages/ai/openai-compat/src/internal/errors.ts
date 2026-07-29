@@ -22,7 +22,7 @@ export const OpenAiErrorBody = Schema.Struct({
     type: Schema.optional(Schema.NullOr(Schema.String)),
     status: Schema.optional(Schema.NullOr(Schema.String)),
     param: Schema.optional(Schema.NullOr(Schema.String)),
-    code: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number])))
+    code: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Finite])))
   })
 })
 const OpenAiErrorBodyJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Union([

@@ -1,8 +1,9 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
-import * as Test from "@/Test/Vitest";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import * as connectivity from "@distilled.cloud/cloudflare/connectivity";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -17,17 +18,17 @@ const logLevel = Effect.provideService(
 
 test.provider("create, update, delete vpc service", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
     const { tunnel, service } = yield* stack.deploy(
       Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel("VpcTunnel", {
+        const tunnel = yield* Cloudflare.Tunnel.Tunnel("VpcTunnel", {
           ingress: [{ service: "http://localhost:8080" }],
           adopt: true,
         });
-        const service = yield* Cloudflare.VpcService("VpcSvc", {
+        const service = yield* Cloudflare.VpcService.VpcService("VpcSvc", {
           httpPort: 8080,
           host: {
             hostname: "localhost",
@@ -52,16 +53,15 @@ test.provider("create, update, delete vpc service", (stack) =>
       serviceId: service.serviceId,
     });
     expect(fetched.serviceId).toEqual(service.serviceId);
-    // @ts-expect-error
     expect(fetched.httpPort).toEqual(8080);
 
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel("VpcTunnel", {
+        const tunnel = yield* Cloudflare.Tunnel.Tunnel("VpcTunnel", {
           ingress: [{ service: "http://localhost:8080" }],
           adopt: true,
         });
-        return yield* Cloudflare.VpcService("VpcSvc", {
+        return yield* Cloudflare.VpcService.VpcService("VpcSvc", {
           httpPort: 3000,
           httpsPort: 3001,
           host: {
@@ -81,9 +81,7 @@ test.provider("create, update, delete vpc service", (stack) =>
       accountId,
       serviceId: service.serviceId,
     });
-    // @ts-expect-error
     expect(fetchedUpdated.httpPort).toEqual(3000);
-    // @ts-expect-error
     expect(fetchedUpdated.httpsPort).toEqual(3001);
 
     yield* stack.destroy();
@@ -94,17 +92,17 @@ test.provider("create, update, delete vpc service", (stack) =>
 
 test.provider("create vpc service with ipv4 host", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
     const service = yield* stack.deploy(
       Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel("Ipv4Tunnel", {
+        const tunnel = yield* Cloudflare.Tunnel.Tunnel("Ipv4Tunnel", {
           ingress: [{ service: "http://localhost:8080" }],
           adopt: true,
         });
-        return yield* Cloudflare.VpcService("Ipv4Svc", {
+        return yield* Cloudflare.VpcService.VpcService("Ipv4Svc", {
           httpPort: 8080,
           host: {
             ipv4: "192.168.1.100",
@@ -137,17 +135,17 @@ test.provider("create vpc service with ipv4 host", (stack) =>
 // schema's Schema.Union, so `ipv6` is silently stripped on encode.
 test.provider.skip("create vpc service with dual-stack host", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
     const service = yield* stack.deploy(
       Effect.gen(function* () {
-        const tunnel = yield* Cloudflare.Tunnel("DualStackTunnel", {
+        const tunnel = yield* Cloudflare.Tunnel.Tunnel("DualStackTunnel", {
           ingress: [{ service: "http://localhost:8080" }],
           adopt: true,
         });
-        return yield* Cloudflare.VpcService("DualStackSvc", {
+        return yield* Cloudflare.VpcService.VpcService("DualStackSvc", {
           httpPort: 8080,
           host: {
             ipv4: "192.168.1.101",
@@ -163,6 +161,44 @@ test.provider.skip("create vpc service with dual-stack host", (stack) =>
       ipv4: "192.168.1.101",
       ipv6: "2001:db8::1",
     });
+
+    yield* stack.destroy();
+    yield* waitForServiceToBeDeleted(service.serviceId, accountId);
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed vpc service", (stack) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+
+    yield* stack.destroy();
+
+    const service = yield* stack.deploy(
+      Effect.gen(function* () {
+        const tunnel = yield* Cloudflare.Tunnel.Tunnel("ListTunnel", {
+          ingress: [{ service: "http://localhost:8080" }],
+          adopt: true,
+        });
+        return yield* Cloudflare.VpcService.VpcService("ListSvc", {
+          httpPort: 8080,
+          host: {
+            hostname: "localhost",
+            resolverNetwork: { tunnelId: tunnel.tunnelId },
+          },
+          adopt: true,
+        });
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.VpcService.VpcService,
+    );
+    const all = yield* provider.list();
+
+    const found = all.find((s) => s.serviceId === service.serviceId);
+    expect(found).toBeDefined();
+    expect(found?.serviceName).toEqual(service.serviceName);
+    expect(found?.accountId).toEqual(accountId);
 
     yield* stack.destroy();
     yield* waitForServiceToBeDeleted(service.serviceId, accountId);

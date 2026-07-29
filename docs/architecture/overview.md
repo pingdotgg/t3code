@@ -39,6 +39,10 @@ T3 Code runs as a **Node.js WebSocket server** that wraps `codex app-server` (JS
 
 - **Server updates**: A connected environment advertises whether its server can replace itself. When client and server versions differ, the browser selects an automatic, desktop-managed, or manual update path without changing connection ownership. See [Server Update Architecture](./server-updates.md).
 
+Related design:
+
+- [Resource telemetry architecture](./resource-telemetry.md)
+
 ## Event Lifecycle
 
 ### Startup and client connect

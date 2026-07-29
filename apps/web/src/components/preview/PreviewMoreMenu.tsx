@@ -46,6 +46,10 @@ interface Props {
   deviceToolbarVisible: boolean;
   /** Switches between fill-panel mode and a fixed responsive viewport. */
   onToggleDeviceToolbar: () => void;
+  /** Whether the separate native always-on-top preview window is open. */
+  nativePictureInPicture: boolean;
+  /** Toggles the optional native always-on-top preview window. */
+  onNativePictureInPicture: () => void;
 }
 
 /**
@@ -60,6 +64,8 @@ export function PreviewMoreMenu({
   colorScheme,
   deviceToolbarVisible,
   onToggleDeviceToolbar,
+  nativePictureInPicture,
+  onNativePictureInPicture,
 }: Props) {
   if (!previewBridge) return null;
   const bridge = previewBridge;
@@ -92,6 +98,11 @@ export function PreviewMoreMenu({
         </MenuItem>
         <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
           Open DevTools
+        </MenuItem>
+        <MenuItem onClick={onNativePictureInPicture} disabled={tabDisabled}>
+          {nativePictureInPicture
+            ? "Close separate preview window"
+            : "Open separate preview window"}
         </MenuItem>
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}

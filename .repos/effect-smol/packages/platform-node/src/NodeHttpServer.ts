@@ -6,27 +6,9 @@
  * `listen` options, converts `request` events into `HttpServerRequest` values,
  * writes `HttpServerResponse` bodies through Node's `ServerResponse`, and
  * handles `upgrade` events by exposing the upgraded socket through
- * `HttpServerRequest.upgrade`.
- *
- * Common use cases include serving an Effect HTTP application with {@link layer}
- * or {@link layerConfig}, embedding request or upgrade handlers into an
- * existing Node server with {@link makeHandler} and {@link makeUpgradeHandler},
- * and using {@link layerTest} for integration tests that need an ephemeral
- * listening port and a client pointed at it.
- *
- * Listen options are passed directly to Node, so host, port, backlog, and Unix
- * socket path behavior follow `node:http`. The server begins listening when the
- * `HttpServer` is acquired, and handlers are installed when `serve` is run.
- * Request fibers are interrupted with `ClientAbort` when the client disconnects
- * before a response finishes. WebSocket support only applies to Node `upgrade`
- * requests, and ordinary HTTP requests fail if their application attempts to use
- * `HttpServerRequest.upgrade`.
- *
- * Scope ownership is important: the server is closed when the acquiring scope
- * finalizes, while each `serve` call installs its own request and upgrade
- * listeners and removes them on finalization. Unless preemptive shutdown is
- * disabled, finalizing a serve scope also starts a graceful server close, using
- * the configured timeout or the default timeout.
+ * `HttpServerRequest.upgrade`. It also exports request and upgrade handler
+ * constructors plus layers for the server alone, HTTP support services, the
+ * combined server, configurable options, and tests.
  *
  * @since 4.0.0
  */
@@ -182,7 +164,7 @@ export const make = Effect.fnUntraced(function*(
  * injecting a `HttpServerRequest` and interrupting the request fiber if the
  * client closes the response before it finishes.
  *
- * @category Handlers
+ * @category handlers
  * @since 4.0.0
  */
 export const makeHandler = <
@@ -224,7 +206,7 @@ export const makeHandler = <
  * exposing the upgraded WebSocket as the request's `upgrade` effect and
  * interrupting the request fiber when the socket closes early.
  *
- * @category Handlers
+ * @category handlers
  * @since 4.0.0
  */
 export const makeUpgradeHandler = <
@@ -459,8 +441,9 @@ export const layer = (
   )
 
 /**
- * Provides a Node `HttpServer` and HTTP support services, reading the listen
- * and shutdown options from a `Config` value.
+ * Provides a Node `HttpServer` together with the Node HTTP platform, ETag,
+ * and core Node platform services, reading the listen and shutdown options from
+ * a `Config` value.
  *
  * @category layers
  * @since 4.0.0
@@ -474,7 +457,7 @@ export const layerConfig = (
     }
   >
 ): Layer.Layer<
-  HttpServer.HttpServer | FileSystem.FileSystem | Path.Path | HttpPlatform.HttpPlatform | Etag.Generator,
+  HttpServer.HttpServer | NodeServices.NodeServices | HttpPlatform.HttpPlatform | Etag.Generator,
   ServeError | Config.ConfigError
 > =>
   Layer.mergeAll(
@@ -488,7 +471,7 @@ export const layerConfig = (
  * Provides a test HTTP server listening on an ephemeral port together with a
  * Fetch-backed `HttpClient` configured for server integration tests.
  *
- * @category Testing
+ * @category testing
  * @since 4.0.0
  */
 export const layerTest: Layer.Layer<
@@ -535,7 +518,12 @@ const handleResponse = (
   if (request.method === "HEAD") {
     nodeResponse.writeHead(response.status, headers)
     return Effect.callback<void>((resume) => {
-      nodeResponse.end(() => resume(Effect.void))
+      const done = () => {
+        nodeResponse.off("close", done)
+        resume(Effect.void)
+      }
+      nodeResponse.once("close", done)
+      nodeResponse.end(done)
     })
   }
   const body = response.body

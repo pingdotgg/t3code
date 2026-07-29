@@ -1,0 +1,182 @@
+---
+title: CloudWatch
+description: Declare CloudWatch dashboards as structured widget documents and metric alarms that fire SNS topics — versioned next to the Lambda functions and queues they observe.
+---
+
+CloudWatch is AWS's built-in metrics store: every Lambda function,
+SQS queue, and DynamoDB table publishes metrics into it
+automatically. In alchemy the consuming side is code too — a
+`Dashboard` is a structured widget document and an `Alarm` is a
+threshold on a metric, both declared in the same Stack as the
+resources they watch. A tweaked threshold or a new graph is a diff in
+the PR, not a console click.
+
+## Dashboards as code
+
+`DashboardBody` is a plain object, not a JSON string — alchemy
+serializes it to the document the CloudWatch API expects:
+
+```typescript
+import * as AWS from "alchemy/AWS";
+
+const dashboard = yield* AWS.CloudWatch.Dashboard("ApiHealth", {
+  DashboardBody: {
+    widgets: [
+      {
+        type: "metric",
+        width: 12,
+        height: 6,
+        properties: {
+          title: "Lambda invocations and errors",
+          view: "timeSeries",
+          stat: "Sum",
+          period: 300,
+          metrics: [
+            ["AWS/Lambda", "Invocations", "FunctionName", "api"],
+            ["AWS/Lambda", "Errors", "FunctionName", "api"],
+          ],
+        },
+      },
+    ],
+  },
+});
+```
+
+Top-level props are PascalCase because they mirror the
+`PutDashboard` API input; the widget document inside follows
+CloudWatch's own dashboard-body schema (`type`, `properties`,
+`metrics`, ...). Four widget types are supported: `metric` (graphs),
+`text` (markdown), `alarm` (alarm status grids), and `log` (Logs
+Insights queries). Each takes optional `x`/`y`/`width`/`height` grid
+coordinates.
+
+If you omit `name`, alchemy generates a unique dashboard name from
+the app, stage, and logical ID — so `prod` and `pr-42` each get
+their own copy. Renaming a dashboard replaces it.
+
+## Wire in resource names
+
+Hard-coding `"api"` works until the function is renamed. Metric rows
+reference metrics by dimension value, so build the body from the
+function's [Output](/infrastructure-as-code/outputs) instead:
+
+```typescript
+import * as Output from "alchemy/Output";
+
+const func = yield* Api; // an AWS.Lambda.Function
+
+const dashboard = yield* AWS.CloudWatch.Dashboard("ApiDashboard", {
+  DashboardBody: func.functionName.pipe(
+    Output.map((functionName) => ({
+      widgets: [
+        {
+          type: "metric",
+          width: 12,
+          height: 6,
+          properties: {
+            title: "Lambda Duration",
+            stat: "Average",
+            period: 300,
+            metrics: [
+              ["AWS/Lambda", "Duration", "FunctionName", functionName],
+            ],
+          },
+        },
+      ],
+    })),
+  ),
+});
+```
+
+`Output.map` defers building the document
+until the function's physical name is known, so the dashboard always
+tracks the deployed function — including across replacements.
+
+## Alarms
+
+An `Alarm` watches one metric and changes state when it crosses a
+threshold. Props are PascalCase, extending the `PutMetricAlarm` API
+input directly; `AlarmActions` is a list of ARN strings — most
+commonly an [SNS](/aws/messaging/sns) topic that fans out to email, Slack, or
+PagerDuty:
+
+```typescript
+const alerts = yield* AWS.SNS.Topic("Alerts");
+
+const errors = yield* AWS.CloudWatch.Alarm("HighErrors", {
+  MetricName: "Errors",
+  Namespace: "AWS/Lambda",
+  Statistic: "Sum",
+  Period: 60,
+  EvaluationPeriods: 1,
+  Threshold: 1,
+  ComparisonOperator: "GreaterThanOrEqualToThreshold",
+  TreatMissingData: "notBreaching",
+  Dimensions: [{ Name: "FunctionName", Value: func.functionName }],
+  AlarmActions: [alerts.topicArn],
+});
+```
+
+`Dimensions` scopes the alarm to one function, and Output references
+like `func.functionName` resolve in place. `TreatMissingData:
+"notBreaching"` keeps a quiet function out of the `INSUFFICIENT_DATA`
+state. The resolved alarm exposes `alarmName`, `alarmArn`, and its
+current `stateValue` as outputs.
+
+Alarms show up on dashboards too — an `alarm` widget renders a
+status grid from ARNs:
+
+```typescript
+{
+  type: "alarm",
+  width: 12,
+  properties: {
+    title: "Alarms",
+    alarms: [errors.alarmArn],
+  },
+},
+```
+
+To aggregate several alarms into one page-worthy signal,
+`CompositeAlarm` combines their states with a boolean rule:
+
+```typescript
+const composite = yield* AWS.CloudWatch.CompositeAlarm("HighSeverity", {
+  AlarmRule: 'ALARM("HighErrors") OR ALARM("HighLatency")',
+});
+```
+
+Like dashboards, alarms get generated per-stage names when `name` is
+omitted, and renaming one replaces it.
+
+## Where metrics come from
+
+You rarely have to publish anything: AWS services emit metrics on
+their own. Every Lambda function reports `Invocations`, `Errors`,
+`Duration`, and `Throttles` under the `AWS/Lambda` namespace, keyed
+by the `FunctionName` dimension — which is why the snippets above
+work against a stock [Lambda](/aws/compute/lambda) function with zero
+instrumentation. Other services follow suit (`AWS/SQS`,
+`AWS/DynamoDB`, ...).
+
+For application-level signals — spans, structured logs, custom
+metrics from your Effect code — see
+[Observability](/testing/observability): Effect emits OpenTelemetry
+natively, and the receiving end (datasets, monitors, notifiers) is
+provisioned as resources in the same Stack, exactly like the alarms
+here.
+
+## Where next
+
+- [Observability](/testing/observability) — OTel exporters as
+  Layers, plus the cross-cloud version of alerts-in-code.
+- [Lambda](/aws/compute/lambda) — the functions these dashboards and alarms
+  watch.
+- [Axiom](/axiom) — datasets, monitors, and notifiers when you want
+  telemetry outside CloudWatch.
+
+Reference:
+
+- [`Alarm` reference](/providers/aws/cloudwatch/alarm)
+- [`Dashboard` reference](/providers/aws/cloudwatch/dashboard)
+- [`CompositeAlarm` reference](/providers/aws/cloudwatch/compositealarm)
