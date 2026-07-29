@@ -60,9 +60,6 @@ const MAX_RESTART_DELAY = Duration.seconds(10);
 // failures may instead provide their own larger retryLimit when they should
 // self-heal for a while but must not leave the app connecting forever.
 const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
-// WSL backends can take well over a minute to become ready when the packaged
-// server bundle is loaded through /mnt/c (see #4535). Readiness polling still
-// resolves as soon as the endpoint responds, so fast backends are unaffected.
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(3);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
