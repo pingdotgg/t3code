@@ -1968,10 +1968,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   if (workEntry.tone === "subagent") {
     const isRunning =
       workEntry.toolLifecycleStatus === "inProgress" || workEntry.toolLifecycleStatus === undefined;
-    const isFailed =
-      workEntry.toolLifecycleStatus === "failed" ||
-      workEntry.toolLifecycleStatus === "declined" ||
-      workEntry.toolLifecycleStatus === "stopped";
+    const isFailed = workEntry.toolLifecycleStatus === "failed";
     const isDeclined = workEntry.toolLifecycleStatus === "declined";
     const isStopped = workEntry.toolLifecycleStatus === "stopped";
     const isDestructive = isFailed || isDeclined || isStopped;
@@ -1981,12 +1978,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     );
     const statusText = isRunning
       ? "Working"
-      : isFailed
-        ? "Failed"
-        : isDeclined
-          ? "Cancelled"
-          : isStopped
-            ? "Stopped"
+      : isDeclined
+        ? "Cancelled"
+        : isStopped
+          ? "Stopped"
+          : isFailed
+            ? "Failed"
             : "Completed";
     const spinnerSyncDelay = useMemo(() => `-${Date.now() % 1000}ms`, []);
 

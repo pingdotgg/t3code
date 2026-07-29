@@ -54,6 +54,7 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  readonly isSubagent?: boolean;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -396,6 +397,7 @@ function mergeDerivedWorkLogEntries(
   return {
     ...previous,
     ...next,
+    createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
@@ -1191,7 +1193,7 @@ function appendPresentedFeedEntry(
   }
 
   const activities = entry.activities.filter(
-    (activity) => !(activity.toolLike && activity.status === "neutral"),
+    (activity) => !(activity.toolLike && activity.status === "neutral" && !activity.isSubagent),
   );
   if (activities.length === 0) {
     return;
@@ -1405,6 +1407,7 @@ export function buildThreadFeed(
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              isSubagent: entry.tone === "subagent" || entry.itemType === "collab_agent_tool_call",
             },
           };
         }),
