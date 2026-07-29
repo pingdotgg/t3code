@@ -52,6 +52,9 @@ struct SidebarView: View {
     @UIState private var expandedProjects: Set<String> = []
     /// Projects whose settled-thread disclosure is open.
     @UIState private var revealedSettled: Set<String> = []
+    /// Automation subtrees start open so background work becomes visible.
+    /// This set only records the user's explicit collapses for this scene.
+    @UIState private var collapsedAutoReviewParents: Set<String> = []
     /// Project whose settled disclosure row is hovered (reveals archive-all).
     @UIState private var hoveredSettledGroup: String?
     /// Remembers what the list last rendered so a structural update can be
@@ -334,6 +337,7 @@ struct SidebarView: View {
             for item in visible {
                 census.standing.insert("\(section.id)/active/\(tieredRowKey(item))")
                 census.rows.insert("\(section.id)/active/\(rowKey(item))")
+                addAutoReviewRows(to: &census, parent: item, group: section.group)
             }
             if split.active.count > visible.count {
                 census.rows.insert("\(section.id)/more")
@@ -347,6 +351,7 @@ struct SidebarView: View {
             for item in split.settled {
                 census.standing.insert("\(section.id)/settled/\(rowKey(item))")
                 census.rows.insert("\(section.id)/settled/\(rowKey(item))")
+                addAutoReviewRows(to: &census, parent: item, group: section.group)
             }
         }
         return census
@@ -360,6 +365,47 @@ struct SidebarView: View {
 
     private func tieredRowKey(_ item: SidebarThreadItem) -> String {
         "\(rowKey(item))#\(SidebarProjection.displayTier(item))"
+    }
+
+    private func autoReviewTreeKey(_ item: SidebarThreadItem) -> String {
+        rowKey(item)
+    }
+
+    private func autoReviewChildren(
+        for parent: SidebarThreadItem,
+        in group: SidebarProjectGroup
+    ) -> [SidebarThreadItem] {
+        group.autoReviewChildrenByParent[parent.id] ?? []
+    }
+
+    private func hasAutoReviewSubtree(
+        _ parent: SidebarThreadItem,
+        in group: SidebarProjectGroup
+    ) -> Bool {
+        parent.thread.status == .reviewing
+            || parent.thread.status == .fixing
+            || !autoReviewChildren(for: parent, in: group).isEmpty
+    }
+
+    private func addAutoReviewRows(
+        to census: inout SidebarRowCensus,
+        parent: SidebarThreadItem,
+        group: SidebarProjectGroup
+    ) {
+        let key = autoReviewTreeKey(parent)
+        guard hasAutoReviewSubtree(parent, in: group),
+            !collapsedAutoReviewParents.contains(key)
+        else { return }
+        if parent.thread.status == .reviewing {
+            census.rows.insert("\(key)/auto-review-agent")
+        }
+        let children = autoReviewChildren(for: parent, in: group)
+        if parent.thread.status == .fixing, children.isEmpty {
+            census.rows.insert("\(key)/auto-fixer-inline")
+        }
+        for child in children {
+            census.rows.insert("\(key)/auto-fixer/\(rowKey(child))")
+        }
     }
 
     private func visibleActive(
@@ -453,8 +499,9 @@ struct SidebarView: View {
         // line lower — and, being the only row of its section, it was the row
         // the list stranded when the first session arrived.
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
-            threadRow(
+            threadTree(
                 item,
+                group: group,
                 context: .project(
                     showMachine: showMachine,
                     accent: accent,
@@ -614,8 +661,9 @@ struct SidebarView: View {
         }
         if isRevealed {
             ForEach(Array(settled.enumerated()), id: \.element.id) { index, item in
-                threadRow(
+                threadTree(
                     item,
+                    group: group,
                     context: .project(
                         showMachine: showMachine,
                         accent: accent,
@@ -661,7 +709,8 @@ struct SidebarView: View {
         SidebarThreadRow(
             item: item,
             context: context,
-            isSelected: multi.selection == item.id)
+            isSelected: multi.selection == item.id,
+            subtreeDisclosure: nil)
             .tag(item.id)
             .disabled(!item.isSelectable)
             .opacity(item.isSelectable ? 1 : 0.5)
@@ -684,6 +733,79 @@ struct SidebarView: View {
                     },
                     newThreadHelp: newThreadHelp)
             }
+    }
+
+    @ViewBuilder
+    private func threadTree(
+        _ item: SidebarThreadItem,
+        group: SidebarProjectGroup,
+        context: SidebarRowContext,
+        index: Int
+    ) -> some View {
+        let children = autoReviewChildren(for: item, in: group)
+        let hasSubtree = hasAutoReviewSubtree(item, in: group)
+        let key = autoReviewTreeKey(item)
+        let isExpanded = !collapsedAutoReviewParents.contains(key)
+        SidebarThreadRow(
+            item: item,
+            context: context,
+            isSelected: multi.selection == item.id,
+            subtreeDisclosure: hasSubtree
+                ? SidebarSubtreeDisclosure(
+                    isExpanded: isExpanded,
+                    toggle: {
+                        Haptics.play(.toggle)
+                        withAnimation(Motion.structure) {
+                            if isExpanded {
+                                _ = collapsedAutoReviewParents.insert(key)
+                            } else {
+                                _ = collapsedAutoReviewParents.remove(key)
+                            }
+                        }
+                    })
+                : nil)
+            .tag(item.id)
+            .disabled(!item.isSelectable)
+            .opacity(item.isSelectable ? 1 : 0.5)
+            .entrance(.row, index: index)
+            .alpineContextMenu(width: 300) { dismiss in
+                SidebarThreadMenu(
+                    item: item,
+                    dismiss: dismiss,
+                    onNewSession: createThread,
+                    onSettle: settle,
+                    onDelete: { target in
+                        deleteThreadTarget = ThreadActionTarget(
+                            model: target.member.location.model, thread: target.thread)
+                    },
+                    newThreadHelp: newThreadHelp)
+            }
+        if hasSubtree, isExpanded {
+            if item.thread.status == .reviewing {
+                AutoReviewAutomationRow(
+                    title: "Auto-review agent",
+                    detail: "Inspecting the latest pull request diff",
+                    symbol: "text.magnifyingglass",
+                    tint: AlpineTheme.sky,
+                    isWorking: true)
+            }
+            if item.thread.status == .fixing, children.isEmpty {
+                AutoReviewAutomationRow(
+                    title: "Auto-fixer",
+                    detail: "Working in the parent thread",
+                    symbol: "wrench.and.screwdriver.fill",
+                    tint: AlpineTheme.accent,
+                    isWorking: true)
+            }
+            ForEach(children, id: \.id) { child in
+                AutoReviewFixerThreadRow(
+                    item: child,
+                    isSelected: multi.selection == child.id)
+                    .tag(child.id)
+                    .disabled(!child.isSelectable)
+                    .opacity(child.isSelectable ? 1 : 0.5)
+            }
+        }
     }
 
     /// Archives every settled session of a project. A group can span
@@ -1642,10 +1764,16 @@ private struct ProjectSectionHeader: View {
     }
 }
 
+private struct SidebarSubtreeDisclosure {
+    let isExpanded: Bool
+    let toggle: () -> Void
+}
+
 private struct SidebarThreadRow: View {
     let item: SidebarThreadItem
     let context: SidebarRowContext
     let isSelected: Bool
+    let subtreeDisclosure: SidebarSubtreeDisclosure?
 
     @UIState private var isHovering = false
 
@@ -1657,6 +1785,23 @@ private struct SidebarThreadRow: View {
                     isSelected: isSelected,
                     isLast: isLast,
                     index: index)
+            }
+            if let subtreeDisclosure {
+                Button(action: subtreeDisclosure.toggle) {
+                    SidebarDisclosureChevron(
+                        isExpanded: subtreeDisclosure.isExpanded,
+                        size: 8)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(SidebarPressStyle(pressedScale: 0.84))
+                .help(
+                    subtreeDisclosure.isExpanded
+                        ? "Hide auto-review activity" : "Show auto-review activity")
+                .accessibilityLabel(
+                    subtreeDisclosure.isExpanded
+                        ? "Collapse auto-review activity" : "Expand auto-review activity")
             }
             // A working thread breathes, so a sidebar full of sessions says
             // which ones are alive without the user reading a single label.
@@ -1755,6 +1900,98 @@ private struct SidebarThreadRow: View {
             parts.append(item.thread.provider.displayName)
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// A non-selectable automation process. The reviewer has no transcript-backed
+/// thread, and an inline fixer deliberately works in the origin thread, so
+/// both are shown honestly without inventing a destination.
+private struct AutoReviewAutomationRow: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let tint: Color
+    let isWorking: Bool
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .frame(width: 22)
+            SidebarStatusChip(symbol: symbol, tint: tint, isWorking: isWorking)
+                .help(detail)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(SurgeTypography.sidebarTaskTitle)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(SurgeTypography.technicalMetadata)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Text("AUTOMATION")
+                .font(.system(size: 8, weight: .semibold))
+                .tracking(0.45)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.leading, 17)
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), \(detail)")
+    }
+}
+
+/// A real dedicated fixer thread nested beneath the session whose PR it
+/// repairs. It stays a normal List selection target, so opening it uses the
+/// same detail navigation and transcript loading as every other session.
+private struct AutoReviewFixerThreadRow: View {
+    let item: SidebarThreadItem
+    let isSelected: Bool
+
+    @UIState private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .frame(width: 22)
+            SidebarStatusChip(
+                symbol: item.statusSymbol,
+                tint: item.statusTint,
+                isWorking: item.isWorking)
+                .help(item.statusLabel)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.thread.title)
+                    .font(SurgeTypography.sidebarTaskTitle)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .lineLimit(1)
+                Text("\(item.thread.provider.displayName) · \(item.statusLabel)")
+                    .font(SurgeTypography.technicalMetadata)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+        }
+        .padding(.leading, 17)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(isHovering && !isSelected ? 0.05 : 0))
+                .padding(.horizontal, -5)
+        }
+        .onHover { isHovering = $0 }
+        .animation(Motion.feedback, value: isHovering)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.thread.title), \(item.statusLabel)")
+        .help("Open the auto-fixer thread")
     }
 }
 

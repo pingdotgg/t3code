@@ -37,9 +37,26 @@ public struct ChatScreen: View {
     /// closure in the modifier chain, for the same Swift 6.2 type-checker
     /// reason as `selectedThreadIsActive` above.
     private func autoReviewProgress(_ thread: ChatThread) -> some View {
-        AutoReviewProgressOverlay(status: thread.status, threadID: thread.id)
+        let fixer = activeAutoReviewFixer(for: thread)
+        return AutoReviewProgressOverlay(
+            status: thread.status,
+            threadID: thread.id,
+            activeThreadID: fixer?.id,
+            onOpenThread: { model.selectedThreadID = $0 })
             .padding(.trailing, 22)
             .padding(.bottom, 6)
+    }
+
+    /// Dedicated fixers are persisted as child sessions. The reviewer itself
+    /// is a server job with no transcript, so only return an honest navigation
+    /// destination while a real fixer thread is active.
+    private func activeAutoReviewFixer(for thread: ChatThread) -> ChatThread? {
+        guard thread.status == .fixing else { return nil }
+        return model.threads.first {
+            $0.parentThreadId == thread.id
+                && $0.status != .archived
+                && AutoReviewThreadPresentation.isDedicatedFixer($0)
+        }
     }
 
     /// Identity + status of the thread on screen, so switching to an already
