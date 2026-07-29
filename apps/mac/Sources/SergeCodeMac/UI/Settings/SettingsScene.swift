@@ -1050,10 +1050,8 @@ private extension ProviderKind {
 private struct PhoneSettingsTab: View {
     let model: AppModel
     @UIState private var allowConnections = MobileAccessPreference.isEnabled
-    @UIState private var tailscaleEnabled = TailscaleAccessPreference.isEnabled
     @UIState private var lanReachable = false
-    /// Verified default cross-network endpoint (managed cloud first, optional
-    /// Tailscale fallback second).
+    /// Verified default cross-network endpoint provided by SurgeCode Cloud.
     @UIState private var internetHostname: String?
     @UIState private var internetProvider: String?
     @UIState private var checkedReachability = false
@@ -1071,16 +1069,16 @@ private struct PhoneSettingsTab: View {
                         .textSelection(.enabled)
                 }
                 SettingsDivider()
-                SettingsToggleRow(
-                    title: "Use Tailscale fallback",
-                    description:
-                        "Optional compatibility route when SurgeCode Cloud is not linked. A linked Mac uses its managed tunnel and does not require Tailscale.",
-                    isOn: Binding(
-                        get: { tailscaleEnabled },
-                        set: { newValue in
-                            tailscaleEnabled = newValue
-                            TailscaleAccessPreference.setEnabled(newValue)
-                        }))
+                SettingsValueRow(title: "Connection") {
+                    Text(
+                        internetHostname == nil
+                            ? "Link SurgeCode Cloud to connect from any network"
+                            : "Managed automatically — no VPN required"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                }
             }
 
             SettingsSection(header: "Local network") {
@@ -1096,40 +1094,6 @@ private struct PhoneSettingsTab: View {
                         }))
             }
 
-            // The sidecar's bind host and Tailscale-serve flag are captured
-            // at launch and can't change for the life of the process (see
-            // MobileAccessPreference / TailscaleAccessPreference doc
-            // comments); `lanReachable`/the internet endpoint reflect that frozen
-            // state, while the toggles are the live preferences. Whenever
-            // they disagree — in EITHER direction — a toggle's current
-            // position is not what the server is actually doing, and that's
-            // security-relevant when it disagrees by still being open.
-            if checkedReachability && !tailscaleEnabled && internetProvider == "Tailscale" {
-                SettingsSection {
-                    SettingsCardRow {
-                        Label(
-                            "Tailscale access is still on for this session — quit and reopen SurgeCode to stop serving over your tailnet.",
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-            if checkedReachability && tailscaleEnabled && internetHostname == nil {
-                SettingsSection {
-                    SettingsCardRow {
-                        Label(
-                            "Tailscale isn't serving yet — if you just turned this on, quit and reopen SurgeCode; otherwise make sure Tailscale is installed and signed in on this Mac.",
-                            systemImage: "info.circle"
-                        )
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
             if checkedReachability && allowConnections != lanReachable {
                 SettingsSection {
                     SettingsCardRow {
@@ -1153,14 +1117,11 @@ private struct PhoneSettingsTab: View {
             }
         }
         .animation(Motion.structure, value: allowConnections)
-        .animation(Motion.structure, value: tailscaleEnabled)
         .animation(Motion.structure, value: pairing)
         // Re-probe whenever the connection phase moves (the sidecar may
         // still be launching when Settings opens) or a toggle flips —
         // a one-shot .task would leave the frozen-state mirrors stale.
-        .task(
-            id: "\(String(describing: model.connection))-\(allowConnections)-\(tailscaleEnabled)"
-        ) {
+        .task(id: "\(String(describing: model.connection))-\(allowConnections)") {
             await refreshRemoteAccess()
         }
         .task(
@@ -1171,14 +1132,14 @@ private struct PhoneSettingsTab: View {
     }
 
     /// Pairing works whenever the server is reachable beyond this process:
-    /// over a managed/tailnet tunnel (which proxies loopback), or
+    /// over a managed cloud tunnel (which proxies loopback), or
     /// over the LAN when the mobile-access bind is active.
     private var pairingAvailable: Bool {
         checkedReachability && (internetHostname != nil || (allowConnections && lanReachable))
     }
 
     /// The address remote devices will actually use, in preference order:
-    /// managed/tailnet hostname, LAN IP, loopback (nothing reachable).
+    /// managed hostname, LAN IP, loopback (nothing reachable).
     private var remoteAddressText: String {
         if let internetHostname {
             return internetProvider.map { "\(internetHostname) (\($0))" } ?? internetHostname
@@ -1195,8 +1156,8 @@ private struct PhoneSettingsTab: View {
         internetHostname = status.internetHostname
         internetProvider = status.internetProvider
         checkedReachability = true
-        // The serve record can land a few seconds after sidecar boot;
-        // re-poll briefly so the tailnet address appears without having to
+        // The managed endpoint can land a few seconds after sidecar boot;
+        // re-poll briefly so it appears without having to
         // reopen Settings.
         var attempts = 0
         while internetHostname == nil, attempts < 5, !Task.isCancelled {

@@ -1,9 +1,6 @@
-# T3 Connect Relay
+# SurgeCode Cloud Relay
 
-> [!WARNING]
-> T3 Connect is currently in private beta. Join the waitlist in the app under Settings > T3 Connect.
-
-The relay is the hosted control plane for T3 Connect. It helps clients discover and connect to
+The relay is the hosted control plane for SurgeCode Cloud. It helps clients discover and connect to
 remote environments, manages the cloud-side records needed for those connections, and delivers
 optional mobile notifications and Live Activities.
 
@@ -114,9 +111,10 @@ the URL manually.
 ### Deployment CI
 
 The relay is versioned separately from client releases. `.github/workflows/deploy-relay.yml` deploys
-the shared Alchemy `prod` stage on every push to `main`. Stable and nightly release builds both
-resolve their static public config from the same
-`production` GitHub environment. Pull requests do not deploy relay stages. Developers can
+the shared Alchemy `prod` stage on manual dispatch when the repository variable
+`SERGECODE_RELAY_DEPLOY_ENABLED` is set to `true`. With that variable enabled, relay-relevant
+pushes to `main` deploy it automatically as well. Pull requests never deploy relay stages. Stable and nightly release builds both
+resolve their static public config from the same `production` GitHub environment. Developers can
 deploy personal non-production stages locally with any stage name other than `prod`.
 
 The repository must define these Actions variables shared by relay deployments:
@@ -156,5 +154,7 @@ so `AXIOM_ORG_ID` must accompany `AXIOM_TOKEN`.
 
 See:
 
+- [Seamless Remote Connections](../../docs/operations/seamless-remote-connections.md) for account
+  setup, cost boundaries, update behavior, and end-to-end checks.
 - [Relay Observability](../../docs/operations/relay-observability.md) for deployment tracing and diagnostics.
 - [Architecture Overview](../../docs/architecture/overview.md) for the native clients and backend.

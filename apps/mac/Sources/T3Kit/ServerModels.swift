@@ -41,12 +41,20 @@ public struct ExecutionEnvironmentCapabilities: Codable, Sendable {
     }
 }
 
+public struct HostApplicationDescriptor: Codable, Sendable {
+    public var name: String
+    public var version: String
+    public var buildNumber: String
+    public var updateCapability: String
+}
+
 public struct ExecutionEnvironmentDescriptor: Codable, Sendable {
     public var environmentId: String
     public var label: String
     public var platform: ExecutionEnvironmentPlatform
     public var serverVersion: String
     public var capabilities: ExecutionEnvironmentCapabilities
+    public var hostApplication: HostApplicationDescriptor?
 }
 
 public enum ServerAuthPolicy: String, Codable, Sendable {
@@ -632,8 +640,8 @@ public enum ServerConfigStreamEvent: Decodable, Sendable {
     }
 }
 
-// MARK: - subscribeServerLifecycle stream (server.ts; used only for the
-// welcome/ready readiness signal — see wire-protocol.md §1.3)
+// MARK: - subscribeServerLifecycle stream (server.ts; readiness plus
+// desktop-host update requests — see wire-protocol.md §1.3)
 
 public struct ServerLifecycleWelcomePayload: Decodable, Sendable {
     public var environment: ExecutionEnvironmentDescriptor
@@ -648,9 +656,15 @@ public struct ServerLifecycleReadyPayload: Decodable, Sendable {
     public var environment: ExecutionEnvironmentDescriptor
 }
 
+public struct ServerLifecycleHostUpdateRequestedPayload: Decodable, Sendable {
+    public var requestedAt: String
+}
+
 public enum ServerLifecycleStreamEvent: Decodable, Sendable {
     case welcome(sequence: Int, payload: ServerLifecycleWelcomePayload)
     case ready(sequence: Int, payload: ServerLifecycleReadyPayload)
+    case hostUpdateRequested(
+        sequence: Int, payload: ServerLifecycleHostUpdateRequestedPayload)
     /// Any `type` this codec doesn't recognize (forward compatibility, §6
     /// risk 1) — see `ServerConfigStreamEvent.other`.
     case other(type: String, sequence: Int, payload: JSONValue?)
@@ -668,6 +682,11 @@ public enum ServerLifecycleStreamEvent: Decodable, Sendable {
         case "ready":
             self = .ready(
                 sequence: sequence, payload: try c.decode(ServerLifecycleReadyPayload.self, forKey: .payload))
+        case "hostUpdateRequested":
+            self = .hostUpdateRequested(
+                sequence: sequence,
+                payload: try c.decode(
+                    ServerLifecycleHostUpdateRequestedPayload.self, forKey: .payload))
         default:
             let payload = try c.decodeIfPresent(JSONValue.self, forKey: .payload)
             self = .other(type: type, sequence: sequence, payload: payload)
