@@ -1486,7 +1486,7 @@ function SavedBackendListRow({
                         size="xs"
                         variant="destructive-outline"
                         disabled={
-                          isConnecting ||
+                          connectionState === "connecting" ||
                           deregisteringEnvironmentId !== null ||
                           removingEnvironmentId !== null
                         }
