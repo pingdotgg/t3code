@@ -23,6 +23,8 @@ import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import {
   WorkspaceBridgeCoordinator,
   WorkspaceBridgeCoordinatorLive,
+  filterGitDiff,
+  filterGitStatus,
   formatNumberedSlice,
   matchesQuery,
   parseGitStatus,
@@ -89,7 +91,10 @@ const makeWorkspace = Effect.fn("test.makeWorkspace")(function* () {
     await NodeFSP.writeFile(NodePath.join(root, ".git", "config"), "[core]\n");
     await NodeFSP.writeFile(NodePath.join(root, "node_modules", "left-pad", "index.js"), "//\n");
     await NodeFSP.writeFile(NodePath.join(outside, "secrets.txt"), "TOP SECRET\n");
+    await NodeFSP.mkdir(NodePath.join(outside, "secret-dir"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(outside, "secret-dir", "secrets.ts"), "OUTSIDE_SECRET\n");
     await NodeFSP.symlink(NodePath.join(outside, "secrets.txt"), NodePath.join(root, "escape.txt"));
+    await NodeFSP.symlink(NodePath.join(outside, "secret-dir"), NodePath.join(root, "escape-dir"));
   });
 
   return { root, outside };
@@ -215,6 +220,8 @@ it.effect("tree skips blocked directories entirely", () =>
       const paths = result.entries.map((entry) => entry.path);
       expect(paths).toContain("src");
       expect(paths).toContain("src/index.ts");
+      expect(paths).not.toContain("escape-dir");
+      expect(paths.some((path) => path.startsWith("escape-dir/"))).toBe(false);
       expect(paths.some((path) => path.startsWith(".git"))).toBe(false);
       expect(paths.some((path) => path.startsWith("node_modules"))).toBe(false);
     }),
@@ -339,4 +346,11 @@ it("parseGitStatus reports the destination path of a rename", () => {
     { path: "src/index.ts", status: "M" },
     { path: "untracked.md", status: "??" },
   ]);
+});
+
+it("filters changed credential files and disables their diff content", () => {
+  const root = "/workspace/project";
+  const status = " M .env\n M src/index.ts\nR  .env.local -> config.ts\n";
+  expect(filterGitStatus(root, status)).toEqual([{ path: "src/index.ts", status: "M" }]);
+  expect(filterGitDiff(root, status, "diff --git a/.env b/.env\nSECRET")).toBe("");
 });

@@ -148,18 +148,46 @@ export const matchesQuery = (line: string, query: string): boolean =>
 
 /** Parses `git status --porcelain=v1` into changed-file rows. */
 export const parseGitStatus = (stdout: string): ReadonlyArray<WorkspaceChangedFile> =>
+  parseGitStatusEntries(stdout).map(({ file }) => file);
+
+const parseGitStatusEntries = (
+  stdout: string,
+): ReadonlyArray<{
+  readonly file: WorkspaceChangedFile;
+  readonly paths: ReadonlyArray<string>;
+}> =>
   splitLines(stdout)
     .filter((line) => line.length > 3)
     .map((line) => {
       const status = line.slice(0, 2).trim();
       const rest = line.slice(3);
-      // Renames arrive as "old -> new"; the destination is what the caller
-      // can actually read, so that is what is reported.
+      // Renames carry both paths. Keep both for security filtering, while the
+      // result still reports the destination the caller can actually read.
       const arrow = rest.indexOf(" -> ");
-      const path = arrow === -1 ? rest : rest.slice(arrow + 4);
-      return { path, status: status.length > 0 ? status : "?" };
+      const paths = arrow === -1 ? [rest] : [rest.slice(0, arrow), rest.slice(arrow + 4)];
+      return {
+        file: { path: paths[paths.length - 1] ?? "", status: status.length > 0 ? status : "?" },
+        paths,
+      };
     })
-    .filter((entry) => entry.path.length > 0);
+    .filter(({ file }) => file.path.length > 0);
+
+/** Removes status rows that the workspace toolkit must never disclose. */
+export const filterGitStatus = (
+  root: string,
+  stdout: string,
+): ReadonlyArray<WorkspaceChangedFile> =>
+  parseGitStatusEntries(stdout)
+    .filter(({ paths }) => paths.every((path) => resolveWithin({ root, requestedPath: path }).ok))
+    .map(({ file }) => file);
+
+/** Suppresses patch content whenever any status row contains a blocked path. */
+export const filterGitDiff = (root: string, statusOutput: string, rawDiff: string): string =>
+  parseGitStatusEntries(statusOutput).some(({ paths }) =>
+    paths.some((path) => !resolveWithin({ root, requestedPath: path }).ok),
+  )
+    ? ""
+    : rawDiff;
 
 const truncateUtf8 = (value: string, maxBytes: number): { text: string; truncated: boolean } => {
   const encoded = new TextEncoder().encode(value);
@@ -363,7 +391,15 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
         for (const name of [...names].sort((left, right) => left.localeCompare(right))) {
           if (truncated) return;
           const childRelative = relative === "." ? name : `${relative}/${name}`;
-          const childGuard = resolveWithin({ root, requestedPath: childRelative });
+          const lexicalChild = resolveWithin({ root, requestedPath: childRelative });
+          if (!lexicalChild.ok) continue;
+          const realChild = yield* fs.realPath(lexicalChild.absolutePath).pipe(Effect.option);
+          if (Option.isNone(realChild)) continue;
+          const childGuard = resolveWithin({
+            root,
+            requestedPath: childRelative,
+            realPath: realChild.value,
+          });
           if (!childGuard.ok) continue;
           const info = yield* fs.stat(childGuard.absolutePath).pipe(Effect.option);
           if (Option.isNone(info)) continue;
@@ -469,7 +505,15 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
         for (const name of [...names].sort((left, right) => left.localeCompare(right))) {
           if (truncated || filesScanned >= MAX_SEARCH_FILES) return;
           const childRelative = relative === "." ? name : `${relative}/${name}`;
-          const childGuard = resolveWithin({ root, requestedPath: childRelative });
+          const lexicalChild = resolveWithin({ root, requestedPath: childRelative });
+          if (!lexicalChild.ok) continue;
+          const realChild = yield* fs.realPath(lexicalChild.absolutePath).pipe(Effect.option);
+          if (Option.isNone(realChild)) continue;
+          const childGuard = resolveWithin({
+            root,
+            requestedPath: childRelative,
+            realPath: realChild.value,
+          });
           if (!childGuard.ok) continue;
           const info = yield* fs.stat(childGuard.absolutePath).pipe(Effect.option);
           if (Option.isNone(info)) continue;
@@ -524,10 +568,12 @@ const make = Effect.fn("WorkspaceBridgeCoordinator.make")(function* () {
     }
 
     const branch = yield* runGit(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    const files = parseGitStatus(statusOutput);
+    const files = filterGitStatus(root, statusOutput);
     const includeDiff = input.includeDiff ?? true;
     const diffArgs = input.staged === true ? ["diff", "--staged"] : ["diff"];
-    const rawDiff = includeDiff ? ((yield* runGit(root, diffArgs)) ?? "") : "";
+    const rawDiff = includeDiff
+      ? filterGitDiff(root, statusOutput, (yield* runGit(root, diffArgs)) ?? "")
+      : "";
     const capped = truncateUtf8(rawDiff, MAX_DIFF_BYTES);
 
     yield* recordActivity({
