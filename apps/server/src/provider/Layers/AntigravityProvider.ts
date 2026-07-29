@@ -112,7 +112,10 @@ const checkAntigravityAccountAuth = (
 
           const statResults = yield* Effect.all(
             logFiles.map((file) =>
-              Effect.map(fs.stat(file), (stat) => ({ file, mtimeMs: stat.mtimeMillis }))
+              Effect.map(fs.stat(file), (stat) => ({
+                file,
+                mtimeMs: Option.getOrElse(stat.mtime, () => new Date(0)).getTime(),
+              }))
             ),
             { concurrency: "unbounded" }
           );
@@ -165,12 +168,15 @@ const checkAntigravityAccountAuth = (
 
     if (discoveredPlanType === "unknown") {
       const onboardingPath = path.join(targetDir, "cache", "onboarding.json");
-      yield* Effect.catchAll(
+      yield* Effect.catchTags(
         Effect.gen(function* () {
           const exists = yield* fs.exists(onboardingPath);
           if (exists) {
             const content = yield* fs.readFileString(onboardingPath);
-            const parsed: unknown = JSON.parse(content);
+            const parsed = yield* Effect.try({
+              try: () => JSON.parse(content) as unknown,
+              catch: (error) => ({ _tag: "ParseError" as const, error }),
+            });
             if (typeof parsed === "object" && parsed !== null) {
               const obj = parsed as Record<string, unknown>;
               if (obj["enterpriseOnboardingComplete"] === true) {
@@ -184,7 +190,10 @@ const checkAntigravityAccountAuth = (
             }
           }
         }),
-        () => Effect.void
+        {
+          PlatformError: () => Effect.void,
+          ParseError: () => Effect.void,
+        }
       );
     }
 
