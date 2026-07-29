@@ -46,8 +46,29 @@ it.effect(
       assertTrue(Option.isSome(ready));
       assert.equal(ready.value.sequence, 2);
 
+      const firstUpdateRequest = yield* lifecycleEvents.publish({
+        version: 1,
+        type: "hostUpdateRequested",
+        payload: { requestedAt: "2026-01-01T00:00:01.000Z" },
+      });
+      assert.equal(firstUpdateRequest.sequence, 3);
+      const latestUpdateRequest = yield* lifecycleEvents.publish({
+        version: 1,
+        type: "hostUpdateRequested",
+        payload: { requestedAt: "2026-01-01T00:00:02.000Z" },
+      });
+      assert.equal(latestUpdateRequest.sequence, 4);
+
       const snapshot = yield* lifecycleEvents.snapshot;
-      assert.equal(snapshot.sequence, 2);
-      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), ["ready", "welcome"]);
+      assert.equal(snapshot.sequence, 4);
+      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), [
+        "hostUpdateRequested",
+        "ready",
+        "welcome",
+      ]);
+      assert.deepEqual(
+        snapshot.events.filter((event) => event.type === "hostUpdateRequested"),
+        [latestUpdateRequest],
+      );
     }).pipe(Effect.provide(ServerLifecycleEvents.layer)),
 );

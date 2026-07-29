@@ -110,6 +110,7 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerHostUpdateUnavailableError,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -120,6 +121,7 @@ import {
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
+  ServerRequestHostUpdateResult,
   ServerSignalProcessInput,
   ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
@@ -190,6 +192,7 @@ export const WS_METHODS = {
 
   // Server meta
   serverGetConfig: "server.getConfig",
+  serverRequestHostUpdate: "server.requestHostUpdate",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
   serverUpsertKeybinding: "server.upsertKeybinding",
@@ -240,6 +243,12 @@ export const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerRequestHostUpdateRpc = Rpc.make(WS_METHODS.serverRequestHostUpdate, {
+  payload: Schema.Struct({}),
+  success: ServerRequestHostUpdateResult,
+  error: Schema.Union([ServerHostUpdateUnavailableError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
@@ -680,6 +689,7 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
 
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
+  WsServerRequestHostUpdateRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsServerUpsertKeybindingRpc,

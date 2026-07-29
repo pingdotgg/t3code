@@ -544,11 +544,39 @@ export const ServerLifecycleStreamReadyEvent = Schema.Struct({
 });
 export type ServerLifecycleStreamReadyEvent = typeof ServerLifecycleStreamReadyEvent.Type;
 
+export const ServerLifecycleHostUpdateRequestedPayload = Schema.Struct({
+  requestedAt: IsoDateTime,
+});
+export type ServerLifecycleHostUpdateRequestedPayload =
+  typeof ServerLifecycleHostUpdateRequestedPayload.Type;
+
+export const ServerLifecycleStreamHostUpdateRequestedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("hostUpdateRequested"),
+  payload: ServerLifecycleHostUpdateRequestedPayload,
+});
+export type ServerLifecycleStreamHostUpdateRequestedEvent =
+  typeof ServerLifecycleStreamHostUpdateRequestedEvent.Type;
+
 export const ServerLifecycleStreamEvent = Schema.Union([
   ServerLifecycleStreamWelcomeEvent,
   ServerLifecycleStreamReadyEvent,
+  ServerLifecycleStreamHostUpdateRequestedEvent,
 ]);
 export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
+
+export const ServerRequestHostUpdateResult = Schema.Struct({
+  accepted: Schema.Literal(true),
+});
+export type ServerRequestHostUpdateResult = typeof ServerRequestHostUpdateResult.Type;
+
+export class ServerHostUpdateUnavailableError extends Schema.TaggedErrorClass<ServerHostUpdateUnavailableError>()(
+  "ServerHostUpdateUnavailableError",
+  {
+    message: Schema.String,
+  },
+) {}
 
 export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,

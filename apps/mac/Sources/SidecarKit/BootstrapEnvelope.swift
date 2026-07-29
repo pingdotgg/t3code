@@ -18,6 +18,8 @@ public struct BootstrapEnvelope: Codable, Sendable, Equatable {
     public var t3Home: String?
     public var host: String
     public var desktopBootstrapToken: String
+    public var hostAppVersion: String?
+    public var hostAppBuild: String?
     public var tailscaleServeEnabled: Bool
     public var tailscaleServePort: Int
     public var otlpTracesUrl: String?
@@ -28,6 +30,8 @@ public struct BootstrapEnvelope: Codable, Sendable, Equatable {
         t3Home: String? = nil,
         host: String,
         desktopBootstrapToken: String,
+        hostAppVersion: String? = nil,
+        hostAppBuild: String? = nil,
         tailscaleServeEnabled: Bool = false,
         tailscaleServePort: Int = 443,
         otlpTracesUrl: String? = nil,
@@ -38,6 +42,8 @@ public struct BootstrapEnvelope: Codable, Sendable, Equatable {
         self.t3Home = t3Home
         self.host = host
         self.desktopBootstrapToken = desktopBootstrapToken
+        self.hostAppVersion = hostAppVersion
+        self.hostAppBuild = hostAppBuild
         self.tailscaleServeEnabled = tailscaleServeEnabled
         self.tailscaleServePort = tailscaleServePort
         self.otlpTracesUrl = otlpTracesUrl

@@ -111,6 +111,8 @@ public struct SidecarConfig: Sendable {
     public var host: String
     public var baseDir: String
     public var logDirectory: String
+    public var hostAppVersion: String?
+    public var hostAppBuild: String?
     /// Whether the server should attempt `tailscale serve` so the machine is
     /// reachable at `https://<magicdns>/` over the tailnet. Sent in the
     /// bootstrap envelope, where it OVERRIDES the server's own default —
@@ -142,6 +144,8 @@ public struct SidecarConfig: Sendable {
         host: String = "127.0.0.1",
         baseDir: String? = nil,
         logDirectory: String? = nil,
+        hostAppVersion: String? = nil,
+        hostAppBuild: String? = nil,
         tailscaleServeEnabled: Bool = false,
         tailscaleServePort: Int = 443
     ) throws {
@@ -149,6 +153,8 @@ public struct SidecarConfig: Sendable {
         self.entryPath = entryPath
         self.port = try port ?? FreePortPicker.pick(host: host)
         self.host = host
+        self.hostAppVersion = hostAppVersion
+        self.hostAppBuild = hostAppBuild
         self.tailscaleServeEnabled = tailscaleServeEnabled
         self.tailscaleServePort = tailscaleServePort
         let resolvedBaseDir = baseDir ?? SidecarConfig.defaultBaseDir()

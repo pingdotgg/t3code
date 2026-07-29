@@ -30,12 +30,24 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
+export const HostApplicationDescriptor = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  version: TrimmedNonEmptyString,
+  buildNumber: TrimmedNonEmptyString,
+  updateCapability: Schema.Literal("sparkle"),
+});
+export type HostApplicationDescriptor = typeof HostApplicationDescriptor.Type;
+
 export const ExecutionEnvironmentDescriptor = Schema.Struct({
   environmentId: EnvironmentId,
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
   capabilities: ExecutionEnvironmentCapabilities,
+  /** Present when the backend is supervised by a desktop app. Older hosts
+      omit this field, allowing clients to detect version-reporting skew
+      without confusing the server package version with the app version. */
+  hostApplication: Schema.optional(HostApplicationDescriptor),
   advertisedEndpoints: Schema.optional(Schema.Array(AdvertisedEndpoint)),
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;

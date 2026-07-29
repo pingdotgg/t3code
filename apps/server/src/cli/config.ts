@@ -318,6 +318,8 @@ export const resolveServerConfig = (
       serverTracePath,
       host,
       desktopBootstrapToken,
+      ...(bootstrap?.hostAppVersion ? { hostAppVersion: bootstrap.hostAppVersion } : {}),
+      ...(bootstrap?.hostAppBuild ? { hostAppBuild: bootstrap.hostAppBuild } : {}),
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
       tailscaleServeEnabled,

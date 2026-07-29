@@ -64,6 +64,8 @@ export class ServerConfig extends Context.Service<
     readonly cwd: string;
     readonly baseDir: string;
     readonly desktopBootstrapToken: string | undefined;
+    readonly hostAppVersion?: string;
+    readonly hostAppBuild?: string;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;

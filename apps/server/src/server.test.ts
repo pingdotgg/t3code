@@ -25,6 +25,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  type ServerLifecycleStreamEvent,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -4140,6 +4141,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(second?.type, "ready");
         assert.equal(second?.sequence, 2);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes an authenticated host update request only to desktop-supervised apps", () =>
+    Effect.gen(function* () {
+      const publishedTypes: Array<string> = [];
+      yield* buildAppUnderTest({
+        config: { mode: "desktop", hostAppVersion: "0.7.0", hostAppBuild: "25" },
+        layers: {
+          serverLifecycleEvents: {
+            publish: (event) =>
+              Effect.sync(() => {
+                publishedTypes.push(event.type);
+                return { ...event, sequence: 1 } as ServerLifecycleStreamEvent;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverRequestHostUpdate]({})),
+      );
+
+      assert.deepEqual(result, { accepted: true });
+      assert.deepEqual(publishedTypes, ["hostUpdateRequested"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc projects.searchEntries", () =>

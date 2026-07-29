@@ -17,22 +17,6 @@ public enum MobileAccessPreference {
     }
 }
 
-/// Optional compatibility fallback for installations that still use
-/// `tailscale serve`. SurgeCode Cloud's managed tunnel is the preferred
-/// cross-network route, so fresh installs leave this off. Like
-/// `MobileAccessPreference`, the value is read once at backend construction.
-public enum TailscaleAccessPreference {
-    static let defaultsKey = "allowTailscaleAccess"
-
-    public static var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
-    }
-
-    public static func setEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: defaultsKey)
-    }
-}
-
 /// Resolves this Mac's primary LAN IPv4 address (the one an iPhone on the
 /// same network can reach), mirroring the server's own headless heuristic
 /// (`resolveHeadlessConnectionHost` in apps/server/src/startupAccess.ts):
