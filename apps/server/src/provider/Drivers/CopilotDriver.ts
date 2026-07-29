@@ -9,7 +9,7 @@
  * @module provider/Drivers/CopilotDriver
  */
 import { CopilotSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import { Duration, Effect, FileSystem, Schema, Stream } from "effect";
+import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
@@ -37,6 +37,7 @@ const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
 export type CopilotDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
+  | Path.Path
   | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
@@ -89,6 +90,16 @@ const makeCopilotDriver = (input: {
 
       const adapter = yield* makeCopilotAdapter(
         eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : undefined,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: `Failed to prepare Copilot runtime: ${cause.message}`,
+              cause,
+            }),
+        ),
       );
       const textGeneration = yield* makeCopilotTextGeneration(effectiveConfig);
 

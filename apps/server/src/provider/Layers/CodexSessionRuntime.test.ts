@@ -16,6 +16,7 @@ import {
   buildTurnStartParams,
   isRecoverableThreadResumeError,
   openCodexThread,
+  selectCodexApprovalForRuntimeMode,
 } from "./CodexSessionRuntime.ts";
 
 const isDynamicToolCallResponse = Schema.is(EffectCodexSchema.DynamicToolCallResponse);
@@ -149,6 +150,17 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+});
+
+describe("selectCodexApprovalForRuntimeMode", () => {
+  it("accepts provider approval requests for the full-access session", () => {
+    assert.equal(selectCodexApprovalForRuntimeMode("full-access"), "acceptForSession");
+  });
+
+  it("leaves approvals interactive in restricted modes", () => {
+    assert.equal(selectCodexApprovalForRuntimeMode("approval-required"), undefined);
+    assert.equal(selectCodexApprovalForRuntimeMode("auto-accept-edits"), undefined);
   });
 });
 

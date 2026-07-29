@@ -133,7 +133,15 @@ function AgentWorkflowActionButton({
                 <span className="sr-only">{REVIEW_SCOPE_LABELS[defaultReviewScope!]}</span>
               </Button>
               <GroupSeparator />
-              <Menu highlightItemOnHover={false}>
+              <Menu
+                highlightItemOnHover={false}
+                onOpenChange={(open) => {
+                  // Warm the PR list as soon as the menu opens: `gh pr list` is a
+                  // network round trip, and starting it here overlaps it with the
+                  // pointer travel to the submenu instead of stalling on it.
+                  if (open) loadPullRequests();
+                }}
+              >
                 <MenuTrigger
                   render={
                     <Button

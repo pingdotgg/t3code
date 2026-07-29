@@ -12,6 +12,8 @@ import type { Project, ThreadShell } from "../../types";
 import {
   buildArchivedThreadGroups,
   buildProviderInstanceUpdatePatch,
+  filterArchivedThreadGroups,
+  runSequentiallySettled,
 } from "./SettingsPanels.logic";
 
 describe("buildProviderInstanceUpdatePatch", () => {
@@ -66,6 +68,21 @@ describe("buildProviderInstanceUpdatePatch", () => {
 
     expect(patch.providerInstances?.[instanceId]).toEqual(nextInstance);
     expect(patch.providers).toBeUndefined();
+  });
+});
+
+describe("runSequentiallySettled", () => {
+  it("continues after an item fails", async () => {
+    const visited: number[] = [];
+    const results = await runSequentiallySettled([1, 2, 3], async (item) => {
+      visited.push(item);
+      if (item === 2) {
+        throw new Error("failed");
+      }
+    });
+
+    expect(visited).toEqual([1, 2, 3]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
   });
 });
 
@@ -137,5 +154,33 @@ describe("buildArchivedThreadGroups", () => {
     expect(groups[0]?.threads.map((thread) => thread.id)).toEqual([envAArchived.id]);
     expect(groups[1]?.project.environmentId).toBe(envBProject.environmentId);
     expect(groups[1]?.threads.map((thread) => thread.id)).toEqual([envBArchived.id]);
+  });
+
+  it("filters archived threads by title or project name", () => {
+    const alphaProject = makeProject("env-a", "project-a", "Alpha");
+    const betaProject = makeProject("env-b", "project-b", "Beta");
+    const alphaThread = makeThread(
+      "env-a",
+      "project-a",
+      "refactor-auth",
+      "2026-01-03T00:00:00.000Z",
+    );
+    const betaThread = makeThread(
+      "env-b",
+      "project-b",
+      "release-notes",
+      "2026-01-02T00:00:00.000Z",
+    );
+    const groups = buildArchivedThreadGroups({
+      projects: [alphaProject, betaProject],
+      threads: [alphaThread, betaThread],
+    });
+
+    expect(filterArchivedThreadGroups(groups, "refactor")).toEqual([
+      { project: alphaProject, threads: [alphaThread] },
+    ]);
+    expect(filterArchivedThreadGroups(groups, "alpha")).toEqual([
+      { project: alphaProject, threads: [alphaThread] },
+    ]);
   });
 });

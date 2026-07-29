@@ -275,6 +275,13 @@ function runtimeEventToActivities(
           payload: {
             provider: event.provider,
             state: event.payload.state,
+            ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            ...(event.payload.modelUsage !== undefined
+              ? { modelUsage: event.payload.modelUsage }
+              : {}),
+            ...(event.payload.totalCostUsd !== undefined
+              ? { totalCostUsd: event.payload.totalCostUsd }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

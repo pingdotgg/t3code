@@ -1,3 +1,5 @@
+import * as nodePath from "node:path";
+
 import {
   ThreadId,
   type ProviderInstanceId,
@@ -5,11 +7,12 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { Effect, Layer, Scope } from "effect";
+import { Effect, FileSystem, Layer, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
+import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import { startMcpHttpServer, type McpHttpServer, type McpServeOptions } from "../../mcpServer.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import type { McpProviderSessionConfig } from "../../mcp/McpSessionRegistry.ts";
@@ -34,6 +37,15 @@ export const COPILOT_LEGACY_AGENT_MODE_ID = "https://github.com/github/copilot-c
 export const COPILOT_LEGACY_AUTOPILOT_MODE_ID =
   "https://github.com/github/copilot-cli/mode#autopilot";
 export const COPILOT_LEGACY_PLAN_MODE_ID = "https://github.com/github/copilot-cli/mode#plan";
+
+export const COPILOT_WORKSPACE_INSTRUCTIONS = `# T3 Code workspace handoff
+
+- NEVER run \`git worktree add\`, \`git worktree move\`, or \`git worktree remove\` through a terminal or shell tool.
+- When a task needs a new isolated checkout, call the \`create_isolated_workspace\` tool instead.
+- When a task needs to use an existing worktree, call the \`switch_workspace\` tool instead.
+- After either workspace tool succeeds, end the current turn. T3 Code will restart the provider in the bound workspace and continue the task automatically.
+- Read-only commands such as \`git worktree list\` are allowed.
+`;
 
 export const COPILOT_CLIENT_CAPABILITIES = {
   fs: {
@@ -77,6 +89,7 @@ type CopilotAcpRuntimeBaseInput = Omit<
   readonly copilotSettings: CopilotAcpRuntimeCopilotSettings | null | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly baseDir?: string;
+  readonly customInstructionsDir?: string;
 };
 export type CopilotAcpRuntimeInput =
   | (CopilotAcpRuntimeBaseInput & {
@@ -99,13 +112,49 @@ export function buildCopilotAcpSpawnInput(
   copilotSettings: CopilotAcpRuntimeCopilotSettings | null | undefined,
   cwd: string,
   runtimeMode: RuntimeMode,
+  customInstructionsDir?: string,
+  environment: NodeJS.ProcessEnv = process.env,
 ): AcpSpawnInput {
+  const configuredInstructionsDirs = environment.COPILOT_CUSTOM_INSTRUCTIONS_DIRS?.split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const instructionsDirs = customInstructionsDir
+    ? Array.from(new Set([...(configuredInstructionsDirs ?? []), customInstructionsDir]))
+    : configuredInstructionsDirs;
+
   return {
     command: copilotSettings?.binaryPath || "copilot",
     args: ["--acp", ...buildCopilotRuntimeModeArgs(runtimeMode)],
     cwd,
+    ...(instructionsDirs && instructionsDirs.length > 0
+      ? {
+          env: {
+            COPILOT_CUSTOM_INSTRUCTIONS_DIRS: instructionsDirs.join(","),
+          },
+        }
+      : {}),
   };
 }
+
+export const prepareCopilotCustomInstructions = Effect.fn("prepareCopilotCustomInstructions")(
+  function* (stateDir: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const instructionsDir = nodePath.join(stateDir, "providers", "copilot", "instructions");
+    const instructionsPath = nodePath.join(instructionsDir, "AGENTS.md");
+    const currentContents = yield* fileSystem
+      .readFileString(instructionsPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+
+    if (currentContents !== COPILOT_WORKSPACE_INSTRUCTIONS) {
+      yield* writeFileStringAtomically({
+        filePath: instructionsPath,
+        contents: COPILOT_WORKSPACE_INSTRUCTIONS,
+      });
+    }
+
+    return instructionsDir;
+  },
+);
 
 export function buildCopilotMcpServerOptions(
   cwd: string,
@@ -243,7 +292,12 @@ export const makeCopilotAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildCopilotAcpSpawnInput(input.copilotSettings, input.cwd, input.runtimeMode),
+        spawn: buildCopilotAcpSpawnInput(
+          input.copilotSettings,
+          input.cwd,
+          input.runtimeMode,
+          input.customInstructionsDir,
+        ),
         auth: {
           methodId: COPILOT_AUTH_METHOD_ID,
           required: true,

@@ -21,7 +21,7 @@ import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterRequestError } from "../Errors.ts";
-import { COPILOT_PLAN_MODE_ID } from "../acp/CopilotAcpSupport.ts";
+import { COPILOT_PLAN_MODE_ID, COPILOT_WORKSPACE_INSTRUCTIONS } from "../acp/CopilotAcpSupport.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
@@ -51,7 +51,7 @@ const isolateCopilotHome = Effect.fn("isolateCopilotHome")(function* () {
 
 async function makeMockCopilotWrapper(
   extraEnv?: Record<string, string>,
-  options?: { argvLogPath?: string },
+  options?: { argvLogPath?: string; customInstructionsLogPath?: string },
 ) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "copilot-acp-mock-"));
   const wrapperPath = path.join(dir, "fake-copilot.sh");
@@ -65,8 +65,12 @@ async function makeMockCopilotWrapper(
     ? `printf '%s\\t' "$@" >> ${JSON.stringify(options.argvLogPath)}
 printf '\\n' >> ${JSON.stringify(options.argvLogPath)}`
     : "";
+  const customInstructionsLog = options?.customInstructionsLogPath
+    ? `printf '%s\\n' "$COPILOT_CUSTOM_INSTRUCTIONS_DIRS" >> ${JSON.stringify(options.customInstructionsLogPath)}`
+    : "";
   const script = `#!/bin/sh
 ${argvLog}
+${customInstructionsLog}
 ${envExports}
 exec ${JSON.stringify(bunExe)} ${JSON.stringify(mockAgentPath)} "$@"
 `;
@@ -493,6 +497,61 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("attributes only new cumulative cost after resuming a Copilot ACP session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("copilot-resume-cost-thread");
+
+      yield* isolateCopilotHome();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockCopilotWrapper({
+          T3_ACP_LOAD_SESSION_COST: "1.25",
+          T3_ACP_PROMPT_COST: "1.5",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: COPILOT_DRIVER,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        resumeCursor: {
+          schemaVersion: 1,
+          sessionId: "mock-session-1",
+        },
+      });
+
+      const usageEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.token-usage.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello after resume",
+        attachments: [],
+      });
+
+      const usageEvents = Array.from(yield* Fiber.join(usageEventFiber));
+      const usageEvent = usageEvents[0];
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.deepEqual(usageEvent.payload.usage.cost, {
+          amount: 0.25,
+          currency: "USD",
+        });
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("forks a Copilot ACP session and binds the forked session id", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
@@ -735,13 +794,14 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
       );
       const requestLogPath = path.join(tempDir, "requests.ndjson");
       const argvLogPath = path.join(tempDir, "argv.log");
+      const customInstructionsLogPath = path.join(tempDir, "custom-instructions.log");
 
       const wrapperPath = yield* Effect.promise(() =>
         makeMockCopilotWrapper(
           {
             T3_ACP_REQUEST_LOG_PATH: requestLogPath,
           },
-          { argvLogPath },
+          { argvLogPath, customInstructionsLogPath },
         ),
       );
       yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
@@ -762,6 +822,17 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
 
       const argv = yield* Effect.promise(() => readArgvLog(argvLogPath));
       assert.deepEqual(argv[0], ["--acp"]);
+      const customInstructionsDirs = yield* Effect.promise(() =>
+        readFile(customInstructionsLogPath, "utf8"),
+      ).pipe(Effect.map((contents) => contents.trim().split(",")));
+      const t3InstructionsDir = customInstructionsDirs.find((directory) =>
+        directory.endsWith(path.join("providers", "copilot", "instructions")),
+      );
+      assert.isDefined(t3InstructionsDir);
+      assert.equal(
+        yield* Effect.promise(() => readFile(path.join(t3InstructionsDir, "AGENTS.md"), "utf8")),
+        COPILOT_WORKSPACE_INSTRUCTIONS,
+      );
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const methods = requests.map((request) => request.method);

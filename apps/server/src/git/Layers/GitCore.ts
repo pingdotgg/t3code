@@ -47,6 +47,10 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const REVIEW_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
 const REVIEW_DIFF_NULL_DEVICE = process.platform === "win32" ? "NUL" : "/dev/null";
+// Untracked-file diffs are independent single-file `git diff --no-index` spawns;
+// a bound keeps a large untracked set from saturating the process table while
+// still removing the per-file serialization from the review critical path.
+const REVIEW_UNTRACKED_DIFF_CONCURRENCY = 8;
 // Well-known empty tree object, used as the uncommitted-review diff base when
 // the repository has an unborn HEAD (initialized, not yet committed). Falls back
 // to this SHA-1 value when the repository's object format cannot be resolved.
@@ -1492,7 +1496,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
                 ),
           ),
         ),
-      { concurrency: 1 },
+      { concurrency: REVIEW_UNTRACKED_DIFF_CONCURRENCY },
     ).pipe(Effect.map((diffs) => diffs.join("")));
 
   const toReviewSnapshot = (input: {
@@ -1532,20 +1536,28 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       );
     }
 
-    const [statusShort, untrackedFiles] = yield* Effect.all(
-      [readStatusShort(input.cwd), readUntrackedFiles(input.cwd)],
-      { concurrency: "unbounded" },
-    );
+    // The pull-request scope reviews the PR patch, not the working tree, so it
+    // reports an empty status/untracked set. Reading them anyway spends two
+    // subprocess spawns on output that is discarded.
+    const [statusShort, untrackedFiles] =
+      input.scope === "pull-request"
+        ? (["", [] as ReadonlyArray<string>] as const)
+        : yield* Effect.all([readStatusShort(input.cwd), readUntrackedFiles(input.cwd)], {
+            concurrency: "unbounded",
+          });
 
     if (input.scope === "uncommitted") {
-      const diffBase = yield* resolveUncommittedDiffBase(input.cwd);
       const [trackedDiff, untrackedDiff] = yield* Effect.all(
         [
-          runGitStdoutWithOptions(
-            "GitCore.resolveReviewChangesContext.uncommittedDiff",
-            input.cwd,
-            ["diff", "--no-ext-diff", "--binary", "--full-index", diffBase],
-            { maxOutputBytes: REVIEW_SNAPSHOT_MAX_BYTES },
+          resolveUncommittedDiffBase(input.cwd).pipe(
+            Effect.flatMap((diffBase) =>
+              runGitStdoutWithOptions(
+                "GitCore.resolveReviewChangesContext.uncommittedDiff",
+                input.cwd,
+                ["diff", "--no-ext-diff", "--binary", "--full-index", diffBase],
+                { maxOutputBytes: REVIEW_SNAPSHOT_MAX_BYTES },
+              ),
+            ),
           ),
           readUntrackedReviewDiff(input.cwd, untrackedFiles),
         ],

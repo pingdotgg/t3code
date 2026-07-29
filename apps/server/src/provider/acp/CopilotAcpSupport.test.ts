@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { Effect, Logger } from "effect";
+import { Effect, FileSystem, Logger, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 
 import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
@@ -12,6 +12,7 @@ import {
   COPILOT_LEGACY_AUTOPILOT_MODE_ID,
   COPILOT_LEGACY_PLAN_MODE_ID,
   COPILOT_PLAN_MODE_ID,
+  COPILOT_WORKSPACE_INSTRUCTIONS,
   buildCopilotRuntimeModeArgs,
   buildCopilotAcpSpawnInput,
   buildCopilotMcpServerOptions,
@@ -19,6 +20,7 @@ import {
   isCopilotPlanModeId,
   logMissingCopilotMcpProviderSession,
   normalizeCopilotAcpModeId,
+  prepareCopilotCustomInstructions,
   resolveCopilotAcpModeId,
 } from "./CopilotAcpSupport.ts";
 
@@ -34,7 +36,9 @@ const fakeEnvironment = ServerEnvironment.of({
 
 describe("buildCopilotAcpSpawnInput", () => {
   it("builds the default GitHub Copilot ACP command", () => {
-    expect(buildCopilotAcpSpawnInput(undefined, "/tmp/project", "approval-required")).toEqual({
+    expect(
+      buildCopilotAcpSpawnInput(undefined, "/tmp/project", "approval-required", undefined, {}),
+    ).toEqual({
       command: "copilot",
       args: ["--acp"],
       cwd: "/tmp/project",
@@ -43,13 +47,55 @@ describe("buildCopilotAcpSpawnInput", () => {
 
   it("uses the configured binary path", () => {
     expect(
-      buildCopilotAcpSpawnInput({ binaryPath: "/opt/bin/copilot" }, "/tmp/project", "full-access"),
+      buildCopilotAcpSpawnInput(
+        { binaryPath: "/opt/bin/copilot" },
+        "/tmp/project",
+        "full-access",
+        undefined,
+        {},
+      ),
     ).toEqual({
       command: "/opt/bin/copilot",
       args: ["--acp"],
       cwd: "/tmp/project",
     });
   });
+
+  it("adds T3 workspace instructions without replacing configured instruction directories", () => {
+    expect(
+      buildCopilotAcpSpawnInput(undefined, "/tmp/project", "full-access", "/tmp/t3-instructions", {
+        COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/tmp/user-instructions,/tmp/t3-instructions",
+      }),
+    ).toEqual({
+      command: "copilot",
+      args: ["--acp"],
+      cwd: "/tmp/project",
+      env: {
+        COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/tmp/user-instructions,/tmp/t3-instructions",
+      },
+    });
+  });
+
+  it.effect("writes the T3 workspace policy as Copilot custom instructions", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-copilot-instructions-",
+      });
+
+      const instructionsDir = yield* prepareCopilotCustomInstructions(stateDir);
+      expect(instructionsDir).toBe(path.join(stateDir, "providers", "copilot", "instructions"));
+      expect(yield* fileSystem.readFileString(path.join(instructionsDir, "AGENTS.md"))).toBe(
+        COPILOT_WORKSPACE_INSTRUCTIONS,
+      );
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain(
+        "NEVER run `git worktree add`, `git worktree move`, or `git worktree remove`",
+      );
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`create_isolated_workspace`");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`switch_workspace`");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   describe("buildCopilotMcpServers", () => {
     it("exposes the workspace handoff tool by default", () => {

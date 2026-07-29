@@ -179,7 +179,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { MessagesTimeline, type AssistantResponseMeta } from "./chat/MessagesTimeline";
 import { ReviewFindingsCard } from "./chat/ReviewFindingsCard";
 import { formatReviewFindings } from "../lib/reviewFindingFormat";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -1646,6 +1646,53 @@ function ChatViewBody(
     }
     return byMessageId;
   }, [turnDiffSummaries, timelineMessages]);
+  const responseMetaByTurnId = useMemo(() => {
+    const metadata = new Map<TurnId, AssistantResponseMeta>();
+    for (const activity of threadActivities) {
+      if (activity.turnId === null || typeof activity.payload !== "object" || !activity.payload) {
+        continue;
+      }
+      const payload = activity.payload as Record<string, unknown>;
+      const existing = metadata.get(activity.turnId) ?? {};
+      if (activity.kind === "insights.turn.started" && typeof payload.model === "string") {
+        metadata.set(activity.turnId, { ...existing, model: payload.model });
+        continue;
+      }
+      if (activity.kind === "context-window.updated") {
+        const usedTokens =
+          typeof payload.lastUsedTokens === "number"
+            ? payload.lastUsedTokens
+            : typeof payload.usedTokens === "number"
+              ? payload.usedTokens
+              : undefined;
+        const rawCost = payload.cost;
+        const cost =
+          typeof rawCost === "object" &&
+          rawCost !== null &&
+          "amount" in rawCost &&
+          typeof rawCost.amount === "number" &&
+          "currency" in rawCost &&
+          typeof rawCost.currency === "string"
+            ? { amount: rawCost.amount, currency: rawCost.currency }
+            : undefined;
+        if (usedTokens !== undefined || cost !== undefined) {
+          metadata.set(activity.turnId, {
+            ...existing,
+            ...(usedTokens !== undefined ? { usedTokens } : {}),
+            ...(cost !== undefined ? { cost } : {}),
+          });
+        }
+        continue;
+      }
+      if (activity.kind === "insights.turn.completed" && typeof payload.totalCostUsd === "number") {
+        metadata.set(activity.turnId, {
+          ...existing,
+          cost: { amount: payload.totalCostUsd, currency: "USD" },
+        });
+      }
+    }
+    return metadata;
+  }, [threadActivities]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
@@ -4566,6 +4613,7 @@ function ChatViewBody(
               completionSummary={completionSummary}
               copilotResumeCommand={copilotResumeCommand}
               turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+              responseMetaByTurnId={responseMetaByTurnId}
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
               routeThreadKey={routeThreadKey}

@@ -175,6 +175,116 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-message-id="message-continuation"');
   });
 
+  it("renders model and usage metadata below assistant responses", () => {
+    const turnId = TurnId.make("turn-usage");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        responseMetaByTurnId={
+          new Map([
+            [
+              turnId,
+              {
+                model: "claude-opus-5",
+                usedTokens: 178_100,
+                cost: { amount: 0.42, currency: "USD" },
+              },
+            ],
+          ])
+        }
+        timelineEntries={[
+          {
+            id: "entry-assistant-usage",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-usage"),
+              role: "assistant",
+              text: "Done.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              completedAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("claude-opus-5 · 178.1K tokens · $0.42");
+  });
+
+  it.each([
+    [{ amount: 0.00001, currency: "USD" }, "$0.00001"],
+    [{ amount: 0.04, currency: "EUR" }, "0.04 EUR"],
+  ])("preserves small positive response costs", (cost, expectedCost) => {
+    const turnId = TurnId.make(`turn-cost-${cost.currency}`);
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        responseMetaByTurnId={new Map([[turnId, { model: "mock-model", cost }]])}
+        timelineEntries={[
+          {
+            id: `entry-cost-${cost.currency}`,
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make(`message-cost-${cost.currency}`),
+              role: "assistant",
+              text: "Done.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              completedAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain(expectedCost);
+  });
+
+  it("renders response metadata only on the final assistant message in a turn", () => {
+    const turnId = TurnId.make("turn-segmented");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        responseMetaByTurnId={new Map([[turnId, { model: "claude-opus-5", usedTokens: 178_100 }]])}
+        timelineEntries={[
+          {
+            id: "assistant-first",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("assistant-first"),
+              role: "assistant",
+              text: "First blurb.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+          {
+            id: "assistant-final",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            message: {
+              id: MessageId.make("assistant-final"),
+              role: "assistant",
+              text: "Final response.",
+              turnId,
+              createdAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup.match(/claude-opus-5/g)).toHaveLength(1);
+  });
+
   it("renders preview annotations as context and keeps their screenshots out of regular images", () => {
     const messageText = [
       "Fix the heading.",

@@ -288,6 +288,12 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
+export function selectCodexApprovalForRuntimeMode(
+  runtimeMode: RuntimeMode,
+): ProviderApprovalDecision | undefined {
+  return runtimeMode === "full-access" ? "acceptForSession" : undefined;
+}
+
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
@@ -945,6 +951,13 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerRequest("item/commandExecution/requestApproval", (payload) =>
       Effect.gen(function* () {
+        const autoApproval = selectCodexApprovalForRuntimeMode(options.runtimeMode);
+        if (autoApproval !== undefined) {
+          return {
+            decision: autoApproval,
+          } satisfies EffectCodexSchema.CommandExecutionRequestApprovalResponse;
+        }
+
         const requestId = ApprovalRequestId.make(randomUUID());
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
@@ -1001,6 +1014,13 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerRequest("item/fileChange/requestApproval", (payload) =>
       Effect.gen(function* () {
+        const autoApproval = selectCodexApprovalForRuntimeMode(options.runtimeMode);
+        if (autoApproval !== undefined) {
+          return {
+            decision: autoApproval,
+          } satisfies EffectCodexSchema.FileChangeRequestApprovalResponse;
+        }
+
         const requestId = ApprovalRequestId.make(randomUUID());
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);

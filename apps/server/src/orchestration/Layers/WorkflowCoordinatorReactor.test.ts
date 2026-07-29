@@ -22,6 +22,7 @@ import {
   type ProjectionWorkflowRepositoryShape,
   type ProjectionWorkflowRun,
 } from "../../persistence/Services/ProjectionWorkflows.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { projectEvent } from "../projector.ts";
 import {
@@ -200,6 +201,98 @@ describe("WorkflowCoordinatorReactor", () => {
     );
 
     await Effect.runPromise(Scope.close(scope, Exit.void));
+  });
+
+  it("starts a requested run inline without waiting for the event-stream pass", async () => {
+    const commands: OrchestrationCommand[] = [];
+    const engine: OrchestrationEngineShape = {
+      getReadModel: () => Effect.succeed(readModel),
+      readEvents: () => Stream.empty,
+      dispatch: (command) =>
+        Effect.sync(() => {
+          commands.push(command);
+          return { sequence: commands.length };
+        }),
+      streamDomainEvents: Stream.empty,
+    };
+    const finalizedRun: ProjectionWorkflowRun = { ...run, status: "completed" };
+    let requestedRun: ProjectionWorkflowRun = run;
+    const workflows: ProjectionWorkflowRepositoryShape = {
+      upsertRun: () => Effect.void,
+      getByRunId: () => Effect.succeed(Option.some(requestedRun)),
+      // A drained run must not depend on the full incomplete-run sweep.
+      listIncomplete: () => Effect.succeed([]),
+      listAll: () => Effect.succeed([run]),
+      listShellSnapshot: () => Effect.succeed({ runs: [], artifacts: [] }),
+      upsertArtifact: () => Effect.void,
+      getArtifactById: () => Effect.succeed(Option.some(inputArtifact)),
+      listAllArtifacts: () => Effect.succeed([inputArtifact]),
+      setNodeInputArtifact: () => Effect.void,
+      startNode: () => Effect.void,
+      recordNodeResult: () => Effect.void,
+      finalizeRun: () => Effect.void,
+    };
+
+    runtime = ManagedRuntime.make(
+      WorkflowCoordinatorReactorLive.pipe(
+        Layer.provideMerge(Layer.succeed(OrchestrationEngineService, engine)),
+        Layer.provideMerge(Layer.succeed(ProjectionWorkflowRepository, workflows)),
+      ),
+    );
+    const coordinator = await runtime.runPromise(Effect.service(WorkflowCoordinatorReactor));
+
+    await runtime.runPromise(coordinator.drainRun(runId));
+
+    expect(commands.map((command) => command.type)).toEqual([
+      "thread.create",
+      "workflow.node.worker.start",
+      "thread.turn.start",
+    ]);
+    expect(commands[0]).toMatchObject({
+      type: "thread.create",
+      threadId: ThreadId.make("workflow:workflow-run:node:worker:worker"),
+    });
+
+    requestedRun = finalizedRun;
+    await runtime.runPromise(coordinator.drainRun(runId));
+    expect(commands).toHaveLength(3);
+  });
+
+  it("propagates inline reconciliation failures", async () => {
+    const failure = new PersistenceSqlError({
+      operation: "workflow.getByRunId",
+      detail: "database unavailable",
+    });
+    const engine: OrchestrationEngineShape = {
+      getReadModel: () => Effect.succeed(readModel),
+      readEvents: () => Stream.empty,
+      dispatch: () => Effect.succeed({ sequence: 1 }),
+      streamDomainEvents: Stream.empty,
+    };
+    const workflows: ProjectionWorkflowRepositoryShape = {
+      upsertRun: () => Effect.void,
+      getByRunId: () => Effect.fail(failure),
+      listIncomplete: () => Effect.succeed([]),
+      listAll: () => Effect.succeed([]),
+      listShellSnapshot: () => Effect.succeed({ runs: [], artifacts: [] }),
+      upsertArtifact: () => Effect.void,
+      getArtifactById: () => Effect.succeed(Option.none()),
+      listAllArtifacts: () => Effect.succeed([]),
+      setNodeInputArtifact: () => Effect.void,
+      startNode: () => Effect.void,
+      recordNodeResult: () => Effect.void,
+      finalizeRun: () => Effect.void,
+    };
+
+    runtime = ManagedRuntime.make(
+      WorkflowCoordinatorReactorLive.pipe(
+        Layer.provideMerge(Layer.succeed(OrchestrationEngineService, engine)),
+        Layer.provideMerge(Layer.succeed(ProjectionWorkflowRepository, workflows)),
+      ),
+    );
+    const coordinator = await runtime.runPromise(Effect.service(WorkflowCoordinatorReactor));
+
+    await expect(runtime.runPromise(coordinator.drainRun(runId))).rejects.toBe(failure);
   });
 
   it("fails a pending run when its parent thread was deleted", async () => {
@@ -424,7 +517,9 @@ describe("WorkflowCoordinatorReactor", () => {
     const scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(coordinator.start().pipe(Scope.provide(scope)));
 
-    expect(commands.map((command) => command.type)).toEqual(["thread.turn.start"]);
+    // The worker thread already has activity, so the coordinator neither records
+    // a result mid-turn nor redundantly re-dispatches the worker turn.
+    expect(commands.map((command) => command.type)).toEqual([]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));
   });
@@ -517,11 +612,8 @@ describe("WorkflowCoordinatorReactor", () => {
     const scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(coordinator.start().pipe(Scope.provide(scope)));
 
-    expect(commands.map((command) => command.type)).toEqual([
-      "thread.turn.start",
-      "workflow.worker-result.record",
-    ]);
-    expect(commands[1]).toMatchObject({
+    expect(commands.map((command) => command.type)).toEqual(["workflow.worker-result.record"]);
+    expect(commands[0]).toMatchObject({
       type: "workflow.worker-result.record",
       artifact: {
         payload: {

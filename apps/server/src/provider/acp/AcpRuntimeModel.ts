@@ -62,6 +62,16 @@ export type AcpParsedSessionEvent =
       readonly rawPayload: unknown;
     }
   | {
+      readonly _tag: "UsageUpdated";
+      readonly used: number;
+      readonly size: number;
+      readonly cost?: {
+        readonly amount: number;
+        readonly currency: string;
+      };
+      readonly rawPayload: unknown;
+    }
+  | {
       readonly _tag: "ToolCallUpdated";
       readonly toolCall: AcpToolCallState;
       readonly rawPayload: unknown;
@@ -448,6 +458,16 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           rawPayload: params,
         });
       }
+      break;
+    }
+    case "usage_update": {
+      events.push({
+        _tag: "UsageUpdated",
+        used: upd.used,
+        size: upd.size,
+        ...(upd.cost ? { cost: upd.cost } : {}),
+        rawPayload: params,
+      });
       break;
     }
     case "tool_call": {

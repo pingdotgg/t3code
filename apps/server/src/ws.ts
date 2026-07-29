@@ -92,6 +92,7 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { makeClientCommandDispatcher } from "./orchestration/clientCommandDispatcher.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { WorkflowCoordinatorReactor } from "./orchestration/Services/WorkflowCoordinatorReactor.ts";
 import { isThreadDetailEvent } from "./orchestration/threadDetailEvents.ts";
 import { collectActiveThreadSubtree } from "./orchestration/threadHierarchy.ts";
 import {
@@ -442,6 +443,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             },
             createdAt: input.createdAt,
           });
+          // Drive the coordinator inline so the worker thread and its first turn
+          // exist by the time this call resolves; otherwise the client polls for
+          // a thread that only appears after the event-stream reconciliation hop.
+          const coordinator = yield* Effect.serviceOption(WorkflowCoordinatorReactor);
+          if (Option.isSome(coordinator)) {
+            yield* coordinator.value.drainRun(input.runId);
+          }
           return {
             status: "started" as const,
             runId: input.runId,

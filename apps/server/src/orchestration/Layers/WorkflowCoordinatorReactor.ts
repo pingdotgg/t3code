@@ -12,6 +12,7 @@ import { Cause, Effect, Layer, Option, Stream } from "effect";
 
 import {
   ProjectionWorkflowRepository,
+  isIncompleteWorkflowRun,
   type ProjectionWorkflowRun,
 } from "../../persistence/Services/ProjectionWorkflows.ts";
 import { renderWorkflowContextArtifact } from "../workflowContext.ts";
@@ -316,14 +317,6 @@ const makeWorkflowCoordinatorReactor = Effect.gen(function* () {
       return;
     }
 
-    yield* dispatchWorkerTurn({
-      runId: run.id,
-      parentThreadId: run.parentThreadId,
-      definition: run.definition,
-      workerConfig: run.workerConfig,
-      node,
-    });
-
     const readModel = yield* orchestrationEngine.getReadModel();
     const worker = readModel.threads.find((thread) => thread.id === node.workerThreadId);
     if (!worker || worker.deletedAt !== null) {
@@ -336,6 +329,21 @@ const makeWorkflowCoordinatorReactor = Effect.gen(function* () {
       });
       return;
     }
+
+    // The worker turn only needs re-dispatching when nothing ever started on the
+    // worker thread. Re-issuing it on every pass costs an artifact read plus a
+    // command-queue hop per incomplete run per domain event, which delays every
+    // other command — including a freshly requested workflow run.
+    if (worker.latestTurn === null && worker.messages.length === 0) {
+      yield* dispatchWorkerTurn({
+        runId: run.id,
+        parentThreadId: run.parentThreadId,
+        definition: run.definition,
+        workerConfig: run.workerConfig,
+        node,
+      });
+    }
+
     const session = worker.session;
     if (session === null || session.activeTurnId !== null || session.status === "starting") {
       return;
@@ -411,6 +419,18 @@ const makeWorkflowCoordinatorReactor = Effect.gen(function* () {
     ),
   );
 
+  // Reconciling just-requested runs inline keeps the worker thread creation and
+  // its first turn on the caller's critical path instead of waiting for the
+  // event-stream hop, which is what makes a requested run visible in the UI.
+  const drainRun: WorkflowCoordinatorReactorShape["drainRun"] = (runId) =>
+    Effect.gen(function* () {
+      const run = yield* workflowRepository.getByRunId({ runId });
+      if (Option.isNone(run) || !isIncompleteWorkflowRun(run.value.status)) {
+        return;
+      }
+      yield* reconcileRun(run.value);
+    });
+
   const start: WorkflowCoordinatorReactorShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
@@ -423,6 +443,7 @@ const makeWorkflowCoordinatorReactor = Effect.gen(function* () {
   return {
     start,
     drain: reconcileSafely,
+    drainRun,
   } satisfies WorkflowCoordinatorReactorShape;
 });
 

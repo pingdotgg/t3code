@@ -77,6 +77,7 @@ describe("OrchestrationReactor", () => {
               return Effect.void;
             },
             drain: Effect.void,
+            drainRun: () => Effect.void,
           }),
         ),
       ),

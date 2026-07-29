@@ -43,6 +43,8 @@ const promptDelayMs = Number.parseInt(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0",
 const promptStartedText = process.env.T3_ACP_PROMPT_STARTED_TEXT;
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const loadSessionAgentText = process.env.T3_ACP_LOAD_SESSION_AGENT_TEXT;
+const loadSessionCost = Number.parseFloat(process.env.T3_ACP_LOAD_SESSION_COST ?? "");
+const promptCost = Number.parseFloat(process.env.T3_ACP_PROMPT_COST ?? "");
 const authMethods = (process.env.T3_ACP_AUTH_METHODS ?? "")
   .split(",")
   .map((method) => method.trim())
@@ -391,6 +393,17 @@ const program = Effect.gen(function* () {
           },
         });
       }
+      if (Number.isFinite(loadSessionCost)) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 100,
+            size: 1_000,
+            cost: { amount: loadSessionCost, currency: "USD" },
+          },
+        });
+      }
       return {
         modes: modeState(),
         configOptions: configOptions(),
@@ -494,6 +507,18 @@ const program = Effect.gen(function* () {
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
+      }
+
+      if (Number.isFinite(promptCost)) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 200,
+            size: 1_000,
+            cost: { amount: promptCost, currency: "USD" },
+          },
+        });
       }
 
       if (emitBackgroundAgentFlow) {

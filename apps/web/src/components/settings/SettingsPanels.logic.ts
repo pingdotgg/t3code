@@ -70,3 +70,39 @@ export function buildArchivedThreadGroups(input: {
     }))
     .filter((group) => group.threads.length > 0);
 }
+
+export function filterArchivedThreadGroups(
+  groups: readonly ArchivedThreadGroup[],
+  query: string,
+): readonly ArchivedThreadGroup[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (normalizedQuery.length === 0) {
+    return groups;
+  }
+
+  return groups.flatMap((group) => {
+    const projectMatches = group.project.name.toLocaleLowerCase().includes(normalizedQuery);
+    const threads = projectMatches
+      ? group.threads
+      : group.threads.filter((thread) =>
+          thread.title.toLocaleLowerCase().includes(normalizedQuery),
+        );
+    return threads.length > 0 ? [{ ...group, threads }] : [];
+  });
+}
+
+export async function runSequentiallySettled<T>(
+  items: readonly T[],
+  operation: (item: T) => Promise<void>,
+): Promise<ReadonlyArray<PromiseSettledResult<void>>> {
+  const results: Array<PromiseSettledResult<void>> = [];
+  for (const item of items) {
+    try {
+      await operation(item);
+      results.push({ status: "fulfilled", value: undefined });
+    } catch (reason) {
+      results.push({ status: "rejected", reason });
+    }
+  }
+  return results;
+}

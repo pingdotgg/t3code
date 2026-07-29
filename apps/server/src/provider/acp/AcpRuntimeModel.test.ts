@@ -189,6 +189,36 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("projects ACP usage and cost updates", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 178_100,
+        size: 200_000,
+        cost: { amount: 1.75, currency: "USD" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        used: 178_100,
+        size: 200_000,
+        cost: { amount: 1.75, currency: "USD" },
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 178_100,
+            size: 200_000,
+            cost: { amount: 1.75, currency: "USD" },
+          },
+        },
+      },
+    ]);
+  });
+
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",

@@ -6,6 +6,48 @@ import { ProviderRuntimeEvent } from "./providerRuntime.ts";
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("requires response cost amount and currency together", () => {
+    const baseEvent = {
+      type: "thread.token-usage.updated",
+      eventId: "event-cost",
+      provider: "copilot",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        usage: {
+          usedTokens: 100,
+        },
+      },
+    };
+
+    expect(() =>
+      decodeRuntimeEvent({
+        ...baseEvent,
+        payload: {
+          usage: {
+            ...baseEvent.payload.usage,
+            cost: { amount: 0.25 },
+          },
+        },
+      }),
+    ).toThrow();
+    expect(
+      decodeRuntimeEvent({
+        ...baseEvent,
+        payload: {
+          usage: {
+            ...baseEvent.payload.usage,
+            cost: { amount: 0.25, currency: "USD" },
+          },
+        },
+      }).payload,
+    ).toMatchObject({
+      usage: {
+        cost: { amount: 0.25, currency: "USD" },
+      },
+    });
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

@@ -75,7 +75,11 @@ import {
   selectCopilotPermissionForDecision,
   selectCopilotPermissionForRuntimeMode,
 } from "../acp/CopilotAcpPermissions.ts";
-import { makeCopilotAcpRuntime, resolveCopilotAcpModeId } from "../acp/CopilotAcpSupport.ts";
+import {
+  makeCopilotAcpRuntime,
+  prepareCopilotCustomInstructions,
+  resolveCopilotAcpModeId,
+} from "../acp/CopilotAcpSupport.ts";
 import {
   copilotFatalToolCallErrorMessage,
   detectCopilotFatalToolCallError,
@@ -532,6 +536,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
     const serverSettingsService = yield* ServerSettingsService;
+    const customInstructionsDir = yield* prepareCopilotCustomInstructions(serverConfig.stateDir);
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -856,6 +861,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           providerInstanceId: input.providerInstanceId,
           cwd: input.cwd,
           baseDir: serverConfig.baseDir,
+          customInstructionsDir,
           runtimeMode: input.runtimeMode,
           ...(input.resumeSessionId ? { resumeSessionId: input.resumeSessionId } : {}),
           ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
@@ -1052,11 +1058,25 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             return mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error);
           }),
         );
+        const assistantItemTurnIdByItemId = new Map<string, TurnId>();
+        let lastCumulativeCost:
+          | {
+              readonly amount: number;
+              readonly currency: string;
+            }
+          | undefined;
+        const turnCostBaselineByTurnId = new Map<TurnId, number>();
         if (input.resumeSessionId) {
-          yield* acp.discardPendingEvents;
+          const pendingEvents = yield* acp.discardPendingEvents;
+          for (let index = pendingEvents.length - 1; index >= 0; index -= 1) {
+            const pendingEvent = pendingEvents[index];
+            if (pendingEvent?._tag === "UsageUpdated" && pendingEvent.cost) {
+              lastCumulativeCost = pendingEvent.cost;
+              break;
+            }
+          }
         }
 
-        const assistantItemTurnIdByItemId = new Map<string, TurnId>();
         const notificationFiber = yield* Stream.runDrain(
           Stream.mapEffect(acp.getEvents(), (rawEvent) =>
             Effect.gen(function* () {
@@ -1067,6 +1087,52 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                   : rawNormalizedEvent;
                 const activeTurnId = input.getCurrentTurnId();
                 switch (event._tag) {
+                  case "UsageUpdated": {
+                    yield* logNative(input.threadId, "session/update", event.rawPayload);
+                    const cost =
+                      event.cost && activeTurnId
+                        ? (() => {
+                            const baseline =
+                              turnCostBaselineByTurnId.get(activeTurnId) ??
+                              (lastCumulativeCost?.currency === event.cost.currency
+                                ? lastCumulativeCost.amount
+                                : 0);
+                            turnCostBaselineByTurnId.set(activeTurnId, baseline);
+                            return {
+                              amount: Math.max(0, event.cost.amount - baseline),
+                              currency: event.cost.currency,
+                            };
+                          })()
+                        : undefined;
+                    if (event.cost) {
+                      lastCumulativeCost = event.cost;
+                    }
+                    yield* offerRuntimeEvent({
+                      type: "thread.token-usage.updated",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      ...(activeTurnId ? { turnId: activeTurnId } : {}),
+                      payload: {
+                        usage: {
+                          usedTokens: event.used,
+                          maxTokens: event.size,
+                          lastUsedTokens: event.used,
+                          ...(cost
+                            ? {
+                                cost,
+                              }
+                            : {}),
+                        },
+                      },
+                      raw: {
+                        source: "acp.jsonrpc",
+                        method: "session/update",
+                        payload: event.rawPayload,
+                      },
+                    });
+                    break;
+                  }
                   case "ModeChanged":
                     yield* logNative(input.threadId, "session/update", event.rawPayload);
                     yield* offerRuntimeEvent(

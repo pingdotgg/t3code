@@ -5,6 +5,7 @@ import {
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  SearchIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -25,7 +26,7 @@ import {
   type ReviewChangesScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
 import {
   DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
@@ -85,8 +86,10 @@ import {
 } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { DraftInput } from "../ui/draft-input";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
@@ -98,6 +101,8 @@ import { getDriverOption } from "./providerDriverMeta";
 import {
   buildArchivedThreadGroups,
   buildProviderInstanceUpdatePatch,
+  filterArchivedThreadGroups,
+  runSequentiallySettled,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -2771,10 +2776,140 @@ export function AgentWorkflowsSettingsPanel() {
 export function ArchivedThreadsPanel() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
-  const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const confirmThreadDelete = useSettings((settings) => settings.confirmThreadDelete);
+  const { unarchiveThread, deleteThread, confirmAndDeleteThread } = useThreadActions();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedThreadKeys, setSelectedThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const archivedGroups = useMemo(() => {
     return buildArchivedThreadGroups({ projects, threads });
   }, [projects, threads]);
+  const filteredArchivedGroups = useMemo(
+    () => filterArchivedThreadGroups(archivedGroups, searchQuery),
+    [archivedGroups, searchQuery],
+  );
+  const filteredThreadKeys = useMemo(
+    () =>
+      filteredArchivedGroups.flatMap(({ threads: projectThreads }) =>
+        projectThreads.map((thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ),
+      ),
+    [filteredArchivedGroups],
+  );
+  const archivedThreadKeys = useMemo(
+    () =>
+      new Set(
+        archivedGroups.flatMap(({ threads: projectThreads }) =>
+          projectThreads.map((thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          ),
+        ),
+      ),
+    [archivedGroups],
+  );
+  const selectedThreadCount = selectedThreadKeys.size;
+
+  useEffect(() => {
+    setSelectedThreadKeys((current) => {
+      const next = new Set([...current].filter((threadKey) => archivedThreadKeys.has(threadKey)));
+      return next.size === current.size ? current : next;
+    });
+  }, [archivedThreadKeys]);
+
+  const toggleThreadSelection = useCallback((threadKey: string) => {
+    setSelectedThreadKeys((current) => {
+      const next = new Set(current);
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllFilteredThreads = useCallback(() => {
+    setSelectedThreadKeys((current) => new Set([...current, ...filteredThreadKeys]));
+  }, [filteredThreadKeys]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedThreadKeys(new Set());
+  }, []);
+
+  const unarchiveSelectedThreads = useCallback(async () => {
+    const selectedThreads = archivedGroups.flatMap(({ threads: projectThreads }) =>
+      projectThreads.flatMap((thread) => {
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        return selectedThreadKeys.has(scopedThreadKey(threadRef))
+          ? [{ key: scopedThreadKey(threadRef), threadRef }]
+          : [];
+      }),
+    );
+    const results = await Promise.allSettled(
+      selectedThreads.map(({ threadRef }) => unarchiveThread(threadRef)),
+    );
+    const failedThreadKeys = new Set(
+      selectedThreads.flatMap(({ key }, index) =>
+        results[index]?.status === "rejected" ? [key] : [],
+      ),
+    );
+    const failedCount = failedThreadKeys.size;
+    if (failedCount > 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to unarchive some threads",
+          description: `${failedCount} thread${failedCount === 1 ? "" : "s"} could not be unarchived.`,
+        }),
+      );
+    }
+    setSelectedThreadKeys(failedThreadKeys);
+  }, [archivedGroups, selectedThreadKeys, unarchiveThread]);
+
+  const deleteSelectedThreads = useCallback(async () => {
+    const api = readLocalApi();
+    if (!api) return;
+    const selectedThreads = archivedGroups.flatMap(({ threads: projectThreads }) =>
+      projectThreads.flatMap((thread) => {
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        return selectedThreadKeys.has(scopedThreadKey(threadRef))
+          ? [{ key: scopedThreadKey(threadRef), threadRef }]
+          : [];
+      }),
+    );
+    if (confirmThreadDelete) {
+      const count = selectedThreads.length;
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Delete ${count} chat${count === 1 ? "" : "s"}?`,
+          "This permanently clears conversation history for these chats.",
+        ].join("\n"),
+      );
+      if (!confirmed) return;
+    }
+
+    const deletedThreadKeys = new Set(selectedThreadKeys);
+    const results = await runSequentiallySettled(selectedThreads, ({ threadRef }) =>
+      deleteThread(threadRef, { deletedThreadKeys }),
+    );
+    const failedThreadKeys = new Set(
+      selectedThreads.flatMap(({ key }, index) =>
+        results[index]?.status === "rejected" ? [key] : [],
+      ),
+    );
+    if (failedThreadKeys.size > 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to delete some chats",
+          description: `${failedThreadKeys.size} chat${failedThreadKeys.size === 1 ? "" : "s"} could not be deleted.`,
+        }),
+      );
+    }
+    setSelectedThreadKeys(failedThreadKeys);
+  }, [archivedGroups, confirmThreadDelete, deleteThread, selectedThreadKeys]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -2825,62 +2960,139 @@ export function ArchivedThreadsPanel() {
           </Empty>
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }) => (
-          <SettingsSection
-            key={`${project.environmentId}:${project.id}`}
-            title={project.name}
-            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
-          >
-            {projectThreads.map((thread) => (
-              <div
-                key={thread.id}
-                className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  void handleArchivedThreadContextMenu(
-                    scopeThreadRef(thread.environmentId, thread.id),
-                    {
-                      x: event.clientX,
-                      y: event.clientY,
-                    },
-                  );
-                }}
-              >
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                    {" \u00b7 Created "}
-                    {formatRelativeTimeLabel(thread.createdAt)}
-                  </p>
-                </div>
+        <>
+          <SettingsSection title="Archived threads">
+            <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:px-5">
+              <div className="relative flex-1">
+                <SearchIcon
+                  aria-hidden
+                  className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search archived chats..."
+                  aria-label="Search archived chats"
+                  className="pl-9"
+                />
+              </div>
+              <div className="flex gap-2">
                 <Button
-                  type="button"
                   variant="outline"
                   size="sm"
-                  className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
-                  onClick={() =>
-                    void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
-                      (error) => {
-                        toastManager.add(
-                          stackedThreadToast({
-                            type: "error",
-                            title: "Failed to unarchive thread",
-                            description:
-                              error instanceof Error ? error.message : "An error occurred.",
-                          }),
-                        );
-                      },
-                    )
-                  }
+                  disabled={filteredThreadKeys.length === 0}
+                  onClick={selectAllFilteredThreads}
                 >
-                  <ArchiveX className="size-3.5" />
-                  <span>Unarchive</span>
+                  Select all
                 </Button>
+                {selectedThreadCount > 0 ? (
+                  <>
+                    <Button variant="outline" size="sm" onClick={clearSelection}>
+                      Clear selection
+                    </Button>
+                    <Button size="sm" onClick={() => void unarchiveSelectedThreads()}>
+                      <ArchiveX className="size-3.5" />
+                      Unarchive {selectedThreadCount}
+                    </Button>
+                    <Button
+                      variant="destructive-outline"
+                      size="sm"
+                      onClick={() => void deleteSelectedThreads()}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      Delete {selectedThreadCount}
+                    </Button>
+                  </>
+                ) : null}
               </div>
-            ))}
+            </div>
           </SettingsSection>
-        ))
+          {filteredArchivedGroups.length === 0 ? (
+            <SettingsSection title="Search results">
+              <Empty className="min-h-48">
+                <EmptyHeader>
+                  <EmptyTitle>No archived chats found</EmptyTitle>
+                  <EmptyDescription>Try another search term.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </SettingsSection>
+          ) : (
+            filteredArchivedGroups.map(({ project, threads: projectThreads }) => (
+              <SettingsSection
+                key={`${project.environmentId}:${project.id}`}
+                title={project.name}
+                icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+              >
+                {projectThreads.map((thread) => {
+                  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+                  const threadKey = scopedThreadKey(threadRef);
+                  return (
+                    <div
+                      key={thread.id}
+                      className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        void handleArchivedThreadContextMenu(threadRef, {
+                          x: event.clientX,
+                          y: event.clientY,
+                        });
+                      }}
+                    >
+                      <Checkbox
+                        checked={selectedThreadKeys.has(threadKey)}
+                        onCheckedChange={() => toggleThreadSelection(threadKey)}
+                        aria-label={`Select ${thread.title}`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate text-sm font-medium text-foreground">
+                          {thread.title}
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                          {" \u00b7 Created "}
+                          {formatRelativeTimeLabel(thread.createdAt)}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
+                        onClick={() =>
+                          void unarchiveThread(threadRef)
+                            .then(() => {
+                              setSelectedThreadKeys((current) => {
+                                if (!current.has(threadKey)) {
+                                  return current;
+                                }
+                                const next = new Set(current);
+                                next.delete(threadKey);
+                                return next;
+                              });
+                            })
+                            .catch((error) => {
+                              toastManager.add(
+                                stackedThreadToast({
+                                  type: "error",
+                                  title: "Failed to unarchive thread",
+                                  description:
+                                    error instanceof Error ? error.message : "An error occurred.",
+                                }),
+                              );
+                            })
+                        }
+                      >
+                        <ArchiveX className="size-3.5" />
+                        <span>Unarchive</span>
+                      </Button>
+                    </div>
+                  );
+                })}
+              </SettingsSection>
+            ))
+          )}
+        </>
       )}
     </SettingsPageContainer>
   );
