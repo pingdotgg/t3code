@@ -187,6 +187,11 @@ const ProjectionTurnSnapshotBoundsRowSchema = Schema.Struct({
   snapshotMaxCompletedAt: Schema.NullOr(IsoDateTime),
 });
 const ProjectionStateDbRowSchema = ProjectionState;
+const ProjectionUpdatedAtBoundsRowSchema = Schema.Struct({
+  maxProjectUpdatedAt: Schema.NullOr(IsoDateTime),
+  maxThreadUpdatedAt: Schema.NullOr(IsoDateTime),
+  maxThreadSessionUpdatedAt: Schema.NullOr(IsoDateTime),
+});
 const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
   threadCount: Schema.Number,
@@ -411,20 +416,50 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const projectionWorkflowRepository = yield* ProjectionWorkflowRepository;
   const repositoryIdentityResolutionConcurrency = 4;
 
+  // Shared column lists so the full-snapshot and live-only variants below can
+  // never drift apart when a projection column is added.
+  const projectRowColumns = sql`
+    project_id AS "projectId",
+    title,
+    workspace_root AS "workspaceRoot",
+    default_model_selection_json AS "defaultModelSelection",
+    scripts_json AS "scripts",
+    created_at AS "createdAt",
+    updated_at AS "updatedAt",
+    deleted_at AS "deletedAt"
+  `;
+
+  const threadRowColumns = sql`
+    thread_id AS "threadId",
+    project_id AS "projectId",
+    parent_thread_id AS "parentThreadId",
+    title,
+    model_selection_json AS "modelSelection",
+    runtime_mode AS "runtimeMode",
+    pending_runtime_mode AS "pendingRuntimeMode",
+    interaction_mode AS "interactionMode",
+    branch,
+    worktree_path AS "worktreePath",
+    review_snapshot_json AS "reviewSnapshot",
+    review_result_json AS "reviewResult",
+    latest_turn_id AS "latestTurnId",
+    created_at AS "createdAt",
+    updated_at AS "updatedAt",
+    archived_at AS "archivedAt",
+    latest_user_message_at AS "latestUserMessageAt",
+    pending_approval_count AS "pendingApprovalCount",
+    pending_user_input_count AS "pendingUserInputCount",
+    has_actionable_proposed_plan AS "hasActionableProposedPlan",
+    deleted_at AS "deletedAt"
+  `;
+
   const listProjectRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionProjectDbRowSchema,
     execute: () =>
       sql`
         SELECT
-          project_id AS "projectId",
-          title,
-          workspace_root AS "workspaceRoot",
-          default_model_selection_json AS "defaultModelSelection",
-          scripts_json AS "scripts",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
+          ${projectRowColumns}
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
       `,
@@ -436,28 +471,41 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: () =>
       sql`
         SELECT
-          thread_id AS "threadId",
-          project_id AS "projectId",
-          parent_thread_id AS "parentThreadId",
-          title,
-          model_selection_json AS "modelSelection",
-          runtime_mode AS "runtimeMode",
-          pending_runtime_mode AS "pendingRuntimeMode",
-          interaction_mode AS "interactionMode",
-          branch,
-          worktree_path AS "worktreePath",
-          review_snapshot_json AS "reviewSnapshot",
-          review_result_json AS "reviewResult",
-          latest_turn_id AS "latestTurnId",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          archived_at AS "archivedAt",
-          latest_user_message_at AS "latestUserMessageAt",
-          pending_approval_count AS "pendingApprovalCount",
-          pending_user_input_count AS "pendingUserInputCount",
-          has_actionable_proposed_plan AS "hasActionableProposedPlan",
-          deleted_at AS "deletedAt"
+          ${threadRowColumns}
         FROM projection_threads
+        ORDER BY created_at ASC, thread_id ASC
+      `,
+  });
+
+  /**
+   * Shell-snapshot variants that drop soft-deleted rows in SQL.
+   *
+   * The shell snapshot discards these rows anyway, so filtering here avoids
+   * decoding them and - for projects - avoids resolving a repository identity
+   * (filesystem work) for a project the client will never see.
+   */
+  const listLiveProjectRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionProjectDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          ${projectRowColumns}
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+        ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
+  const listLiveThreadRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          ${threadRowColumns}
+        FROM projection_threads
+        WHERE deleted_at IS NULL
         ORDER BY created_at ASC, thread_id ASC
       `,
   });
@@ -575,26 +623,50 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const threadSessionRowColumns = sql`
+    s.thread_id AS "threadId",
+    s.status,
+    s.provider_name AS "providerName",
+    s.provider_instance_id AS "providerInstanceId",
+    s.provider_session_id AS "providerSessionId",
+    s.provider_thread_id AS "providerThreadId",
+    s.runtime_mode AS "runtimeMode",
+    s.active_turn_id AS "activeTurnId",
+    COALESCE(s.resume_cursor_json, r.resume_cursor_json) AS "resumeCursor",
+    s.last_error AS "lastError",
+    s.updated_at AS "updatedAt"
+  `;
+
   const listThreadSessionRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionThreadSessionDbRowSchema,
     execute: () =>
       sql`
         SELECT
-          s.thread_id AS "threadId",
-          s.status,
-          s.provider_name AS "providerName",
-          s.provider_instance_id AS "providerInstanceId",
-          s.provider_session_id AS "providerSessionId",
-          s.provider_thread_id AS "providerThreadId",
-          s.runtime_mode AS "runtimeMode",
-          s.active_turn_id AS "activeTurnId",
-          COALESCE(s.resume_cursor_json, r.resume_cursor_json) AS "resumeCursor",
-          s.last_error AS "lastError",
-          s.updated_at AS "updatedAt"
+          ${threadSessionRowColumns}
         FROM projection_thread_sessions s
         LEFT JOIN provider_session_runtime r
           ON r.thread_id = s.thread_id
+        ORDER BY s.thread_id ASC
+      `,
+  });
+
+  const listLiveThreadSessionRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadSessionDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          ${threadSessionRowColumns}
+        FROM projection_thread_sessions s
+        LEFT JOIN provider_session_runtime r
+          ON r.thread_id = s.thread_id
+        WHERE EXISTS (
+          SELECT 1
+          FROM projection_threads t
+          WHERE t.thread_id = s.thread_id
+            AND t.deleted_at IS NULL
+        )
         ORDER BY s.thread_id ASC
       `,
   });
@@ -621,32 +693,76 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const latestTurnRowColumns = sql`
+    turns.thread_id AS "threadId",
+    turns.turn_id AS "turnId",
+    turns.state,
+    turns.requested_at AS "requestedAt",
+    turns.started_at AS "startedAt",
+    turns.completed_at AS "completedAt",
+    turns.assistant_message_id AS "assistantMessageId",
+    turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+    turns.source_proposed_plan_id AS "sourceProposedPlanId"
+  `;
+
+  const latestTurnRowJoin = sql`
+    INNER JOIN projection_turns AS turns
+      ON turns.row_id = (
+        SELECT candidate.row_id
+        FROM projection_turns AS candidate
+        WHERE candidate.thread_id = threads.thread_id
+          AND candidate.turn_id IS NOT NULL
+        ORDER BY candidate.requested_at DESC, candidate.turn_id DESC
+        LIMIT 1
+      )
+  `;
+
   const listLatestTurnRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionLatestTurnDbRowSchema,
     execute: () =>
       sql`
         SELECT
-          turns.thread_id AS "threadId",
-          turns.turn_id AS "turnId",
-          turns.state,
-          turns.requested_at AS "requestedAt",
-          turns.started_at AS "startedAt",
-          turns.completed_at AS "completedAt",
-          turns.assistant_message_id AS "assistantMessageId",
-          turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
-          turns.source_proposed_plan_id AS "sourceProposedPlanId"
+          ${latestTurnRowColumns}
         FROM projection_threads AS threads
-        INNER JOIN projection_turns AS turns
-          ON turns.row_id = (
-            SELECT candidate.row_id
-            FROM projection_turns AS candidate
-            WHERE candidate.thread_id = threads.thread_id
-              AND candidate.turn_id IS NOT NULL
-            ORDER BY candidate.requested_at DESC, candidate.turn_id DESC
-            LIMIT 1
-          )
+        ${latestTurnRowJoin}
         ORDER BY turns.thread_id ASC
+      `,
+  });
+
+  /**
+   * Skips the per-thread correlated lookup for soft-deleted threads, which the
+   * shell snapshot never renders.
+   */
+  const listLiveLatestTurnRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionLatestTurnDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          ${latestTurnRowColumns}
+        FROM projection_threads AS threads
+        ${latestTurnRowJoin}
+        WHERE threads.deleted_at IS NULL
+        ORDER BY turns.thread_id ASC
+      `,
+  });
+
+  /**
+   * Snapshot freshness must keep reflecting soft-deleted rows: deleting a
+   * project or thread bumps its `updated_at`, and clients rely on
+   * `updatedAt` moving so they re-read. The shell snapshot no longer loads
+   * those rows, so read their bounds as aggregates instead.
+   */
+  const readProjectionUpdatedAtBounds = SqlSchema.findOne({
+    Request: Schema.Void,
+    Result: ProjectionUpdatedAtBoundsRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          (SELECT MAX(updated_at) FROM projection_projects) AS "maxProjectUpdatedAt",
+          (SELECT MAX(updated_at) FROM projection_threads) AS "maxThreadUpdatedAt",
+          (SELECT MAX(updated_at) FROM projection_thread_sessions) AS "maxThreadSessionUpdatedAt"
       `,
   });
 
@@ -1407,7 +1523,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     sql
       .withTransaction(
         Effect.all([
-          listProjectRows(undefined).pipe(
+          listLiveProjectRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getShellSnapshot:listProjects:query",
@@ -1415,7 +1531,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listThreadRows(undefined).pipe(
+          listLiveThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getShellSnapshot:listThreads:query",
@@ -1423,7 +1539,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listThreadSessionRows(undefined).pipe(
+          listLiveThreadSessionRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getShellSnapshot:listThreadSessions:query",
@@ -1431,7 +1547,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listLatestTurnRows(undefined).pipe(
+          listLiveLatestTurnRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getShellSnapshot:listLatestTurns:query",
@@ -1464,6 +1580,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
           projectionWorkflowRepository.listShellSnapshot(),
+          readProjectionUpdatedAtBounds(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:readProjectionUpdatedAtBounds:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:readProjectionUpdatedAtBounds:decodeRow",
+              ),
+            ),
+          ),
         ]),
       )
       .pipe(
@@ -1477,18 +1601,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             backgroundAgentActivityRows,
             stateRows,
             workflowSnapshot,
+            updatedAtBounds,
           ]) =>
             Effect.gen(function* () {
               const { artifacts: workflowArtifacts, runs: workflowRuns } = workflowSnapshot;
               let updatedAt: string | null = null;
-              for (const row of projectRows) {
-                updatedAt = maxIso(updatedAt, row.updatedAt);
+              // Aggregates rather than row folds: the row queries above exclude
+              // soft-deleted rows, but a delete bumps `updated_at` and must
+              // still move snapshot freshness.
+              if (updatedAtBounds.maxProjectUpdatedAt !== null) {
+                updatedAt = maxIso(updatedAt, updatedAtBounds.maxProjectUpdatedAt);
               }
-              for (const row of threadRows) {
-                updatedAt = maxIso(updatedAt, row.updatedAt);
+              if (updatedAtBounds.maxThreadUpdatedAt !== null) {
+                updatedAt = maxIso(updatedAt, updatedAtBounds.maxThreadUpdatedAt);
               }
-              for (const row of sessionRows) {
-                updatedAt = maxIso(updatedAt, row.updatedAt);
+              if (updatedAtBounds.maxThreadSessionUpdatedAt !== null) {
+                updatedAt = maxIso(updatedAt, updatedAtBounds.maxThreadSessionUpdatedAt);
               }
               if (turnSnapshotBounds.snapshotMaxRequestedAt !== null) {
                 updatedAt = maxIso(updatedAt, turnSnapshotBounds.snapshotMaxRequestedAt);
@@ -1532,43 +1660,39 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
               const snapshot = {
                 snapshotSequence: computeSnapshotSequence(stateRows),
-                projects: projectRows
-                  .filter((row) => row.deletedAt === null)
-                  .map((row) =>
-                    mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
-                  ),
-                threads: threadRows
-                  .filter((row) => row.deletedAt === null)
-                  .map((row): OrchestrationThreadShell => {
-                    const session = sessionByThread.get(row.threadId) ?? null;
-                    return {
-                      id: row.threadId,
-                      projectId: row.projectId,
-                      parentThreadId: row.parentThreadId ?? null,
-                      title: row.title,
-                      modelSelection: row.modelSelection,
-                      runtimeMode: row.runtimeMode,
-                      pendingRuntimeMode: row.pendingRuntimeMode,
-                      interactionMode: row.interactionMode,
-                      branch: row.branch,
-                      worktreePath: row.worktreePath,
-                      latestTurn: reconcileLatestTurnWithSession(
-                        latestTurnByThread.get(row.threadId) ?? null,
-                        session,
-                      ),
-                      createdAt: row.createdAt,
-                      updatedAt: row.updatedAt,
-                      archivedAt: row.archivedAt,
+                projects: projectRows.map((row) =>
+                  mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
+                ),
+                threads: threadRows.map((row): OrchestrationThreadShell => {
+                  const session = sessionByThread.get(row.threadId) ?? null;
+                  return {
+                    id: row.threadId,
+                    projectId: row.projectId,
+                    parentThreadId: row.parentThreadId ?? null,
+                    title: row.title,
+                    modelSelection: row.modelSelection,
+                    runtimeMode: row.runtimeMode,
+                    pendingRuntimeMode: row.pendingRuntimeMode,
+                    interactionMode: row.interactionMode,
+                    branch: row.branch,
+                    worktreePath: row.worktreePath,
+                    latestTurn: reconcileLatestTurnWithSession(
+                      latestTurnByThread.get(row.threadId) ?? null,
                       session,
-                      latestUserMessageAt: row.latestUserMessageAt,
-                      hasPendingApprovals: row.pendingApprovalCount > 0,
-                      hasPendingUserInput: row.pendingUserInputCount > 0,
-                      hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
-                      ...(backgroundAgentRunsByThread.get(row.threadId)?.length
-                        ? { backgroundAgentRuns: backgroundAgentRunsByThread.get(row.threadId)! }
-                        : {}),
-                    };
-                  }),
+                    ),
+                    createdAt: row.createdAt,
+                    updatedAt: row.updatedAt,
+                    archivedAt: row.archivedAt,
+                    session,
+                    latestUserMessageAt: row.latestUserMessageAt,
+                    hasPendingApprovals: row.pendingApprovalCount > 0,
+                    hasPendingUserInput: row.pendingUserInputCount > 0,
+                    hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                    ...(backgroundAgentRunsByThread.get(row.threadId)?.length
+                      ? { backgroundAgentRuns: backgroundAgentRunsByThread.get(row.threadId)! }
+                      : {}),
+                  };
+                }),
                 workflowRuns,
                 workflowArtifacts,
                 updatedAt: updatedAt ?? new Date(0).toISOString(),
