@@ -74,16 +74,31 @@ const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 // Kept for orchestration/projection call sites, which are being revamped separately.
 /**
+ * SQLite names its condition through a fixed result-code table, so the code and
+ * its canonical string are bounded and carry no query data. The driver message
+ * is not bounded: a constraint failure spells out the table and column it hit.
+ * Only the normalized pair is carried here; `cause` keeps everything else.
+ */
+function sqliteCondition(cause: unknown): string | undefined {
+  let value: unknown = cause;
+  for (let depth = 0; depth < 4 && typeof value === "object" && value !== null; depth += 1) {
+    const { errcode, errstr } = value as { errcode?: unknown; errstr?: unknown };
+    if (typeof errcode === "number" && typeof errstr === "string") {
+      return `SQLITE(${errcode}) ${errstr}`;
+    }
+    value = (value as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
  * A rejected payload must never reach diagnostics, so a schema failure
- * contributes only its issue tags. A driver error names the SQLite condition
- * and at most the constraint it violated, never a bound value, so its own
- * message is safe to carry and is the part that makes an occurrence
- * diagnosable at all.
+ * contributes only its issue tags, and a driver failure only its normalized
+ * condition. Anything the mapper cannot categorize leaves the detail unset.
  */
 function describeSqlCause(cause: unknown): string | undefined {
   if (Schema.isSchemaError(cause)) return summarizeSchemaIssue(cause.issue);
-  if (cause instanceof Error && cause.message.length > 0) return cause.message;
-  return undefined;
+  return sqliteCondition(cause);
 }
 
 export function toPersistenceSqlError(operation: string) {
