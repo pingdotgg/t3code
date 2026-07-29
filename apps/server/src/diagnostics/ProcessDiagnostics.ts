@@ -443,11 +443,11 @@ function readWindowsProcessRows(): Effect.Effect<
   ChildProcessSpawner.ChildProcessSpawner
 > {
   const command = [
-    "$processes = Get-CimInstance Win32_Process | ForEach-Object {",
-    '$perf = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter "IDProcess = $($_.ProcessId)" -ErrorAction SilentlyContinue;',
-    "[pscustomobject]@{ ProcessId = $_.ProcessId; ParentProcessId = $_.ParentProcessId; Name = $_.Name; CommandLine = $_.CommandLine; Status = $_.Status; WorkingSetSize = $_.WorkingSetSize; PercentProcessorTime = if ($perf) { $perf.PercentProcessorTime } else { 0 } }",
-    "};",
-    "$processes | ConvertTo-Json -Compress -Depth 3",
+    "$perfData=@{};Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue|ForEach-Object{$perfData[$_.IDProcess]=$_};",
+    "Get-CimInstance Win32_Process|ForEach-Object{",
+    "$perf=$perfData[$_.ProcessId];",
+    "[pscustomobject]@{ProcessId=$_.ProcessId;ParentProcessId=$_.ParentProcessId;Name=$_.Name;CommandLine=$_.CommandLine;Status=$_.Status;WorkingSetSize=$_.WorkingSetSize;PercentProcessorTime=if($perf){$perf.PercentProcessorTime}else{0}}",
+    "}|ConvertTo-Json -Compress -Depth 3",
   ].join(" ");
 
   return runProcess({
