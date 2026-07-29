@@ -1,0 +1,50 @@
+diff --git a/dist/NodeHttpServer.js b/dist/NodeHttpServer.js
+index 4ca746097f782fccc6b595e4d772f98d764278b5..915ca642441c1eb628e3ec60747e034763812eef 100644
+--- a/dist/NodeHttpServer.js
++++ b/dist/NodeHttpServer.js
+@@ -101,7 +101,17 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (evaluate, options)
+   });
+   const address = server.address();
+   const wss = yield* Effect.acquireRelease(Effect.sync(() => new NodeWS.WebSocketServer({
+-    noServer: true
++    noServer: true,
++    // Patch: upstreamed as https://github.com/Effect-TS/effect/pull/6691 (ships
++    // in >= 4.0.0-beta.103 as the layer option `websocket: { perMessageDeflate }`).
++    // On upgrade: drop this patch and pass the option in apps/server/src/server.ts.
++    // Negotiate permessage-deflate with clients that offer it; clients that
++    // don't still get uncompressed frames on their connection. Context
++    // takeover stays enabled (ws default) so the compression window is shared
++    // across frames — that also makes small frames cheap to compress, so no
++    // size threshold is set (ws only honors `threshold` when context takeover
++    // is disabled).
++    perMessageDeflate: true
+   })), wss => Effect.callback(resume => {
+     wss.close(() => resume(Effect.void));
+   })).pipe(Scope.provide(scope), Effect.cached);
+diff --git a/src/NodeHttpServer.ts b/src/NodeHttpServer.ts
+index 3bc28527ffad0eda569d89da50a8b8211bc6468c..c926c5356ad791cba892c9b5b96b14965ee012e7 100644
+--- a/src/NodeHttpServer.ts
++++ b/src/NodeHttpServer.ts
+@@ -134,7 +134,21 @@ export const make = Effect.fnUntraced(function*(
+   const address = server.address()!
+ 
+   const wss = yield* Effect.acquireRelease(
+-    Effect.sync(() => new NodeWS.WebSocketServer({ noServer: true })),
++    Effect.sync(() =>
++      new NodeWS.WebSocketServer({
++        noServer: true,
++        // Patch: upstreamed as https://github.com/Effect-TS/effect/pull/6691 (ships
++        // in >= 4.0.0-beta.103 as the layer option `websocket: { perMessageDeflate }`).
++        // On upgrade: drop this patch and pass the option in apps/server/src/server.ts.
++        // Negotiate permessage-deflate with clients that offer it; clients that
++        // don't still get uncompressed frames on their connection. Context
++        // takeover stays enabled (ws default) so the compression window is
++        // shared across frames — that also makes small frames cheap to
++        // compress, so no size threshold is set (ws only honors `threshold`
++        // when context takeover is disabled).
++        perMessageDeflate: true
++      })
++    ),
+     (wss) =>
+       Effect.callback<void>((resume) => {
+         wss.close(() => resume(Effect.void))
