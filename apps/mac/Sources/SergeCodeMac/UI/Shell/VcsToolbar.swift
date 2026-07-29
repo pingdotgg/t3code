@@ -215,14 +215,11 @@ struct VcsToolbar: View {
                 .padding(8)
             }
         }
-        .task {
-            // A focused TextField can vend SafariPlatformSupport's remote
-            // completion view. Let the NSPopover finish ordering first:
-            // macOS 27 otherwise throws from NSRemoteView while assigning the
-            // completion view's containing window.
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-            branchSearchFocused = true
+        .background {
+            WindowPresentationReadyProbe {
+                branchSearchFocused = true
+            }
+            .frame(width: 0, height: 0)
         }
     }
 
