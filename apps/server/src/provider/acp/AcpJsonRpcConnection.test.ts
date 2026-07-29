@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -783,6 +784,56 @@ describe("AcpSessionRuntime", () => {
       Effect.scoped,
       Effect.provide(NodeServices.layer),
     ),
+  );
+
+  it.effect("keeps active-session updates while loading a different session", () =>
+    Effect.gen(function* () {
+      const loadStarted = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        authMethodId: "test",
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "250",
+          },
+        },
+        cwd: process.cwd(),
+        sessionLoadTimeout: "2 seconds",
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        requestLogger: (event) =>
+          event.method === "session/load" && event.status === "started"
+            ? Deferred.succeed(loadStarted, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      yield* runtime.start();
+
+      const eventsFiber = yield* Stream.runCollect(Stream.take(runtime.getEvents(), 4)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const loadFiber = yield* runtime
+        .loadSession("mock-session-2")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(loadStarted);
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "active session prompt" }],
+      });
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("2 seconds")));
+      expect(events.map((event) => event._tag)).toEqual([
+        "PlanUpdated",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+      ]);
+      expect(
+        events.some((event) => event._tag === "ContentDelta" && event.text === "hello from mock"),
+      ).toBe(true);
+
+      const loaded = yield* Fiber.join(loadFiber).pipe(Effect.timeout("2 seconds"));
+      expect(loaded.sessionId).toBe("mock-session-2");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   );
 
   it.effect("completes session/load after replay becomes idle while its RPC stays pending", () =>

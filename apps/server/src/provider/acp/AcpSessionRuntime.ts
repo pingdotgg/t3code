@@ -1597,7 +1597,13 @@ export const make = (
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
         const gate = yield* Ref.get(sessionLoadGateRef);
-        if (Option.isSome(gate) && gate.value.active) {
+        // A different session can still have an in-flight prompt while this
+        // load replays history, so quarantine only the loading session.
+        if (
+          Option.isSome(gate) &&
+          gate.value.active &&
+          notification.sessionId === gate.value.sessionId
+        ) {
           if (sessionUpdateCountsAsLoadReplayActivity(notification, gate.value.sessionId)) {
             const lastActivityAtMillis = yield* Clock.currentTimeMillis;
             yield* Ref.set(
