@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type ChatAttachment,
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
@@ -16,17 +17,23 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
+import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
+import { IMAGE_EXTENSION_BY_MIME_TYPE, SAFE_IMAGE_FILE_EXTENSIONS } from "../../imageMime.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
@@ -122,6 +129,32 @@ function sameId(left: string | null | undefined, right: string | null | undefine
     return false;
   }
   return left === right;
+}
+
+const IMAGE_MIME_TYPE_BY_EXTENSION = new Map<string, string>();
+for (const [mimeType, extension] of Object.entries(IMAGE_EXTENSION_BY_MIME_TYPE)) {
+  if (!IMAGE_MIME_TYPE_BY_EXTENSION.has(extension)) {
+    IMAGE_MIME_TYPE_BY_EXTENSION.set(extension, mimeType);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function resolveImageViewPath(event: ProviderRuntimeEvent): string | undefined {
+  if (event.type !== "item.completed" || event.payload.itemType !== "image_view") {
+    return undefined;
+  }
+  const data = isRecord(event.payload.data) ? event.payload.data : undefined;
+  const item = data && isRecord(data.item) ? data.item : undefined;
+  const candidates = [item?.path, data?.path, event.payload.detail];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
 }
 
 function hasAssistantMessageForTurn(
@@ -688,10 +721,13 @@ export function runtimeEventToActivities(
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const path = yield* Path.Path;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const serverConfig = yield* ServerConfig;
   const serverSettingsService = yield* ServerSettingsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
@@ -937,6 +973,57 @@ const make = Effect.gen(function* () {
 
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId);
+
+  const persistAssistantImageAttachment = Effect.fn("persistAssistantImageAttachment")(function* (
+    event: ProviderRuntimeEvent,
+    threadId: ThreadId,
+  ) {
+    const sourcePath = resolveImageViewPath(event);
+    if (!sourcePath || !path.isAbsolute(sourcePath)) {
+      return undefined;
+    }
+
+    const extension = path.extname(sourcePath).toLowerCase();
+    if (!SAFE_IMAGE_FILE_EXTENSIONS.has(extension)) {
+      return undefined;
+    }
+
+    const fileInfo = yield* fileSystem.stat(sourcePath).pipe(Effect.orElseSucceed(() => null));
+    const sizeBytes = fileInfo ? Number(fileInfo.size) : 0;
+    if (
+      !fileInfo ||
+      fileInfo.type !== "File" ||
+      !Number.isSafeInteger(sizeBytes) ||
+      sizeBytes <= 0 ||
+      sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+    ) {
+      return undefined;
+    }
+
+    const mimeType = IMAGE_MIME_TYPE_BY_EXTENSION.get(extension);
+    const attachmentId = createAttachmentId(threadId);
+    if (!mimeType || !attachmentId) {
+      return undefined;
+    }
+
+    const attachment = {
+      type: "image" as const,
+      id: attachmentId,
+      name: path.basename(sourcePath),
+      mimeType,
+      sizeBytes,
+    } satisfies ChatAttachment;
+    const destinationPath = resolveAttachmentPath({
+      attachmentsDir: serverConfig.attachmentsDir,
+      attachment,
+    });
+    if (!destinationPath) {
+      return undefined;
+    }
+
+    yield* fileSystem.copyFile(sourcePath, destinationPath);
+    return attachment;
+  });
 
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -1495,6 +1582,42 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             messageId: assistantMessageId,
             delta: assistantDelta,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+          });
+        }
+      }
+
+      if (event.type === "item.completed" && event.payload.itemType === "image_view") {
+        const imageAttachment = yield* persistAssistantImageAttachment(event, thread.id).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider runtime ingestion failed to persist assistant image", {
+              eventId: event.eventId,
+              threadId: thread.id,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(undefined)),
+          ),
+        );
+        if (imageAttachment) {
+          const turnId = toTurnId(event.turnId);
+          const assistantMessageId = yield* getOrCreateAssistantMessageId({
+            threadId: thread.id,
+            event,
+            ...(turnId ? { turnId } : {}),
+          });
+          if (turnId) {
+            yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+          }
+          const detailedThread = yield* getLoadedThreadDetail();
+          const existingAttachments =
+            findMessageById(detailedThread?.messages ?? [], assistantMessageId)?.attachments ?? [];
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.assistant.delta",
+            commandId: yield* providerCommandId(event, "assistant-image-attachment"),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            delta: "",
+            attachments: [...existingAttachments, imageAttachment],
             ...(turnId ? { turnId } : {}),
             createdAt: now,
           });

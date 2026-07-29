@@ -220,6 +220,8 @@ describe("ProviderRuntimeIngestion", () => {
 
   async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
+    const serverBaseDir = makeTempDir("t3-provider-server-");
+    const attachmentsDir = NodePath.join(serverBaseDir, "userdata", "attachments");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -240,7 +242,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -316,6 +318,7 @@ describe("ProviderRuntimeIngestion", () => {
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      attachmentsDir,
     };
   }
 
@@ -359,6 +362,93 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("persists completed image views as assistant message attachments", async () => {
+    const harness = await createHarness({ serverSettings: { enableAssistantStreaming: true } });
+    const sourceDir = makeTempDir("t3-provider-assistant-image-");
+    const sourcePath = NodePath.join(sourceDir, "filter-manager.png");
+    NodeFS.writeFileSync(sourcePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const turnId = asTurnId("turn-assistant-image");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-assistant-image"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      turnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-image-completed-assistant-image"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId,
+      itemId: asItemId("item-image-assistant-image"),
+      payload: {
+        itemType: "image_view",
+        status: "completed",
+        detail: sourcePath,
+        data: {
+          item: {
+            type: "imageView",
+            path: sourcePath,
+          },
+        },
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-assistant-image"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      turnId,
+      itemId: asItemId("item-message-assistant-image"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Screenshot attached.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-assistant-image"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      turnId,
+      itemId: asItemId("item-message-assistant-image"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.text === "Screenshot attached." &&
+          message.attachments?.length === 1 &&
+          message.attachments[0]?.name === "filter-manager.png",
+      ),
+    );
+    const message = thread.messages.find(
+      (entry) => entry.role === "assistant" && entry.text === "Screenshot attached.",
+    );
+    const attachment = message?.attachments?.[0];
+    expect(attachment).toMatchObject({
+      type: "image",
+      name: "filter-manager.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+    });
+    expect(attachment).toBeDefined();
+    expect(
+      NodeFS.readFileSync(NodePath.join(harness.attachmentsDir, `${attachment!.id}.png`)),
+    ).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   });
 
   it("applies provider session.state.changed transitions directly", async () => {

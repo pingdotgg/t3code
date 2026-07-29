@@ -296,6 +296,46 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
+  it("renders assistant image attachments inline", () => {
+    const turnId = TurnId.make("turn-with-image");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-assistant-with-image",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-with-image"),
+              role: "assistant",
+              text: "Screenshot attached.",
+              attachments: [
+                {
+                  type: "image",
+                  id: "assistant-image-1",
+                  name: "filter-manager.png",
+                  mimeType: "image/png",
+                  sizeBytes: 4,
+                  previewUrl: "https://t3.example.test/api/assets/filter-manager.png",
+                },
+              ],
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Preview filter-manager.png"');
+    expect(markup).toContain('alt="filter-manager.png"');
+    expect(markup).toContain("https://t3.example.test/api/assets/filter-manager.png");
+    expect(markup).toContain("Screenshot attached.");
+  });
+
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
     const {
       resolveTimelineIsAtEnd,
