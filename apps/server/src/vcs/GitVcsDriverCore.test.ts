@@ -997,6 +997,52 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadOfDefaultCount, 1);
       }),
     );
+
+    it.effect("reports combined staged and unstaged edits to the same file", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n");
+        yield* git(cwd, ["add", "feature.ts"]);
+        yield* git(cwd, ["commit", "-m", "add feature"]);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n// line two\n");
+        yield* git(cwd, ["add", "feature.ts"]);
+        yield* writeTextFile(cwd, "feature.ts", "// line one\n// line two\n// line three\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.hasWorkingTreeChanges, true);
+        const file = status.workingTree.files.find((f) => f.path === "feature.ts");
+        assert.ok(file);
+        // HEAD has 1 line. Staged has 2 lines (+1). Unstaged has 3 lines (+2 from HEAD).
+        // Combined net from HEAD: +2 insertions.
+        assert.equal(file.insertions, 2);
+        assert.equal(file.deletions, 0);
+      }),
+    );
+
+    it.effect("reports staged file counts on unborn HEAD without failing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, ["config", "user.email", "test@test.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+        yield* writeTextFile(cwd, "initial.ts", "// first file\n");
+        yield* git(cwd, ["add", "initial.ts"]);
+
+        const status = yield* driver.statusDetails(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.workingTree.files.length, 1);
+        const file = status.workingTree.files[0];
+        if (file) {
+          assert.equal(file.path, "initial.ts");
+          assert.equal(file.insertions, 1);
+        }
+      }),
+    );
   });
 
   describe("refName operations", () => {
