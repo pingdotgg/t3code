@@ -32,6 +32,19 @@ const PROCESS_QUERY_TIMEOUT_MS = 1_000;
 const POSIX_PROCESS_QUERY_COMMAND = "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=";
 const PROCESS_QUERY_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 
+const WindowsProcessRecord = Schema.Struct({
+  ProcessId: Schema.Number,
+  ParentProcessId: Schema.Number,
+  CommandLine: Schema.optional(Schema.NullOr(Schema.String)),
+  Name: Schema.optional(Schema.NullOr(Schema.String)),
+  Status: Schema.optional(Schema.NullOr(Schema.String)),
+  WorkingSetSize: Schema.optional(Schema.NullOr(Schema.Number)),
+  PercentProcessorTime: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+type WindowsProcessRecord = typeof WindowsProcessRecord.Type;
+const decodeWindowsProcessJson = Schema.decodeOption(Schema.UnknownFromJsonString);
+const decodeWindowsProcessRecord = Schema.decodeUnknownOption(WindowsProcessRecord);
+
 export class ProcessDiagnostics extends Context.Service<
   ProcessDiagnostics,
   {
@@ -121,19 +134,47 @@ const ProcessDiagnosticsError = Schema.Union([
 type ProcessDiagnosticsError = typeof ProcessDiagnosticsError.Type;
 const isProcessDiagnosticsError = Schema.is(ProcessDiagnosticsError);
 
-function parsePositiveInt(value: string): number | null {
+function parsePositiveInt(value: string): Option.Option<number> {
   const parsed = Number.parseInt(value, 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  return Number.isInteger(parsed) && parsed > 0 ? Option.some(parsed) : Option.none();
 }
 
-function parseNonNegativeInt(value: string): number | null {
+function parseNonNegativeInt(value: string): Option.Option<number> {
   const parsed = Number.parseInt(value, 10);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  return Number.isInteger(parsed) && parsed >= 0 ? Option.some(parsed) : Option.none();
 }
 
-function parseNumber(value: string): number | null {
+function parseInteger(value: string): Option.Option<number> {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) ? Option.some(parsed) : Option.none();
+}
+
+function parseNumber(value: string): Option.Option<number> {
   const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) ? Option.some(parsed) : Option.none();
+}
+
+function positiveInteger(value: number): Option.Option<number> {
+  return Number.isInteger(value) && value > 0 ? Option.some(value) : Option.none();
+}
+
+function nonNegativeInteger(value: number): Option.Option<number> {
+  return Number.isInteger(value) && value >= 0 ? Option.some(value) : Option.none();
+}
+
+function trimNonEmpty(value: string | null | undefined): Option.Option<string> {
+  return Option.fromNullishOr(value).pipe(
+    Option.map((text) => text.trim()),
+    Option.filter((text) => text.length > 0),
+  );
+}
+
+function finiteNonNegativeNumberOrZero(value: number | null | undefined): number {
+  return Option.fromNullishOr(value).pipe(
+    Option.filter(Number.isFinite),
+    Option.map((number) => Math.max(0, number)),
+    Option.getOrElse(() => 0),
+  );
 }
 
 export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow> {
@@ -168,31 +209,24 @@ export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow>
       continue;
     }
 
-    const pid = parsePositiveInt(pidText);
-    const ppid = parseNonNegativeInt(ppidText);
-    const pgid = Number.parseInt(pgidText, 10);
-    const cpuPercent = parseNumber(cpuText);
-    const rssKiB = parseNonNegativeInt(rssText);
-    if (
-      pid === null ||
-      ppid === null ||
-      !Number.isInteger(pgid) ||
-      cpuPercent === null ||
-      rssKiB === null ||
-      !status ||
-      !elapsed ||
-      !command
-    ) {
+    const parsed = Option.all({
+      pid: parsePositiveInt(pidText),
+      ppid: parseNonNegativeInt(ppidText),
+      pgid: parseInteger(pgidText),
+      cpuPercent: parseNumber(cpuText),
+      rssKiB: parseNonNegativeInt(rssText),
+    });
+    if (Option.isNone(parsed) || !status || !elapsed || !command) {
       continue;
     }
 
     rows.push({
-      pid,
-      ppid,
-      pgid,
+      pid: parsed.value.pid,
+      ppid: parsed.value.ppid,
+      pgid: parsed.value.pgid,
       status,
-      cpuPercent,
-      rssBytes: rssKiB * 1024,
+      cpuPercent: parsed.value.cpuPercent,
+      rssBytes: parsed.value.rssKiB * 1024,
       elapsed,
       command,
     });
@@ -201,51 +235,38 @@ export function parsePosixProcessRows(output: string): ReadonlyArray<ProcessRow>
   return rows;
 }
 
-function normalizeWindowsProcessRow(value: unknown): ProcessRow | null {
-  if (typeof value !== "object" || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const pid = typeof record.ProcessId === "number" ? record.ProcessId : null;
-  const ppid = typeof record.ParentProcessId === "number" ? record.ParentProcessId : null;
-  const commandLine =
-    typeof record.CommandLine === "string" && record.CommandLine.trim().length > 0
-      ? record.CommandLine
-      : typeof record.Name === "string"
-        ? record.Name
-        : null;
-  const workingSet =
-    typeof record.WorkingSetSize === "number" && Number.isFinite(record.WorkingSetSize)
-      ? Math.max(0, Math.round(record.WorkingSetSize))
-      : 0;
-  const cpuPercent =
-    typeof record.PercentProcessorTime === "number" && Number.isFinite(record.PercentProcessorTime)
-      ? Math.max(0, record.PercentProcessorTime)
-      : 0;
+function normalizeWindowsProcessRow(value: unknown): Option.Option<ProcessRow> {
+  return Option.gen(function* () {
+    const record: WindowsProcessRecord = yield* decodeWindowsProcessRecord(value);
+    const pid = yield* positiveInteger(record.ProcessId);
+    const ppid = yield* nonNegativeInteger(record.ParentProcessId);
+    const command = yield* Option.firstSomeOf([
+      trimNonEmpty(record.CommandLine),
+      trimNonEmpty(record.Name),
+    ]);
+    const status = Option.getOrElse(trimNonEmpty(record.Status), () => "Live");
 
-  if (!pid || pid <= 0 || ppid === null || ppid < 0 || !commandLine) return null;
-  return {
-    pid,
-    ppid,
-    pgid: null,
-    status: typeof record.Status === "string" && record.Status.length > 0 ? record.Status : "Live",
-    cpuPercent,
-    rssBytes: workingSet,
-    elapsed: "",
-    command: commandLine,
-  };
+    return {
+      pid,
+      ppid,
+      pgid: null,
+      status,
+      cpuPercent: finiteNonNegativeNumberOrZero(record.PercentProcessorTime),
+      rssBytes: Math.round(finiteNonNegativeNumberOrZero(record.WorkingSetSize)),
+      elapsed: "",
+      command,
+    };
+  });
 }
 
 function parseWindowsProcessRows(output: string): ReadonlyArray<ProcessRow> {
-  if (output.trim().length === 0) return [];
-  try {
-    const parsed = JSON.parse(output) as unknown;
-    const records = Array.isArray(parsed) ? parsed : [parsed];
-    return records.flatMap((record) => {
-      const row = normalizeWindowsProcessRow(record);
-      return row ? [row] : [];
-    });
-  } catch {
-    return [];
-  }
+  const parsed = decodeWindowsProcessJson(output);
+  if (Option.isNone(parsed)) return [];
+  const records = Array.isArray(parsed.value) ? parsed.value : [parsed.value];
+  return records.flatMap((record) => {
+    const row = normalizeWindowsProcessRow(record);
+    return Option.isSome(row) ? [row.value] : [];
+  });
 }
 
 export function buildDescendantEntries(
