@@ -52,6 +52,19 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { GitVcsDriver, type ExecuteGitProgress } from "../vcs/GitVcsDriver.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 import { makeSourceControlPanelActions } from "./SourceControlPanelActions.ts";
+import {
+  parseCommits,
+  parseFileChangesFromNumstat,
+  parseLocalBranches,
+  parseNameStatus,
+  parseRemoteBranches,
+  parseRemoteVerbose,
+  parseStashes,
+  parseWorktreeBranchEntries,
+  parseWorktreeBranchPaths,
+  uniquePaths,
+  type WorktreeBranchEntry,
+} from "./SourceControlPanelParsers.ts";
 import { makeSourceControlPanelReaders } from "./SourceControlPanelReaders.ts";
 import {
   mergeNumstats,
@@ -246,31 +259,16 @@ function isUnsupportedWorktreePathFormat(detail: string) {
   return detail.includes("worktreepath") && detail.includes("unknown field");
 }
 
-import {
-  parseCommits,
-  parseFileChangesFromNumstat,
-  parseLocalBranches,
-  parseNameStatus,
-  parseRemoteBranches,
-  parseRemoteVerbose,
-  parseStashes,
-  parseWorktreeBranchEntries,
-  parseWorktreeBranchPaths,
-  uniquePaths,
-  type WorktreeBranchEntry,
-} from "./SourceControlPanelParsers.ts";
-
 export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver;
   const path = yield* Path.Path;
   const workflow = yield* GitWorkflowService;
   const serverSettings = yield* ServerSettingsService;
-  const context = yield* Effect.context<never>();
   const sourceControlProviders = Option.getOrUndefined(
-    Context.getOption(context, SourceControlProviderRegistry),
+    yield* Effect.serviceOption(SourceControlProviderRegistry),
   );
-  const textGeneration = Option.getOrUndefined(Context.getOption(context, TextGeneration));
+  const textGeneration = Option.getOrUndefined(yield* Effect.serviceOption(TextGeneration));
 
   const runResult = (
     operation: string,

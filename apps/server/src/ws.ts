@@ -480,7 +480,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      const sourceControlPanel = yield* SourceControlPanelService.make();
+      const sourceControlPanel = yield* SourceControlPanelService.SourceControlPanelService;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
