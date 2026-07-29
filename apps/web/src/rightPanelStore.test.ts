@@ -102,6 +102,30 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("preserves a saved Plan auto-open dismissal", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: false,
+            activeSurfaceId: null,
+            surfaces: [],
+            planSidebarAutoOpenDisabled: true,
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+          planSidebarAutoOpenDisabled: true,
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -233,6 +257,26 @@ describe("rightPanelStore", () => {
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: false,
+      activeSurfaceId: "plan",
+      surfaces: [{ id: "plan", kind: "plan" }],
+      planSidebarAutoOpenDisabled: true,
+    });
+  });
+
+  it("remembers when the user closes Plan so auto-open does not override it", () => {
+    useRightPanelStore.getState().open(refA, "plan");
+    useRightPanelStore.getState().closeSurface(refA, "plan");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+      planSidebarAutoOpenDisabled: true,
+    });
+
+    useRightPanelStore.getState().open(refA, "plan");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
       activeSurfaceId: "plan",
       surfaces: [{ id: "plan", kind: "plan" }],
     });

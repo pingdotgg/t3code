@@ -3827,6 +3827,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!autoOpenPlanSidebar) return;
     if (!activePlan) return;
     if (planSidebarOpen) return;
+    if (rightPanelState.planSidebarAutoOpenDisabled) return;
+    // A closed panel with remembered surfaces is an explicit user preference,
+    // even when the Plan surface is no longer in the list.
+    if (rightPanelState.surfaces.length > 0 && !rightPanelState.isOpen) return;
     const latestTurnId = activeLatestTurn?.turnId ?? null;
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -3840,6 +3844,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef,
     autoOpenPlanSidebar,
     planSidebarOpen,
+    rightPanelState,
     sidebarProposedPlan?.turnId,
   ]);
 
@@ -5241,7 +5246,11 @@ function ChatViewContent(props: ChatViewProps) {
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
-        if (nextInteractionMode === "default" && autoOpenPlanSidebar) {
+        if (
+          nextInteractionMode === "default" &&
+          autoOpenPlanSidebar &&
+          !rightPanelState.planSidebarAutoOpenDisabled
+        ) {
           planSidebarDismissedForTurnRef.current = null;
           if (activeThreadRef) {
             useRightPanelStore.getState().open(activeThreadRef, "plan");
@@ -5281,6 +5290,7 @@ function ChatViewContent(props: ChatViewProps) {
       autoOpenPlanSidebar,
       environmentId,
       composerRef,
+      rightPanelState.planSidebarAutoOpenDisabled,
     ],
   );
 
