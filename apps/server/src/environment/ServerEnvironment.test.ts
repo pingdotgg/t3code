@@ -7,6 +7,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const isServerEnvironmentIdPersistenceError = Schema.is(
@@ -14,7 +15,10 @@ const isServerEnvironmentIdPersistenceError = Schema.is(
 );
 
 const makeServerEnvironmentLayer = (baseDir: string) =>
-  ServerEnvironment.layer.pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
+  ServerEnvironment.layer.pipe(
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+  );
 
 const makeServerConfig = Effect.fn(function* (baseDir: string) {
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
@@ -73,6 +77,28 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
+  it.effect("applies configured environment label updates without a restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-label-test-",
+      });
+      yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const initial = yield* serverEnvironment.getDescriptor;
+
+        yield* serverSettings.updateSettings({ environmentLabel: "Studio Mac" });
+        const renamed = yield* serverEnvironment.getDescriptor;
+        yield* serverSettings.updateSettings({ environmentLabel: "" });
+        const reset = yield* serverEnvironment.getDescriptor;
+
+        expect(renamed).toEqual({ ...initial, label: "Studio Mac" });
+        expect(reset).toEqual(initial);
+      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+    }),
+  );
+
   it.effect("structures persisted environment id filesystem failures", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -112,6 +138,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         }).pipe(
           Effect.provide(
             ServerEnvironment.layer.pipe(
+              Layer.provideMerge(ServerSettings.layerTest()),
               Layer.provide(Layer.merge(ServerConfig.layer(serverConfig), failingFileSystemLayer)),
             ),
           ),

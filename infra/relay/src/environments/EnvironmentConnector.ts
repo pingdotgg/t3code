@@ -530,6 +530,23 @@ const make = Effect.gen(function* () {
           operation: "status",
         });
       }
+      if (decoded.descriptor.label !== link.label) {
+        yield* links
+          .updateLabelForUser({
+            userId: input.userId,
+            environmentId: input.environmentId,
+            label: decoded.descriptor.label,
+          })
+          .pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("managed environment label persistence failed", {
+                environmentId: input.environmentId,
+                errorTag: error._tag,
+              }),
+            ),
+            Effect.ignore,
+          );
+      }
       return {
         environmentId: link.environmentId,
         endpoint,
