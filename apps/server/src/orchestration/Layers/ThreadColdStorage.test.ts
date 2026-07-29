@@ -89,6 +89,7 @@ layer("ThreadColdStorage", (it) => {
       `;
 
       assert.isTrue(yield* storage.restoreTree(threadId));
+      assert.deepInclude(yield* storage.listPendingArchiveThreadIds, threadId);
       yield* storage.archiveThread(threadId);
 
       const messages = yield* sql<{ readonly text: string }>`
@@ -105,6 +106,51 @@ layer("ThreadColdStorage", (it) => {
         SELECT COUNT(*) AS count FROM thread_archive_manifests WHERE thread_id = ${threadId}
       `;
       assert.deepStrictEqual(remainingManifest, [{ count: 0 }]);
+    }),
+  );
+
+  it.effect("re-archives an orphaned restore reservation discovered after restart", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage;
+      const threadId = ThreadId.make("thread-orphaned-restore-reservation");
+
+      yield* insertArchivedThread(threadId, "Orphaned restore reservation");
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'message-orphaned-restore-reservation', ${threadId}, NULL, 'user',
+          'move cold during startup recovery', '[]', 0,
+          '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO thread_archive_manifests (
+          thread_id, root_thread_id, status, archive_version,
+          archived_at, updated_at, error
+        ) VALUES (
+          ${threadId}, ${threadId}, 'restored', 1,
+          '2026-07-02T00:00:00.000Z', CURRENT_TIMESTAMP, NULL
+        )
+      `;
+
+      assert.deepInclude(yield* storage.listPendingArchiveThreadIds, threadId);
+      yield* storage.archiveThread(threadId);
+
+      const messages = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+      `;
+      const manifest = yield* sql<{ readonly status: string }>`
+        SELECT status
+        FROM thread_archive_manifests
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(messages, [{ count: 0 }]);
+      assert.deepStrictEqual(manifest, [{ status: "cold" }]);
     }),
   );
 

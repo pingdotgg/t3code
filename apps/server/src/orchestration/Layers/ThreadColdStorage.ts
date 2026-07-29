@@ -164,6 +164,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const config = yield* ServerConfig;
   const threadLocksRef = yield* SynchronizedRef.make(new Map<string, ThreadLockEntry>());
+  const activeRestoreRoots = new Set<string>();
 
   yield* sql.unsafe(`ATTACH DATABASE ? AS ${ARCHIVE_SCHEMA}`, [config.archiveDbPath]);
   yield* sql.unsafe(`PRAGMA ${ARCHIVE_SCHEMA}.auto_vacuum = INCREMENTAL`);
@@ -364,17 +365,20 @@ const make = Effect.gen(function* () {
       }
       return;
     }
+    const rootThreadId = String(source.root_thread_id ?? threadId);
     // A restored manifest reserves this archive epoch for an in-flight
-    // unarchive. A later archive has a new shell timestamp and may replace a
-    // reservation that finishRestoreTree failed to remove after commit.
+    // unarchive only while this process owns that restore. A reservation left
+    // behind by a crashed process is durable recovery work, while a later
+    // archive has a new shell timestamp and may replace a reservation that
+    // finishRestoreTree failed to remove after commit.
     if (
       source.status === "restored" &&
       !allowRestored &&
+      activeRestoreRoots.has(rootThreadId) &&
       String(source.archived_at) === String(threadRows[0]?.archived_at)
     ) {
       return;
     }
-    const rootThreadId = String(source.root_thread_id ?? threadId);
     const archivedAt = String(
       threadRows[0]?.archived_at ?? source.archived_at ?? DateTime.formatIso(yield* DateTime.now),
     );
@@ -642,6 +646,7 @@ const make = Effect.gen(function* () {
       restored = (yield* restoreThread(ThreadId.make(String(row.thread_id)))) || restored;
     }
     if (restored || rows.some((row) => row.status === "restored")) {
+      activeRestoreRoots.add(String(rootThreadId));
       return true;
     }
     if (rows.length > 0) {
@@ -653,7 +658,7 @@ const make = Effect.gen(function* () {
     // tree lock, so a queued archive job cannot delete them before that command
     // commits. A failed command rolls this reservation back through archiveImpl;
     // a successful command removes it through finishRestoreTreeImpl.
-    return yield* sql.withTransaction(
+    const reserved = yield* sql.withTransaction(
       Effect.gen(function* () {
         const archivedShell = (yield* sql.unsafe(
           `SELECT archived_at
@@ -679,50 +684,76 @@ const make = Effect.gen(function* () {
         return true;
       }),
     );
+    if (reserved) {
+      activeRestoreRoots.add(String(rootThreadId));
+    }
+    return reserved;
   });
 
   const rollbackRestoreTreeImpl = Effect.fn("rollbackRestoreArchiveTreeImpl")(function* (
     threadId: ThreadId,
   ) {
     const rootThreadId = yield* resolveTreeRoot(threadId);
-    const rows = (yield* sql.unsafe(
-      `SELECT thread_id
-       FROM thread_archive_manifests
-       WHERE root_thread_id = ? AND status = 'restored'
-       ORDER BY CASE WHEN thread_id = ? THEN 1 ELSE 0 END, thread_id ASC`,
-      [rootThreadId, rootThreadId],
-    )) as ReadonlyArray<SqlRow>;
-    for (const row of rows) {
-      yield* archiveImpl(ThreadId.make(String(row.thread_id)), true);
-    }
+    yield* Effect.gen(function* () {
+      const rows = (yield* sql.unsafe(
+        `SELECT thread_id
+         FROM thread_archive_manifests
+         WHERE root_thread_id = ? AND status = 'restored'
+         ORDER BY CASE WHEN thread_id = ? THEN 1 ELSE 0 END, thread_id ASC`,
+        [rootThreadId, rootThreadId],
+      )) as ReadonlyArray<SqlRow>;
+      yield* Effect.forEach(
+        rows,
+        (row) => archiveImpl(ThreadId.make(String(row.thread_id)), true),
+        {
+          discard: true,
+        },
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          activeRestoreRoots.delete(String(rootThreadId));
+        }),
+      ),
+    );
   });
 
   const finishRestoreTreeImpl = Effect.fn("finishRestoreArchiveTreeImpl")(function* (
     threadId: ThreadId,
   ) {
     const rootThreadId = yield* resolveTreeRoot(threadId);
-    const rows = (yield* sql.unsafe(
-      `SELECT thread_id FROM thread_archive_manifests WHERE root_thread_id = ? AND status = 'restored'`,
-      [rootThreadId],
-    )) as ReadonlyArray<SqlRow>;
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
-        for (const row of rows) {
-          const restoredThreadId = String(row.thread_id);
-          yield* sql.unsafe(
-            `DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE thread_id = ?`,
-            [restoredThreadId],
-          );
-          yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
-            restoredThreadId,
-          ]);
-          yield* sql.unsafe(`DELETE FROM thread_archive_manifests WHERE thread_id = ?`, [
-            restoredThreadId,
-          ]);
-        }
-      }),
+    yield* Effect.gen(function* () {
+      const rows = (yield* sql.unsafe(
+        `SELECT thread_id
+         FROM thread_archive_manifests
+         WHERE root_thread_id = ? AND status = 'restored'`,
+        [rootThreadId],
+      )) as ReadonlyArray<SqlRow>;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          for (const row of rows) {
+            const restoredThreadId = String(row.thread_id);
+            yield* sql.unsafe(
+              `DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE thread_id = ?`,
+              [restoredThreadId],
+            );
+            yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
+              restoredThreadId,
+            ]);
+            yield* sql.unsafe(`DELETE FROM thread_archive_manifests WHERE thread_id = ?`, [
+              restoredThreadId,
+            ]);
+          }
+        }),
+      );
+      yield* sql.unsafe(`PRAGMA ${ARCHIVE_SCHEMA}.incremental_vacuum(2048)`);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          activeRestoreRoots.delete(String(rootThreadId));
+        }),
+      ),
     );
-    yield* sql.unsafe(`PRAGMA ${ARCHIVE_SCHEMA}.incremental_vacuum(2048)`);
   });
 
   const deleteImpl = Effect.fn("deleteThreadPermanentlyImpl")(function* (threadId: ThreadId) {
@@ -859,6 +890,14 @@ const make = Effect.gen(function* () {
          SELECT thread_id, archived_at
          FROM thread_archive_manifests
          WHERE status IN ('pending', 'archiving', 'cleanup_pending')
+         UNION ALL
+         SELECT thread_archive_manifests.thread_id, thread_archive_manifests.archived_at
+         FROM thread_archive_manifests
+         INNER JOIN projection_threads
+           ON projection_threads.thread_id = thread_archive_manifests.thread_id
+          AND projection_threads.deleted_at IS NULL
+          AND projection_threads.archived_at = thread_archive_manifests.archived_at
+         WHERE thread_archive_manifests.status = 'restored'
          UNION ALL
          SELECT projection_threads.thread_id, projection_threads.archived_at
          FROM projection_threads
