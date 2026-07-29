@@ -51,25 +51,6 @@ export function useThreadDiscoveredPorts(input: {
   );
 }
 
-/** Discovered dev servers owned by any of the given threads (e.g. every
-    thread sharing a worktree). */
-export function useDiscoveredPortsForThreads(input: {
-  readonly environmentId: EnvironmentId | null;
-  readonly threadIds: ReadonlyArray<ThreadId>;
-}): ReadonlyArray<DiscoveredLocalServer> {
-  const ports = useDiscoveredPorts(input.environmentId);
-  return useMemo(() => {
-    if (input.threadIds.length === 0) {
-      return EMPTY_PORTS;
-    }
-    const threadIds = new Set<ThreadId>(input.threadIds);
-    const matched = ports.filter(
-      (port) => port.terminal !== null && threadIds.has(port.terminal.threadId),
-    );
-    return matched.length > 0 ? matched : EMPTY_PORTS;
-  }, [input.threadIds, ports]);
-}
-
 export function useTerminalDiscoveredPorts(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;

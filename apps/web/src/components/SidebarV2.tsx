@@ -391,7 +391,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   wokeAt: string | null;
   isActive: boolean;
   jumpLabel: string | null;
-  currentEnvironmentId: string | null;
   environmentLabel: string | null;
   projectCwd: string | null;
   projectTitle: string | null;
@@ -1069,14 +1068,9 @@ const SidebarV2WorktreeCard = memo(function SidebarV2WorktreeCard(props: {
     () => scopeThreadRef(newest.environmentId, newest.id),
     [newest.environmentId, newest.id],
   );
-  const activeMember =
-    props.activeThreadKey === null
-      ? null
-      : (threads.find(
-          (thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
-            props.activeThreadKey,
-        ) ?? null);
+  const activeMemberIndex =
+    props.activeThreadKey === null ? -1 : memberKeys.indexOf(props.activeThreadKey);
+  const activeMember = activeMemberIndex === -1 ? null : threads[activeMemberIndex]!;
   const isActiveCard = activeMember !== null;
   const environmentId = newest.environmentId;
   const canonicalThreadRef = useWorktreeCanonicalThreadRef(newestRef);
@@ -3080,7 +3074,6 @@ export default function SidebarV2() {
                       wokeAt={threadWokeAt(representative, { now: snoozeNow })}
                       isActive={routeThreadKey === threadKey}
                       jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
-                      currentEnvironmentId={primaryEnvironmentId}
                       environmentLabel={
                         environmentLabelById.get(representative.environmentId) ?? null
                       }

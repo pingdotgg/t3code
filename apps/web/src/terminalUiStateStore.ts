@@ -586,7 +586,6 @@ interface TerminalUiStateStoreState {
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   reconcileTerminalIds: (threadRef: ScopedThreadRef, nextIds: string[]) => void;
-  clearTerminalUiState: (threadRef: ScopedThreadRef) => void;
   clearTerminalUiStateForKey: (threadKey: string) => void;
   removeTerminalUiState: (threadRef: ScopedThreadRef) => void;
   removeOrphanedTerminalUiStates: (activeThreadKeys: Set<string>) => void;
@@ -707,33 +706,6 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
               state,
               nextIds.filter((terminalId) => !suppressedIds.has(terminalId)),
             );
-          }),
-        clearTerminalUiState: (threadRef) =>
-          set((state) => {
-            const threadKey = terminalThreadKey(threadRef);
-            const nextTerminalUiStateByThreadKey = updateTerminalUiStateByThreadKey(
-              state.terminalUiStateByThreadKey,
-              threadRef,
-              () => createDefaultThreadTerminalUiState(),
-            );
-            const migratedSuppressedTerminalIds = migrateWorktreeScopedRecord(
-              state.suppressedTerminalIdsByThreadKey,
-              threadRef,
-            ).record;
-            const hadSuppressedTerminalIds = migratedSuppressedTerminalIds[threadKey] !== undefined;
-            if (
-              nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
-              !hadSuppressedTerminalIds
-            ) {
-              return state;
-            }
-            return {
-              terminalUiStateByThreadKey: nextTerminalUiStateByThreadKey,
-              suppressedTerminalIdsByThreadKey: removeRecordEntry(
-                migratedSuppressedTerminalIds,
-                threadKey,
-              ),
-            };
           }),
         clearTerminalUiStateForKey: (threadKey) =>
           set((state) => {

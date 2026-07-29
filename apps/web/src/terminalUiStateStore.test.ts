@@ -284,11 +284,11 @@ describe("terminalUiStateStore actions", () => {
     ).toEqual(["term-2", "term-1"]);
   });
 
-  it("is a no-op when clearing terminal UI state for a thread with no state", () => {
+  it("is a no-op when clearing terminal UI state for a key with no state", () => {
     const store = useTerminalUiStateStore.getState();
     const before = useTerminalUiStateStore.getState();
 
-    store.clearTerminalUiState(THREAD_REF);
+    store.clearTerminalUiStateForKey(scopedThreadKey(THREAD_REF));
 
     expect(useTerminalUiStateStore.getState()).toBe(before);
   });

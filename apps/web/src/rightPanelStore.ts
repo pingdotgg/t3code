@@ -69,7 +69,6 @@ interface RightPanelStoreState {
   ) => void;
   activateTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   closeTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
-  removeTerminalSurfaces: (ref: ScopedThreadRef) => void;
   removeTerminalSurfacesForKey: (threadKey: string) => void;
   activateSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
@@ -393,10 +392,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         })),
-      removeTerminalSurfaces: (ref) =>
-        set((state) => ({
-          byThreadKey: updateThread(state.byThreadKey, ref, withoutTerminalSurfaces),
-        })),
       removeTerminalSurfacesForKey: (threadKey) =>
         set((state) => {
           const current = state.byThreadKey[threadKey];
@@ -620,10 +615,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       partialize: (state) => ({ byThreadKey: state.byThreadKey }),
-      // v9 makes plan surfaces conversation-owned within shared worktree
-      // records. Older state cannot identify which sibling owned a plan.
-      // thread-keyed entries can never match again, so they are dropped
-      // rather than left as unreachable garbage.
+      // v9 keys records by worktree scope and makes plan surfaces
+      // conversation-owned. Older state is thread-keyed (it can never match a
+      // worktree key) and cannot say which sibling owned a plan, so it is
+      // dropped rather than left as unreachable garbage.
       migrate: (persistedState, version) =>
         version < 9 ? { byThreadKey: {} } : migratePersistedRightPanelState(persistedState),
     },

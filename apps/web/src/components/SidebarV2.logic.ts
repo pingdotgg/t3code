@@ -3,7 +3,6 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 
 import { threadWorktreeScopeKey } from "../worktreeScope";
 import {
-  firstValidTimestamp,
   firstValidTimestampMs,
   parseTimestampMs,
   resolveSettledTimestamp,
@@ -224,20 +223,4 @@ export function pickWorktreeGroupTimeLabelThread(
     const threadMs = firstValidTimestampMs(thread.latestUserMessageAt, thread.updatedAt);
     return threadMs >= latestMs ? thread : latest;
   });
-}
-
-/** ISO timestamp used by tests/debug displays for a group's settled label. */
-export function resolveWorktreeGroupSettledTimestamp(group: SidebarWorktreeGroup): string | null {
-  let best: string | null = null;
-  let bestMs = Number.NEGATIVE_INFINITY;
-  for (const thread of group.threads) {
-    const timestamp = firstValidTimestamp(resolveSettledTimestamp(thread));
-    if (timestamp === null) continue;
-    const ms = parseTimestampMs(timestamp);
-    if (ms > bestMs) {
-      best = timestamp;
-      bestMs = ms;
-    }
-  }
-  return best;
 }

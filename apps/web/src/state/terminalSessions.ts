@@ -128,30 +128,3 @@ export function useThreadRunningTerminalIds(input: {
 }): ReadonlyArray<string> {
   return selectRunningSubprocessTerminalIds(useKnownTerminalSessions(input));
 }
-
-/** Running-subprocess terminals across a set of threads (e.g. every thread
-    sharing a worktree). Terminal ids are only unique per thread, so results
-    are (threadId, terminalId) pairs. */
-export function useRunningTerminalsForThreads(input: {
-  readonly environmentId: EnvironmentId | null;
-  readonly threadIds: ReadonlyArray<ThreadId>;
-}): ReadonlyArray<{ readonly threadId: ThreadId; readonly terminalId: string }> {
-  const sessions = useKnownTerminalSessions({
-    environmentId: input.environmentId,
-    threadId: null,
-  });
-  return useMemo(() => {
-    if (input.threadIds.length === 0) {
-      return [];
-    }
-    const threadIds = new Set<string>(input.threadIds);
-    return sessions
-      .filter(
-        (session) => threadIds.has(session.target.threadId) && session.state.hasRunningSubprocess,
-      )
-      .map((session) => ({
-        threadId: session.target.threadId,
-        terminalId: session.target.terminalId,
-      }));
-  }, [input.threadIds, sessions]);
-}

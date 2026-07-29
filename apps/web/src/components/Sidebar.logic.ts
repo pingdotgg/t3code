@@ -457,20 +457,6 @@ export function firstValidTimestamp(
   return null;
 }
 
-// v2 sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
-// the screen only moves at lifecycle transitions. Status (including pending
-// approval) is carried by each card's edge strip, not by position.
-export function sortThreadsForSidebarV2<
-  T extends { readonly id: string; readonly createdAt: string },
->(threads: readonly T[]): T[] {
-  return [...threads].toSorted(
-    (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
-}
-
 type SettledTimestampInput = Pick<
   SidebarThreadSummary,
   "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
@@ -500,20 +486,6 @@ export function resolveSettledTimestamp(thread: SettledTimestampInput): string |
     }
   }
   return latest ?? firstValidTimestamp(thread.updatedAt);
-}
-
-// Settled rows are history, so they order by when the work ENDED, not when
-// the thread was created or last touched.
-export function sortSettledThreadsForSidebarV2<
-  T extends SettledTimestampInput & { readonly id: string },
->(threads: readonly T[]): T[] {
-  const timestampMs = (thread: T) => {
-    const timestamp = resolveSettledTimestamp(thread);
-    return timestamp === null ? 0 : Date.parse(timestamp);
-  };
-  return [...threads].toSorted(
-    (left, right) => timestampMs(right) - timestampMs(left) || left.id.localeCompare(right.id),
-  );
 }
 
 /** The timestamp a working thread's elapsed label counts from: the running
