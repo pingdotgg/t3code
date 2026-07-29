@@ -46,6 +46,7 @@ const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     args: ["update"],
     lockKey: "native-package-tool-native",
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+    useResolvedExecutable: true,
   },
 });
 const scopedPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
@@ -358,7 +359,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           update: {
             command: "native-package-tool update",
 
-            executable: "native-package-tool",
+            executable: nativePackageToolPath,
 
             args: ["update"],
 

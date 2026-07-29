@@ -72,6 +72,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly args: ReadonlyArray<string>;
     readonly lockKey: string;
     readonly isCommandPath: (commandPath: string) => boolean;
+    /** Execute the provider path resolved during capability detection. */
+    readonly useResolvedExecutable?: boolean;
   } | null;
 }
 
@@ -97,6 +99,7 @@ function nonEmptyString(value: unknown): string | null {
 export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  readonly updateCommand?: string;
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
@@ -105,7 +108,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: [input.updateExecutable, ...input.updateArgs].join(" "),
+          command: input.updateCommand ?? [input.updateExecutable, ...input.updateArgs].join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
@@ -199,6 +202,7 @@ function makeHomebrewProviderMaintenanceCapabilities(
 
 function makeNativeProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  resolvedCommandPath: string,
 ): ProviderMaintenanceCapabilities | null {
   if (!definition.nativeUpdate) {
     return null;
@@ -207,7 +211,10 @@ function makeNativeProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
-    updateExecutable: definition.nativeUpdate.executable,
+    updateCommand: [definition.nativeUpdate.executable, ...definition.nativeUpdate.args].join(" "),
+    updateExecutable: definition.nativeUpdate.useResolvedExecutable
+      ? resolvedCommandPath
+      : definition.nativeUpdate.executable,
     updateArgs: definition.nativeUpdate.args,
     updateLockKey: definition.nativeUpdate.lockKey,
   });
@@ -287,7 +294,7 @@ export function resolvePackageManagedProviderMaintenance(
       commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
     ) {
       return (
-        makeNativeProviderMaintenanceCapabilities(definition) ??
+        makeNativeProviderMaintenanceCapabilities(definition, resolvedCommandPath) ??
         makeNpmGlobalProviderMaintenanceCapabilities(definition)
       );
     }
