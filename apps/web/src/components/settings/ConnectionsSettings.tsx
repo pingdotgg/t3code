@@ -2521,8 +2521,16 @@ export function ConnectionsSettings() {
         : visibleDesktopNetworkAdvertisedEndpoints,
     [tailscaleHttpsEndpoint, visibleDesktopNetworkAdvertisedEndpoints],
   );
+  // Persisted Serve counts as reachable on its own. Until this branch, Serve
+  // implied network-accessible mode, so the first operand covered it and the
+  // probe was only ever a tiebreaker. Now that Serve stands alone without LAN,
+  // an unfinished cert or a momentary tailnet blip is enough to make `status`
+  // miss — and "Authorized clients" would vanish while the toggle above it
+  // correctly reads on. Same reason the switch tracks the setting, not the probe.
   const isLocalBackendRemotelyReachable =
-    isLocalBackendNetworkAccessible || tailscaleHttpsEndpoint?.status === "available";
+    isLocalBackendNetworkAccessible ||
+    (desktopServerExposureState?.tailscaleServeEnabled ?? false) ||
+    tailscaleHttpsEndpoint?.status === "available";
   const defaultDesktopNetworkAdvertisedEndpoint = useMemo(
     () =>
       selectPairingEndpoint(visibleDesktopNetworkAdvertisedEndpoints, defaultAdvertisedEndpointKey),
