@@ -798,9 +798,14 @@ struct SidebarView: View {
                     isWorking: true)
             }
             ForEach(children, id: \.id) { child in
-                AutoReviewFixerThreadRow(
-                    item: child,
-                    isSelected: multi.selection == child.id)
+                Button {
+                    multi.selection = child.id
+                } label: {
+                    AutoReviewFixerThreadRow(
+                        item: child,
+                        isSelected: multi.selection == child.id)
+                }
+                .buttonStyle(.plain)
                     .tag(child.id)
                     .disabled(!child.isSelectable)
                     .opacity(child.isSelectable ? 1 : 0.5)

@@ -7,6 +7,32 @@ enum AutoReviewThreadPresentation {
         guard let parent = thread.parentThreadId, !parent.isEmpty else { return false }
         return thread.title.hasPrefix(fixerTitlePrefix)
     }
+
+    /// Pick the destination for an in-progress review when retries left more
+    /// than one dedicated fixer child behind. Prefer a child that is doing
+    /// work now, then the most recently updated child. The ID tie-breaker
+    /// keeps the result stable when timestamps are equal.
+    static func activeFixer(
+        for parentID: String,
+        in threads: [ChatThread]
+    ) -> ChatThread? {
+        threads
+            .filter {
+                $0.parentThreadId == parentID
+                    && $0.status != .archived
+                    && isDedicatedFixer($0)
+            }
+            .sorted {
+                if $0.status.isLiveTurn != $1.status.isLiveTurn {
+                    return $0.status.isLiveTurn
+                }
+                if $0.updatedAt != $1.updatedAt {
+                    return $0.updatedAt > $1.updatedAt
+                }
+                return $0.id < $1.id
+            }
+            .first
+    }
 }
 
 /// The server-projected auto-review lifecycle shown on the active thread.
