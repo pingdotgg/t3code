@@ -1,4 +1,4 @@
-import { describe, expect, test } from "@effect/vitest";
+import { describe, expect, test } from "alchemy-test";
 import { fromPath, FQN_SEPARATOR, parseFqn, toFqn, toPath } from "../src/FQN";
 import type { NamespaceNode } from "../src/Namespace";
 

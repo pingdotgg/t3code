@@ -1,40 +1,11 @@
 /**
- * The `RunnerHealth` module defines the health-check service used by the
- * unstable cluster runtime when deciding whether a runner can keep ownership of
- * its assigned shards. The service answers whether a runner address is alive
- * enough for sharding to keep routing work to it.
+ * Checks whether cluster runners should be treated as alive.
  *
- * **Mental model**
- *
- * Runner health feeds placement decisions, not process supervision. A healthy
- * result lets the current runner continue serving its entities, while an
- * unhealthy result allows sharding to move those shards to another runner. Keep
- * checks conservative: a runner reported as unavailable may still be finishing
- * in-flight messages.
- *
- * **Common tasks**
- *
- * - Provide a custom {@link RunnerHealth} service for deployment-specific
- *   failure detection.
- * - Use {@link layerPing} to check runners through the cluster runner protocol.
- * - Use {@link layerK8s} when Kubernetes pod readiness should drive runner
- *   health.
- * - Use {@link layerNoop} in tests or single-runner environments where every
- *   runner should be treated as healthy.
- *
- * **Gotchas**
- *
- * - False negatives can trigger shard reassignment away from runners that are
- *   still processing messages.
- * - The Kubernetes implementation treats API failures as healthy to avoid
- *   reassignment caused by a temporary control-plane outage.
- * - {@link layerNoop} disables failure detection for this decision point, so it
- *   should only be used when that tradeoff is intentional.
- *
- * **See also**
- *
- * - {@link RunnerHealth}
- * - {@link layerPing}, {@link layerK8s}, and {@link layerNoop}
+ * `RunnerHealth` is used by sharding when deciding whether assigned shards can
+ * stay on a runner or need to move elsewhere. This module includes the
+ * health-check service, a no-op layer that always reports runners as alive, a
+ * ping-based checker, and a Kubernetes-based checker that looks at pod readiness
+ * for the runner host.
  *
  * @since 4.0.0
  */
@@ -71,7 +42,8 @@ export class RunnerHealth extends Context.Service<
  *
  * **When to use**
  *
- * Use when tests or local development do not need active runner health checks.
+ * Use when you need a runner-health layer for tests or local development where
+ * active health checks are unnecessary.
  *
  * @category layers
  * @since 4.0.0

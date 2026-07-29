@@ -1,6 +1,6 @@
 # `@effect/sql-sqlite-node`
 
-An `@effect/sql` implementation using the `better-sqlite3` library.
+An Effect SQL implementation using Node.js' built-in `node:sqlite` module.
 
 ## Documentation
 

@@ -1,4 +1,3 @@
-import { Region } from "@distilled.cloud/aws/Region";
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -7,9 +6,10 @@ import { deepEqual, isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import { createInternalTags, hasAlchemyTags, tagRecord } from "../../Tags.ts";
+import type { Providers } from "../Providers.ts";
 
+import { AWSEnvironment } from "../Environment.ts";
 import { apiKeyArn, syncTags } from "./common.ts";
 
 export interface ApiKeyProps {
@@ -53,6 +53,7 @@ export interface ApiKeyProps {
   tags?: Record<string, string>;
 }
 
+/** @resource */
 export interface ApiKey extends Resource<
   "AWS.ApiGateway.ApiKey",
   ApiKeyProps,
@@ -110,8 +111,6 @@ export const ApiKeyProvider = () =>
   Provider.effect(
     ApiKeyResource,
     Effect.gen(function* () {
-      const awsRegion = yield* Region;
-
       return {
         stables: ["id"] as const,
         diff: Effect.fn(function* ({ news: newsIn, olds }) {
@@ -143,7 +142,24 @@ export const ApiKeyProvider = () =>
             tags: tagRecord(k.tags),
           };
         }),
+        list: () =>
+          ag.getApiKeys.pages({ limit: 500, includeValues: false }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.items ?? [])
+                  .filter((k): k is ag.ApiKey & { id: string } => !!k.id)
+                  .map((k) => ({
+                    id: k.id,
+                    name: k.name,
+                    enabled: k.enabled,
+                    tags: tagRecord(k.tags),
+                  })),
+              ),
+            ),
+          ),
         reconcile: Effect.fn(function* ({ id, news: newsIn, output, session }) {
+          const { region } = yield* AWSEnvironment.current;
           if (!isResolved(newsIn)) {
             return yield* Effect.die("ApiKey props were not resolved");
           }
@@ -179,7 +195,10 @@ export const ApiKeyProvider = () =>
                 description: news.description,
                 enabled: news.enabled,
                 generateDistinctId: news.generateDistinctId,
-                value: resolvedValue(news.value),
+                // Distilled's CreateApiKeyRequest.value is SensitiveString —
+                // it accepts the Redacted directly and unwraps on encode, so
+                // the plaintext never passes through alchemy code.
+                value: news.value,
                 stageKeys: news.stageKeys,
                 customerId: news.customerId,
                 tags: desiredTags,
@@ -246,7 +265,7 @@ export const ApiKeyProvider = () =>
           const observedTags = tagRecord(observed.tags);
           if (!deepEqual(observedTags, desiredTags)) {
             yield* syncTags({
-              resourceArn: apiKeyArn(awsRegion, apiKeyId),
+              resourceArn: apiKeyArn(region, apiKeyId),
               oldTags: observedTags,
               newTags: desiredTags,
             });

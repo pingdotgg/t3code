@@ -2,8 +2,30 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { Stack } from "../Stack.ts";
 import { Stage } from "../Stage.ts";
+
+/**
+ * Resolve a bundle entrypoint (`main`) to a real filesystem path.
+ *
+ * `main` is user-supplied and is very commonly `import.meta.url` — a
+ * `file://` URL — which `FileSystem.realPath` cannot `lstat` directly
+ * (it would try to stat a literal `file:` path). Convert any `file://`
+ * URL to a path first, then resolve to the canonical real path.
+ */
+export const resolveMainPath = Effect.fn(function* (main: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asPath = yield* Effect.sync(() => {
+    try {
+      return fileURLToPath(main);
+    } catch {
+      return main;
+    }
+  });
+  return path.resolve(yield* fs.realPath(asPath));
+});
 
 /**
  * Creates a unique bundle staging directory under the nearest package-local
@@ -87,7 +109,7 @@ const findBundleTempRoot = (entry: string, dotAlchemy: string) =>
     return path.join(path.dirname(entry), path.basename(dotAlchemy), "tmp");
   });
 
-export const findCwdForBundle = Effect.fnUntraced(function* (entry: string) {
+export const findCwdForBundle = Effect.fn(function* (entry: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let current = path.dirname(entry);

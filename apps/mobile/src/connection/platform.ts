@@ -33,7 +33,7 @@ import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { connectionStorageLayer } from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
-  if (state.isConnected === false || state.isInternetReachable === false) {
+  if (state.isConnected === false) {
     return "offline";
   }
   if (state.isConnected === true) {

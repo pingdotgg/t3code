@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import { createConnection, type Connection } from "mysql2/promise";
-import { listSqlFiles, readSqlFile, type SqlFile } from "../../Sql/SqlFile.ts";
+import { listSqlFiles, readSqlFile, type SqlFile } from "../../SQL/SqlFile.ts";
 
 const MIGRATION_PASSWORD_TTL_SECONDS = 600;
 
@@ -217,9 +217,10 @@ const withTemporaryMySQLPassword = <A, E, R>(
           // Already-deleted passwords are a success: nothing to clean up.
           Effect.catchTag("NotFound", () => Effect.void),
           Effect.retry({
-            schedule: Schedule.exponential("500 millis").pipe(
-              Schedule.both(Schedule.recurs(5)),
-            ),
+            schedule: Schedule.max([
+              Schedule.exponential("500 millis"),
+              Schedule.recurs(5),
+            ]),
           }),
           // Migrations succeeded; don't fail the parent over a release-step
           // hiccup. The password's TTL bounds the orphan window; log loudly

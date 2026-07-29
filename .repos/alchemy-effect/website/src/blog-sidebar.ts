@@ -11,7 +11,7 @@ const groupLabels: Record<BlogCategory, string> = {
   release: "Releases",
   post: "Posts",
 };
-const groupOrder: BlogCategory[] = ["release", "post"];
+const groupOrder: BlogCategory[] = ["post", "release"];
 
 let categoryById: Map<string, BlogCategory> | undefined;
 

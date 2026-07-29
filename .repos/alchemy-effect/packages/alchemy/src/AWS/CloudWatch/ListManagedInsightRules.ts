@@ -1,17 +1,35 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface ListManagedInsightRulesRequest
   extends cloudwatch.ListManagedInsightRulesInput {}
 
 /**
- * Runtime binding for `cloudwatch:ListManagedInsightRules`.
+ * Runtime binding for `cloudwatch:ListManagedInsightRules` — list the
+ * managed Contributor Insights rules available for a given AWS resource
+ * ARN.
+ *
+ * Provide `CloudWatch.ListManagedInsightRulesHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Reading Insight Rules
+ * @example List Managed Rules for a Resource
+ * ```typescript
+ * // init — grants cloudwatch:ListManagedInsightRules
+ * const listManagedInsightRules = yield* AWS.CloudWatch.ListManagedInsightRules();
+ *
+ * // runtime — only specific AWS resource types support managed rules;
+ * // an unsupported ARN fails with the typed InvalidParameterValueException
+ * const result = yield* listManagedInsightRules({
+ *   ResourceARN: yield* table.tableArn,
+ * });
+ * const rules = result.ManagedRules ?? [];
+ * ```
  */
-export class ListManagedInsightRules extends Binding.Service<
+export interface ListManagedInsightRules extends Binding.Service<
   ListManagedInsightRules,
+  "AWS.CloudWatch.ListManagedInsightRules",
   () => Effect.Effect<
     (
       request?: ListManagedInsightRulesRequest,
@@ -20,49 +38,8 @@ export class ListManagedInsightRules extends Binding.Service<
       cloudwatch.ListManagedInsightRulesError
     >
   >
->()("AWS.CloudWatch.ListManagedInsightRules") {}
+> {}
 
-export const ListManagedInsightRulesLive = Layer.effect(
-  ListManagedInsightRules,
-  Effect.gen(function* () {
-    const Policy = yield* ListManagedInsightRulesPolicy;
-    const listManagedInsightRules = yield* cloudwatch.listManagedInsightRules;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (
-        request: ListManagedInsightRulesRequest = {},
-      ) {
-        return yield* listManagedInsightRules(request);
-      });
-    });
-  }),
+export const ListManagedInsightRules = Binding.Service<ListManagedInsightRules>(
+  "AWS.CloudWatch.ListManagedInsightRules",
 );
-
-export class ListManagedInsightRulesPolicy extends Binding.Policy<
-  ListManagedInsightRulesPolicy,
-  () => Effect.Effect<void>
->()("AWS.CloudWatch.ListManagedInsightRules") {}
-
-export const ListManagedInsightRulesPolicyLive =
-  ListManagedInsightRulesPolicy.layer.succeed(
-    Effect.fn(function* (host) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.ListManagedInsightRules())`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:ListManagedInsightRules"],
-                Resource: ["*"],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `ListManagedInsightRulesPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

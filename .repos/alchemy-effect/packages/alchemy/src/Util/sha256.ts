@@ -13,6 +13,15 @@ export const sha256 = (input: Input) =>
 export const sha256Object = (input: object) =>
   sha256(JSON.stringify(stableValue(input)));
 
+/**
+ * Stable sha256 hex digest of a resolved Task input. Unlike
+ * {@link sha256Object} this does not stabilize key ordering — it hashes the
+ * raw `JSON.stringify(input ?? null)` so identical inputs map to identical
+ * hashes for caching/equality checks.
+ */
+export const hashInput = (input: unknown): Effect.Effect<string> =>
+  sha256(JSON.stringify(input ?? null));
+
 const toArrayBuffer = (input: Input) => {
   if (input instanceof ArrayBuffer) {
     return input;
