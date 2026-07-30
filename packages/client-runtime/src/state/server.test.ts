@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -84,7 +85,7 @@ describe("server state projection", () => {
     expect(isLegacyUpdateHandoffLoss(Cause.fail(new Error("Install failed.")))).toBe(false);
   });
 
-  it("resumes after the progress stream disconnects following completion", () => {
+  it.effect("resumes after the progress stream disconnects following completion", () => {
     const result = {
       targetVersion: "0.0.31",
       method: "respawn" as const,
@@ -96,15 +97,14 @@ describe("server state projection", () => {
       }),
     });
 
-    expect(
-      Effect.runSync(
-        resolveServerUpdateProgressResult(
-          result.targetVersion,
-          Option.some(result),
-          Effect.runSyncExit(Effect.fail(disconnect)),
-        ),
-      ),
-    ).toEqual(result);
+    return Effect.gen(function* () {
+      const resumed = yield* resolveServerUpdateProgressResult(
+        result.targetVersion,
+        Option.some(result),
+        Exit.fail(disconnect),
+      );
+      expect(resumed).toEqual(result);
+    });
   });
 
   it("projects streamed update milestones into the shared operation state", () => {
