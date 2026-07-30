@@ -2,6 +2,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
@@ -18,6 +19,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadListV2Status, type ThreadListV2Status } from "./threadListV2";
+import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
@@ -243,6 +245,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     state: "open" | "closed" | "merged" | null,
   ) => void;
   readonly projectCwd?: string | null;
+  readonly searchMatch?: EnvironmentThreadSearchMatch;
+  readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<
     typeof ThreadSwipeable
   >["simultaneousWithExternalGesture"];
@@ -369,6 +373,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {thread.title}
       </Text>
+      {props.searchMatch ? (
+        <View className="mt-1">
+          <ThreadSearchMatchExcerpt
+            match={props.searchMatch}
+            query={props.searchQuery ?? ""}
+            selected={selected}
+          />
+        </View>
+      ) : null}
       <View className="mt-1 flex-row items-center gap-2">
         {status === "failed" && thread.session?.lastError ? (
           <Text
@@ -517,15 +530,24 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             </View>
           ) : null}
-          <Text
-            className={cn(
-              "flex-1 text-base",
-              selected ? "text-user-bubble-foreground" : "text-foreground-muted",
-            )}
-            numberOfLines={1}
-          >
-            {thread.title}
-          </Text>
+          <View className="min-w-0 flex-1">
+            <Text
+              className={cn(
+                "text-base",
+                selected ? "text-user-bubble-foreground" : "text-foreground-muted",
+              )}
+              numberOfLines={1}
+            >
+              {thread.title}
+            </Text>
+            {props.searchMatch ? (
+              <ThreadSearchMatchExcerpt
+                match={props.searchMatch}
+                query={props.searchQuery ?? ""}
+                selected={selected}
+              />
+            ) : null}
+          </View>
           <Text
             className={cn(
               "text-sm tabular-nums",
