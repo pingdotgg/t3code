@@ -45,14 +45,8 @@ import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as RelayConfiguration from "../Config.ts";
 import { isManagedEndpointHostname } from "../deploymentConfig.ts";
 
-// The reason set is part of the public relay contract so clients can render
-// specific diagnostics (e.g. "your server never linked" vs. a real auth issue).
-export const EnvironmentConnectNotAuthorizedReason = RelayEnvironmentConnectNotAuthorizedReason;
-export type EnvironmentConnectNotAuthorizedReason =
-  typeof EnvironmentConnectNotAuthorizedReason.Type;
-
 function environmentConnectNotAuthorizedReasonMessage(
-  reason: EnvironmentConnectNotAuthorizedReason,
+  reason: RelayEnvironmentConnectNotAuthorizedReason,
 ): string {
   switch (reason) {
     case "client_proof_key_thumbprint_missing":
@@ -79,7 +73,7 @@ export class EnvironmentConnectNotAuthorized extends Schema.TaggedErrorClass<Env
   {
     environmentId: Schema.String,
     operation: Schema.Literals(["connect", "status"]),
-    reason: EnvironmentConnectNotAuthorizedReason,
+    reason: RelayEnvironmentConnectNotAuthorizedReason,
   },
 ) {
   override get message(): string {
