@@ -52,6 +52,7 @@ import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
+import { VoiceBudDraftBridgeConsumer } from "../voiceBudDraftBridge";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -134,6 +135,7 @@ function RootRouteView() {
         <SshPasswordPromptDialog />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
+        <VoiceBudDraftBridgeConsumer />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}

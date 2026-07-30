@@ -402,6 +402,11 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
+  /**
+   * Atomically appends dictated text without replacing edits made while the
+   * recording was being processed. Unknown/expired draft-session ids fail.
+   */
+  appendPrompt: (threadRef: ComposerThreadTarget, prompt: string) => boolean;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
     threadRef: ComposerThreadTarget,
@@ -2576,6 +2581,35 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        appendPrompt: (threadRef, prompt) => {
+          const normalizedPrompt = prompt.trim();
+          if (normalizedPrompt.length === 0) {
+            return false;
+          }
+          const state = get();
+          if (typeof threadRef === "string" && !state.draftThreadsByThreadKey[threadRef]) {
+            return false;
+          }
+          const threadKey = resolveComposerDraftKey(state, threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return false;
+          }
+          set((currentState) => {
+            const existing = currentState.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const separator =
+              existing.prompt.length === 0 || /\s$/.test(existing.prompt) ? "" : " ";
+            return {
+              draftsByThreadKey: {
+                ...currentState.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  prompt: `${existing.prompt}${separator}${normalizedPrompt}`,
+                },
+              },
+            };
+          });
+          return true;
         },
         setTerminalContexts: (threadRef, contexts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);

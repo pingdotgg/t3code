@@ -245,6 +245,10 @@ export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null
   return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
 }
 
+export function readThreadStatus(ref: ScopedThreadRef): EnvironmentThreadStatus {
+  return appAtomRegistry.get(environmentThreadDetails.statusAtom(ref));
+}
+
 export function readEnvironmentThreadRefs(
   environmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
