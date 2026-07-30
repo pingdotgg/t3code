@@ -1,5 +1,7 @@
 # Server Update Architecture
 
+> For maintainers. Using T3 Code? See [docs/user](../user/).
+
 T3 Code can update a connected server to the exact version of the client that detected version
 drift. This path exists primarily for remote environments, where the user may not have a terminal
 open on the server machine.
@@ -59,10 +61,11 @@ flowchart TD
     B -->|boot-service or respawn| E{Progress capability}
     E -->|present| F[server.updateServerWithProgress]
     E -->|missing| G[server.updateServer fallback]
-    F --> H[Download exact t3 version]
+    F --> H[Install exact t3 version in pinned runtime]
     G --> H
-    H --> I[Install and run version preflight]
-    I -->|fails| J[Remove failed runtime and keep current server]
+    H --> I[Run version preflight]
+    I -->|bad code or version| J[Remove candidate runtime and keep current server]
+    I -->|cannot run preflight| J2[Keep candidate and current server]
     I -->|passes| K{Handoff method}
     K -->|boot-service| L[Rewrite and restart T3 systemd unit]
     K -->|respawn| M[Start delayed replacement and exit current process]
@@ -82,8 +85,14 @@ successfully. Boot-service setup and self-update share the same process-wide ins
 they cannot mutate a pinned runtime concurrently.
 
 Before any restart, the current Node executable runs the replacement with `--version`. A failed
-install, failed preflight, or wrong reported version leaves the current server running. A failed
-preflight also removes the candidate runtime so retrying the same version performs a clean install.
+install, failed preflight, or wrong reported version leaves the current server running.
+
+Candidate cleanup is narrower than "any failed preflight". The candidate runtime is removed only when
+the preflight process actually completes and reports a bad exit code or the wrong version: that is
+the case where a completed npm install produced an unusable tree, so retrying the same version must
+perform a clean install rather than reuse it. If the preflight cannot run at all, for example a spawn
+error or the `PREFLIGHT_TIMEOUT` elapsing, the update fails before reaching cleanup and the candidate
+directory is left in place.
 
 ## Host Service Lifecycle
 
