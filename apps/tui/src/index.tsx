@@ -1,3 +1,5 @@
+import * as NodeFS from "node:fs";
+
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { installKittyClipboardExtension, installKittyImageExtension } from "@t3tools/opentui-image";
@@ -104,6 +106,25 @@ async function main(): Promise<void> {
   // reporting remain enabled explicitly in the shared renderer configuration.
   const tmuxPassthrough = detectKittyGraphicsTerminal();
   const renderer = await createCliRenderer(TUI_RENDERER_CONFIG);
+
+  // Colour bugs are environment-dependent (SSH drops COLORTERM, multiplexers
+  // rewrite TERM) and invisible in the output itself, so record what the
+  // renderer actually detected: once right after startup and once after the
+  // capability handshake has settled.
+  const logColorCapabilities = (stage: string) => {
+    try {
+      NodeFS.appendFileSync(
+        logPath,
+        `[color-caps ${stage}] TERM=${process.env.TERM ?? ""} COLORTERM=${
+          process.env.COLORTERM ?? ""
+        } caps=${JSON.stringify(renderer.capabilities)}\n`,
+      );
+    } catch {
+      // Diagnostics only — never let logging break startup.
+    }
+  };
+  logColorCapabilities("startup");
+  setTimeout(() => logColorCapabilities("settled"), 2000).unref?.();
   installKittyImageExtension(renderer, {
     tmuxPassthrough,
   });
