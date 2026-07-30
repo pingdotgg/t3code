@@ -23,6 +23,13 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 
+export function resolveResponsiveShortcutLabel(
+  shortcutLabel: string | null,
+  isMobile: boolean,
+): string | null {
+  return isMobile ? null : shortcutLabel;
+}
+
 type SidebarProject = {
   id: string;
   title: string;
