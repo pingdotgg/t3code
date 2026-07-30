@@ -509,6 +509,18 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitCreatePlan && promptCount === 3) {
+        yield* agent.client.extRequest("cursor/create_plan", {
+          toolCallId: "create-plan-tool-call-2",
+          name: "Mock plan",
+          overview: "Re-propose the refined plan",
+          plan: "# Mock plan\n\n- refined step",
+          todos: [{ id: "step-1", content: "Refined step", status: "pending" }],
+          isProject: false,
+        });
+        return { stopReason: "end_turn" };
+      }
+
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
         return {
           stopReason: "end_turn",

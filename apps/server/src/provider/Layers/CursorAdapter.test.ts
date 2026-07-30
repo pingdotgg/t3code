@@ -267,7 +267,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             event.threadId === threadId &&
             (event.type === "turn.proposed.completed" || event.type === "turn.completed"),
         ),
-        Stream.take(4),
+        Stream.take(6),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -292,6 +292,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         attachments: [],
         interactionMode: "plan",
       });
+      const reproposedTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "propose the same refined plan again",
+        attachments: [],
+        interactionMode: "plan",
+      });
 
       const planEvents = Array.from(yield* Fiber.join(planEventsFiber));
       const proposedPlans = planEvents.filter(
@@ -299,14 +305,23 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           event.type === "turn.proposed.completed",
       );
 
-      assert.equal(proposedPlans.length, 2);
+      assert.equal(proposedPlans.length, 3);
       assert.equal(proposedPlans[0]?.turnId, initialTurn.turnId);
       assert.equal(proposedPlans[0]?.payload.planMarkdown, "# Mock plan\n\n- initial step");
       assert.equal(proposedPlans[1]?.turnId, refinedTurn.turnId);
       assert.equal(proposedPlans[1]?.payload.planMarkdown, "# Mock plan\n\n- refined step");
+      assert.equal(proposedPlans[2]?.turnId, reproposedTurn.turnId);
+      assert.equal(proposedPlans[2]?.payload.planMarkdown, "# Mock plan\n\n- refined step");
       assert.deepStrictEqual(
         planEvents.map((event) => event.type),
-        ["turn.proposed.completed", "turn.completed", "turn.proposed.completed", "turn.completed"],
+        [
+          "turn.proposed.completed",
+          "turn.completed",
+          "turn.proposed.completed",
+          "turn.completed",
+          "turn.proposed.completed",
+          "turn.completed",
+        ],
       );
 
       yield* adapter.stopSession(threadId);

@@ -370,11 +370,15 @@ export function makeCursorAdapter(
     const normalizeProposedPlanMarkdown = (planMarkdown: string) => planMarkdown.trim();
 
     const emitProposedPlanCompleted = Effect.fn("CursorAdapter.emitProposedPlanCompleted")(
-      function* (ctx: CursorSessionContext, planMarkdown: string) {
+      function* (
+        ctx: CursorSessionContext,
+        planMarkdown: string,
+        options?: { readonly force?: boolean },
+      ) {
         const normalizedPlanMarkdown = normalizeProposedPlanMarkdown(planMarkdown);
         if (
           normalizedPlanMarkdown.length === 0 ||
-          normalizedPlanMarkdown === ctx.lastProposedPlanMarkdown
+          (!options?.force && normalizedPlanMarkdown === ctx.lastProposedPlanMarkdown)
         ) {
           return;
         }
@@ -688,7 +692,7 @@ export function makeCursorAdapter(
                     ctx.proposedPlanFilePath,
                     `${planMarkdown.trimEnd()}\n`,
                   );
-                  yield* emitProposedPlanCompleted(ctx, planMarkdown);
+                  yield* emitProposedPlanCompleted(ctx, planMarkdown, { force: true });
                   const planUri = yield* path.toFileUrl(ctx.proposedPlanFilePath);
                   return CursorCreatePlanResponse.make({
                     outcome: {
