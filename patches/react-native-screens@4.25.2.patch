@@ -226,7 +226,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
  
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -637,10 +675,458 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -637,10 +675,461 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -341,10 +341,10 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +      if (hostWidth <= 0.0) {
 +        hostWidth = [UIScreen mainScreen].bounds.size.width;
 +      }
-+      CGFloat fallbackWidth = MIN(560.0, MAX(300.0, hostWidth - (horizontalInset * 2.0)));
-+      CGFloat resolvedWidth = width != nil ? width.doubleValue : fallbackWidth;
++      CGFloat fallbackWidth = MIN(560.0, MAX(0.0, hostWidth - (horizontalInset * 2.0)));
++      CGFloat resolvedWidth = MAX(0.0, width != nil ? width.doubleValue : fallbackWidth);
 +      if (hostWidth > 0.0) {
-+        resolvedWidth = MIN(resolvedWidth, MAX(260.0, hostWidth - 12.0));
++        resolvedWidth = MIN(resolvedWidth, MAX(0.0, hostWidth - (horizontalInset * 2.0)));
 +      }
 +
 +      CGFloat toolbarHeight = 48.0;
@@ -379,14 +379,21 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +      NSLayoutConstraint *restingBottomConstraint =
 +          [toolbarHost.bottomAnchor constraintEqualToAnchor:chromeHostView.safeAreaLayoutGuide.bottomAnchor
 +                                                   constant:-toolbarBottomSpacing];
-+      restingBottomConstraint.priority = UILayoutPriorityDefaultHigh;
++      restingBottomConstraint.priority = UILayoutPriorityDefaultLow;
++      NSLayoutConstraint *preferredWidthConstraint =
++          [toolbarHost.widthAnchor constraintEqualToConstant:resolvedWidth];
++      preferredWidthConstraint.priority = UILayoutPriorityDefaultHigh;
 +      [NSLayoutConstraint activateConstraints:@[
 +        [toolbarHost.centerXAnchor constraintEqualToAnchor:chromeHostView.centerXAnchor],
++        [toolbarHost.leadingAnchor constraintGreaterThanOrEqualToAnchor:chromeHostView.safeAreaLayoutGuide.leadingAnchor
++                                                              constant:horizontalInset],
++        [toolbarHost.trailingAnchor constraintLessThanOrEqualToAnchor:chromeHostView.safeAreaLayoutGuide.trailingAnchor
++                                                            constant:-horizontalInset],
 +        [toolbarHost.bottomAnchor constraintLessThanOrEqualToAnchor:chromeHostView.safeAreaLayoutGuide.bottomAnchor
 +                                                           constant:-toolbarBottomSpacing],
 +        keyboardAvoidConstraint,
 +        restingBottomConstraint,
-+        [toolbarHost.widthAnchor constraintEqualToConstant:resolvedWidth],
++        preferredWidthConstraint,
 +        [toolbarHost.heightAnchor constraintEqualToConstant:toolbarHeight],
 +      ]];
 +      [chromeHostView bringSubviewToFront:toolbarHost];
