@@ -29,6 +29,7 @@ import {
   isLegacyUpdateHandoffLoss,
   projectServerWelcome,
   resolveServerConfigValue,
+  resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
 } from "./server.ts";
 
@@ -81,6 +82,29 @@ describe("server state projection", () => {
       ),
     ).toBe(true);
     expect(isLegacyUpdateHandoffLoss(Cause.fail(new Error("Install failed.")))).toBe(false);
+  });
+
+  it("resumes after the progress stream disconnects following completion", () => {
+    const result = {
+      targetVersion: "0.0.31",
+      method: "respawn" as const,
+    };
+    const disconnect = new RpcClientError.RpcClientError({
+      reason: new RpcClientError.RpcClientDefect({
+        message: "socket closed",
+        cause: new Error("socket closed"),
+      }),
+    });
+
+    expect(
+      Effect.runSync(
+        resolveServerUpdateProgressResult(
+          result.targetVersion,
+          Option.some(result),
+          Effect.runSyncExit(Effect.fail(disconnect)),
+        ),
+      ),
+    ).toEqual(result);
   });
 
   it("projects streamed update milestones into the shared operation state", () => {

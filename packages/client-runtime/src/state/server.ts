@@ -119,6 +119,23 @@ export function isLegacyUpdateHandoffLoss(cause: Cause.Cause<unknown>): boolean 
   );
 }
 
+export function resolveServerUpdateProgressResult<E>(
+  targetVersion: string,
+  terminal: Option.Option<ServerSelfUpdateResult>,
+  streamExit: Exit.Exit<void, E>,
+): Effect.Effect<ServerSelfUpdateResult, E | ServerUpdateProgressIncompleteError> {
+  if (
+    Option.isSome(terminal) &&
+    (Exit.isSuccess(streamExit) || isLegacyUpdateHandoffLoss(streamExit.cause))
+  ) {
+    return Effect.succeed(terminal.value);
+  }
+  if (Exit.isFailure(streamExit)) {
+    return Effect.failCause(streamExit.cause);
+  }
+  return Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion }));
+}
+
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
   readonly latestEvent: ServerConfigStreamEvent;
@@ -398,7 +415,7 @@ export function createServerEnvironmentAtoms<R, E>(
               const terminal = yield* Ref.make<Option.Option<ServerSelfUpdateResult>>(
                 Option.none(),
               );
-              yield* environmentRegistry
+              const streamExit = yield* environmentRegistry
                 .runStream(
                   target.environmentId,
                   runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
@@ -419,15 +436,12 @@ export function createServerEnvironmentAtoms<R, E>(
                       ),
                     ),
                   ),
+                  Effect.exit,
                 );
-              return yield* Ref.get(terminal).pipe(
-                Effect.flatMap(
-                  Option.match({
-                    onNone: () =>
-                      Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion })),
-                    onSome: Effect.succeed,
-                  }),
-                ),
+              return yield* resolveServerUpdateProgressResult(
+                targetVersion,
+                yield* Ref.get(terminal),
+                streamExit,
               );
             })
           : yield* Effect.gen(function* () {

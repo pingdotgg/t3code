@@ -1384,7 +1384,9 @@ const makeWsRpcLayer = (
                       result,
                     }),
                   ),
-                  Effect.catchTag("ServerSelfUpdateError", (error) => Queue.fail(queue, error)),
+                  Effect.catchTags({
+                    ServerSelfUpdateError: (error) => Queue.fail(queue, error),
+                  }),
                   Effect.andThen(Queue.end(queue)),
                   Effect.forkScoped,
                 ),
