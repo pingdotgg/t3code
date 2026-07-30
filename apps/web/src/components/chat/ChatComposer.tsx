@@ -64,7 +64,7 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
-import { compressImageForStash } from "../../lib/stashImageCompression";
+import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { resolveShortcutCommand } from "../../keybindings";
@@ -205,8 +205,6 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
-
-const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -2273,7 +2271,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
-  const addComposerImages = (files: File[]) => {
+  const addComposerImages = async (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
     if (pendingUserInputs.length > 0) {
       toastManager.add({
@@ -2282,6 +2280,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
+    // Captured before the awaits below: the user may switch threads while a
+    // large image is being compressed, and the error belongs to the thread
+    // the paste happened in.
+    const threadId = activeThreadId;
     const nextImages: ComposerImageAttachment[] = [];
     let nextImageCount = composerImagesRef.current.length;
     let error: string | null = null;
@@ -2290,23 +2292,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
         continue;
       }
-      if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
-        continue;
-      }
       if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
         break;
       }
-      const previewUrl = URL.createObjectURL(file);
+      // Images over the wire cap are downscaled to fit rather than refused;
+      // files already within it pass through byte-for-byte.
+      const compressed = await compressImageToByteLimit(file, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+      if (!compressed.ok) {
+        error =
+          compressed.reason === "unreadable"
+            ? `'${file.name}' could not be read as an image.`
+            : `'${file.name}' is too large to attach, even after compression.`;
+        continue;
+      }
+      const attachmentFile = compressed.file;
+      const previewUrl = URL.createObjectURL(attachmentFile);
       nextImages.push({
         type: "image",
         id: randomUUID(),
-        name: file.name || "image",
-        mimeType: file.type,
-        sizeBytes: file.size,
+        name: attachmentFile.name || "image",
+        mimeType: attachmentFile.type,
+        sizeBytes: attachmentFile.size,
         previewUrl,
-        file,
+        file: attachmentFile,
       });
       nextImageCount += 1;
     }
@@ -2315,7 +2324,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     } else if (nextImages.length > 1) {
       addComposerImagesToDraft(nextImages);
     }
-    setThreadError(activeThreadId, error);
+    setThreadError(threadId, error);
   };
 
   const removeComposerImage = (imageId: string) => {
@@ -2331,7 +2340,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const imageFiles = files.filter((file) => file.type.startsWith("image/"));
     if (imageFiles.length === 0) return;
     event.preventDefault();
-    addComposerImages(imageFiles);
+    void addComposerImages(imageFiles);
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2365,7 +2374,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    addComposerImages(files);
+    void addComposerImages(files);
     focusComposer();
   };
 
