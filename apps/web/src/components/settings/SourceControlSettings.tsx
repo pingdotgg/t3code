@@ -426,16 +426,14 @@ function GitFetchIntervalSettings() {
 }
 
 function SourceControlSectionSkeleton({
-  id,
   title,
   headerAction,
 }: {
-  readonly id?: string;
   readonly title: string;
   readonly headerAction?: ReactNode;
 }) {
   return (
-    <SettingsSection id={id} title={title} headerAction={headerAction}>
+    <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
         <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -549,11 +547,7 @@ export function SourceControlSettingsPanel() {
     <SettingsPageContainer>
       {isInitialScanPending ? (
         <>
-          <SourceControlSectionSkeleton
-            id="source-control"
-            title="Version Control"
-            headerAction={scanButton}
-          />
+          <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
           <SourceControlSectionSkeleton title="Source Control Providers" />
         </>
       ) : hasDiscoveryItems ? (

@@ -2337,7 +2337,7 @@ export function ArchivedThreadsPanel() {
   return (
     <SettingsPageContainer>
       {archivedGroups.length === 0 ? (
-        <SettingsSection id="archive" title="Archived threads">
+        <SettingsSection id={isLoadingArchive ? undefined : "archive"} title="Archived threads">
           <SettingsRow
             title={
               <span className="inline-flex items-center gap-2">

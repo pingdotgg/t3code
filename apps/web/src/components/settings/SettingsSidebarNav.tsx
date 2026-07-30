@@ -91,7 +91,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       if (isMobile) {
         setOpenMobile(false);
       }
-      void navigate({ to, hash: "", replace: true });
+      void navigate({ to, hash: "", replace: true, hashScrollIntoView: false });
     },
     [isMobile, navigate, setOpenMobile],
   );
@@ -110,7 +110,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         scrollToSettingsTarget(targetId);
         return;
       }
-      void navigate({ to: item.to, hash: targetId, replace: true });
+      void navigate({ to: item.to, hash: targetId, replace: true, hashScrollIntoView: false });
     },
     [clearSearch, currentHash, isMobile, navigate, pathname, setOpenMobile],
   );

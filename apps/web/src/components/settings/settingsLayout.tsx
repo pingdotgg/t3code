@@ -202,7 +202,7 @@ export function SettingsPageContainer({
   const hash = useLocation({ select: (location) => location.hash });
   const targetId = hash.replace(/^#/, "") || null;
   const clearTargetHash = useCallback(() => {
-    void navigate({ hash: "", replace: true, resetScroll: false });
+    void navigate({ hash: "", replace: true, resetScroll: false, hashScrollIntoView: false });
   }, [navigate]);
 
   return (
