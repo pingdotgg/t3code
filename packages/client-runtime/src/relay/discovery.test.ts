@@ -16,7 +16,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ManagedRelay from "./managedRelay.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Connectivity from "../connection/connectivity.ts";
-import { ConnectionBlockedError, type NetworkStatus } from "../connection/model.ts";
+import {
+  ConnectionBlockedError,
+  type ConnectionAttemptError,
+  ConnectionTransientError,
+  type NetworkStatus,
+} from "../connection/model.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as RelayEnvironmentDiscovery from "./discovery.ts";
 
@@ -60,7 +65,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const listCalls = yield* Ref.make(0);
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
-  const clerkToken = yield* Ref.make<string | null>("clerk-token");
+  const clerkToken = yield* Ref.make<string | ConnectionAttemptError | null>("clerk-token");
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
     readonly reason: "application-active" | "credentials-changed";
@@ -126,18 +131,15 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
         Layer.succeed(
           ClientCapabilities.CloudSession,
           ClientCapabilities.CloudSession.of({
-            clerkToken: Ref.get(clerkToken).pipe(
-              Effect.flatMap((token) =>
-                token === null
-                  ? Effect.fail(
-                      new ConnectionBlockedError({
-                        reason: "authentication",
-                        detail: "Signed out.",
-                      }),
-                    )
-                  : Effect.succeed(token),
-              ),
-            ),
+            clerkToken: Effect.gen(function* () {
+              const token = yield* Ref.get(clerkToken);
+              if (typeof token === "string") return token;
+              if (token !== null) return yield* token;
+              return yield* new ConnectionBlockedError({
+                reason: "authentication",
+                detail: "Signed out.",
+              });
+            }),
           }),
         ),
         Layer.succeed(Connectivity.Connectivity, connectivity),
@@ -387,6 +389,26 @@ describe("RelayEnvironmentDiscovery", () => {
         expect(state.environments.size).toBe(0);
         expect(state.refreshing).toBe(false);
         expect(Option.isNone(state.error)).toBe(true);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("publishes non-authentication session failures", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const failure = new ConnectionTransientError({
+        reason: "network",
+        detail: "Session lookup failed.",
+      });
+      yield* Ref.set(harness.clerkToken, failure);
+
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* discovery.refresh;
+
+        const state = yield* SubscriptionRef.get(discovery.state);
+        expect(state.refreshing).toBe(false);
+        expect(Option.getOrThrow(state.error)).toBe(failure);
       }).pipe(Effect.provide(harness.layer));
     }),
   );
