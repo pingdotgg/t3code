@@ -140,8 +140,15 @@ describe("ProviderSessionReaper", () => {
     readonly stopSessionImplementation?: (input: {
       readonly threadId: ThreadId;
     }) => ReturnType<ProviderServiceShape["stopSession"]>;
+    readonly outstandingTaskThreadIds?: ReadonlyArray<ThreadId>;
+    readonly sweepIntervalMs?: number;
   }) {
     const stoppedThreadIds = new Set<ThreadId>();
+    // Threads the fake provider reports as still running background work.
+    // Tests mutate this between sweeps to model a task reaching a terminal
+    // state without touching the reaper's clock.
+    const threadsWithOutstandingTasks = new Set<ThreadId>(input.outstandingTaskThreadIds ?? []);
+    const threadShellReadsByThread = new Map<ThreadId, number>();
     const stopSession = vi.fn<ProviderServiceShape["stopSession"]>(
       (request) =>
         (input.stopSessionImplementation
@@ -174,6 +181,8 @@ describe("ProviderSessionReaper", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      hasOutstandingBackgroundTasks: (threadId) =>
+        Effect.sync(() => threadsWithOutstandingTasks.has(threadId)),
       streamEvents: Stream.empty,
     };
 
@@ -185,7 +194,7 @@ describe("ProviderSessionReaper", () => {
     );
     const layer = makeProviderSessionReaperLive({
       inactivityThresholdMs: 1_000,
-      sweepIntervalMs: 60_000,
+      sweepIntervalMs: input.sweepIntervalMs ?? 60_000,
     }).pipe(
       Layer.provideMerge(providerSessionDirectoryLayer),
       Layer.provideMerge(runtimeRepositoryLayer),
@@ -205,11 +214,17 @@ describe("ProviderSessionReaper", () => {
           getThreadCheckpointContext: () => Effect.die("unused"),
           getFullThreadDiffContext: () => Effect.die("unused"),
           getThreadShellById: (threadId) =>
-            Effect.succeed(
-              input.readModel.threads.find((thread) => thread.id === threadId)
-                ? Option.some(input.readModel.threads.find((thread) => thread.id === threadId)!)
-                : Option.none(),
-            ),
+            Effect.sync(() => {
+              // The sweep reads the thread shell for every stale binding before
+              // it consults the outstanding-task guard, so counting these calls
+              // proves a sweep actually examined the thread.
+              threadShellReadsByThread.set(
+                threadId,
+                (threadShellReadsByThread.get(threadId) ?? 0) + 1,
+              );
+              const thread = input.readModel.threads.find((entry) => entry.id === threadId);
+              return thread ? Option.some(thread) : Option.none();
+            }),
           getThreadDetailById: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),
           searchThreads: () => Effect.succeed({ matches: [] }),
@@ -219,7 +234,7 @@ describe("ProviderSessionReaper", () => {
     );
 
     runtime = ManagedRuntime.make(layer);
-    return { stopSession, stoppedThreadIds };
+    return { stopSession, stoppedThreadIds, threadsWithOutstandingTasks, threadShellReadsByThread };
   }
 
   it("reaps stale persisted sessions without active turns", async () => {
@@ -368,6 +383,71 @@ describe("ProviderSessionReaper", () => {
     expect(harness.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
+  });
+
+  it("skips stale sessions that still have outstanding background tasks", async () => {
+    const threadId = ThreadId.make("thread-reaper-background-tasks");
+    const now = "2026-01-01T00:00:00.000Z";
+    // Idle past the threshold with no foreground turn — the only thing keeping
+    // this session alive is background work the projection cannot see.
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+      outstandingTaskThreadIds: [threadId],
+      sweepIntervalMs: 5,
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        resumeCursor: {
+          opaque: "resume-background-tasks",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await runtime!.runPromise(Scope.make("sequential"));
+    await runtime!.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    // Wait until a sweep has actually examined this thread, otherwise the
+    // negative assertion below would also hold with the guard removed.
+    await waitFor(() => (harness.threadShellReadsByThread.get(threadId) ?? 0) >= 1);
+    await runtime!.runPromise(drainFibers);
+
+    // Holds for every sweep that runs while the task is outstanding, so the
+    // number of sweeps that actually elapsed cannot make this flaky.
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
+    expect(Option.isSome(remaining)).toBe(true);
+
+    // The task reaches a terminal state; the session is still idle, so the next
+    // sweep is free to reap it.
+    harness.threadsWithOutstandingTasks.delete(threadId);
+
+    await waitFor(() => harness.stopSession.mock.calls.length >= 1);
+    expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
   });
 
   it("skips persisted sessions that are already marked stopped", async () => {

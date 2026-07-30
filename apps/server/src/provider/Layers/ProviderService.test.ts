@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -38,6 +39,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderSessionDirectoryPersistenceError,
   ProviderUnsupportedError,
   ProviderValidationError,
   type ProviderAdapterError,
@@ -639,6 +641,488 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
     assert.equal(canonicalEvents.length, 1);
     assert.equal(canonicalEvents[0]?.threadId, "thread-canonical-thread-segment");
     assert.deepEqual(canonicalThreadIds, ["thread-canonical-thread-segment"]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive touches lastSeenAt on background runtime activity, throttled", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: codex.adapter,
+    });
+
+    // Spy directory: records every touchLastSeen call so we assert the wiring
+    // directly (a runtime event triggers a touch) rather than inferring it from
+    // DB timestamp noise, and confirms throttling collapses a burst.
+    const touched: string[] = [];
+    const spyDirectoryLayer = Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, {
+      upsert: () => Effect.void,
+      getProvider: () => Effect.die(new Error("getProvider unused in test")),
+      getBinding: () => Effect.succeed(Option.none()),
+      listThreadIds: () => Effect.succeed([]),
+      listBindings: () => Effect.succeed([]),
+      touchLastSeen: (threadId) =>
+        Effect.sync(() => {
+          touched.push(threadId);
+          return true;
+        }),
+    });
+
+    const threadId = asThreadId("thread-runtime-activity-touch");
+
+    const providerLayer = makeProviderServiceLive({
+      // Tight throttle window so the test can prove both "touches" and
+      // "throttles a rapid burst" deterministically with the test clock.
+      runtimeActivityTouchThrottleMs: 1_000,
+    }).pipe(
+      Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+      Layer.provide(spyDirectoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+
+    const emitTaskProgress = (id: string) =>
+      codex.emit({
+        eventId: asEventId(id),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:05:00.000Z",
+        type: "task.progress",
+        payload: {
+          taskId: RuntimeTaskId.make("task-touch"),
+          description: "background work",
+        },
+      });
+
+    yield* Effect.gen(function* () {
+      yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      // First background event → one touch.
+      emitTaskProgress("evt-task-progress-1");
+      yield* advanceTestClock(20);
+      assert.deepEqual(touched, [threadId]);
+
+      // Rapid second event within the throttle window → collapsed (no new touch).
+      emitTaskProgress("evt-task-progress-2");
+      yield* advanceTestClock(20);
+      assert.deepEqual(touched, [threadId]);
+
+      // After the throttle window elapses, a further event touches again.
+      yield* advanceTestClock(1_000);
+      emitTaskProgress("evt-task-progress-3");
+      yield* advanceTestClock(20);
+      assert.deepEqual(touched, [threadId, threadId]);
+    }).pipe(Effect.provide(providerLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "ProviderServiceLive retries lastSeenAt touch after a failed write (throttle not armed on failure)",
+  () =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const registry = makeAdapterRegistryMock({
+        [ProviderDriverKind.make("codex")]: codex.adapter,
+      });
+
+      // Directory whose first touch fails, then succeeds. A failed touch must not
+      // arm the throttle window — otherwise a stale last_seen_at would persist and
+      // the reaper could reap a live session.
+      const attempts: string[] = [];
+      let shouldFail = true;
+      const flakyDirectoryLayer = Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, {
+        upsert: () => Effect.void,
+        getProvider: () => Effect.die(new Error("getProvider unused in test")),
+        getBinding: () => Effect.succeed(Option.none()),
+        listThreadIds: () => Effect.succeed([]),
+        listBindings: () => Effect.succeed([]),
+        touchLastSeen: (threadId) =>
+          Effect.suspend(() => {
+            attempts.push(threadId);
+            if (shouldFail) {
+              shouldFail = false;
+              return Effect.fail(
+                new ProviderSessionDirectoryPersistenceError({
+                  operation: "test.touchLastSeen",
+                  detail: "simulated transient touch failure",
+                }),
+              );
+            }
+            return Effect.succeed(true);
+          }),
+      });
+
+      const threadId = asThreadId("thread-touch-retry");
+
+      const providerLayer = makeProviderServiceLive({
+        runtimeActivityTouchThrottleMs: 1_000,
+      }).pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(flakyDirectoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      const emitTaskProgress = (id: string) =>
+        codex.emit({
+          eventId: asEventId(id),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:05:00.000Z",
+          type: "task.progress",
+          payload: {
+            taskId: RuntimeTaskId.make("task-retry"),
+            description: "background work",
+          },
+        });
+
+      yield* Effect.gen(function* () {
+        yield* ProviderService.ProviderService;
+        yield* advanceTestClock(10);
+
+        // First event: touch attempted, but the write fails (swallowed).
+        emitTaskProgress("evt-retry-1");
+        yield* advanceTestClock(20);
+        assert.deepEqual(attempts, [threadId]);
+
+        // Second event *within the throttle window*: because the prior touch
+        // failed, the window was never armed, so this event retries the touch
+        // instead of being throttled away.
+        emitTaskProgress("evt-retry-2");
+        yield* advanceTestClock(20);
+        assert.deepEqual(attempts, [threadId, threadId]);
+
+        // That retry succeeded and armed the window, so a third rapid event is
+        // now correctly throttled.
+        emitTaskProgress("evt-retry-3");
+        yield* advanceTestClock(20);
+        assert.deepEqual(attempts, [threadId, threadId]);
+      }).pipe(Effect.provide(providerLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+// Outstanding-background-task tracking runs against the real directory so
+// `stopSession` can resolve the binding `startSession` persisted, and captures
+// every published runtime event through the canonical logger.
+function makeOutstandingTaskHarness(options?: { readonly outstandingTaskStalenessMs?: number }) {
+  const codex = makeFakeCodexAdapter();
+  // A second instance, so tests can emit an event carrying a provider instance
+  // id that differs from the one owning a task.
+  const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const registry = makeAdapterRegistryMock({
+    [ProviderDriverKind.make("codex")]: codex.adapter,
+    [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
+  });
+  const publishedEvents: ProviderRuntimeEvent[] = [];
+  const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const providerLayer = makeProviderServiceLive({
+    ...(options?.outstandingTaskStalenessMs !== undefined
+      ? { outstandingTaskStalenessMs: options.outstandingTaskStalenessMs }
+      : {}),
+    canonicalEventLogger: {
+      filePath: "memory://provider-outstanding-tasks",
+      write: (event) =>
+        Effect.sync(() => {
+          publishedEvents.push(event as ProviderRuntimeEvent);
+        }),
+      close: () => Effect.void,
+    },
+  }).pipe(
+    Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+    Layer.provide(directoryLayer),
+    Layer.provide(defaultServerSettingsLayer),
+    Layer.provide(AnalyticsService.layerTest),
+    Layer.provide(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
+  );
+
+  const emitTaskEvent = (
+    threadId: ThreadId,
+    eventId: string,
+    type: "task.started" | "task.progress" | "task.completed",
+    payload: Record<string, unknown>,
+  ) =>
+    codex.emit({
+      eventId: asEventId(eventId),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      createdAt: "2026-01-01T00:05:00.000Z",
+      type,
+      payload,
+    });
+
+  const startSession = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      return yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+    });
+
+  return { codex, claude, providerLayer, publishedEvents, emitTaskEvent, startSession };
+}
+
+const settledTaskEvents = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
+  events.filter(
+    (event) => event.type === "task.completed" && event.payload.status === "stopped",
+  ) as ReadonlyArray<Extract<ProviderRuntimeEvent, { type: "task.completed" }>>;
+
+it.effect("ProviderServiceLive tracks background tasks from started to terminal", () =>
+  Effect.gen(function* () {
+    const harness = makeOutstandingTaskHarness();
+    const threadId = asThreadId("thread-outstanding-lifecycle");
+    const taskId = RuntimeTaskId.make("task-lifecycle");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), false);
+
+      harness.emitTaskEvent(threadId, "evt-task-started", "task.started", {
+        taskId,
+        description: "dynamic workflow",
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), true);
+
+      harness.emitTaskEvent(threadId, "evt-task-completed", "task.completed", {
+        taskId,
+        status: "completed",
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), false);
+    }).pipe(Effect.provide(harness.providerLayer));
+
+    // A real terminal event needs no synthetic stand-in.
+    assert.equal(settledTaskEvents(harness.publishedEvents).length, 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive adopts a background task first seen via task.progress", () =>
+  Effect.gen(function* () {
+    const harness = makeOutstandingTaskHarness();
+    const threadId = asThreadId("thread-outstanding-progress-only");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      // No task.started was seen — this is what a subscription that attached
+      // mid-task observes, and it must still pin the session.
+      harness.emitTaskEvent(threadId, "evt-task-progress-only", "task.progress", {
+        taskId: RuntimeTaskId.make("task-progress-only"),
+        description: "already running",
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), true);
+    }).pipe(Effect.provide(harness.providerLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "ProviderServiceLive settles outstanding background tasks when a session is stopped",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeOutstandingTaskHarness();
+      const threadId = asThreadId("thread-outstanding-stop");
+      const taskId = RuntimeTaskId.make("task-orphaned-by-stop");
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        yield* advanceTestClock(10);
+        yield* harness.startSession(threadId);
+
+        harness.emitTaskEvent(threadId, "evt-stop-task-started", "task.started", {
+          taskId,
+          description: "background shell",
+        });
+        yield* advanceTestClock(20);
+        assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), true);
+
+        yield* provider.stopSession({ threadId });
+        yield* advanceTestClock(20);
+        assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), false);
+      }).pipe(Effect.provide(harness.providerLayer));
+
+      const settled = settledTaskEvents(harness.publishedEvents);
+      assert.equal(settled.length, 1);
+      assert.equal(settled[0]?.threadId, threadId);
+      assert.equal(settled[0]?.payload.taskId, taskId);
+      assert.equal(settled[0]?.payload.summary, "Session stopped before the task finished");
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive settles outstanding background tasks when the session exits", () =>
+  Effect.gen(function* () {
+    const harness = makeOutstandingTaskHarness();
+    const threadId = asThreadId("thread-outstanding-exit");
+    const taskId = RuntimeTaskId.make("task-orphaned-by-exit");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      harness.emitTaskEvent(threadId, "evt-exit-task-started", "task.started", {
+        taskId,
+        description: "subagent",
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), true);
+
+      harness.codex.emit({
+        eventId: asEventId("evt-session-exited"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:06:00.000Z",
+        type: "session.exited",
+        payload: { reason: "provider process exited" },
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), false);
+    }).pipe(Effect.provide(harness.providerLayer));
+
+    const settled = settledTaskEvents(harness.publishedEvents);
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]?.payload.taskId, taskId);
+    assert.equal(settled[0]?.payload.summary, "Provider session exited before the task finished");
+    // The task's terminal event lands before the exit that caused it.
+    const settledIndex = harness.publishedEvents.indexOf(settled[0]!);
+    const exitIndex = harness.publishedEvents.findIndex((event) => event.type === "session.exited");
+    assert.equal(settledIndex < exitIndex, true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive tracks outstanding background tasks per thread", () =>
+  Effect.gen(function* () {
+    const harness = makeOutstandingTaskHarness();
+    const busyThreadId = asThreadId("thread-outstanding-busy");
+    const idleThreadId = asThreadId("thread-outstanding-idle");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      harness.emitTaskEvent(busyThreadId, "evt-isolation-started", "task.started", {
+        taskId: RuntimeTaskId.make("task-isolation"),
+        description: "long workflow",
+      });
+      yield* advanceTestClock(20);
+
+      // One thread's background work must never pin an unrelated thread.
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(busyThreadId), true);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(idleThreadId), false);
+    }).pipe(Effect.provide(harness.providerLayer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive only settles tasks owned by the exiting provider instance", () =>
+  Effect.gen(function* () {
+    const harness = makeOutstandingTaskHarness();
+    const threadId = asThreadId("thread-outstanding-cross-instance");
+    const taskId = RuntimeTaskId.make("task-cross-instance");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      // Task belongs to the codex instance.
+      harness.emitTaskEvent(threadId, "evt-cross-task-started", "task.started", {
+        taskId,
+        description: "codex workflow",
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), true);
+
+      // A different instance exits on the same thread — not this task's owner.
+      harness.claude.emit({
+        eventId: asEventId("evt-cross-exit-other-instance"),
+        provider: CLAUDE_AGENT_DRIVER,
+        threadId,
+        createdAt: "2026-01-01T00:06:00.000Z",
+        type: "session.exited",
+        payload: { reason: "other instance exited" },
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), true);
+      assert.equal(settledTaskEvents(harness.publishedEvents).length, 0);
+
+      // The owning instance exits — now it settles.
+      harness.codex.emit({
+        eventId: asEventId("evt-cross-exit-owning-instance"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:07:00.000Z",
+        type: "session.exited",
+        payload: { reason: "owning instance exited" },
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), false);
+    }).pipe(Effect.provide(harness.providerLayer));
+
+    const settled = settledTaskEvents(harness.publishedEvents);
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]?.payload.taskId, taskId);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive settles background tasks that go silent for too long", () =>
+  Effect.gen(function* () {
+    const harness = makeOutstandingTaskHarness({ outstandingTaskStalenessMs: 60_000 });
+    const threadId = asThreadId("thread-outstanding-abandoned");
+    const taskId = RuntimeTaskId.make("task-abandoned");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* advanceTestClock(10);
+
+      harness.emitTaskEvent(threadId, "evt-abandoned-started", "task.started", {
+        taskId,
+        description: "workflow whose owner vanished",
+      });
+      yield* advanceTestClock(20);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), true);
+
+      // No terminal event will ever arrive (the owning process is gone). Once
+      // the task has been silent past the ceiling it is presumed abandoned.
+      yield* advanceTestClock(60_001);
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), false);
+
+      // The entry is gone, so a second call neither reports busy nor settles again.
+      assert.equal(yield* provider.hasOutstandingBackgroundTasks(threadId), false);
+    }).pipe(Effect.provide(harness.providerLayer));
+
+    const settled = settledTaskEvents(harness.publishedEvents);
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]?.threadId, threadId);
+    assert.equal(settled[0]?.payload.taskId, taskId);
+    assert.equal(
+      settled[0]?.payload.summary,
+      "No activity from the task for an extended period; presumed abandoned",
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

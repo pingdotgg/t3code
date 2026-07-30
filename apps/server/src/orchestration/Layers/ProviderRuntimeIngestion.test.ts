@@ -121,6 +121,7 @@ function createProviderServiceHarness() {
       });
     },
     rollbackConversation: () => unsupported(),
+    hasOutstandingBackgroundTasks: () => Effect.succeed(false),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

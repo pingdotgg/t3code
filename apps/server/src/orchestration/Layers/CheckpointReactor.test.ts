@@ -123,6 +123,7 @@ function createProviderServiceHarness(
         },
       }),
     rollbackConversation,
+    hasOutstandingBackgroundTasks: () => Effect.succeed(false),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

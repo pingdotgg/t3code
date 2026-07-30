@@ -70,6 +70,16 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
+        // Checked immediately before the stop so the window in which a task can
+        // start and still be killed is as small as we can make it.
+        if (yield* providerService.hasOutstandingBackgroundTasks(binding.threadId)) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-outstanding-tasks", {
+            threadId: binding.threadId,
+            idleDurationMs,
+          });
+          continue;
+        }
+
         const reaped = yield* providerService.stopSession({ threadId: binding.threadId }).pipe(
           Effect.tap(() =>
             Effect.logInfo("provider.session.reaped", {

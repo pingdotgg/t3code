@@ -10,6 +10,7 @@
  * @module ProviderServiceLive
  */
 import {
+  EventId,
   ModelSelection,
   NonNegativeInt,
   ThreadId,
@@ -23,8 +24,10 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type RuntimeTaskId,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -57,6 +60,14 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
+// Summaries carried by the synthetic terminal events we publish for background
+// tasks that were still running when their session went away. They surface in
+// the activity feed, so they have to read as an explanation to the user.
+const TASK_SETTLED_BY_STOP_SUMMARY = "Session stopped before the task finished";
+const TASK_SETTLED_BY_EXIT_SUMMARY = "Provider session exited before the task finished";
+const TASK_SETTLED_BY_ABANDONMENT_SUMMARY =
+  "No activity from the task for an extended period; presumed abandoned";
+
 /**
  * Hook for tests that want to override the canonical event logger pulled
  * from `ProviderEventLoggers`. Production wiring leaves this undefined and
@@ -64,6 +75,18 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  /**
+   * Minimum interval between `lastSeenAt` refreshes triggered by runtime
+   * activity, per thread. Defaults to 60s. Exposed for tests.
+   */
+  readonly runtimeActivityTouchThrottleMs?: number;
+  /**
+   * How long a tracked background task may stay silent before it is presumed
+   * abandoned and settled. Defaults to 90 minutes: 3x the session reaper's
+   * default 30-minute inactivity threshold, so a merely slow task is never
+   * mistaken for a dead one. Exposed for tests.
+   */
+  readonly outstandingTaskStalenessMs?: number;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -199,6 +222,30 @@ const correlateRuntimeEventWithInstance = (
   return { ...event, providerInstanceId: source.instanceId };
 };
 
+/**
+ * A background task we have seen start but not finish.
+ *
+ * The owning instance is recorded so a `session.exited` from one provider
+ * instance cannot settle tasks belonging to a different instance. It does not
+ * separate successive sessions *within* one instance — `ProviderInstanceId` is
+ * a stable user-authored config slug, not a per-session id. Ordering within an
+ * instance comes from its FIFO runtime event queue instead.
+ */
+interface OutstandingBackgroundTask {
+  readonly provider: ProviderDriverKind;
+  readonly providerInstanceId?: ProviderInstanceId;
+}
+
+/**
+ * Per-thread background-task state. `lastEventAtMs` is the clock reading of the
+ * most recent `task.*` event on the thread and backs the staleness ceiling in
+ * `hasOutstandingBackgroundTasks`.
+ */
+interface OutstandingThreadTasks {
+  readonly tasks: Map<RuntimeTaskId, OutstandingBackgroundTask>;
+  lastEventAtMs: number;
+}
+
 const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
@@ -213,6 +260,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  // Throttle `lastSeenAt` refreshes keyed by thread. A running dynamic workflow
+  // emits many runtime events per second (`task.progress`, token-usage updates,
+  // …); we only need to bump the inactivity clock often enough that the session
+  // reaper never mistakes an active background session for an idle one. One
+  // write per thread per window is plenty and keeps the DB churn negligible.
+  const lastSeenTouchMs = options?.runtimeActivityTouchThrottleMs ?? 60_000;
+  const lastSeenTouchByThread = new Map<ThreadId, number>();
+  // Background tasks (dynamic workflows, subagents, background shells) that
+  // have started but not reached a terminal event, keyed by thread. They
+  // outlive the foreground turn, so `session.activeTurnId` says nothing about
+  // them and the reaper needs this as its hard busy guard.
+  //
+  // Deliberately in-memory: in-flight background work never survives a server
+  // restart (the provider child process dies with it), so a persisted entry
+  // could only ever pin a session that is already gone.
+  const outstandingTasksByThread = new Map<ThreadId, OutstandingThreadTasks>();
+  // Ceiling on how long a tracked task may go without emitting anything before
+  // we presume it dead. This guard fails open by construction — an entry only
+  // leaves on a terminal event — and there are real paths where that event
+  // never arrives (an instance rebuilt by a settings edit stops its sessions
+  // without emitting an exit; events queued behind a stop can re-add a task
+  // after teardown). Without a ceiling one stranded entry exempts the thread
+  // from reaping for the lifetime of the process.
+  const outstandingTaskStalenessMs = options?.outstandingTaskStalenessMs ?? 90 * 60_000;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
@@ -281,6 +352,176 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  // Keep a live session's inactivity clock fresh from runtime activity. This
+  // matters for work that runs *after* the foreground turn settles — a
+  // background dynamic workflow / subagents keep emitting runtime events (e.g.
+  // `task.progress`) while the adapter session has already gone `ready` with no
+  // active turn. Without this, the session reaper sees a stale `lastSeenAt` and
+  // tears the session down mid-workflow. Throttled per thread so a burst of
+  // events is at most one lightweight `last_seen_at` write per window.
+  const refreshLastSeenForActivity = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const threadId = event.threadId;
+      const now = yield* Clock.currentTimeMillis;
+      const previous = lastSeenTouchByThread.get(threadId);
+      if (previous !== undefined && now - previous < lastSeenTouchMs) return;
+      // Best-effort: a failed touch must never break event processing (the row
+      // may be absent/stopped, where the touch is a no-op, or the write may
+      // transiently fail). Arm the throttle window only after a touch that
+      // actually updated a live row, so neither a failure nor a no-op leaves
+      // `last_seen_at` stale behind an armed window (which could lead to
+      // premature reaping) or accumulates entries for threads that have none.
+      //
+      // Bounded because this runs inline in the strictly-sequential per-instance
+      // event pump: a stalled write would otherwise stall streaming for every
+      // thread on that instance. A timeout lands in the error channel, so it is
+      // swallowed below without arming the throttle. `catch` handles only the
+      // error channel, so fiber interrupts still propagate.
+      yield* directory.touchLastSeen(threadId).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.tap((touched) =>
+          touched ? Effect.sync(() => lastSeenTouchByThread.set(threadId, now)) : Effect.void,
+        ),
+        Effect.catch(() => Effect.void),
+      );
+    });
+
+  const rememberOutstandingTask = (
+    threadId: ThreadId,
+    taskId: RuntimeTaskId,
+    task: OutstandingBackgroundTask,
+    nowMs: number,
+  ): void => {
+    const existing = outstandingTasksByThread.get(threadId);
+    if (existing) {
+      existing.tasks.set(taskId, task);
+      existing.lastEventAtMs = nowMs;
+      return;
+    }
+    outstandingTasksByThread.set(threadId, {
+      tasks: new Map([[taskId, task]]),
+      lastEventAtMs: nowMs,
+    });
+  };
+
+  const forgetOutstandingTask = (
+    threadId: ThreadId,
+    taskId: RuntimeTaskId,
+    nowMs: number,
+  ): void => {
+    const entry = outstandingTasksByThread.get(threadId);
+    if (!entry) return;
+    entry.tasks.delete(taskId);
+    entry.lastEventAtMs = nowMs;
+    if (entry.tasks.size === 0) outstandingTasksByThread.delete(threadId);
+  };
+
+  // Remove and return the thread's outstanding tasks, optionally restricted by
+  // `select`. Draining and settling is one step so a task can never be counted
+  // twice, and callers get exactly the set they are responsible for announcing.
+  const drainOutstandingTasks = (
+    threadId: ThreadId,
+    select?: (task: OutstandingBackgroundTask) => boolean,
+  ): ReadonlyArray<readonly [RuntimeTaskId, OutstandingBackgroundTask]> => {
+    const entry = outstandingTasksByThread.get(threadId);
+    if (!entry) return [];
+    const drained: Array<readonly [RuntimeTaskId, OutstandingBackgroundTask]> = [];
+    for (const [taskId, task] of entry.tasks) {
+      if (select && !select(task)) continue;
+      entry.tasks.delete(taskId);
+      drained.push([taskId, task]);
+    }
+    if (entry.tasks.size === 0) outstandingTasksByThread.delete(threadId);
+    return drained;
+  };
+
+  // Announce a terminal state for background tasks whose session went away
+  // before they finished. Without this the task simply stops emitting and the
+  // activity feed keeps a spinner alive forever; a duplicate terminal activity
+  // is far cheaper than a silently orphaned one.
+  const settleOutstandingTasks = (
+    threadId: ThreadId,
+    summary: string,
+    select?: (task: OutstandingBackgroundTask) => boolean,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const drained = drainOutstandingTasks(threadId, select);
+      if (drained.length === 0) return;
+      const createdAt = yield* nowIso;
+      yield* Effect.forEach(
+        drained,
+        ([taskId, task]) =>
+          // Counted like any other runtime event: these are real canonical
+          // events on the bus, not bookkeeping.
+          increment(providerRuntimeEventsTotal, {
+            provider: task.provider,
+            eventType: "task.completed",
+          }).pipe(
+            Effect.andThen(
+              publishRuntimeEvent({
+                eventId: EventId.make(`settled:${threadId}:${taskId}:${createdAt}`),
+                provider: task.provider,
+                ...(task.providerInstanceId !== undefined
+                  ? { providerInstanceId: task.providerInstanceId }
+                  : {}),
+                threadId,
+                createdAt,
+                type: "task.completed",
+                payload: { taskId, status: "stopped", summary },
+              }),
+            ),
+          ),
+        { discard: true },
+      );
+    });
+
+  // Everything we hold per thread is scoped to a live session, so both maps are
+  // dropped together when the session ends.
+  const forgetThreadState = (threadId: ThreadId): void => {
+    lastSeenTouchByThread.delete(threadId);
+    outstandingTasksByThread.delete(threadId);
+  };
+
+  const trackBackgroundTasks = (event: ProviderRuntimeEvent): Effect.Effect<void> => {
+    switch (event.type) {
+      case "task.started":
+      // `task.progress` also adds: a subscription that attaches mid-task never
+      // saw the `task.started`, and an untracked running task is exactly the
+      // case the reaper must not miss.
+      case "task.progress":
+        return Effect.map(Clock.currentTimeMillis, (nowMs) =>
+          rememberOutstandingTask(
+            event.threadId,
+            event.payload.taskId,
+            {
+              provider: event.provider,
+              ...(event.providerInstanceId !== undefined
+                ? { providerInstanceId: event.providerInstanceId }
+                : {}),
+            },
+            nowMs,
+          ),
+        );
+      // The only terminal task event, for every status it can carry.
+      case "task.completed":
+        return Effect.map(Clock.currentTimeMillis, (nowMs) =>
+          forgetOutstandingTask(event.threadId, event.payload.taskId, nowMs),
+        );
+      case "session.exited":
+        return settleOutstandingTasks(
+          event.threadId,
+          TASK_SETTLED_BY_EXIT_SUMMARY,
+          // Fail closed: only the instance that owns a task may settle it, so
+          // an exit from another instance leaves it alone. This does not order
+          // successive sessions of the *same* instance (the id is a stable
+          // config slug); that ordering comes from the instance's FIFO queue.
+          (task) => task.providerInstanceId === event.providerInstanceId,
+        );
+      default:
+        return Effect.void;
+    }
+  };
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -293,9 +534,38 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(refreshLastSeenForActivity(canonicalEvent)),
+          // Settling runs before the triggering event is published so that a
+          // task's terminal activity lands ahead of the session exit that
+          // caused it.
+          Effect.andThen(trackBackgroundTasks(canonicalEvent)),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        ),
       ),
     );
+
+  const hasOutstandingBackgroundTasks: ProviderServiceMethod<"hasOutstandingBackgroundTasks"> = (
+    threadId,
+  ) =>
+    Effect.gen(function* () {
+      const entry = outstandingTasksByThread.get(threadId);
+      if (entry === undefined || entry.tasks.size === 0) return false;
+      const silentDurationMs = (yield* Clock.currentTimeMillis) - entry.lastEventAtMs;
+      if (silentDurationMs <= outstandingTaskStalenessMs) return true;
+      // A live background workflow keeps emitting task events (which also keep
+      // `lastSeenAt` fresh), so total silence this long means the owning process
+      // is gone and no terminal event is ever coming. Settle the tasks rather
+      // than pin the thread forever, and report the session as reapable.
+      const taskCount = entry.tasks.size;
+      yield* Effect.logWarning("provider.session.tasks.presumed-abandoned", {
+        threadId,
+        taskCount,
+        silentDurationMs,
+      });
+      yield* settleOutstandingTasks(threadId, TASK_SETTLED_BY_ABANDONMENT_SUMMARY);
+      return false;
+    });
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set
@@ -855,6 +1125,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
+        // Settled after the adapter stop so that any terminal event the adapter
+        // had already handed us wins. This is not a complete drain: adapter
+        // events reach us through a forked per-instance pump, so `stopSession`
+        // returning does not mean the queue is empty, and a `task.started`
+        // still in flight can re-add an entry right after `forgetThreadState`.
+        // The staleness ceiling in `hasOutstandingBackgroundTasks` is what
+        // bounds those leftovers.
+        yield* settleOutstandingTasks(input.threadId, TASK_SETTLED_BY_STOP_SUMMARY);
+        forgetThreadState(input.threadId);
         yield* clearMcpSession(input.threadId);
         yield* directory.upsert({
           threadId: input.threadId,
@@ -1036,6 +1315,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
+    // Best-effort by design: `runStopAll` runs from the scope finalizer, and
+    // ProviderRuntimeIngestion sits above this layer, so by now it has already
+    // been torn down. These events reach the canonical NDJSON log but not live
+    // ingestion — no activity row is written. Kept because the log is the
+    // forensic record, and because it stays correct if layer order changes.
+    yield* Effect.forEach(
+      Array.from(outstandingTasksByThread.keys()),
+      (threadId) => settleOutstandingTasks(threadId, TASK_SETTLED_BY_STOP_SUMMARY),
+      { discard: true },
+    );
+    outstandingTasksByThread.clear();
+    lastSeenTouchByThread.clear();
     yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
     McpProviderSession.clearAllMcpProviderSessions();
     const bindings = yield* directory.listBindings().pipe(Effect.orElseSucceed(() => []));
@@ -1085,6 +1376,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,
+    hasOutstandingBackgroundTasks,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

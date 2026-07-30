@@ -106,6 +106,16 @@ export interface ProviderServiceShape {
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
+   * Whether the thread has background tasks (dynamic workflows, subagents,
+   * background shells) that started but have not reached a terminal event.
+   *
+   * Such work outlives the foreground turn, so `session.activeTurnId` does not
+   * see it. Callers that tear a session down — the session reaper above all —
+   * must treat this as busy.
+   */
+  readonly hasOutstandingBackgroundTasks: (threadId: ThreadId) => Effect.Effect<boolean>;
+
+  /**
    * Canonical provider runtime event stream.
    *
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).

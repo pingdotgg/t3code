@@ -62,6 +62,17 @@ export interface ProviderSessionDirectoryShape {
     ReadonlyArray<ProviderRuntimeBindingWithMetadata>,
     ProviderSessionDirectoryPersistenceError
   >;
+
+  /**
+   * Bump only `last_seen_at` for a live (non-stopped) binding.
+   *
+   * Used to keep a session's inactivity clock fresh from background runtime
+   * activity without rewriting the full binding. Resolves `false` when the row
+   * is absent or already stopped, where the touch is a no-op.
+   */
+  readonly touchLastSeen: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ProviderSessionDirectoryWriteError>;
 }
 
 export class ProviderSessionDirectory extends Context.Service<
