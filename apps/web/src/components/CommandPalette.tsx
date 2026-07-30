@@ -341,7 +341,7 @@ function errorMessage(error: unknown): string {
 }
 
 interface CommandPaletteOpenIntent {
-  readonly kind: "add-project" | "new-thread-in";
+  readonly kind: "add-project" | "new-thread-in" | "switch-project";
 }
 
 interface CommandPaletteUiState {
@@ -354,6 +354,7 @@ type CommandPaletteUiAction =
   | { readonly _tag: "Toggle" }
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "OpenProjectSwitcher" }
   | { readonly _tag: "ClearOpenIntent" };
 
 function reduceCommandPaletteUiState(
@@ -372,6 +373,8 @@ function reduceCommandPaletteUiState(
       return { open: true, openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":
       return { open: true, openIntent: { kind: "new-thread-in" } };
+    case "OpenProjectSwitcher":
+      return { open: true, openIntent: { kind: "switch-project" } };
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }
@@ -386,6 +389,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const toggleOpen = useCallback(() => dispatch({ _tag: "Toggle" }), []);
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const openProjectSwitcher = useCallback(() => dispatch({ _tag: "OpenProjectSwitcher" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
@@ -427,11 +431,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
           openAddProject();
+        } else if (detail.open === "switch-project") {
+          openProjectSwitcher();
         } else {
           setOpen(true);
         }
       }),
-    [openAddProject, openNewThreadIn, setOpen],
+    [openAddProject, openNewThreadIn, openProjectSwitcher, setOpen],
   );
 
   return (
@@ -1230,6 +1236,27 @@ function OpenCommandPaletteDialog(props: {
     projectThreadItems,
     pushPaletteView,
   ]);
+
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "switch-project" || projectSearchItems.length === 0) {
+      return;
+    }
+    clearOpenIntent();
+    browseNavigation.invalidate();
+    setAddProjectCloneFlow(null);
+    setViewStack([]);
+    setQuery("");
+    pushPaletteView({
+      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "projects",
+          label: "Projects",
+          items: projectSearchItems,
+        },
+      ],
+    });
+  }, [browseNavigation, clearOpenIntent, openIntent, projectSearchItems, pushPaletteView]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
