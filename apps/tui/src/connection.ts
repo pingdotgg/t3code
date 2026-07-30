@@ -16,6 +16,7 @@ import {
   type OrchestrationThreadDetailSnapshot,
   OrchestrationProposedPlanId,
   type ProjectId,
+  ProjectId as ProjectIdSchema,
   type ProviderApprovalDecision,
   PositiveInt,
   type ProviderInteractionMode,
@@ -45,6 +46,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import {
   archiveThread as archiveThreadOp,
+  createProject as createProjectOp,
   deleteThread as deleteThreadOp,
   interruptThreadTurn,
   respondToThreadApproval,
@@ -57,6 +59,7 @@ import {
   unarchiveThread as unarchiveThreadOp,
   updateThreadMetadata,
 } from "@t3tools/client-runtime/operations";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import {
   request,
   rpcSessionFactoryLayer,
@@ -68,6 +71,7 @@ import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import { ThreadSnapshotLoader } from "@t3tools/client-runtime/state/threads";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { mergeVcsStatus } from "./gitActions.logic.ts";
 
@@ -421,6 +425,7 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 // ── Imperative client surface consumed by the UI components ────────────────
 
 export interface TuiClient {
+  readonly hostPlatform: NodeJS.Platform;
   /** Live list of every project + thread. Returns an unsubscribe fn. */
   readonly subscribeShell: (
     onSnapshot: (snapshot: OrchestrationShellSnapshot) => void,
@@ -450,6 +455,8 @@ export interface TuiClient {
     attachments?: ReadonlyArray<UploadChatImageAttachment>,
     modelSelection?: ModelSelection,
   ) => Promise<void>;
+  /** Register a local workspace as a project and return its generated id. */
+  readonly createProject: (workspaceRoot: string) => Promise<ProjectId>;
   readonly createThread: (input: TuiCreateThreadInput) => Promise<ThreadId>;
   readonly implementPlan: (
     thread: Pick<OrchestrationThread, "id" | "runtimeMode">,
@@ -565,6 +572,7 @@ const THREAD_WARM_LIMIT = 8;
 
 export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   const attachmentImages = createAttachmentImageCache();
+  const hostPlatform = runtime.runSync(HostProcessPlatform);
   const forkUnsub = <A>(stream: Stream.Stream<A, unknown, EnvironmentSupervisor>): (() => void) => {
     const fiber = runtime.runFork(Stream.runDrain(stream));
     return () => {
@@ -712,6 +720,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   };
 
   return {
+    hostPlatform,
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarm(makeEnvironmentShellState());
       return followWarm(shellWarm, (state) => {
@@ -791,6 +800,21 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
             createdAt,
           });
           return threadId;
+        }),
+      ),
+
+    createProject: (workspaceRoot) =>
+      runtime.runPromise(
+        Effect.gen(function* () {
+          const projectId = ProjectIdSchema.make(yield* newId);
+          yield* createProjectOp({
+            projectId,
+            title: TrimmedNonEmptyString.make(inferProjectTitleFromPath(workspaceRoot)),
+            workspaceRoot: TrimmedNonEmptyString.make(workspaceRoot),
+            createWorkspaceRootIfMissing: true,
+            defaultModelSelection: null,
+          });
+          return projectId;
         }),
       ),
 
@@ -941,9 +965,9 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         }).pipe(Effect.map((result) => result.diff)),
       ),
 
-  getFullThreadDiff: (threadId, toTurnCount) =>
-    runtime.runPromise(
-      request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
+    getFullThreadDiff: (threadId, toTurnCount) =>
+      runtime.runPromise(
+        request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
           threadId,
           toTurnCount: NonNegativeInt.make(toTurnCount),
         }).pipe(Effect.map((result) => result.diff)),

@@ -107,6 +107,7 @@ function fakeClient({
   shellSnapshot = shell(),
   sendReply = () => Promise.resolve(),
   respondUserInput = () => Promise.resolve(),
+  createProject = async () => "p-new" as never,
   createThread = async () => "t-new" as never,
   terminalClear = async () => {},
   terminalRestart = async () => {},
@@ -132,6 +133,7 @@ function fakeClient({
       totalCount: 1,
     }) as never,
   switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
+  getServerConfig = async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
   listModels = async () =>
     [
       {
@@ -148,6 +150,7 @@ function fakeClient({
   readonly shellSnapshot?: OrchestrationShellSnapshot;
   readonly sendReply?: TuiClient["sendReply"];
   readonly respondUserInput?: TuiClient["respondUserInput"];
+  readonly createProject?: TuiClient["createProject"];
   readonly createThread?: TuiClient["createThread"];
   readonly terminalClear?: TuiClient["terminalClear"];
   readonly terminalRestart?: TuiClient["terminalRestart"];
@@ -159,11 +162,13 @@ function fakeClient({
   readonly getAttachmentImage?: TuiClient["getAttachmentImage"];
   readonly listRefs?: TuiClient["listRefs"];
   readonly switchRef?: TuiClient["switchRef"];
+  readonly getServerConfig?: TuiClient["getServerConfig"];
   readonly listModels?: TuiClient["listModels"];
   readonly listTerminalIds?: TuiClient["listTerminalIds"];
 }): {
   readonly client: TuiClient;
   readonly connect: () => void;
+  readonly emitShell: (snapshot: OrchestrationShellSnapshot) => void;
   readonly subscribedThreadIds: string[];
   readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
 } {
@@ -171,6 +176,7 @@ function fakeClient({
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
   const subscribedThreadIds: string[] = [];
   const client = {
+    hostPlatform: "linux",
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
       shellSubscriber = onSnapshot;
       return () => {
@@ -194,6 +200,7 @@ function fakeClient({
     },
     sendReply,
     respondUserInput,
+    createProject,
     createThread,
     subscribeTerminal: () => () => {},
     terminalWrite: async () => {},
@@ -204,7 +211,7 @@ function fakeClient({
     terminalClose,
     listTerminalIds,
     listModels,
-    getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
+    getServerConfig,
     listRefs,
     switchRef,
     getAttachmentUrl,
@@ -215,6 +222,7 @@ function fakeClient({
   return {
     client,
     connect: () => shellSubscriber?.(shellSnapshot),
+    emitShell: (snapshot) => shellSubscriber?.(snapshot),
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
   };
@@ -370,6 +378,68 @@ describe("ChatView responsive shell", () => {
     await setup.waitForFrame((frame) => frame.includes("model ▸") && frame.includes("GPT-5"));
     await clickModelChip();
     await setup.waitForFrame((frame) => !frame.includes("model ▸"));
+    setup.renderer.destroy();
+  });
+
+  it("Given the flat sidebar, adding a project registers its path and opens its new-thread composer", async () => {
+    const projectPaths: string[] = [];
+    const createdProject = {
+      ...project,
+      id: "p-created",
+      title: "new-project",
+      workspaceRoot: "/workspace/new-project",
+    };
+    const fake = fakeClient({
+      detail: thread(),
+      getServerConfig: async () =>
+        ({
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            addProjectBaseDirectory: "/workspace/",
+          },
+        }) as never,
+      createProject: async (workspaceRoot) => {
+        projectPaths.push(workspaceRoot);
+        return "p-created" as never;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+
+    const lines = setup.captureCharFrame().split("\n");
+    const row = lines.findIndex(
+      (line) => line.includes("Project All projects") && line.includes("+"),
+    );
+    const column = row < 0 ? -1 : (lines[row]?.lastIndexOf("+") ?? -1);
+    expect(row).toBeGreaterThanOrEqual(0);
+    expect(column).toBeGreaterThanOrEqual(0);
+    await React.act(async () => {
+      await setup.mockMouse.click(column, row);
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => frame.includes("project ▸"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("new-project");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("/workspace/new-project"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      await Promise.resolve();
+    });
+    await setup.waitFor(() => projectPaths.length === 1);
+    expect(projectPaths).toEqual(["/workspace/new-project"]);
+
+    await React.act(async () => {
+      fake.emitShell(shell(undefined, [project, createdProject] as never));
+      await setup.renderOnce();
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => frame.includes("What should we build in new-project?"));
     setup.renderer.destroy();
   });
 

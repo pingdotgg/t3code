@@ -27,6 +27,7 @@ export type KeyBindingMode =
   | "rename"
   | "filter"
   | "commit"
+  | "project"
   | "panel"
   | "compose";
 
@@ -105,6 +106,8 @@ export interface KeyBindingActions {
   readonly onCancelFilter: () => void;
   readonly onSubmitCommit: () => void;
   readonly onCancelCommit: () => void;
+  readonly onSubmitProject: () => void;
+  readonly onCancelProject: () => void;
   // Compose mode
   /** True when unmodified ↑/↓ should choose between multiple pending approvals. */
   readonly approvalNavigation: boolean;
@@ -255,6 +258,11 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     if (actions.mode === "commit") {
       if (key.name === "return" || key.name === "enter") return actions.onSubmitCommit();
       if (key.name === "escape") return actions.onCancelCommit();
+      return;
+    }
+    if (actions.mode === "project") {
+      if (key.name === "return" || key.name === "enter") return actions.onSubmitProject();
+      if (key.name === "escape") return actions.onCancelProject();
       return;
     }
 

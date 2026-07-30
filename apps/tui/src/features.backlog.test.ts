@@ -82,9 +82,9 @@ const CLIENT_UI_GAPS = [
       { client: "mobile", path: "apps/mobile/src/features/projects/AddProjectScreen.tsx" },
     ],
     scenarios: [
-      "Given the user wants to add a local workspace, when project onboarding opens, then the TUI can browse or create a directory and register it as a project.",
+      "Given the user wants to browse for a local workspace, when project onboarding opens, then the TUI can navigate the filesystem and choose a directory without manually entering its path.",
       "Given the user supplies a supported repository URL, when the remote is resolved, then the TUI previews its identity and clones it into the selected destination.",
-      "Given a project path or repository is already registered, when the user confirms onboarding, then the TUI prevents a duplicate and selects the existing project.",
+      "Given a repository is already registered, when the user confirms remote onboarding, then the TUI prevents a duplicate and selects the existing project.",
     ],
   },
   {

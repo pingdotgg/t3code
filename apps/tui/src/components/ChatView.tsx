@@ -12,6 +12,11 @@ import {
 import { truncate } from "@t3tools/shared/String";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getKittyClipboardManager, getKittyImageManager } from "@t3tools/opentui-image";
+import {
+  getAddProjectInitialQuery,
+  resolveAddProjectPath,
+} from "@t3tools/client-runtime/operations/projects";
+import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -106,6 +111,14 @@ const MAX_TERMINALS_PER_THREAD = 6;
 const IMAGE_ONLY_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 
+function expandLocalHomePath(value: string): string {
+  if (value === "~") return NodeOS.homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return NodePath.join(NodeOS.homedir(), value.slice(2));
+  }
+  return value;
+}
+
 function branchPickerOptions(refs: ReadonlyArray<VcsRef>): ReadonlyArray<SelectOption> {
   return refs.map((ref) => {
     const badges = [
@@ -180,9 +193,9 @@ export function ChatView({
     };
   }, [client]);
 
-  const [focus, setFocus] = React.useState<"compose" | "new" | "rename" | "filter" | "commit">(
-    "compose",
-  );
+  const [focus, setFocus] = React.useState<
+    "compose" | "new" | "rename" | "filter" | "commit" | "project"
+  >("compose");
   // Transient key-driven overlay over the composer (thread actions / delete confirm / revert).
   const [overlay, setOverlay] = React.useState<"none" | "command" | "confirmDelete" | "revert">(
     "none",
@@ -266,6 +279,10 @@ export function ChatView({
   const [composerEpoch, setComposerEpoch] = React.useState(0);
   const [draft, setDraft] = React.useState("");
   const [renameDraft, setRenameDraft] = React.useState("");
+  const [projectDraft, setProjectDraft] = React.useState("");
+  const projectSubmissionPendingRef = React.useRef(false);
+  const [projectSubmissionPending, setProjectSubmissionPending] = React.useState(false);
+  const pendingCreatedProjectIdRef = React.useRef<string | null>(null);
   // The commit-message dialog: the draft + which commit-bearing action to run on submit.
   const [commitDraft, setCommitDraft] = React.useState("");
   const [pendingCommitAction, setPendingCommitAction] = React.useState<GitStackedAction | null>(
@@ -333,6 +350,27 @@ export function ChatView({
   // list can't leave it pointing past the end (projects[projectIndex] = undefined).
   const activeProjectIndex = projects.length > 0 ? Math.min(projectIndex, projects.length - 1) : 0;
   const activeNewThreadProject = projects[activeProjectIndex] ?? null;
+  const activateCreatedProject = React.useCallback(
+    (projectId: string): boolean => {
+      const currentProjects = store.getState().shell?.projects ?? [];
+      const nextProjectIndex = currentProjects.findIndex((project) => project.id === projectId);
+      if (nextProjectIndex < 0) return false;
+
+      pendingCreatedProjectIdRef.current = null;
+      setProjectIndex(nextProjectIndex);
+      store.setProjectScope(projectId);
+      store.select({ kind: "project", id: projectId });
+      setProjectDraft("");
+      setFocus("compose");
+      store.setStatus("Project added. What should we build?", "success");
+      return true;
+    },
+    [store],
+  );
+  React.useEffect(() => {
+    const pendingProjectId = pendingCreatedProjectIdRef.current;
+    if (pendingProjectId !== null) activateCreatedProject(pendingProjectId);
+  }, [activateCreatedProject, projects]);
   const selectedProjectId =
     state.selection?.kind === "project" ? state.selection.id : state.projectScopeId;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
@@ -678,6 +716,60 @@ export function ChatView({
         copied ? "success" : "info",
       );
     }
+  };
+
+  const openAddProject = () => {
+    setTerminalFocused(false);
+    setRightPanelFocused(false);
+    setPicker(null);
+    setOverlay("none");
+    setDiffOpen(false);
+    setFilesOpen(false);
+    setSettingsOpen(false);
+    setProjectDraft(getAddProjectInitialQuery(newThreadSettings.addProjectBaseDirectory));
+    setFocus("project");
+  };
+
+  const submitProject = () => {
+    if (projectSubmissionPendingRef.current) return;
+    const currentProjectCwd =
+      projects.find((project) => project.id === selectedProjectId)?.workspaceRoot ?? null;
+    const resolution = resolveAddProjectPath({
+      rawPath: projectDraft,
+      currentProjectCwd,
+      platform: client.hostPlatform,
+    });
+    if (!resolution.ok) {
+      store.setStatus(resolution.error, "error");
+      return;
+    }
+    const workspaceRoot = expandLocalHomePath(resolution.path);
+    const existingProject = findProjectByPath(projects, workspaceRoot);
+    if (existingProject) {
+      activateCreatedProject(existingProject.id as string);
+      store.setStatus("Project already added. What should we build?", "info");
+      return;
+    }
+
+    projectSubmissionPendingRef.current = true;
+    setProjectSubmissionPending(true);
+    store.setStatus("Adding project…", "busy");
+    void client.createProject(workspaceRoot).then(
+      (projectId) => {
+        projectSubmissionPendingRef.current = false;
+        setProjectSubmissionPending(false);
+        if (!activateCreatedProject(projectId as string)) {
+          pendingCreatedProjectIdRef.current = projectId as string;
+          setFocus("compose");
+          store.setStatus("Project added. Waiting for it to appear…", "busy");
+        }
+      },
+      (error) => {
+        projectSubmissionPendingRef.current = false;
+        setProjectSubmissionPending(false);
+        store.setStatus(`add project failed: ${String(error)}`, "error");
+      },
+    );
   };
 
   const openNewThread = React.useCallback(() => {
@@ -1166,6 +1258,7 @@ export function ChatView({
     !terminalFocused &&
     !replySubmissionPending &&
     !newSubmissionPending &&
+    !projectSubmissionPending &&
     !newContextMutationPending &&
     !diffOpen &&
     !filesOpen &&
@@ -1191,12 +1284,17 @@ export function ChatView({
   const attachmentPreviewHeight =
     activeComposerImages.length === 0 ? 0 : inlineImagesSupported ? 4 : 1;
   const compactComposerFooter =
-    focus !== "rename" && focus !== "filter" && focus !== "commit" && composerSurfaceWidth < 64;
+    focus !== "rename" &&
+    focus !== "filter" &&
+    focus !== "commit" &&
+    focus !== "project" &&
+    composerSurfaceWidth < 64;
   const pickerWanted = picker ? Math.max(picker.options.length, 1) * 2 + 3 : 0;
   const commandWanted = overlay === "command" ? Math.floor(height * 0.5) : 0;
   const revertWanted = overlay === "revert" ? Math.min(checkpoints.length, 8) + 3 : 0;
   const confirmWanted = overlay === "confirmDelete" ? 4 : 0;
-  const specialComposer = focus === "rename" || focus === "filter" || focus === "commit";
+  const specialComposer =
+    focus === "rename" || focus === "filter" || focus === "commit" || focus === "project";
   const desiredPromptLines = specialComposer || popoverOpen ? 1 : (promptHeight ?? autoPromptLines);
   // OpenTUI measures four non-editor rows for the composer borders, footer, and dock spacing.
   const composerChromeRows =
@@ -1775,6 +1873,7 @@ export function ChatView({
   };
 
   const focusComposer = () => {
+    if (focus === "project") setProjectDraft("");
     setTerminalFocused(false);
     setRightPanelFocused(false);
     setPicker(null);
@@ -1855,6 +1954,12 @@ export function ChatView({
   const paletteCommands = React.useMemo<Command[]>(() => {
     const list: Command[] = [];
     list.push({ id: "new", title: "New thread", hint: "^N", run: () => runCommand(openNewThread) });
+    list.push({
+      id: "project-add",
+      title: "Add project",
+      keywords: "new project folder directory workspace",
+      run: () => runCommand(openAddProject),
+    });
     if (detail && focus !== "new") {
       list.push({
         id: "plan",
@@ -2091,6 +2196,7 @@ export function ChatView({
     newBranch,
     newContextWorktreePath,
     activeProjectIndex,
+    newThreadSettings.addProjectBaseDirectory,
   ]);
 
   const filteredCommands = React.useMemo(
@@ -2126,11 +2232,13 @@ export function ChatView({
                         ? "filter"
                         : focus === "commit"
                           ? "commit"
-                          : rightPanelVisible && rightPanelFocused
-                            ? "panel"
-                            : composerUserInputActive
-                              ? "userInput"
-                              : "compose";
+                          : focus === "project"
+                            ? "project"
+                            : rightPanelVisible && rightPanelFocused
+                              ? "panel"
+                              : composerUserInputActive
+                                ? "userInput"
+                                : "compose";
 
   useKeyBindings({
     mode: keyMode,
@@ -2337,6 +2445,11 @@ export function ChatView({
       setPendingCommitAction(null);
       setFocus("compose");
     },
+    onSubmitProject: submitProject,
+    onCancelProject: () => {
+      setProjectDraft("");
+      setFocus("compose");
+    },
     onInterrupt: stopTurn,
     onApprove: () => {
       const approval = approvals[activeApprovalIndex];
@@ -2409,11 +2522,13 @@ export function ChatView({
   ].join(" · ");
   const hint = expandedImage
     ? "image preview · Esc or click to close · ^C quit"
-    : focus !== "new" && pendingUserInput && userInputDeferred
-      ? "⚠ question pending — ^U to answer · ^C quit"
-      : activeTerminal
-        ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
-        : composeHint;
+    : focus === "project"
+      ? "Enter add project · Esc cancel · ^C quit"
+      : focus !== "new" && pendingUserInput && userInputDeferred
+        ? "⚠ question pending — ^U to answer · ^C quit"
+        : activeTerminal
+          ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
+          : composeHint;
 
   const statusStyle = statusGlyphColor(state.statusKind);
   const selectRightPanelAction = (index: number) => {
@@ -2460,6 +2575,7 @@ export function ChatView({
           onSearchInput={store.setFilter}
           onFocusSearch={() => setFocus("filter")}
           onChooseProjectScope={openProjectScopePicker}
+          onAddProject={openAddProject}
         />
       ) : null}
 
@@ -2577,7 +2693,15 @@ export function ChatView({
               // Search/filter now lives in the sidebar; the composer never owns it.
               mode={focus === "filter" || focus === "new" ? "compose" : focus}
               reply={composerText}
-              auxValue={focus === "rename" ? renameDraft : focus === "commit" ? commitDraft : ""}
+              auxValue={
+                focus === "rename"
+                  ? renameDraft
+                  : focus === "commit"
+                    ? commitDraft
+                    : focus === "project"
+                      ? projectDraft
+                      : ""
+              }
               placeholder={placeholder}
               editorRows={promptLines}
               inputFocused={composerInputFocused}
@@ -2596,7 +2720,13 @@ export function ChatView({
               onFocusInput={focusComposer}
               onReplyInput={focus === "new" ? setDraft : setReply}
               onReplySubmit={focus === "new" ? submitNewThread : sendReply}
-              onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}
+              onAuxInput={
+                focus === "commit"
+                  ? setCommitDraft
+                  : focus === "project"
+                    ? setProjectDraft
+                    : setRenameDraft
+              }
               onTogglePlan={togglePlanMode}
               onOpenAccess={openRuntimePicker}
               onOpenModel={openModelPicker}

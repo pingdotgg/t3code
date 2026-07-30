@@ -103,6 +103,7 @@ export const Sidebar = React.memo(function Sidebar({
   onSearchInput,
   onFocusSearch,
   onChooseProjectScope,
+  onAddProject,
 }: {
   readonly rows: ReadonlyArray<Row>;
   readonly selection: Selection | null;
@@ -117,6 +118,7 @@ export const Sidebar = React.memo(function Sidebar({
   readonly onSearchInput: (value: string) => void;
   readonly onFocusSearch: () => void;
   readonly onChooseProjectScope: () => void;
+  readonly onAddProject: () => void;
 }): React.ReactNode {
   const palette = usePalette();
   const innerWidth = Math.max(8, width - 4);
@@ -171,19 +173,24 @@ export const Sidebar = React.memo(function Sidebar({
           </text>
         )}
       </box>
-      <box
-        marginTop={1}
-        marginBottom={1}
-        onMouseDown={onChooseProjectScope}
-        {...(projectScopeLabel !== "All projects" ? { backgroundColor: palette.selectedBg } : {})}
-      >
-        <text>
-          <span fg={palette.dim}>Project </span>
-          <span fg={projectScopeLabel === "All projects" ? palette.text : palette.accent}>
-            {padClip(projectScopeLabel, Math.max(1, innerWidth - 11))}
-          </span>
-          <span fg={palette.dim}> ▾</span>
-        </text>
+      <box flexDirection="row" marginTop={1} marginBottom={1} flexShrink={0}>
+        <box
+          flexGrow={1}
+          overflow="hidden"
+          onMouseDown={onChooseProjectScope}
+          {...(projectScopeLabel !== "All projects" ? { backgroundColor: palette.selectedBg } : {})}
+        >
+          <text>
+            <span fg={palette.dim}>Project </span>
+            <span fg={projectScopeLabel === "All projects" ? palette.text : palette.accent}>
+              {padClip(projectScopeLabel, Math.max(1, innerWidth - 11))}
+            </span>
+            <span fg={palette.dim}> ▾</span>
+          </text>
+        </box>
+        <box marginLeft={1} onMouseDown={onAddProject}>
+          <text fg={palette.accent}>+</text>
+        </box>
       </box>
       <text>
         <span fg={palette.accent}>Threads</span>

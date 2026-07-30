@@ -21,6 +21,7 @@ const baseProps = {
   onSearchInput: () => {},
   onFocusSearch: () => {},
   onChooseProjectScope: () => {},
+  onAddProject: () => {},
 } as const;
 
 describe("Sidebar search box", () => {
