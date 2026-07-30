@@ -1,5 +1,6 @@
 import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -183,6 +184,7 @@ export function buildThreadListV2Items(input: {
     readonly projectId: ProjectId;
   }> | null;
   readonly searchQuery: string;
+  readonly matchedThreadKeys?: ReadonlySet<string>;
   /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
   readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
   /** Environments whose server supports thread.settle/unsettle. Threads on
@@ -222,7 +224,18 @@ export function buildThreadListV2Items(input: {
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
     }
-    if (query.length > 0 && !thread.title.toLocaleLowerCase().includes(query)) continue;
+    if (
+      query.length > 0 &&
+      !thread.title.toLocaleLowerCase().includes(query) &&
+      input.matchedThreadKeys?.has(
+        threadSearchMatchKey({
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        }),
+      ) !== true
+    ) {
+      continue;
+    }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     const changeRequestState =

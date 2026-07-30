@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   CommandId,
   EnvironmentId,
@@ -261,6 +262,27 @@ describe("buildThreadListV2Items", () => {
       ["match", "card"],
       ["settled", "slim"],
     ]);
+  });
+
+  it("includes a thread matched by message content", () => {
+    const thread = makeThread({
+      id: ThreadId.make("content-match"),
+      title: "Unrelated title",
+    });
+    const { items } = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "relay reconnect",
+      matchedThreadKeys: new Set([
+        threadSearchMatchKey({
+          environmentId,
+          threadId: thread.id,
+        }),
+      ]),
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["content-match"]);
   });
 
   it("scopes the flat list to one project", () => {

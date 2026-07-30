@@ -3,6 +3,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
@@ -21,6 +22,7 @@ import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
+import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -416,6 +418,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly projectCwd: string | null;
+  readonly searchMatch?: EnvironmentThreadSearchMatch;
+  readonly searchQuery?: string;
   readonly isLast: boolean;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
@@ -569,6 +573,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 />
               </View>
             </View>
+            {props.searchMatch ? (
+              <ThreadSearchMatchExcerpt
+                compact
+                match={props.searchMatch}
+                query={props.searchQuery ?? ""}
+              />
+            ) : null}
             {subtitleRow}
           </View>
         </View>
@@ -623,6 +634,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               </Text>
             </View>
           </View>
+          {props.searchMatch ? (
+            <ThreadSearchMatchExcerpt
+              match={props.searchMatch}
+              query={props.searchQuery ?? ""}
+              selected={selected}
+            />
+          ) : null}
           {subtitleRow}
         </View>
       </Pressable>

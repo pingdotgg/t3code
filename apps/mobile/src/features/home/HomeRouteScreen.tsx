@@ -25,7 +25,7 @@ export function HomeRouteScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
-  const { state: catalogState } = useWorkspaceState();
+  const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
@@ -33,20 +33,22 @@ export function HomeRouteScreen() {
     useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
-  const environments = useMemo(
-    () =>
-      Arr.sort(
-        Object.values(savedConnectionsById).map((connection) => ({
-          environmentId: connection.environmentId,
-          label: connection.environmentLabel,
-        })),
-        Order.mapInput(
-          Order.String,
-          (environment: { readonly label: string }) => environment.label,
-        ),
+  const environments = useMemo(() => {
+    const connectionStateByEnvironmentId = new Map(
+      workspaceEnvironments.map(
+        (environment) => [environment.environmentId, environment.connectionState] as const,
       ),
-    [savedConnectionsById],
-  );
+    );
+    return Arr.sort(
+      Object.values(savedConnectionsById).map((connection) => ({
+        environmentId: connection.environmentId,
+        label: connection.environmentLabel,
+        connectionState:
+          connectionStateByEnvironmentId.get(connection.environmentId) ?? "available",
+      })),
+      Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
+    );
+  }, [savedConnectionsById, workspaceEnvironments]);
   const availableEnvironmentIds = useMemo(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
