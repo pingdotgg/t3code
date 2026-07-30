@@ -67,6 +67,17 @@ interface SessionState {
    * await must be rejected rather than installing a fiber the delete then orphans.
    */
   readonly stopping: boolean;
+  /**
+   * Identifies the stop operation that owns this session's teardown. Concurrent
+   * stops share the token, while a replacement session starts with a fresh null
+   * token, so a late finalizer cannot delete that replacement by thread id alone.
+   */
+  readonly stopToken: object | null;
+}
+
+interface StopOperation {
+  readonly stopToken: object;
+  readonly state: SessionState | undefined;
 }
 
 export const makePluginProviderAdapter = (input: {
@@ -231,6 +242,7 @@ export const makePluginProviderAdapter = (input: {
             turnFiber: null,
             activeTurnId: null,
             stopping: false,
+            stopToken: null,
           }),
         );
         return session;
@@ -433,18 +445,37 @@ export const makePluginProviderAdapter = (input: {
       threadId: ThreadId,
     ) =>
       Effect.gen(function* () {
+        const requestedStopToken = {};
         // Mark the session stopping BEFORE anything awaits, so a sendTurn racing in
         // during the driver's stopSession await below is rejected rather than
         // installing a fiber the final delete would orphan. Interrupting the turn
         // fiber runs its `ensuring(endTurn)`, which spreads ...state and so preserves
-        // this flag. No-op if the session is already gone.
-        yield* Ref.update(sessions, (current) => {
-          const existing = current.get(threadId);
-          if (existing === undefined) return current;
-          return new Map(current).set(threadId, { ...existing, stopping: true });
-        });
-        const state = (yield* Ref.get(sessions)).get(threadId);
-        if (state?.turnFiber) yield* Fiber.interrupt(state.turnFiber).pipe(Effect.orDie);
+        // this flag and token. Concurrent stops share the installed token so either
+        // may finish the original teardown, but neither can delete a later session.
+        const stopOperation = yield* Ref.modify(
+          sessions,
+          (current): readonly [StopOperation, ReadonlyMap<ThreadId, SessionState>] => {
+            const existing = current.get(threadId);
+            if (existing === undefined) {
+              return [{ stopToken: requestedStopToken, state: undefined }, current];
+            }
+            if (existing.stopToken !== null) {
+              return [{ stopToken: existing.stopToken, state: existing }, current];
+            }
+            const stoppingState = {
+              ...existing,
+              stopping: true,
+              stopToken: requestedStopToken,
+            };
+            return [
+              { stopToken: requestedStopToken, state: stoppingState },
+              new Map(current).set(threadId, stoppingState),
+            ];
+          },
+        );
+        if (stopOperation.state?.turnFiber) {
+          yield* Fiber.interrupt(stopOperation.state.turnFiber).pipe(Effect.orDie);
+        }
         // Effect.suspend so a synchronously-throwing driver stopSession is captured
         // rather than escaping, and Effect.ensuring so the session is ALWAYS deleted
         // from the map — otherwise a throw/interrupt would leave the session pinned
@@ -465,6 +496,8 @@ export const makePluginProviderAdapter = (input: {
           ),
           Effect.ensuring(
             Ref.update(sessions, (current) => {
+              const existing = current.get(threadId);
+              if (existing?.stopToken !== stopOperation.stopToken) return current;
               const next = new Map(current);
               next.delete(threadId);
               return next;

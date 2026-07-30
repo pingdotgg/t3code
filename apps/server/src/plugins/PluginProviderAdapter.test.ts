@@ -553,6 +553,56 @@ describe("makePluginProviderAdapter", () => {
     }),
   );
 
+  it.effect("does not let an overlapping stop delete a replacement session", () =>
+    Effect.gen(function* () {
+      const firstEntered = yield* Deferred.make<void>();
+      const secondEntered = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const releaseSecond = yield* Deferred.make<void>();
+      const stopCalls = yield* Ref.make(0);
+      const adapter = yield* adapterFor({
+        startSession: () => Effect.void,
+        sendTurn: () => Effect.void,
+        stopSession: () =>
+          Ref.updateAndGet(stopCalls, (count) => count + 1).pipe(
+            Effect.flatMap((call) =>
+              call === 1
+                ? Deferred.succeed(firstEntered, undefined).pipe(
+                    Effect.flatMap(() => Deferred.await(releaseFirst)),
+                  )
+                : Deferred.succeed(secondEntered, undefined).pipe(
+                    Effect.flatMap(() => Deferred.await(releaseSecond)),
+                  ),
+            ),
+          ),
+      });
+
+      yield* start(adapter);
+      const firstStop = yield* Effect.forkChild(adapter.stopSession(threadId));
+      yield* Deferred.await(firstEntered);
+      const secondStop = yield* Effect.forkChild(adapter.stopSession(threadId));
+      yield* Deferred.await(secondEntered);
+
+      // The first stop removes the original session, allowing a replacement to start
+      // while the overlapping second driver call is still finishing.
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Fiber.join(firstStop);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      yield* start(adapter);
+      assert.isTrue(yield* adapter.hasSession(threadId));
+
+      // The slower stop belongs to the original session. Its finalizer must not
+      // delete the replacement merely because it has the same thread id.
+      yield* Deferred.succeed(releaseSecond, undefined);
+      yield* Fiber.join(secondStop);
+      assert.isTrue(
+        yield* adapter.hasSession(threadId),
+        "the replacement session must survive the stale stop finalizer",
+      );
+      assert.strictEqual((yield* adapter.listSessions()).length, 1);
+    }),
+  );
+
   it.effect("keeps session bookkeeping in the host", () =>
     Effect.gen(function* () {
       const adapter = yield* adapterFor({
