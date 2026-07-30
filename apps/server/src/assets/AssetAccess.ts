@@ -21,7 +21,9 @@ import {
 } from "@t3tools/shared/filePreview";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -44,6 +46,8 @@ export const ASSET_ROUTE_PREFIX = "/api/assets";
 
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
+const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
+const PROJECT_FAVICON_VERSION_PREFIX = "v";
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -169,7 +173,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-  const expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
+  let expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
   let claims: AssetClaims;
   let fileName: string;
 
@@ -293,18 +297,18 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ),
       );
       const relativePath = faviconPath ? path.relative(workspaceRoot, faviconPath) : null;
-      if (
-        relativePath &&
-        !(yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new AssetProjectFaviconInspectionError({
-                resource: input.resource,
-                cause,
-              }),
-          ),
-        ))
-      ) {
+      const canonicalFaviconPath = relativePath
+        ? yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new AssetProjectFaviconInspectionError({
+                  resource: input.resource,
+                  cause,
+                }),
+            ),
+          )
+        : null;
+      if (relativePath && !canonicalFaviconPath) {
         return yield* new AssetProjectFaviconNotFoundError({
           resource: input.resource,
         });
@@ -324,7 +328,31 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         relativePath,
         expiresAt,
       };
-      fileName = relativePath ? path.basename(relativePath) : PROJECT_FAVICON_FALLBACK_MARKER;
+      if (relativePath && canonicalFaviconPath) {
+        const crypto = yield* Crypto.Crypto;
+        const faviconBytes = yield* fileSystem.readFile(canonicalFaviconPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AssetProjectFaviconInspectionError({
+                resource: input.resource,
+                cause,
+              }),
+          ),
+        );
+        const revision = yield* crypto.digest("SHA-256", faviconBytes).pipe(
+          Effect.map(Encoding.encodeHex),
+          Effect.mapError(
+            (cause) =>
+              new AssetProjectFaviconInspectionError({
+                resource: input.resource,
+                cause,
+              }),
+          ),
+        );
+        fileName = `${PROJECT_FAVICON_VERSION_PREFIX}${revision}-${path.basename(relativePath)}`;
+      } else {
+        fileName = PROJECT_FAVICON_FALLBACK_MARKER;
+      }
       break;
     }
   }
@@ -339,6 +367,13 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         }),
     ),
   );
+  if (claims.kind === "project-favicon") {
+    const issuedAt = yield* Clock.currentTimeMillis;
+    expiresAt =
+      (Math.floor(issuedAt / PROJECT_FAVICON_TOKEN_BUCKET_MS) + 2) *
+      PROJECT_FAVICON_TOKEN_BUCKET_MS;
+    claims = { ...claims, expiresAt };
+  }
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
   return {
