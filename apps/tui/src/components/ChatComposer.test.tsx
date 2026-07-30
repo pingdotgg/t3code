@@ -45,6 +45,7 @@ const base = {
   onSubmitAnswer: noop,
   onRemoveAttachment: noop,
   onPasteImage: noop,
+  onPasteImagePath: () => null,
 } as const;
 
 async function frameOf(node: React.ReactNode): Promise<string> {
@@ -255,6 +256,60 @@ describe("ChatComposer", () => {
     expect(pasted?.bytes).toEqual(new Uint8Array([137, 80, 78, 71]));
     expect(captured).toBe("keep this draft");
     expect(t.captureCharFrame()).toContain("keep this draft");
+    t.renderer.destroy();
+  });
+
+  it("Given a complete image path is pasted, when it is attached, then the path is not inserted into the prompt", async () => {
+    let captured = "";
+    let pastedPath = "";
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={(value) => {
+            captured = value;
+            setReply(value);
+          }}
+          onPasteImagePath={(value) => {
+            pastedPath = value;
+            return Promise.resolve(true);
+          }}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText("./screenshots/error.png");
+    await t.waitFor(() => pastedPath.length > 0);
+
+    expect(pastedPath).toBe("./screenshots/error.png");
+    expect(captured).toBe("");
+    expect(t.captureCharFrame()).not.toContain("./screenshots/error.png");
+    t.renderer.destroy();
+  });
+
+  it("Given a pasted image path cannot be attached, when loading fails, then it remains ordinary prompt text", async () => {
+    function Harness(): React.ReactNode {
+      const [reply, setReply] = React.useState("");
+      return (
+        <ChatComposer
+          {...base}
+          mode="compose"
+          reply={reply}
+          inputFocused
+          onReplyInput={setReply}
+          onPasteImagePath={() => Promise.resolve(false)}
+        />
+      );
+    }
+    const t = await testRender(<Harness />, { width: 60, height: 8 });
+    await t.renderOnce();
+    await t.mockInput.pasteBracketedText("./screenshots/missing.png");
+    await t.waitForFrame((frame) => frame.includes("./screenshots/missing.png"));
     t.renderer.destroy();
   });
 

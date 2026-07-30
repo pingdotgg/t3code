@@ -45,6 +45,7 @@ import {
   prepareComposerImage,
   prepareComposerImageBytes,
   removeComposerImage,
+  resolvePastedWorkspaceImagePath,
 } from "../composerAttachments.ts";
 import { normalizeEditedPrompt, resolveEditorCommand } from "../promptEditor.ts";
 import type { TuiClient } from "../connection.ts";
@@ -2252,6 +2253,68 @@ export function ChatView({
       });
   };
 
+  const pasteComposerImagePath = (pastedText: string): Promise<boolean> | null => {
+    const relativePath = resolvePastedWorkspaceImagePath(
+      pastedText,
+      composerCwd,
+      client.hostPlatform,
+    );
+    if (!relativePath) return null;
+
+    return (async () => {
+      if (!detail && focus !== "new") {
+        store.setStatus("Select a thread before attaching an image path.", "error");
+        return false;
+      }
+      if (userInputActive) {
+        store.setStatus("Answer the pending question before attaching an image.", "error");
+        return false;
+      }
+      if (activeComposerImages.some((image) => image.relativePath === relativePath)) {
+        store.setStatus(`${NodePath.basename(relativePath)} is already attached.`, "info");
+        return true;
+      }
+      if (
+        activeComposerImages.length + clipboardImageLoadsRef.current >=
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      ) {
+        store.setStatus(
+          `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
+          "error",
+        );
+        return false;
+      }
+
+      clipboardImageLoadsRef.current += 1;
+      const imageName = relativePath.split(/[\\/]/u).at(-1) ?? relativePath;
+      store.setStatus(`Adding ${imageName}…`, "busy");
+      try {
+        const file = await client.readFileBase64(composerCwd, relativePath);
+        if (!file) throw new Error("Could not read the pasted image path.");
+        const image = await prepareComposerImage(relativePath, file);
+        updateActiveComposerImages((current) => {
+          if (
+            current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ||
+            current.some((entry) => entry.relativePath === relativePath)
+          ) {
+            return current;
+          }
+          return [...current, image];
+        });
+        store.setStatus(`Attached ${image.upload.name}.`, "success");
+        return true;
+      } catch (error) {
+        store.setStatus(
+          error instanceof Error ? error.message : "Could not attach the pasted image path.",
+          "error",
+        );
+        return false;
+      } finally {
+        clipboardImageLoadsRef.current = Math.max(0, clipboardImageLoadsRef.current - 1);
+      }
+    })();
+  };
+
   const focusComposer = () => {
     if (projectFlow) closeAddProject();
     setTerminalFocused(false);
@@ -3166,6 +3229,7 @@ export function ChatView({
               onSubmitAnswer={submitUserInput}
               onRemoveAttachment={removeStagedComposerImage}
               onPasteImage={pasteComposerImage}
+              onPasteImagePath={pasteComposerImagePath}
             />
           </ComposerDock>
 

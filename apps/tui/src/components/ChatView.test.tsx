@@ -129,6 +129,7 @@ function fakeClient({
   runGitPull = async () => {},
   getAttachmentUrl = async () => null,
   getAttachmentImage = async () => null,
+  readFileBase64 = async () => null,
   listRefs = async () =>
     ({
       refs: [
@@ -176,6 +177,7 @@ function fakeClient({
   readonly runGitPull?: TuiClient["runGitPull"];
   readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
   readonly getAttachmentImage?: TuiClient["getAttachmentImage"];
+  readonly readFileBase64?: TuiClient["readFileBase64"];
   readonly listRefs?: TuiClient["listRefs"];
   readonly switchRef?: TuiClient["switchRef"];
   readonly getServerConfig?: TuiClient["getServerConfig"];
@@ -236,6 +238,7 @@ function fakeClient({
     switchRef,
     getAttachmentUrl,
     getAttachmentImage,
+    readFileBase64,
     runGitStackedAction: async () => {},
     runGitPull,
   } as unknown as TuiClient;
@@ -1278,6 +1281,63 @@ describe("ChatView acknowledged submissions", () => {
         dataUrl: `data:image/png;base64,${PNG_BASE64}`,
       },
     ]);
+    setup.renderer.destroy();
+  });
+
+  it("Given the terminal pastes a workspace image path, when it resolves safely, then the prompt stages the image instead of inserting the path", async () => {
+    const calls: Array<Parameters<TuiClient["sendReply"]>> = [];
+    const reads: Array<{ cwd: string; relativePath: string }> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      readFileBase64: async (cwd, relativePath) => {
+        reads.push({ cwd, relativePath });
+        return {
+          contents: PNG_BASE64,
+          byteLength: 68,
+          truncated: false,
+        };
+      },
+      sendReply: async (...args) => {
+        calls.push(args);
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      await setup.mockInput.pasteBracketedText(
+        "'/workspace/project-one/docs/error screenshot.png'",
+      );
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("error screenshot.png") &&
+        !frame.includes("/workspace/project-one/docs/error"),
+    );
+    expect(reads).toEqual([
+      { cwd: "/workspace/project-one", relativePath: "docs/error screenshot.png" },
+    ]);
+
+    await React.act(async () => {
+      await setup.mockInput.typeText("explain this image");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("explain this image"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitFor(() => calls.length === 1);
+    expect(calls[0]?.[2]?.[0]).toMatchObject({
+      type: "image",
+      name: "error screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 68,
+    });
     setup.renderer.destroy();
   });
 

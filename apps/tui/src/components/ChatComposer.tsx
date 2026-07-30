@@ -1,5 +1,7 @@
 import {
+  decodePasteBytes,
   defaultTextareaKeyBindings,
+  stripAnsiSequences,
   type PasteEvent,
   type TextareaRenderable,
 } from "@opentui/core";
@@ -126,6 +128,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   onSubmitAnswer,
   onRemoveAttachment,
   onPasteImage,
+  onPasteImagePath,
 }: {
   readonly mode: "compose" | "rename" | "filter" | "commit";
   readonly reply: string;
@@ -167,6 +170,11 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onSubmitAnswer: () => void;
   readonly onRemoveAttachment: (relativePath: string) => void;
   readonly onPasteImage: (paste: { readonly bytes: Uint8Array; readonly mimeType: string }) => void;
+  /**
+   * Returns null for an ordinary text paste, otherwise resolves whether a
+   * complete pasted path was staged as a workspace image.
+   */
+  readonly onPasteImagePath: (pastedText: string) => Promise<boolean> | null;
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
@@ -292,10 +300,21 @@ export const ChatComposer = React.memo(function ChatComposer({
             onSubmit={onReplySubmit}
             onPaste={(event: PasteEvent) => {
               const mimeType = event.metadata?.mimeType;
-              if (!mimeType?.toLowerCase().startsWith("image/")) return;
+              if (mimeType?.toLowerCase().startsWith("image/")) {
+                event.preventDefault();
+                event.stopPropagation();
+                onPasteImage({ bytes: event.bytes, mimeType });
+                return;
+              }
+
+              const pastedText = stripAnsiSequences(decodePasteBytes(event.bytes));
+              const attachment = onPasteImagePath(pastedText);
+              if (!attachment) return;
               event.preventDefault();
               event.stopPropagation();
-              onPasteImage({ bytes: event.bytes, mimeType });
+              void attachment.then((attached) => {
+                if (!attached) replyRef.current?.insertText(pastedText);
+              });
             }}
           />
         ) : showAnswerInput ? (

@@ -7,6 +7,7 @@ import {
   prepareComposerImage,
   prepareComposerImageBytes,
   removeComposerImage,
+  resolvePastedWorkspaceImagePath,
 } from "./composerAttachments.ts";
 
 const PNG_BASE64 =
@@ -19,6 +20,46 @@ describe("composer image attachments", () => {
     expect(imageExtensionForMimeType("image/png")).toBe("png");
     expect(imageExtensionForMimeType("image/jpeg;charset=binary")).toBe("jpg");
     expect(isSupportedImagePath("README.md")).toBe(false);
+  });
+
+  it("Given a terminal path paste, when it identifies a workspace image, then it resolves a safe relative path", () => {
+    expect(
+      resolvePastedWorkspaceImagePath(
+        "'/workspace/project/docs/error screenshot.PNG'",
+        "/workspace/project",
+        "linux",
+      ),
+    ).toBe("docs/error screenshot.PNG");
+    expect(
+      resolvePastedWorkspaceImagePath(
+        "./docs/error\\ screenshot.webp",
+        "/workspace/project",
+        "linux",
+      ),
+    ).toBe("docs/error screenshot.webp");
+    expect(
+      resolvePastedWorkspaceImagePath(
+        "C:\\workspace\\project\\shots\\error.jpg",
+        "C:\\workspace\\project",
+        "win32",
+      ),
+    ).toBe("shots\\error.jpg");
+  });
+
+  it("Given prompt text or an unsafe path, when image-path recognition runs, then it leaves the paste as text", () => {
+    expect(
+      resolvePastedWorkspaceImagePath(
+        "please inspect docs/error.png",
+        "/workspace/project",
+        "linux",
+      ),
+    ).toBeNull();
+    expect(
+      resolvePastedWorkspaceImagePath("/workspace/other/secret.png", "/workspace/project", "linux"),
+    ).toBeNull();
+    expect(
+      resolvePastedWorkspaceImagePath("docs/one.png\ndocs/two.png", "/workspace/project", "linux"),
+    ).toBeNull();
   });
 
   it("builds an upload attachment and bounded RGBA preview", async () => {

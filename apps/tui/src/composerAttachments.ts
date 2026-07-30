@@ -1,4 +1,5 @@
 import * as NodeBuffer from "node:buffer";
+import * as NodePath from "node:path";
 
 import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -52,6 +53,56 @@ export function imageMimeTypeForPath(relativePath: string): string | null {
 
 export function isSupportedImagePath(relativePath: string): boolean {
   return imageMimeTypeForPath(relativePath) !== null;
+}
+
+/**
+ * Resolve a complete prompt paste into a workspace-relative image path.
+ *
+ * Terminal file paste/drag-and-drop usually supplies a path rather than image
+ * clipboard bytes. Keep recognition intentionally narrow: one path, a supported
+ * extension, and a destination inside the active workspace. The server performs
+ * the authoritative realpath check when the file is read.
+ */
+export function resolvePastedWorkspaceImagePath(
+  pastedText: string,
+  workspaceRoot: string,
+  platform: NodeJS.Platform,
+): string | null {
+  if (workspaceRoot.trim().length === 0 || pastedText.includes("\n") || pastedText.includes("\0")) {
+    return null;
+  }
+
+  let candidate = pastedText.trim();
+  if (candidate.length === 0) return null;
+  const quote = candidate[0];
+  const wasQuoted = (quote === "'" || quote === '"') && candidate.at(-1) === quote;
+  if (wasQuoted) {
+    candidate = candidate.slice(1, -1);
+  }
+  const wasShellEscaped = platform !== "win32" && /\\./u.test(candidate);
+  if (platform !== "win32") {
+    // Terminal drag/drop commonly shell-escapes spaces and punctuation.
+    candidate = candidate.replace(/\\(.)/gu, "$1");
+  }
+  if (!isSupportedImagePath(candidate)) return null;
+
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  if (/\s/u.test(candidate) && !wasQuoted && !wasShellEscaped && !path.isAbsolute(candidate)) {
+    return null;
+  }
+  const normalizedRoot = path.resolve(workspaceRoot);
+  const relativePath = path.isAbsolute(candidate)
+    ? path.relative(normalizedRoot, path.resolve(candidate))
+    : path.normalize(candidate);
+  if (
+    relativePath.length === 0 ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+  return relativePath;
 }
 
 export function imageExtensionForMimeType(mimeType: string): string | null {
