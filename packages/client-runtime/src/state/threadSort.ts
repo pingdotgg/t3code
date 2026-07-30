@@ -13,6 +13,14 @@ export interface ThreadSortInput {
   }>;
 }
 
+export type ThreadListV2Priority = "woke" | "unsettled" | "default";
+
+const THREAD_LIST_V2_PRIORITY_RANK: Record<ThreadListV2Priority, number> = {
+  woke: 0,
+  unsettled: 1,
+  default: 2,
+};
+
 export function toSortableTimestamp(iso: string | undefined): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
@@ -55,6 +63,25 @@ function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
   }
 
   return getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Attention transitions come first, with static creation order inside each
+ * group. The caller must derive priority from server-backed state so every
+ * client renders the same order.
+ */
+export function sortThreadsForListV2<T extends { readonly id: string; readonly createdAt: string }>(
+  threads: readonly T[],
+  getPriority: (thread: T) => ThreadListV2Priority = () => "default",
+): T[] {
+  // Hermes does not ship the ES2023 change-by-copy array methods.
+  return [...threads].sort(
+    (left, right) =>
+      THREAD_LIST_V2_PRIORITY_RANK[getPriority(left)] -
+        THREAD_LIST_V2_PRIORITY_RANK[getPriority(right)] ||
+      (toSortableTimestamp(right.createdAt) ?? 0) - (toSortableTimestamp(left.createdAt) ?? 0) ||
+      left.id.localeCompare(right.id),
+  );
 }
 
 export function getThreadSortTimestamp(

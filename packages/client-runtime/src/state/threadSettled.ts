@@ -180,10 +180,9 @@ export function effectiveSnoozed(
 
 /**
  * When a previously-snoozed thread woke, or null if it never snoozed / is
- * still snoozed. Used for the "Woke" indicator and as the stable appearance
- * timestamp that moves the thread to the top once. Compare against the
- * client's lastVisitedAt — visiting clears the indicator like it clears
- * unread without moving the row again.
+ * still snoozed. A non-null result is the server-backed list priority shared
+ * by every client. Web also compares it with local lastVisitedAt so visiting
+ * can clear the "Woke" indicator without changing that shared priority.
  *
  * Timer wakes report the wake time itself; raised-hand wakes report the
  * triggering timestamp so a visit BEFORE the early wake doesn't suppress

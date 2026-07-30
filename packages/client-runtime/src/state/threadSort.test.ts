@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sortThreads, type ThreadSortInput } from "./threadSort.ts";
+import {
+  sortThreads,
+  sortThreadsForListV2,
+  type ThreadListV2Priority,
+  type ThreadSortInput,
+} from "./threadSort.ts";
 
 type TestThread = { readonly id: string } & ThreadSortInput;
 
@@ -67,5 +72,44 @@ describe("sortThreads", () => {
     );
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+});
+
+describe("sortThreadsForListV2", () => {
+  const threads = [
+    { id: "oldest", createdAt: "2026-06-01T08:00:00.000Z" },
+    { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
+    { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
+  ] as const;
+
+  it("orders by creation time within the default priority", () => {
+    expect(sortThreadsForListV2(threads).map((thread) => thread.id)).toEqual([
+      "newest",
+      "middle",
+      "oldest",
+    ]);
+  });
+
+  it("ranks server-backed wakes and manual un-settles above default threads", () => {
+    const priorityById: Record<string, ThreadListV2Priority> = {
+      oldest: "woke",
+      middle: "unsettled",
+      newest: "default",
+    };
+
+    expect(
+      sortThreadsForListV2(threads, (thread) => priorityById[thread.id] ?? "default").map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["oldest", "middle", "newest"]);
+  });
+
+  it("breaks equal creation timestamps by id", () => {
+    const tied = [
+      { id: "b", createdAt: "2026-06-01T10:00:00.000Z" },
+      { id: "a", createdAt: "2026-06-01T10:00:00.000Z" },
+    ];
+
+    expect(sortThreadsForListV2(tied).map((thread) => thread.id)).toEqual(["a", "b"]);
   });
 });

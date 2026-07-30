@@ -6,6 +6,7 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { sortThreadsForListV2 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
@@ -114,7 +115,6 @@ import {
   isSidebarV2ThreadWoke,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
-  reconcileSidebarV2ThreadOrder,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
@@ -123,8 +123,6 @@ import {
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
-  sortThreadsForSidebarV2,
-  type SidebarV2ThreadOrderEntry,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -1177,9 +1175,6 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
 export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threadSidebarOrder = useUiStateStore((store) => store.threadSidebarOrder);
-  const threadSidebarAppearedAtById = useUiStateStore((store) => store.threadSidebarAppearedAtById);
-  const setThreadSidebarOrder = useUiStateStore((store) => store.setThreadSidebarOrder);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1566,7 +1561,7 @@ export default function SidebarV2() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const threadPartitions = useMemo(() => {
+  const { activeThreads, snoozedThreads, settledThreads, snoozeNow } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
     // Snooze classification uses a REAL clock, not the quantized minute:
     // wake times are second-precise and a woken thread must not linger on
@@ -1574,11 +1569,16 @@ export default function SidebarV2() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter((thread) => thread.archivedAt === null);
+    const visible = threads.filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        (scopedProjectKeys === null ||
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+    );
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
-    const threadOrderEntries: SidebarV2ThreadOrderEntry[] = [];
+    const wokeThreadKeys = new Set<string>();
     for (const thread of visible) {
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
@@ -1591,10 +1591,10 @@ export default function SidebarV2() {
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
       const wokeAt = supportsSnooze ? threadWokeAt(thread, { now: preciseNow }) : null;
+      if (wokeAt !== null) wokeThreadKeys.add(threadKey);
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
-      let isActive = false;
       if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
         snoozed.push(thread);
       } else if (
@@ -1609,38 +1609,23 @@ export default function SidebarV2() {
         settled.push(thread);
       } else {
         active.push(thread);
-        isActive = true;
       }
-      threadOrderEntries.push({
-        key: threadKey,
-        active: isActive,
-        createdAt: thread.createdAt,
-        updatedAt: thread.updatedAt,
-        explicitAppearanceAt: wokeAt,
-      });
     }
-    const nextOrder = reconcileSidebarV2ThreadOrder(threadOrderEntries, {
-      order: threadSidebarOrder,
-      appearedAtById: threadSidebarAppearedAtById,
-    });
-    const inScope = (thread: EnvironmentThreadShell) =>
-      scopedProjectKeys === null ||
-      scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`);
-    const getThreadKey = (thread: EnvironmentThreadShell) =>
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     return {
-      activeThreads: sortThreadsForSidebarV2(active.filter(inScope), nextOrder.order, getThreadKey),
+      activeThreads: sortThreadsForListV2(active, (thread) => {
+        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        if (wokeThreadKeys.has(threadKey)) return "woke";
+        if (thread.settledOverride === "active") return "unsettled";
+        return "default";
+      }),
       // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed
-        .filter(inScope)
-        .toSorted(
-          (left, right) =>
-            firstValidTimestampMs(left.snoozedUntil ?? null) -
-            firstValidTimestampMs(right.snoozedUntil ?? null),
-        ),
-      settledThreads: sortSettledThreadsForSidebarV2(settled.filter(inScope)),
+      snoozedThreads: snoozed.toSorted(
+        (left, right) =>
+          firstValidTimestampMs(left.snoozedUntil ?? null) -
+          firstValidTimestampMs(right.snoozedUntil ?? null),
+      ),
+      settledThreads: sortSettledThreadsForSidebarV2(settled),
       snoozeNow: preciseNow,
-      nextThreadSidebarOrder: nextOrder,
     };
   }, [
     autoSettleAfterDays,
@@ -1649,16 +1634,8 @@ export default function SidebarV2() {
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
-    threadSidebarAppearedAtById,
-    threadSidebarOrder,
     threads,
   ]);
-  const { activeThreads, snoozedThreads, settledThreads, snoozeNow, nextThreadSidebarOrder } =
-    threadPartitions;
-
-  useEffect(() => {
-    setThreadSidebarOrder(nextThreadSidebarOrder.order, nextThreadSidebarOrder.appearedAtById);
-  }, [nextThreadSidebarOrder, setThreadSidebarOrder]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
