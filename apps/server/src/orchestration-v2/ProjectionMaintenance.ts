@@ -34,6 +34,10 @@ export class ProjectionMaintenanceError extends Schema.TaggedErrorClass<Projecti
 export interface ProjectionMaintenanceV2Shape {
   readonly verify: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
   readonly rebuild: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
+  readonly compactReadStateEvents: Effect.Effect<
+    { readonly deletedEventCount: number },
+    ProjectionMaintenanceError
+  >;
 }
 
 export class ProjectionMaintenanceV2 extends Context.Service<
@@ -210,9 +214,37 @@ export const layer: Layer.Layer<
           Effect.mapError((cause) => new ProjectionMaintenanceError({ operation, cause })),
         );
 
+    /**
+     * thread.visited events carry the full thread payload, so only the newest
+     * one per thread can influence a replay or an afterSequence catch-up; the
+     * rest are dead weight. Visits fire on every activity bump while a thread
+     * is open, so without compaction they dominate the event store.
+     */
+    const compactReadStateEvents = sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          DELETE FROM orchestration_events
+          WHERE application_event_version = 2
+            AND aggregate_kind = 'thread'
+            AND event_type = 'thread.visited'
+            AND sequence NOT IN (
+              SELECT MAX(sequence)
+              FROM orchestration_events
+              WHERE application_event_version = 2
+                AND aggregate_kind = 'thread'
+                AND event_type = 'thread.visited'
+              GROUP BY stream_id
+            )
+        `;
+        const rows = yield* sql<{ readonly deleted: number }>`SELECT changes() AS deleted`;
+        return { deletedEventCount: rows[0]?.deleted ?? 0 };
+      }),
+    );
+
     return ProjectionMaintenanceV2.of({
       verify: mapError("verify")(verify),
       rebuild: mapError("rebuild")(rebuild),
+      compactReadStateEvents: mapError("compact read-state events")(compactReadStateEvents),
     });
   }),
 );

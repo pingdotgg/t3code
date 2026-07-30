@@ -71,11 +71,12 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
-  archivedShellStreamItemFromSnapshot,
+  archivedShellStreamItemFromThreadShell,
   coalesceShellApplicationEvents,
+  coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   shellStreamItemFromEnrichmentRefresh,
-  shellStreamItemFromSnapshot,
+  shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
 } from "./orchestration-v2/ShellStream.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -747,25 +748,23 @@ const makeWsRpcLayer = (
             });
           });
 
+          // Coalescing makes each per-thread shell read represent every event
+          // for that thread in the current window; reading only the affected
+          // threads keeps the cost of a busy stream independent of how many
+          // threads exist overall.
           const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
             events: ReadonlyArray<ApplicationStoredEvent>,
           ) {
-            const survivors = coalesceShellApplicationEvents(events);
-            const needsThreadSnapshot = survivors.some((stored) => !("aggregateKind" in stored));
-            const threadSnapshot = needsThreadSnapshot
-              ? yield* threadManagement.getShellSnapshot().pipe(Effect.map(Option.some))
-              : Option.none();
             return yield* Effect.forEach(
-              survivors,
+              coalesceShellApplicationEvents(events),
               (stored) =>
-                "aggregateKind" in stored
-                  ? projectItem(stored)
-                  : Effect.succeed(
-                      shellStreamItemFromSnapshot({
-                        stored,
-                        snapshot: Option.getOrThrow(threadSnapshot),
-                      }),
-                    ),
+                Effect.gen(function* () {
+                  if ("aggregateKind" in stored) {
+                    return yield* projectItem(stored);
+                  }
+                  const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
+                  return shellStreamItemFromThreadShell({ stored, shell });
+                }),
               { concurrency: 8 },
             );
           });
@@ -920,20 +919,22 @@ const makeWsRpcLayer = (
         const live = threadManagement
           .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
           .pipe(
-            Stream.mapEffect((stored) =>
-              threadManagement.getShellSnapshot().pipe(
-                Effect.map((nextSnapshot) =>
-                  archivedShellStreamItemFromSnapshot({ stored, snapshot: nextSnapshot }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetShellSnapshotError({
-                      message: "Failed while streaming archived threads",
-                      cause,
-                    }),
-                ),
+            Stream.groupedWithin(512, Duration.millis(50)),
+            Stream.mapEffect((events) =>
+              Effect.forEach(
+                coalesceStoredThreadEvents(Array.from(events)),
+                (stored) =>
+                  threadManagement
+                    .getThreadShell(stored.event.threadId)
+                    .pipe(
+                      Effect.map((shell) =>
+                        archivedShellStreamItemFromThreadShell({ stored, shell }),
+                      ),
+                    ),
+                { concurrency: 8 },
               ),
             ),
+            Stream.flatMap(Stream.fromIterable),
             Stream.filterMap((item) => (item === null ? Result.failVoid : Result.succeed(item))),
             Stream.mapError(
               (cause) =>

@@ -524,6 +524,18 @@ export const make = Effect.gen(function* () {
         : importPendingTranscripts
     ).pipe(Effect.forkScoped);
 
+    // Off the startup path: the first run after an upgrade can delete a large
+    // backlog of superseded visited events, and nothing at boot depends on it.
+    yield* projectionMaintenance.compactReadStateEvents.pipe(
+      Effect.tap((summary) =>
+        summary.deletedEventCount === 0
+          ? Effect.void
+          : Effect.logInfo("Compacted superseded read-state events", summary),
+      ),
+      Effect.catch((cause) => Effect.logWarning("Unable to compact read-state events", { cause })),
+      Effect.forkScoped,
+    );
+
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,
       cwd: welcomeBase.cwd,

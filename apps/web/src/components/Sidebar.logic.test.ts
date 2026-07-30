@@ -27,6 +27,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortSidebarV2ProjectGroups,
+  resolveThreadLastVisitedAt,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortScopedProjectsForSidebar,
@@ -1549,5 +1550,41 @@ describe("sortSidebarV2ProjectGroups", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("resolveThreadLastVisitedAt", () => {
+  it("uses the local watermark when the server does not track visits", () => {
+    expect(resolveThreadLastVisitedAt(undefined, "2026-07-30T10:00:00.000Z")).toBe(
+      "2026-07-30T10:00:00.000Z",
+    );
+    expect(resolveThreadLastVisitedAt(undefined, undefined)).toBeUndefined();
+  });
+
+  it("keeps an explicit server-side unread regardless of the local watermark", () => {
+    expect(resolveThreadLastVisitedAt(null, "2026-07-30T10:00:00.000Z")).toBeUndefined();
+  });
+
+  it("prefers the newer of server and local watermarks", () => {
+    // The local watermark is written eagerly while the server dispatch is
+    // throttled, so it may run ahead of the server echo.
+    expect(resolveThreadLastVisitedAt("2026-07-30T10:00:00.000Z", "2026-07-30T10:00:05.000Z")).toBe(
+      "2026-07-30T10:00:05.000Z",
+    );
+    expect(resolveThreadLastVisitedAt("2026-07-30T10:00:05.000Z", "2026-07-30T10:00:00.000Z")).toBe(
+      "2026-07-30T10:00:05.000Z",
+    );
+    expect(resolveThreadLastVisitedAt("2026-07-30T10:00:00.000Z", undefined)).toBe(
+      "2026-07-30T10:00:00.000Z",
+    );
+  });
+
+  it("falls back to the parseable side when a watermark is malformed", () => {
+    expect(resolveThreadLastVisitedAt("not-a-date", "2026-07-30T10:00:00.000Z")).toBe(
+      "2026-07-30T10:00:00.000Z",
+    );
+    expect(resolveThreadLastVisitedAt("2026-07-30T10:00:00.000Z", "not-a-date")).toBe(
+      "2026-07-30T10:00:00.000Z",
+    );
   });
 });

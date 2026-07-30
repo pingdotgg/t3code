@@ -65,6 +65,13 @@ export function existingThreadIdsForCommand(
   switch (command.type) {
     case "thread.create":
       return [];
+    // Read-state commands only rewrite the thread payload's visited/unread
+    // watermark; they never touch messages, so they do not need the imported
+    // v1 transcript hydrated first. Visits fire on every thread-activity bump
+    // while a thread is open, so keeping them off the import path matters.
+    case "thread.visit":
+    case "thread.mark-unread":
+      return [];
     case "thread.fork":
       return [command.sourceThreadId];
     case "thread.merge_back":
@@ -273,6 +280,7 @@ export interface ThreadManagementServiceShape {
     OrchestrationV2ThreadShellSnapshot,
     OrchestratorV2Error
   >;
+  readonly getThreadShell: OrchestratorV2["Service"]["getThreadShell"];
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;
@@ -631,6 +639,7 @@ const make = Effect.gen(function* () {
     getThreadSnapshot,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
+    getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,
     waitForThread,

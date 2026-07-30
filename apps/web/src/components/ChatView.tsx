@@ -332,6 +332,11 @@ import { useAssetUrls } from "../assets/assetUrls";
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+// During an active turn the thread's updatedAt advances several times per
+// second, and every server-side visit is a full command dispatch plus a
+// broadcast to all shell subscribers. One watermark per interval is plenty for
+// cross-device read state; the local watermark below stays instant.
+const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PROJECTION_RUNS: OrchestrationV2ThreadProjection["runs"] = [];
 const EMPTY_ATTACHMENT_IDS: string[] = [];
@@ -1243,6 +1248,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const lastDispatchedVisitRef = useRef<string | null>(null);
+  const lastVisitDispatchAtRef = useRef(0);
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1920,26 +1926,52 @@ function ChatViewContent(props: ChatViewProps) {
     if (!serverThread?.id) return;
     const threadUpdatedAt = Date.parse(serverThread.updatedAt);
     if (Number.isNaN(threadUpdatedAt)) return;
+
+    if (serverThread.lastVisitedAt !== undefined) {
+      // Server-tracked visited state: record the watermark server-side so it
+      // syncs across every device connected to the environment. Decide from
+      // the server watermark alone — the local watermark is written eagerly
+      // below and must not suppress the server sync.
+      const serverVisitedAt =
+        serverThread.lastVisitedAt === null ? NaN : Date.parse(serverThread.lastVisitedAt);
+      if (Number.isNaN(serverVisitedAt) || serverVisitedAt < threadUpdatedAt) {
+        // The local watermark keeps the open thread reading as visited while
+        // the throttled server dispatch is still pending.
+        markThreadVisited(
+          scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
+          serverThread.updatedAt,
+        );
+        // Dedupe per watermark — the effect re-runs before the command's echo
+        // lands — and throttle to one dispatch per interval; each rerun swaps
+        // the pending timer so the trailing dispatch carries the newest
+        // watermark.
+        const dispatchKey = `${routeThreadKey}:${serverThread.updatedAt}`;
+        if (lastDispatchedVisitRef.current === dispatchKey) return;
+        const dispatch = () => {
+          lastDispatchedVisitRef.current = dispatchKey;
+          lastVisitDispatchAtRef.current = Date.now();
+          void visitThreadMutation({
+            environmentId: serverThread.environmentId,
+            input: { threadId: serverThread.id, visitedAt: serverThread.updatedAt },
+          });
+        };
+        const elapsed = Date.now() - lastVisitDispatchAtRef.current;
+        if (elapsed >= VISIT_DISPATCH_THROTTLE_MS) {
+          dispatch();
+          return;
+        }
+        const timer = setTimeout(dispatch, VISIT_DISPATCH_THROTTLE_MS - elapsed);
+        return () => clearTimeout(timer);
+      }
+      return;
+    }
+
     const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
       serverThread.lastVisitedAt,
       activeThreadLocalLastVisitedAt,
     );
     const lastVisitedAt = effectiveLastVisitedAt ? Date.parse(effectiveLastVisitedAt) : NaN;
     if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
-
-    if (serverThread.lastVisitedAt !== undefined) {
-      // Server-tracked visited state: record the watermark server-side so it
-      // syncs across every device connected to the environment. Dedupe per
-      // watermark — the effect re-runs before the command's echo lands.
-      const dispatchKey = `${routeThreadKey}:${serverThread.updatedAt}`;
-      if (lastDispatchedVisitRef.current === dispatchKey) return;
-      lastDispatchedVisitRef.current = dispatchKey;
-      void visitThreadMutation({
-        environmentId: serverThread.environmentId,
-        input: { threadId: serverThread.id, visitedAt: serverThread.updatedAt },
-      });
-      return;
-    }
 
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),

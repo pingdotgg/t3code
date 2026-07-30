@@ -265,6 +265,54 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("compacts superseded thread.visited events, keeping the newest per thread", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:foundation-compact-visits");
+      const thread = makeThread(threadId, now);
+      const visitedEvent = (suffix: string): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`event:foundation-compact-visits:${suffix}`),
+        type: "thread.visited",
+        threadId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, lastVisitedAt: now },
+      });
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({ id: "event:foundation-compact-visits:create", thread, now }),
+          visitedEvent("first"),
+          visitedEvent("second"),
+          visitedEvent("third"),
+        ],
+      });
+
+      const summary = yield* maintenance.compactReadStateEvents;
+      assert.isAtLeast(summary.deletedEventCount, 2);
+
+      const remaining = yield* sql<{ readonly event_id: string }>`
+        SELECT event_id
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+          AND event_type = 'thread.visited'
+        ORDER BY sequence ASC
+      `;
+      assert.deepEqual(
+        remaining.map((row) => row.event_id),
+        ["event:foundation-compact-visits:third"],
+      );
+
+      // Replay across the deletion gap must still produce a valid projection.
+      assert.isTrue((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+    }),
+  );
+
   it.effect("verifies and rebuilds projections with cross-thread subagent relations", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;

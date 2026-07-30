@@ -260,7 +260,17 @@ export function resolveThreadLastVisitedAt(
   localLastVisitedAt: string | undefined,
 ): string | undefined {
   if (serverLastVisitedAt === undefined) return localLastVisitedAt;
-  return serverLastVisitedAt ?? undefined;
+  // Explicitly marked unread: a stale local watermark must not mask it.
+  if (serverLastVisitedAt === null) return undefined;
+  // The server value is authoritative but its dispatch is throttled while a
+  // thread is open; the eagerly-written local watermark keeps the open thread
+  // reading as visited until the trailing dispatch echoes back.
+  if (localLastVisitedAt === undefined) return serverLastVisitedAt;
+  const serverMs = Date.parse(serverLastVisitedAt);
+  const localMs = Date.parse(localLastVisitedAt);
+  if (Number.isNaN(localMs)) return serverLastVisitedAt;
+  if (Number.isNaN(serverMs)) return localLastVisitedAt;
+  return localMs > serverMs ? localLastVisitedAt : serverLastVisitedAt;
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
