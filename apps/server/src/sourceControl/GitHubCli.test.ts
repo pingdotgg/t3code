@@ -374,3 +374,73 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+describe("GitHubCli host targeting", () => {
+  it.effect("sets GH_HOST when a host is supplied", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              nameWithOwner: "owner/repo",
+              url: "https://git.corp.com/owner/repo",
+              sshUrl: "git@git.corp.com:owner/repo.git",
+            }),
+          ),
+        ),
+      );
+
+      const cli = yield* GitHubCli.GitHubCli;
+      yield* cli.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "owner/repo",
+        host: "git.corp.com",
+      });
+
+      expect(mockRun.mock.calls[0]![0].env?.GH_HOST).toBe("git.corp.com");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("omits env entirely when no host is supplied", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              nameWithOwner: "owner/repo",
+              url: "https://github.com/owner/repo",
+              sshUrl: "git@github.com:owner/repo.git",
+            }),
+          ),
+        ),
+      );
+
+      const cli = yield* GitHubCli.GitHubCli;
+      yield* cli.getRepositoryCloneUrls({ cwd: "/repo", repository: "owner/repo" });
+
+      expect(mockRun.mock.calls[0]![0]).not.toHaveProperty("env");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("derives enterprise clone urls when repo create prints no url", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const cli = yield* GitHubCli.GitHubCli;
+      const urls = yield* cli.createRepository({
+        cwd: "/repo",
+        repository: "owner/repo",
+        visibility: "private",
+        host: "git.corp.com",
+      });
+
+      expect(urls).toEqual({
+        nameWithOwner: "owner/repo",
+        url: "https://git.corp.com/owner/repo",
+        sshUrl: "git@git.corp.com:owner/repo.git",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+});

@@ -203,6 +203,7 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
+      readonly host?: string;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -219,12 +220,14 @@ export class GitHubCli extends Context.Service<
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly host?: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
+      readonly host?: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
     readonly createPullRequest: (input: {
@@ -275,8 +278,8 @@ function normalizeRepositoryCloneUrls(
 function deriveRepositoryCloneUrlsFromCreateOutput(
   stdout: string,
   repository: string,
+  host: string = "github.com",
 ): GitHubRepositoryCloneUrls {
-  const fallbackHost = "github.com";
   const match = stdout.match(/https?:\/\/[^\s]+/);
   if (match) {
     const cleaned = match[0].replace(/\.git$/, "");
@@ -298,8 +301,8 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
   }
   return {
     nameWithOwner: repository,
-    url: `https://${fallbackHost}/${repository}`,
-    sshUrl: `git@${fallbackHost}:${repository}.git`,
+    url: `https://${host}/${repository}`,
+    sshUrl: `git@${host}:${repository}.git`,
   };
 }
 
@@ -313,6 +316,7 @@ export const make = Effect.gen(function* () {
         command: "gh",
         args: input.args,
         cwd: input.cwd,
+        ...(input.host ? { env: { ...globalThis.process.env, GH_HOST: input.host } } : {}),
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
@@ -394,6 +398,7 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        ...(input.host ? { host: input.host } : {}),
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -414,9 +419,10 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: ["repo", "create", input.repository, `--${input.visibility}`],
+        ...(input.host ? { host: input.host } : {}),
       }).pipe(
         Effect.map((result) =>
-          deriveRepositoryCloneUrlsFromCreateOutput(result.stdout, input.repository),
+          deriveRepositoryCloneUrlsFromCreateOutput(result.stdout, input.repository, input.host),
         ),
       ),
     createPullRequest: (input) =>
