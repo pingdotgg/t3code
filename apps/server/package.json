@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tarik02/t3code",
+    "url": "https://github.com/tarik02-org/t3code",
     "directory": "apps/server"
   },
   "bin": {

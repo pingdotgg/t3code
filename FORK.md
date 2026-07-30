@@ -8,7 +8,7 @@ This repository is a fork of `pingdotgg/t3code`. Keep this file focused on fork 
 - Keep workflow-only fork changes narrow and prefer job-level disables over broad refactors.
 - Do not commit package version bumps solely to represent fork releases.
 - Re-check Electron updater channel behavior when changing version strings, release metadata, or desktop packaging.
-- Prepare fork PR branches from `origin/main` and target `tarik02/t3code:main`.
+- Prepare fork PR branches from `origin/main` and target `tarik02-org/t3code:main`.
 - If a fork PR branch includes unintended upstream history, rebuild it from `origin/main` and replay only the intended diff.
 
 ## Changes
