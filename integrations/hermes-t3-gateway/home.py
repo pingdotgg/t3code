@@ -604,7 +604,7 @@ async def standalone_send(
     disk before the socket is opened, so the job reports success-with-queued
     and the live gateway flushes it on its next `connection.accepted`.
 
-    `media_files` rides the v4 wire as one `media.deliver` frame per file
+    `media_files` rides the v4+ wire as one `media.deliver` frame per file
     (upstream passes `(path, is_voice)` tuples; bare path strings are accepted
     too). A file that cannot be read or exceeds the 25MB frame ceiling is
     reported in `detail` and skipped — never queued, because a queued frame

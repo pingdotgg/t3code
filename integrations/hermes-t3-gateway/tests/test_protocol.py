@@ -65,8 +65,51 @@ def fake_hermes_skills(skills_list=None, skill_view=None):
                 sys.modules[name] = module
 
 
+@contextmanager
+def fake_hermes_inventory(*, config, payload=None, error=None, calls=None):
+    """Install the documented Hermes inventory/config surfaces."""
+    names = ("hermes_cli", "hermes_cli.config", "hermes_cli.inventory")
+    saved = {name: sys.modules.get(name) for name in names}
+    package = types.ModuleType("hermes_cli")
+    package.__path__ = []
+    config_module = types.ModuleType("hermes_cli.config")
+    config_module.load_config_readonly = lambda: config
+    inventory = types.ModuleType("hermes_cli.inventory")
+    context = object()
+
+    def load_picker_context():
+        return context
+
+    def build_models_payload(received_context, **kwargs):
+        if calls is not None:
+            calls.append((received_context, kwargs))
+        if error is not None:
+            raise error
+        return payload
+
+    inventory.load_picker_context = load_picker_context
+    inventory.build_models_payload = build_models_payload
+    package.config = config_module
+    package.inventory = inventory
+    sys.modules.update(
+        {
+            "hermes_cli": package,
+            "hermes_cli.config": config_module,
+            "hermes_cli.inventory": inventory,
+        }
+    )
+    try:
+        yield context
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
 class ProtocolTests(unittest.TestCase):
-    def test_hello_matches_v4_contract(self):
+    def test_hello_matches_v5_contract(self):
         hello = protocol.connection_hello(
             hermes_version="0.19.0",
             authentication={"type": "enrollment-token", "token": "once"},
@@ -75,8 +118,8 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(hello["type"], "connection.hello")
         self.assertEqual(hello["requestId"], "request-1")
-        self.assertEqual(hello["protocolVersion"], 4)
-        # v4 pins `attachments` to the literal true — it is part of the
+        self.assertEqual(hello["protocolVersion"], protocol.PROTOCOL_VERSION)
+        # v5 retains v4's literal attachment capability.
         # contract, not a negotiated option.
         self.assertTrue(hello["capabilities"]["attachments"])
         self.assertTrue(hello["capabilities"]["streaming"])
@@ -127,15 +170,27 @@ class ProtocolTests(unittest.TestCase):
 
     def test_server_frame_validation_is_closed(self):
         with self.assertRaisesRegex(ValueError, "unsupported"):
-            protocol.validate_server_frame({"type": "made.up", "protocolVersion": 4})
+            protocol.validate_server_frame(
+                {
+                    "type": "made.up",
+                    "protocolVersion": protocol.PROTOCOL_VERSION,
+                }
+            )
         with self.assertRaisesRegex(ValueError, "version"):
-            # Protocol v3 peers must upgrade before sending runtime frames.
-            protocol.validate_server_frame({"type": "ping", "protocolVersion": 3})
+            # Protocol v4 peers must upgrade before sending runtime frames.
+            protocol.validate_server_frame({"type": "ping", "protocolVersion": 4})
 
     def test_describe_frames_are_accepted_server_commands(self):
-        for frame_type in ("describe.request", "skill.body.request"):
+        for frame_type in (
+            "describe.request",
+            "models.list.request",
+            "skill.body.request",
+        ):
             with self.subTest(frame_type=frame_type):
-                message = {"type": frame_type, "protocolVersion": 4}
+                message = {
+                    "type": frame_type,
+                    "protocolVersion": protocol.PROTOCOL_VERSION,
+                }
                 self.assertEqual(protocol.validate_server_frame(message), message)
 
     # ── describe.response ──────────────────────────────────────────────
@@ -153,7 +208,7 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(response["type"], "describe.response")
         self.assertEqual(response["requestId"], "describe-1")
-        self.assertEqual(response["protocolVersion"], 4)
+        self.assertEqual(response["protocolVersion"], protocol.PROTOCOL_VERSION)
         self.assertEqual(response["pluginVersion"], protocol.PLUGIN_VERSION)
         self.assertEqual(response["hermesVersion"], "0.19.0")
         self.assertEqual(response["model"], "gpt-5.6-terra")
@@ -211,6 +266,107 @@ class ProtocolTests(unittest.TestCase):
                 fake_hermes_config(lambda config=config: config),
             ):
                 self.assertIsNone(protocol.configured_reasoning_effort())
+
+    # ── models.list.response ──────────────────────────────────────────
+
+    def test_models_catalog_projects_the_explicit_inventory_shape(self):
+        calls = []
+        config = {
+            "model": {"provider": "openai-codex", "default": "gpt-5.4"},
+            "agent": {"reasoning_effort": "high"},
+        }
+        payload = {
+            "provider": "openai-codex",
+            "model": "gpt-5.4",
+            "providers": [
+                {
+                    "slug": "openai-codex",
+                    "name": "OpenAI Codex",
+                    "models": ["gpt-5.4", "gpt-5.3-codex"],
+                    "capabilities": {
+                        "gpt-5.4": {"fast": True, "reasoning": True},
+                        "gpt-5.3-codex": {"fast": False, "reasoning": False},
+                    },
+                }
+            ],
+        }
+
+        with fake_hermes_inventory(
+            config=config,
+            payload=payload,
+            calls=calls,
+        ) as context:
+            catalog = protocol.models_catalog()
+            response = protocol.models_list_response(
+                request_id_value="models-1",
+                catalog=catalog,
+            )
+
+        self.assertEqual(
+            calls,
+            [
+                (
+                    context,
+                    {
+                        "explicit_only": True,
+                        "include_unconfigured": False,
+                        "picker_hints": False,
+                        "canonical_order": True,
+                        "pricing": False,
+                        "capabilities": True,
+                        "refresh": False,
+                        "probe_custom_providers": False,
+                        "probe_current_custom_provider": False,
+                        "max_models": 100,
+                    },
+                )
+            ],
+        )
+        self.assertEqual(response["type"], "models.list.response")
+        self.assertEqual(response["protocolVersion"], protocol.PROTOCOL_VERSION)
+        self.assertEqual(response["requestId"], "models-1")
+        self.assertEqual(response["currentProvider"], "openai-codex")
+        self.assertEqual(response["currentModel"], "gpt-5.4")
+        self.assertEqual(response["currentReasoningEffort"], "high")
+        self.assertEqual(
+            response["reasoningEfforts"],
+            ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+        )
+        self.assertEqual(
+            response["models"],
+            [
+                {
+                    "provider": "openai-codex",
+                    "providerName": "OpenAI Codex",
+                    "model": "gpt-5.4",
+                    "supportsReasoning": True,
+                },
+                {
+                    "provider": "openai-codex",
+                    "providerName": "OpenAI Codex",
+                    "model": "gpt-5.3-codex",
+                    "supportsReasoning": False,
+                },
+            ],
+        )
+
+    def test_models_catalog_degrades_to_current_config_and_an_empty_list(self):
+        config = {
+            "model": {"default": "anthropic/claude-sonnet-4.6"},
+            "agent": {"reasoning_effort": "off"},
+        }
+        with fake_hermes_inventory(
+            config=config,
+            error=RuntimeError("inventory unavailable"),
+        ):
+            response = protocol.models_list_response(
+                request_id_value="models-fallback"
+            )
+
+        self.assertEqual(response["models"], [])
+        self.assertEqual(response["currentProvider"], "openrouter")
+        self.assertEqual(response["currentModel"], "anthropic/claude-sonnet-4.6")
+        self.assertEqual(response["currentReasoningEffort"], "none")
 
     # ── skills enumeration ─────────────────────────────────────────────
 
@@ -284,7 +440,7 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(response["type"], "skill.body.response")
         self.assertEqual(response["requestId"], "body-1")
-        self.assertEqual(response["protocolVersion"], 4)
+        self.assertEqual(response["protocolVersion"], protocol.PROTOCOL_VERSION)
         self.assertEqual(response["skillName"], "codex")
         self.assertEqual(response["markdown"], "# Codex\n\nDelegate coding.")
 
@@ -394,7 +550,7 @@ class ProtocolTests(unittest.TestCase):
             created_at="2026-07-27T00:00:00Z",
         )
         self.assertEqual(frame["type"], "media.deliver")
-        self.assertEqual(frame["protocolVersion"], 4)
+        self.assertEqual(frame["protocolVersion"], protocol.PROTOCOL_VERSION)
         self.assertEqual(frame["deliveryId"], "media-1")
         self.assertEqual(frame["threadId"], "home-thread")
         self.assertEqual(frame["turnId"], "turn-9")
@@ -471,7 +627,10 @@ class ProtocolTests(unittest.TestCase):
                     )
 
     def test_media_deliver_ack_is_an_accepted_server_command(self):
-        message = {"type": "media.deliver.ack", "protocolVersion": 4}
+        message = {
+            "type": "media.deliver.ack",
+            "protocolVersion": protocol.PROTOCOL_VERSION,
+        }
         self.assertEqual(protocol.validate_server_frame(message), message)
 
     # ── inbound turn attachments ───────────────────────────────────────

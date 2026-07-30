@@ -104,6 +104,10 @@ describe("Hermes gateway management contracts", () => {
 });
 
 describe("Hermes gateway handshake", () => {
+  it("uses protocol v5 for model and reasoning selection", () => {
+    expect(HERMES_GATEWAY_PROTOCOL_VERSION).toBe(5);
+  });
+
   it("accepts one-time enrollment authentication", () => {
     const hello = decodeHello({
       type: "connection.hello",
@@ -210,9 +214,9 @@ describe("Hermes gateway handshake", () => {
     expect(hello.capabilities.protocolVersion).toBe(3);
   });
 
-  it("requires attachments as part of the v4 contract itself", () => {
-    // Not a negotiated option: a v4 plugin that cannot handle attachments is
-    // a v3 plugin, and belongs at the version gate instead.
+  it("requires attachments as part of the current contract", () => {
+    // Not a negotiated option: a v5 plugin that cannot handle attachments is
+    // a pre-v4 plugin, and belongs at the version gate instead.
     expect(() =>
       decodeCapabilities({
         protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
@@ -246,7 +250,7 @@ describe("T3 to Hermes messages", () => {
     ).toBe("opaque/hermes/session/value");
   });
 
-  it("decodes start and steering as distinct turn operations", () => {
+  it("decodes model and reasoning selection only on a turn start", () => {
     const context = {
       protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
       requestId: "turn-command-1",
@@ -256,8 +260,71 @@ describe("T3 to Hermes messages", () => {
       text: "Keep the current turn running, but use this guidance.",
     };
 
-    expect(decodeT3Message({ type: "turn.start", ...context }).type).toBe("turn.start");
-    expect(decodeT3Message({ type: "turn.steer", ...context }).type).toBe("turn.steer");
+    const start = decodeT3Message({
+      type: "turn.start",
+      ...context,
+      modelSelection: {
+        mode: "specific",
+        provider: "  openrouter  ",
+        model: "  anthropic/claude-sonnet-4  ",
+      },
+      reasoningEffort: "high",
+    });
+    expect(start.type).toBe("turn.start");
+    if (start.type !== "turn.start") {
+      throw new Error("expected turn.start");
+    }
+    expect(start.modelSelection).toEqual({
+      mode: "specific",
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-4",
+    });
+    expect(start.reasoningEffort).toBe("high");
+
+    const steer = decodeT3Message({ type: "turn.steer", ...context });
+    expect(steer.type).toBe("turn.steer");
+    if (steer.type !== "turn.steer") {
+      throw new Error("expected turn.steer");
+    }
+    expect("modelSelection" in steer).toBe(false);
+    expect("reasoningEffort" in steer).toBe(false);
+  });
+
+  it("decodes the default model request and rejects invalid selections", () => {
+    const context = {
+      type: "turn.start",
+      protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
+      requestId: "turn-command-2",
+      threadId: "thread-1",
+      sessionId: "session-1",
+      turnId: "turn-2",
+      text: "Use the configured default.",
+    } as const;
+
+    const start = decodeT3Message({
+      ...context,
+      modelSelection: { mode: "default" },
+      reasoningEffort: "none",
+    });
+    expect(start.type).toBe("turn.start");
+
+    expect(() =>
+      decodeT3Message({
+        ...context,
+        modelSelection: { mode: "specific", provider: " ", model: "gpt-5" },
+      }),
+    ).toThrow();
+    expect(() => decodeT3Message({ ...context, reasoningEffort: "extreme" })).toThrow();
+  });
+
+  it("decodes model catalog requests", () => {
+    expect(
+      decodeT3Message({
+        type: "models.list.request",
+        protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
+        requestId: "models-1",
+      }).type,
+    ).toBe("models.list.request");
   });
 
   it("decodes interrupt, approval, structured input, stop, and ping", () => {
@@ -501,13 +568,25 @@ describe("Hermes to T3 events", () => {
       throw new Error("expected session.ready");
     }
     expect(activeReady.activeTurnId).toBe("turn-1");
-    expect(
-      decodePluginMessage({
-        type: "turn.started",
-        requestId: "turn-command-1",
-        ...turnContext,
-      }).type,
-    ).toBe("turn.started");
+    const started = decodePluginMessage({
+      type: "turn.started",
+      requestId: "turn-command-1",
+      appliedModelSelection: {
+        provider: "openrouter",
+        model: "anthropic/claude-sonnet-4",
+      },
+      appliedReasoningEffort: "high",
+      ...turnContext,
+    });
+    expect(started.type).toBe("turn.started");
+    if (started.type !== "turn.started") {
+      throw new Error("expected turn.started");
+    }
+    expect(started.appliedModelSelection).toEqual({
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-4",
+    });
+    expect(started.appliedReasoningEffort).toBe("high");
     expect(
       decodePluginMessage({
         type: "content.delta",
@@ -604,10 +683,59 @@ describe("Hermes to T3 events", () => {
       }).type,
     ).toBe("user-input.resolved");
   });
+
+  it("decodes the selectable model catalog and reasoning efforts", () => {
+    const catalog = decodePluginMessage({
+      type: "models.list.response",
+      protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
+      requestId: "models-1",
+      currentProvider: "  openrouter  ",
+      currentModel: "  anthropic/claude-sonnet-4  ",
+      currentReasoningEffort: "high",
+      reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+      models: [
+        {
+          provider: "  openrouter  ",
+          providerName: "  OpenRouter  ",
+          model: "  anthropic/claude-sonnet-4  ",
+          supportsReasoning: true,
+        },
+        {
+          provider: "anthropic",
+          providerName: "Anthropic",
+          model: "claude-haiku-4-5",
+          supportsReasoning: false,
+        },
+      ],
+    });
+
+    expect(catalog.type).toBe("models.list.response");
+    if (catalog.type !== "models.list.response") {
+      throw new Error("expected models.list.response");
+    }
+    expect(catalog.currentProvider).toBe("openrouter");
+    expect(catalog.currentModel).toBe("anthropic/claude-sonnet-4");
+    expect(catalog.reasoningEfforts).toEqual([
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+    expect(catalog.models[0]).toEqual({
+      provider: "openrouter",
+      providerName: "OpenRouter",
+      model: "anthropic/claude-sonnet-4",
+      supportsReasoning: true,
+    });
+  });
 });
 
 describe("Hermes provider integration constants", () => {
-  it("exposes Hermes as a single opaque model in the normal provider picker", () => {
+  it("keeps Hermes's stable fallback model slug", () => {
     expect(DEFAULT_MODEL_BY_PROVIDER[HERMES_DRIVER_KIND]).toBe(DEFAULT_HERMES_MODEL);
     expect(PROVIDER_DISPLAY_NAMES[HERMES_DRIVER_KIND]).toBe("Hermes");
   });

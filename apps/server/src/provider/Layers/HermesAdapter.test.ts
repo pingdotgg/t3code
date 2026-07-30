@@ -34,6 +34,7 @@ import {
   type HermesGatewayBrokerShape,
   type HermesGatewayEnvelope,
 } from "../Services/HermesGatewayBroker.ts";
+import { encodeHermesModelSlug } from "../hermesModels.ts";
 import {
   makeHermesAdapter,
   sanitizeHermesItemData,
@@ -1472,7 +1473,13 @@ it.effect("reads a skill body and passes a null body through unchanged", () =>
  * A broker fake that answers session.ensure and turn.start/steer, recording
  * everything sent — the minimum surface `sendTurn` touches.
  */
-const makeTurnBroker = () => {
+const makeTurnBroker = (
+  options: {
+    readonly acknowledgeSelection?: boolean;
+    readonly acknowledgeReasoning?: boolean;
+    readonly failSend?: boolean;
+  } = {},
+) => {
   const sent: Array<HermesGatewayT3ToPluginMessage> = [];
   const broker: HermesGatewayBrokerShape = {
     createEnrollment: () => Effect.die(new Error("unused")),
@@ -1504,17 +1511,226 @@ const makeTurnBroker = () => {
           threadId: message.threadId,
           sessionId: message.sessionId,
           turnId: message.turnId,
+          ...(message.type === "turn.start" &&
+          options.acknowledgeSelection &&
+          message.modelSelection?.mode === "specific"
+            ? {
+                appliedModelSelection: {
+                  provider: message.modelSelection.provider,
+                  model: message.modelSelection.model,
+                },
+                ...(message.reasoningEffort !== undefined && options.acknowledgeReasoning !== false
+                  ? { appliedReasoningEffort: message.reasoningEffort }
+                  : {}),
+              }
+            : {}),
         });
       }
       return Effect.die(new Error(`unexpected request ${message.type}`));
     },
-    send: (_instanceId, message) => Effect.sync(() => sent.push(message)).pipe(Effect.asVoid),
+    send: (_instanceId, message) =>
+      Effect.sync(() => sent.push(message)).pipe(
+        Effect.flatMap(() =>
+          options.failSend
+            ? Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: ProviderDriverKind.make("hermes"),
+                  method: message.type,
+                  detail: "synthetic send failure",
+                }),
+              )
+            : Effect.void,
+        ),
+      ),
     isConnected: () => Effect.succeed(true),
     stream: Stream.empty,
     streamStatuses: Stream.empty,
   };
   return { sent, broker } as const;
 };
+
+it.effect("applies model and reasoning selections only at a fresh turn boundary", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("hermes_model_selection");
+    const threadId = ThreadId.make("thread-model-selection");
+    const selectedModel = encodeHermesModelSlug({
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+    const { sent, broker } = makeTurnBroker({ acknowledgeSelection: true });
+    const adapter = yield* makeHermesAdapter({ instanceId }).pipe(
+      Effect.provideService(HermesGatewayBroker, broker),
+    );
+
+    yield* adapter.startSession({
+      threadId,
+      providerInstanceId: instanceId,
+      runtimeMode: "full-access",
+    });
+    const started = yield* adapter.sendTurn({
+      threadId,
+      input: "use the selected model",
+      modelSelection: {
+        instanceId,
+        model: selectedModel,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
+    });
+
+    const turnStart = sent.find((message) => message.type === "turn.start");
+    if (!turnStart || turnStart.type !== "turn.start") {
+      return yield* Effect.die(new Error("turn.start was not sent"));
+    }
+    assert.deepEqual(turnStart.modelSelection, {
+      mode: "specific",
+      provider: "openrouter",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+    assert.equal(turnStart.reasoningEffort, "high");
+
+    const sessionAfterStart = (yield* adapter.listSessions())[0];
+    assert.equal(sessionAfterStart?.model, selectedModel);
+    assert.equal(sessionAfterStart?.activeTurnId, started.turnId);
+
+    yield* adapter.sendTurn({
+      threadId,
+      input: "continue without switching mid-turn",
+      modelSelection: {
+        instanceId,
+        model: encodeHermesModelSlug({ provider: "openai", model: "gpt-5" }),
+        options: [{ id: "reasoningEffort", value: "ultra" }],
+      },
+    });
+
+    const turnSteer = sent.find((message) => message.type === "turn.steer");
+    if (!turnSteer || turnSteer.type !== "turn.steer") {
+      return yield* Effect.die(new Error("turn.steer was not sent"));
+    }
+    assert.isFalse("modelSelection" in turnSteer);
+    assert.isFalse("reasoningEffort" in turnSteer);
+
+    const sessionAfterSteer = (yield* adapter.listSessions())[0];
+    assert.equal(sessionAfterSteer?.model, selectedModel);
+    assert.equal(sessionAfterSteer?.activeTurnId, started.turnId);
+  }).pipe(Effect.scoped, Effect.provide(testEnvLayer)),
+);
+
+it.effect("interrupts a started turn when Hermes does not acknowledge its model", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("hermes_model_mismatch");
+    const threadId = ThreadId.make("thread-model-mismatch");
+    const selectedModel = encodeHermesModelSlug({ provider: "openai", model: "gpt-5" });
+    // The interrupt transport failure is intentional: the acknowledgement
+    // error remains authoritative even when best-effort compensation fails.
+    const { sent, broker } = makeTurnBroker({ failSend: true });
+    const adapter = yield* makeHermesAdapter({ instanceId }).pipe(
+      Effect.provideService(HermesGatewayBroker, broker),
+    );
+
+    const sessionBefore = yield* adapter.startSession({
+      threadId,
+      providerInstanceId: instanceId,
+      runtimeMode: "full-access",
+    });
+    const sessionSnapshot = { ...sessionBefore };
+    const error = yield* Effect.flip(
+      adapter.sendTurn({
+        threadId,
+        input: "use the selected model",
+        modelSelection: {
+          instanceId,
+          model: selectedModel,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      }),
+    );
+
+    assert.equal(error._tag, "ProviderAdapterRequestError");
+    if (error._tag === "ProviderAdapterRequestError") {
+      assert.equal(error.detail, "Hermes did not confirm the requested model selection.");
+    }
+    const turnStart = sent.find((message) => message.type === "turn.start");
+    const interrupts = sent.filter((message) => message.type === "turn.interrupt");
+    assert.lengthOf(interrupts, 1);
+    if (
+      !turnStart ||
+      turnStart.type !== "turn.start" ||
+      !interrupts[0] ||
+      interrupts[0].type !== "turn.interrupt"
+    ) {
+      return yield* Effect.die(new Error("missing turn.start or compensating turn.interrupt"));
+    }
+    assert.equal(interrupts[0].threadId, turnStart.threadId);
+    assert.equal(interrupts[0].sessionId, turnStart.sessionId);
+    assert.equal(interrupts[0].turnId, turnStart.turnId);
+    assert.notEqual(interrupts[0].requestId, turnStart.requestId);
+
+    const sessionAfter = (yield* adapter.listSessions())[0];
+    assert.deepEqual(sessionAfter, sessionSnapshot);
+
+    // A retry without a selection also proves the rejected selection was not
+    // written into the adapter's private session context.
+    yield* adapter.sendTurn({ threadId, input: "retry with the session default" });
+    const turnStarts = sent.filter((message) => message.type === "turn.start");
+    assert.lengthOf(turnStarts, 2);
+    assert.isFalse("modelSelection" in turnStarts[1]!);
+  }).pipe(Effect.scoped, Effect.provide(testEnvLayer)),
+);
+
+it.effect("interrupts only once when Hermes does not acknowledge reasoning", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("hermes_reasoning_mismatch");
+    const threadId = ThreadId.make("thread-reasoning-mismatch");
+    const selectedModel = encodeHermesModelSlug({ provider: "openai", model: "gpt-5" });
+    const { sent, broker } = makeTurnBroker({
+      acknowledgeSelection: true,
+      acknowledgeReasoning: false,
+    });
+    const adapter = yield* makeHermesAdapter({ instanceId }).pipe(
+      Effect.provideService(HermesGatewayBroker, broker),
+    );
+
+    const sessionBefore = yield* adapter.startSession({
+      threadId,
+      providerInstanceId: instanceId,
+      runtimeMode: "full-access",
+    });
+    const sessionSnapshot = { ...sessionBefore };
+    const error = yield* Effect.flip(
+      adapter.sendTurn({
+        threadId,
+        input: "use high reasoning",
+        modelSelection: {
+          instanceId,
+          model: selectedModel,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      }),
+    );
+
+    assert.equal(error._tag, "ProviderAdapterRequestError");
+    if (error._tag === "ProviderAdapterRequestError") {
+      assert.equal(error.detail, "Hermes did not confirm the requested reasoning effort.");
+    }
+    const turnStart = sent.find((message) => message.type === "turn.start");
+    const interrupts = sent.filter((message) => message.type === "turn.interrupt");
+    assert.lengthOf(interrupts, 1);
+    if (
+      !turnStart ||
+      turnStart.type !== "turn.start" ||
+      !interrupts[0] ||
+      interrupts[0].type !== "turn.interrupt"
+    ) {
+      return yield* Effect.die(new Error("missing turn.start or compensating turn.interrupt"));
+    }
+    assert.equal(interrupts[0].threadId, turnStart.threadId);
+    assert.equal(interrupts[0].sessionId, turnStart.sessionId);
+    assert.equal(interrupts[0].turnId, turnStart.turnId);
+
+    const sessionAfter = (yield* adapter.listSessions())[0];
+    assert.deepEqual(sessionAfter, sessionSnapshot);
+  }).pipe(Effect.scoped, Effect.provide(testEnvLayer)),
+);
 
 /** Write attachment bytes where the adapter will look for them. */
 const writeAttachmentFixture = (attachment: ChatAttachment, bytes: Uint8Array) =>

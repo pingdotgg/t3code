@@ -9,9 +9,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-PROTOCOL_VERSION = 4
-PLUGIN_VERSION = "0.4.0"
+PROTOCOL_VERSION = 5
+PLUGIN_VERSION = "0.5.0"
 WEBSOCKET_PATH = "/api/hermes-gateway/ws"
+
+REASONING_EFFORTS = (
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+)
 
 # What a connecting socket intends to be. `gateway` is the instance's one live
 # plugin connection; `delivery` is a short-lived socket (an out-of-process cron
@@ -26,7 +37,7 @@ CAPABILITIES = {
     "activity": True,
     "approvals": True,
     "userInput": True,
-    # Part of the v4 contract itself, not a negotiated option: the T3 schema
+    # Part of the v4+ contract itself, not a negotiated option: the T3 schema
     # pins `attachments` to the literal `true`, so a plugin that cannot handle
     # them is a v3 plugin and is rejected at the version gate.
     "attachments": True,
@@ -43,6 +54,7 @@ SERVER_COMMANDS = frozenset(
         "session.stop",
         "ping",
         "describe.request",
+        "models.list.request",
         "skill.body.request",
         "home.deliver.ack",
         "media.deliver.ack",
@@ -111,14 +123,14 @@ def frame(frame_type: str, **payload: Any) -> dict[str, Any]:
     }
 
 
-def configured_model() -> str | None:
-    """Return Hermes' configured default model, or None when unavailable.
+def configured_model_selection() -> dict[str, str] | None:
+    """Return Hermes' configured default provider/model pair when available.
 
     Reads `hermes_cli.config.load_config_readonly()`, the documented read-only
     accessor. That function returns the *shared, process-wide cached* config
-    dict, so nothing here mutates it or hands a nested structure to a caller
-    that might: only a trimmed string copy of `model.default` leaves this
-    function.
+    dict, so nothing here mutates it or hands a nested structure to a caller.
+    Older scalar `model:` configs are supported and an omitted provider uses
+    Hermes' own gateway default, `openrouter`.
 
     Every failure mode — no Hermes on the path, an older Hermes without the
     accessor, a config with no model section — degrades to None so the field is
@@ -127,13 +139,28 @@ def configured_model() -> str | None:
     try:
         from hermes_cli.config import load_config_readonly
 
-        model = load_config_readonly().get("model", {}).get("default")
+        raw_model = load_config_readonly().get("model", {})
     except Exception:  # noqa: BLE001 - model reporting must never break the handshake
         return None
-    if not isinstance(model, str):
+    if isinstance(raw_model, dict):
+        model = raw_model.get("default", raw_model.get("name"))
+        provider = raw_model.get("provider") or "openrouter"
+    else:
+        model = raw_model
+        provider = "openrouter"
+    if not isinstance(model, str) or not isinstance(provider, str):
         return None
-    trimmed = model.strip()
-    return trimmed or None
+    trimmed_model = model.strip()
+    trimmed_provider = provider.strip() or "openrouter"
+    if not trimmed_model:
+        return None
+    return {"provider": trimmed_provider, "model": trimmed_model}
+
+
+def configured_model() -> str | None:
+    """Return Hermes' configured default model, or None when unavailable."""
+    selection = configured_model_selection()
+    return selection["model"] if selection else None
 
 
 def configured_reasoning_effort() -> str | None:
@@ -160,6 +187,128 @@ def configured_reasoning_effort() -> str | None:
         return None
     trimmed = effort.strip()
     return trimmed or None
+
+
+def models_catalog() -> dict[str, Any]:
+    """Build the explicit, authenticated provider/model catalog for T3.
+
+    This intentionally performs the potentially-blocking Hermes inventory
+    work synchronously. The adapter calls it through ``asyncio.to_thread`` and
+    only in response to ``models.list.request``; connecting and describing a
+    gateway therefore never trigger model discovery or network-backed cache
+    refreshes.
+
+    Any inventory failure degrades to an empty list plus the read-only current
+    config when available. A broken picker must not take the gateway offline.
+    """
+    configured = configured_model_selection()
+    current_provider = configured["provider"] if configured else None
+    current_model = configured["model"] if configured else None
+    models: list[dict[str, Any]] = []
+
+    try:
+        from hermes_cli.inventory import build_models_payload, load_picker_context
+
+        context = load_picker_context()
+        payload = build_models_payload(
+            context,
+            explicit_only=True,
+            include_unconfigured=False,
+            picker_hints=False,
+            canonical_order=True,
+            pricing=False,
+            capabilities=True,
+            refresh=False,
+            probe_custom_providers=False,
+            probe_current_custom_provider=False,
+            max_models=100,
+        )
+        if isinstance(payload, dict):
+            payload_provider = payload.get("provider")
+            payload_model = payload.get("model")
+            if isinstance(payload_provider, str) and payload_provider.strip():
+                current_provider = payload_provider.strip()
+            if isinstance(payload_model, str) and payload_model.strip():
+                current_model = payload_model.strip()
+
+            seen: set[tuple[str, str]] = set()
+            rows = payload.get("providers")
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    provider = str(row.get("slug") or "").strip()
+                    if not provider:
+                        continue
+                    provider_name = str(row.get("name") or provider).strip()
+                    capabilities = row.get("capabilities")
+                    if not isinstance(capabilities, dict):
+                        capabilities = {}
+                    row_models = row.get("models")
+                    if not isinstance(row_models, list):
+                        continue
+                    for raw_model in row_models:
+                        if not isinstance(raw_model, str) or not raw_model.strip():
+                            continue
+                        model = raw_model.strip()
+                        key = (provider, model)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        model_capabilities = capabilities.get(raw_model)
+                        if not isinstance(model_capabilities, dict):
+                            model_capabilities = capabilities.get(model)
+                        supports_reasoning = True
+                        if isinstance(model_capabilities, dict):
+                            value = model_capabilities.get("reasoning")
+                            if isinstance(value, bool):
+                                supports_reasoning = value
+                        models.append(
+                            {
+                                "provider": provider,
+                                "providerName": provider_name or provider,
+                                "model": model,
+                                "supportsReasoning": supports_reasoning,
+                            }
+                        )
+    except Exception:  # noqa: BLE001 - catalog discovery is best-effort
+        models = []
+
+    reasoning_effort = configured_reasoning_effort()
+    if reasoning_effort:
+        reasoning_effort = reasoning_effort.strip().lower()
+        if reasoning_effort in {"false", "disabled", "off", "no"}:
+            reasoning_effort = "none"
+        elif reasoning_effort not in REASONING_EFFORTS:
+            reasoning_effort = None
+
+    return {
+        "models": models,
+        "currentProvider": current_provider,
+        "currentModel": current_model,
+        "currentReasoningEffort": reasoning_effort,
+    }
+
+
+def models_list_response(
+    *,
+    request_id_value: str,
+    catalog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the correlated response to ``models.list.request``."""
+    resolved = models_catalog() if catalog is None else catalog
+    payload: dict[str, Any] = {
+        "type": "models.list.response",
+        "protocolVersion": PROTOCOL_VERSION,
+        "requestId": request_id_value,
+        "reasoningEfforts": list(REASONING_EFFORTS),
+        "models": [dict(model) for model in resolved.get("models", [])],
+    }
+    for key in ("currentProvider", "currentModel", "currentReasoningEffort"):
+        value = resolved.get(key)
+        if isinstance(value, str) and value.strip():
+            payload[key] = value.strip()
+    return payload
 
 
 def installed_skills() -> list[dict[str, Any]]:

@@ -41,6 +41,8 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
+  resolveComposerModelPickerContinuationGroupKey,
+  shouldRenderStaticComposerModelLabel,
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
@@ -884,21 +886,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerInstanceEntries[0]?.driverKind ??
     ProviderDriverKind.make("unconfigured");
   const requestedDriverKind: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
-  const lockedContinuationGroupKey = useMemo((): string | null => {
-    if (!lockedProvider || !activeThread) return null;
-    const lockedInstanceId =
-      activeThread.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId;
-    if (!lockedInstanceId) return null;
-    return (
-      providerInstanceEntries.find((entry) => entry.instanceId === lockedInstanceId)
-        ?.continuationGroupKey ?? null
-    );
-  }, [
-    activeThread,
-    activeThreadModelSelection?.instanceId,
-    lockedProvider,
-    providerInstanceEntries,
-  ]);
+  const isHomeThread = isHomeThreadId(providerStatuses, activeThread?.id);
+  const lockedContinuationGroupKey = useMemo(
+    () =>
+      resolveComposerModelPickerContinuationGroupKey({
+        isProviderLocked: lockedProvider !== null,
+        isHomeThread,
+        projectAgentInstanceId: activeProjectAgentInstanceId,
+        threadInstanceId: activeThread?.session?.providerInstanceId,
+        threadModelInstanceId: activeThreadModelSelection?.instanceId,
+        instanceEntries: providerInstanceEntries,
+      }),
+    [
+      activeProjectAgentInstanceId,
+      activeThread?.session?.providerInstanceId,
+      activeThreadModelSelection?.instanceId,
+      isHomeThread,
+      lockedProvider,
+      providerInstanceEntries,
+    ],
+  );
 
   // Resolve which configured instance the composer is currently targeting.
   // Priority:
@@ -976,13 +983,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // keeps the image-only intake it has always had.
   const allowsFileAttachments = selectedProvider === "hermes";
 
-  // A Home thread is permanently bound to one instance and one model slug —
-  // `thread.create` fixes both, and Hermes sets
-  // `requiresNewThreadForModelChange`. A picker there would offer a choice
-  // that cannot be taken, so the chip renders as a static label instead.
-  // The same is true for every thread in an agent's synthetic project: the
-  // project itself is the binding, so drafts there are equally choiceless.
-  const isHomeThread = isHomeThreadId(providerStatuses, activeThread?.id);
+  // Home threads and agent projects stay bound to one Hermes instance. The
+  // model chip remains a static label while that instance has no choice to
+  // offer; a dynamic catalog can open the picker without relaxing the
+  // instance binding.
   const isAgentBoundComposer = activeProjectAgentInstanceId !== null;
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
@@ -1077,6 +1081,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     return out;
   }, [providerInstanceEntries, settings]);
+  const isBoundComposerModelPickerStatic = shouldRenderStaticComposerModelLabel({
+    isBoundComposer: isHomeThread || isAgentBoundComposer,
+    modelOptionCount: modelOptionsByInstance.get(selectedInstanceId)?.length ?? 0,
+  });
+  const modelPickerLockedProvider =
+    lockedProvider ?? (isHomeThread || isAgentBoundComposer ? selectedProvider : null);
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -3343,8 +3353,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact={isComposerFooterCompact}
                     activeInstanceId={selectedInstanceId}
                     model={selectedModelForPickerWithCustomFallback}
-                    staticLabel={isHomeThread || isAgentBoundComposer}
-                    lockedProvider={lockedProvider}
+                    staticLabel={isBoundComposerModelPickerStatic}
+                    lockedProvider={modelPickerLockedProvider}
                     lockedContinuationGroupKey={lockedContinuationGroupKey}
                     instanceEntries={providerInstanceEntries}
                     keybindings={keybindings}

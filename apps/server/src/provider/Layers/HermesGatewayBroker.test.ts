@@ -605,7 +605,9 @@ it.effect("shares one live broker between the gateway route and Hermes provider 
       })
       .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Effect.yieldNow;
-    const ensure = sent.at(-1);
+    const ensure = sent.findLast(
+      (message) => message.type === "session.ensure" && message.threadId === threadId,
+    );
     if (!ensure || ensure.type !== "session.ensure") {
       return yield* Effect.die(new Error("session.ensure did not reach the gateway transport"));
     }
@@ -624,7 +626,9 @@ it.effect("shares one live broker between the gateway route and Hermes provider 
       .sendTurn({ threadId, input: "hello through the shared broker" })
       .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Effect.yieldNow;
-    const turnStart = sent.at(-1);
+    const turnStart = sent.findLast(
+      (message) => message.type === "turn.start" && message.threadId === threadId,
+    );
     if (!turnStart || turnStart.type !== "turn.start") {
       return yield* Effect.die(new Error("turn.start did not reach the gateway transport"));
     }

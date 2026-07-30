@@ -6,6 +6,7 @@ import dataclasses
 import enum
 import importlib.util
 import pathlib
+import shlex
 import sys
 import tempfile
 import types
@@ -62,6 +63,28 @@ class Source:
     platform: Platform
     chat_id: str
     message_id: str
+
+
+class FakeGatewayRunner:
+    def __init__(self):
+        self._session_model_overrides = {}
+        self._session_reasoning_overrides = {}
+        self.default_model = "default-model"
+        self.default_provider = "openrouter"
+        self.reasoning_models = []
+
+    def _session_key_for_source(self, source):
+        return build_session_key(source)
+
+    def _resolve_session_agent_runtime(self, *, session_key):
+        override = self._session_model_overrides.get(session_key, {})
+        return override.get("model", self.default_model), {
+            "provider": override.get("provider", self.default_provider)
+        }
+
+    def _resolve_session_reasoning_config(self, *, session_key, model=""):
+        self.reasoning_models.append(model)
+        return self._session_reasoning_overrides.get(session_key)
 
 
 class BasePlatformAdapter:
@@ -223,7 +246,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": f"ensure-{thread_id}",
                 "threadId": thread_id,
             }
@@ -232,7 +255,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": f"start-{thread_id}",
                 "threadId": thread_id,
                 "sessionId": session_id,
@@ -242,11 +265,57 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         return session_id
 
+    async def _ensure_thread(self, thread_id: str) -> str:
+        await self.adapter._handle_server_frame(
+            {
+                "type": "session.ensure",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": f"ensure-{thread_id}",
+                "threadId": thread_id,
+            }
+        )
+        return self.adapter._sessions[thread_id]
+
+    def _install_configuration_handler(self, *, apply_model=True):
+        runner = FakeGatewayRunner()
+        commands = []
+        observations = []
+
+        async def handler(event):
+            commands.append(event.text)
+            observations.append(
+                {
+                    "active": event.source.chat_id in self.adapter._active_turns,
+                    "frames": [message["type"] for message in self.connection.messages],
+                }
+            )
+            tokens = shlex.split(event.text)
+            session_id = runner._session_key_for_source(event.source)
+            if tokens[0] == "/model" and apply_model:
+                runner._session_model_overrides[session_id] = {
+                    "model": tokens[1],
+                    "provider": tokens[tokens.index("--provider") + 1],
+                }
+            elif tokens[0] == "/reasoning":
+                effort = tokens[1]
+                runner._session_reasoning_overrides[session_id] = (
+                    {"enabled": False}
+                    if effort == "none"
+                    else {"enabled": True, "effort": effort}
+                )
+            elif tokens[0] == "/steer":
+                return "⏩ Steer queued for the active session"
+            return "control acknowledgement that must stay hidden"
+
+        self.adapter.gateway_runner = runner
+        self.adapter._message_handler = handler
+        return runner, commands, observations
+
     async def test_thread_ensure_start_stream_and_complete(self):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "ensure-1",
                 "threadId": "thread-1",
             }
@@ -259,7 +328,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-1",
                 "threadId": "thread-1",
                 "sessionId": ready["sessionId"],
@@ -287,6 +356,854 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             if message["type"] == "content.delta"
         ]
         self.assertEqual(deltas, ["Hello", " world"])
+
+    async def test_turn_configuration_is_applied_before_start_and_ack_is_hidden(self):
+        session_id = await self._ensure_thread("thread-configured")
+        runner, commands, observations = self._install_configuration_handler()
+        cached_agent = types.SimpleNamespace(model="prior-model")
+        cached_entry = (cached_agent, "prior-signature")
+        runner._agent_cache = {session_id: cached_entry}
+        runner._agent_cache_lock = None
+        evicted = []
+
+        def evict_cached_agent(key):
+            evicted.append(runner._agent_cache.pop(key, None))
+
+        runner._evict_cached_agent = evict_cached_agent
+        frames_before = len(self.connection.messages)
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-configured",
+                "threadId": "thread-configured",
+                "sessionId": session_id,
+                "turnId": "turn-configured",
+                "text": "Run the tests",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "high",
+            }
+        )
+
+        self.assertEqual(
+            commands,
+            [
+                "/model gpt-5.4 --provider openai-codex --session",
+                "/reasoning high",
+            ],
+        )
+        self.assertTrue(all(not seen["active"] for seen in observations))
+        self.assertTrue(
+            all("turn.started" not in seen["frames"] for seen in observations)
+        )
+        started = self.connection.messages[frames_before]
+        self.assertEqual(started["type"], "turn.started")
+        self.assertEqual(
+            started["appliedModelSelection"],
+            {"provider": "openai-codex", "model": "gpt-5.4"},
+        )
+        self.assertEqual(started["appliedReasoningEffort"], "high")
+        self.assertEqual(
+            runner._session_model_overrides[session_id]["model"], "gpt-5.4"
+        )
+        self.assertEqual(evicted, [cached_entry])
+        self.assertNotIn(session_id, runner._agent_cache)
+        self.assertEqual(cached_agent.model, "prior-model")
+        # Direct control dispatch never entered BasePlatformAdapter, so its
+        # textual acknowledgements could not become T3 transcript messages.
+        self.assertEqual(
+            [event.text for event in self.adapter.messages], ["Run the tests"]
+        )
+
+    async def test_invalid_reasoning_is_rejected_before_model_mutation(self):
+        session_id = await self._ensure_thread("thread-invalid-config")
+        runner, commands, _ = self._install_configuration_handler()
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-invalid-config",
+                "threadId": "thread-invalid-config",
+                "sessionId": session_id,
+                "turnId": "turn-invalid-config",
+                "text": "Do not run",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "impossible",
+            }
+        )
+
+        self.assertEqual(commands, [])
+        self.assertEqual(runner._session_model_overrides, {})
+        self.assertEqual(self.connection.messages[-1]["type"], "protocol.error")
+        self.assertEqual(
+            self.connection.messages[-1]["requestId"], "start-invalid-config"
+        )
+        self.assertNotIn("thread-invalid-config", self.adapter._active_turns)
+
+    async def test_default_model_mode_uses_an_explicit_session_switch(self):
+        session_id = await self._ensure_thread("thread-default-model")
+        runner, commands, _ = self._install_configuration_handler()
+        with unittest.mock.patch.object(
+            adapter_module,
+            "configured_model_selection",
+            return_value={
+                "provider": "custom provider",
+                "model": "model with spaces",
+            },
+        ):
+            await self.adapter._handle_server_frame(
+                {
+                    "type": "turn.start",
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                    "requestId": "start-default-model",
+                    "threadId": "thread-default-model",
+                    "sessionId": session_id,
+                    "turnId": "turn-default-model",
+                    "text": "Run",
+                    "modelSelection": {"mode": "default"},
+                }
+            )
+
+        self.assertEqual(
+            commands,
+            [
+                "/model 'model with spaces' --provider 'custom provider' --session"
+            ],
+        )
+        started = next(
+            frame
+            for frame in reversed(self.connection.messages)
+            if frame["type"] == "turn.started"
+        )
+        self.assertEqual(
+            started["appliedModelSelection"],
+            {"provider": "custom provider", "model": "model with spaces"},
+        )
+        self.assertEqual(runner._session_reasoning_overrides, {})
+
+    async def test_reasoning_only_turn_uses_the_current_effective_model(self):
+        session_id = await self._ensure_thread("thread-reasoning-only")
+        runner, commands, _ = self._install_configuration_handler()
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-reasoning-only",
+                "threadId": "thread-reasoning-only",
+                "sessionId": session_id,
+                "turnId": "turn-reasoning-only",
+                "text": "Run",
+                "reasoningEffort": "ultra",
+            }
+        )
+
+        self.assertEqual(commands, ["/reasoning ultra"])
+        started = next(
+            frame
+            for frame in reversed(self.connection.messages)
+            if frame["type"] == "turn.started"
+        )
+        self.assertNotIn("appliedModelSelection", started)
+        self.assertEqual(started["appliedReasoningEffort"], "ultra")
+        self.assertEqual(
+            runner._session_reasoning_overrides[session_id],
+            {"enabled": True, "effort": "ultra"},
+        )
+        self.assertEqual(runner.reasoning_models, [runner.default_model])
+
+    async def test_failed_model_switch_does_not_apply_reasoning_or_start(self):
+        session_id = await self._ensure_thread("thread-model-failure")
+        runner, commands, _ = self._install_configuration_handler(
+            apply_model=False
+        )
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-model-failure",
+                "threadId": "thread-model-failure",
+                "sessionId": session_id,
+                "turnId": "turn-model-failure",
+                "text": "Do not run",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "high",
+            }
+        )
+
+        self.assertEqual(
+            commands, ["/model gpt-5.4 --provider openai-codex --session"]
+        )
+        self.assertEqual(runner._session_reasoning_overrides, {})
+        self.assertEqual(self.connection.messages[-1]["type"], "protocol.error")
+        self.assertNotIn("thread-model-failure", self.adapter._active_turns)
+        self.assertNotIn(
+            "thread-model-failure", self.adapter._applied_turn_configuration
+        )
+
+    async def test_concurrent_starts_reserve_the_preconfiguration_window(self):
+        thread_id = "thread-concurrent-start"
+        session_id = await self._ensure_thread(thread_id)
+        runner, commands, _ = self._install_configuration_handler()
+        original_handler = self.adapter._message_handler
+        configuration_entered = asyncio.Event()
+        release_configuration = asyncio.Event()
+
+        async def blocking_handler(event):
+            configuration_entered.set()
+            await release_configuration.wait()
+            return await original_handler(event)
+
+        self.adapter._message_handler = blocking_handler
+
+        def start_message(request_id, turn_id, model):
+            return {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": request_id,
+                "threadId": thread_id,
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "text": f"Run {turn_id}",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": model,
+                },
+            }
+
+        first = asyncio.create_task(
+            self.adapter._handle_server_frame(
+                start_message("start-concurrent-1", "turn-concurrent-1", "gpt-5.4")
+            )
+        )
+        await asyncio.wait_for(configuration_entered.wait(), timeout=1)
+
+        await self.adapter._handle_server_frame(
+            start_message("start-concurrent-2", "turn-concurrent-2", "gpt-5.5")
+        )
+
+        second_error = next(
+            message
+            for message in self.connection.messages
+            if message.get("requestId") == "start-concurrent-2"
+        )
+        self.assertEqual(second_error["type"], "protocol.error")
+        self.assertEqual(second_error["code"], "invalid-message")
+        self.assertEqual(commands, [])
+
+        release_configuration.set()
+        await first
+
+        self.assertEqual(
+            commands, ["/model gpt-5.4 --provider openai-codex --session"]
+        )
+        self.assertEqual(
+            runner._session_model_overrides[session_id]["model"], "gpt-5.4"
+        )
+        self.assertEqual(
+            [event.text for event in self.adapter.messages], ["Run turn-concurrent-1"]
+        )
+        self.assertEqual(
+            self.adapter._active_turns[thread_id].turn_id, "turn-concurrent-1"
+        )
+        self.assertNotIn(thread_id, self.adapter._turn_start_reservations)
+
+    async def test_stop_racing_configuration_fences_and_rolls_back_the_start(self):
+        thread_id = "thread-stop-start"
+        session_id = await self._ensure_thread(thread_id)
+        runner = FakeGatewayRunner()
+        configuration_mutated = asyncio.Event()
+        release_configuration = asyncio.Event()
+
+        async def handler(event):
+            tokens = shlex.split(event.text)
+            command_session_id = runner._session_key_for_source(event.source)
+            runner._session_model_overrides[command_session_id] = {
+                "model": tokens[1],
+                "provider": tokens[tokens.index("--provider") + 1],
+            }
+            configuration_mutated.set()
+            await release_configuration.wait()
+            return "hidden"
+
+        self.adapter.gateway_runner = runner
+        self.adapter._message_handler = handler
+        start = asyncio.create_task(
+            self.adapter._handle_server_frame(
+                {
+                    "type": "turn.start",
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                    "requestId": "start-stop-race",
+                    "threadId": thread_id,
+                    "sessionId": session_id,
+                    "turnId": "turn-stop-race",
+                    "text": "Must not run",
+                    "modelSelection": {
+                        "mode": "specific",
+                        "provider": "openai-codex",
+                        "model": "gpt-5.4",
+                    },
+                }
+            )
+        )
+        await asyncio.wait_for(configuration_mutated.wait(), timeout=1)
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "session.stop",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "stop-start-race",
+                "threadId": thread_id,
+                "sessionId": session_id,
+            }
+        )
+        self.assertTrue(
+            self.adapter._turn_start_reservations[thread_id].cancelled
+        )
+        # A fast re-ensure must not revive the already-stopped start.
+        self.assertEqual(await self._ensure_thread(thread_id), session_id)
+
+        release_configuration.set()
+        await start
+
+        self.assertEqual(runner._session_model_overrides, {})
+        self.assertNotIn(thread_id, self.adapter._applied_turn_configuration)
+        self.assertNotIn(thread_id, self.adapter._active_turns)
+        self.assertNotIn(thread_id, self.adapter._turn_start_reservations)
+        self.assertEqual(self.adapter.messages, [])
+        self.assertFalse(
+            any(
+                message["type"] == "turn.started"
+                and message.get("requestId") == "start-stop-race"
+                for message in self.connection.messages
+            )
+        )
+        start_error = next(
+            message
+            for message in self.connection.messages
+            if message.get("requestId") == "start-stop-race"
+        )
+        self.assertEqual(start_error["type"], "protocol.error")
+        self.assertIn("stopped", start_error["message"])
+
+    async def test_profile_aware_session_key_is_used_for_config_and_verification(self):
+        thread_id = "thread-multiplex"
+        profile_session_id = f"agent:work:t3:dm:{thread_id}"
+        runner, commands, _ = self._install_configuration_handler()
+        runner._session_key_for_source = lambda source: (
+            f"agent:work:t3:dm:{source.chat_id}"
+        )
+
+        session_id = await self._ensure_thread(thread_id)
+        self.assertEqual(session_id, profile_session_id)
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-multiplex",
+                "threadId": thread_id,
+                "sessionId": session_id,
+                "turnId": "turn-multiplex",
+                "text": "Run",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "xhigh",
+            }
+        )
+
+        self.assertEqual(
+            commands,
+            [
+                "/model gpt-5.4 --provider openai-codex --session",
+                "/reasoning xhigh",
+            ],
+        )
+        self.assertEqual(
+            set(runner._session_model_overrides), {profile_session_id}
+        )
+        self.assertEqual(
+            set(runner._session_reasoning_overrides), {profile_session_id}
+        )
+        started = next(
+            message
+            for message in self.connection.messages
+            if message.get("requestId") == "start-multiplex"
+        )
+        self.assertEqual(started["type"], "turn.started")
+        self.assertEqual(started["appliedReasoningEffort"], "xhigh")
+
+    async def test_reasoning_failure_restores_model_reasoning_and_cache(self):
+        thread_id = "thread-atomic-config"
+        session_id = await self._ensure_thread(thread_id)
+        runner = FakeGatewayRunner()
+        prior_model = {"provider": "old-provider", "model": "old-model"}
+        prior_reasoning = {"enabled": True, "effort": "low"}
+        prior_cache = {
+            "modelRequest": ("specific", "old-provider", "old-model"),
+            "modelEffective": dict(prior_model),
+            "reasoningRequest": "low",
+            "reasoningEffective": "low",
+        }
+        runner._session_model_overrides[session_id] = dict(prior_model)
+        runner._session_reasoning_overrides[session_id] = dict(prior_reasoning)
+        runner._pending_model_notes = {session_id: "prior model note"}
+        runner._pending_one_turn_model_restores = {
+            session_id: {"had_override": True, "override": dict(prior_model)}
+        }
+        runner._reasoning_config = dict(prior_reasoning)
+        runner._session_ephemeral_pin = {session_id: "prior prompt pin"}
+        runner._session_vc_last = {session_id: "prior voice channel"}
+        cached_agent = types.SimpleNamespace(model="old-model")
+        cached_entry = (cached_agent, "prior-cache-signature")
+        runner._agent_cache = {session_id: cached_entry}
+        runner._agent_cache_lock = None
+
+        session_entry = types.SimpleNamespace(
+            session_id="durable-session-id",
+            was_auto_reset=True,
+        )
+
+        class FakeAsyncSessionStore:
+            def __init__(self):
+                self.model_overrides = {session_id: dict(prior_model)}
+
+            async def get_or_create_session(self, source):
+                del source
+                return session_entry
+
+            async def get_model_override(self, key):
+                value = self.model_overrides.get(key)
+                return dict(value) if value is not None else None
+
+            async def set_model_override(self, key, value):
+                if value is None:
+                    self.model_overrides.pop(key, None)
+                else:
+                    self.model_overrides[key] = dict(value)
+
+        prior_db_row = {
+            "model": "old-model",
+            "model_config": '{"browser_model_lock":"old-model"}',
+            "system_prompt": "prior system prompt",
+        }
+
+        class FakeSessionDB:
+            def __init__(self):
+                self.rows = {session_entry.session_id: dict(prior_db_row)}
+
+            async def get_session(self, key):
+                row = self.rows.get(key)
+                return dict(row) if row is not None else None
+
+            async def update_session_model(self, key, model):
+                row = self.rows[key]
+                row["model"] = model
+                row["model_config"] = None
+                row["system_prompt"] = None
+
+            async def update_session_meta(self, key, model_config, model=None):
+                row = self.rows[key]
+                row["model_config"] = model_config
+                if model is not None:
+                    row["model"] = model
+
+            async def update_system_prompt(self, key, system_prompt):
+                self.rows[key]["system_prompt"] = system_prompt
+
+        runner.async_session_store = FakeAsyncSessionStore()
+        runner._session_db = FakeSessionDB()
+        self.adapter._applied_turn_configuration[thread_id] = dict(prior_cache)
+        commands = []
+
+        async def handler(event):
+            commands.append(event.text)
+            tokens = shlex.split(event.text)
+            command_session_id = runner._session_key_for_source(event.source)
+            if tokens[0] == "/model":
+                cached = runner._agent_cache.get(command_session_id)
+                if cached is not None:
+                    cached[0].model = tokens[1]
+                durable_entry = await runner.async_session_store.get_or_create_session(
+                    event.source
+                )
+                durable_entry.was_auto_reset = False
+                await runner._session_db.update_session_model(
+                    durable_entry.session_id, tokens[1]
+                )
+                runner._pending_model_notes[command_session_id] = "new model note"
+                runner._session_model_overrides[command_session_id] = {
+                    "model": tokens[1],
+                    "provider": tokens[tokens.index("--provider") + 1],
+                }
+                await runner.async_session_store.set_model_override(
+                    command_session_id,
+                    runner._session_model_overrides[command_session_id],
+                )
+                runner._pending_one_turn_model_restores.pop(
+                    command_session_id, None
+                )
+                runner._session_ephemeral_pin.pop(command_session_id, None)
+                runner._session_vc_last.pop(command_session_id, None)
+                runner._agent_cache.pop(command_session_id, None)
+                return "hidden"
+            runner._reasoning_config = {"enabled": True, "effort": tokens[1]}
+            runner._session_reasoning_overrides[command_session_id] = {
+                "enabled": True,
+                "effort": tokens[1],
+            }
+            raise RuntimeError("reasoning command failed after mutation")
+
+        self.adapter.gateway_runner = runner
+        self.adapter._message_handler = handler
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-atomic-config",
+                "threadId": thread_id,
+                "sessionId": session_id,
+                "turnId": "turn-atomic-config",
+                "text": "Must not run",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "high",
+            }
+        )
+
+        self.assertEqual(
+            commands,
+            [
+                "/model gpt-5.4 --provider openai-codex --session",
+                "/reasoning high",
+            ],
+        )
+        self.assertEqual(
+            runner._session_model_overrides, {session_id: prior_model}
+        )
+        self.assertEqual(
+            runner._session_reasoning_overrides, {session_id: prior_reasoning}
+        )
+        self.assertEqual(
+            runner._pending_model_notes, {session_id: "prior model note"}
+        )
+        self.assertEqual(
+            runner._pending_one_turn_model_restores,
+            {session_id: {"had_override": True, "override": prior_model}},
+        )
+        self.assertEqual(runner._reasoning_config, prior_reasoning)
+        self.assertEqual(
+            runner.async_session_store.model_overrides,
+            {session_id: prior_model},
+        )
+        self.assertTrue(session_entry.was_auto_reset)
+        self.assertEqual(
+            runner._session_db.rows,
+            {session_entry.session_id: prior_db_row},
+        )
+        self.assertIs(runner._agent_cache[session_id], cached_entry)
+        self.assertEqual(cached_agent.model, "old-model")
+        self.assertEqual(
+            runner._session_ephemeral_pin, {session_id: "prior prompt pin"}
+        )
+        self.assertEqual(
+            runner._session_vc_last, {session_id: "prior voice channel"}
+        )
+        self.assertEqual(
+            self.adapter._applied_turn_configuration, {thread_id: prior_cache}
+        )
+        self.assertNotIn(thread_id, self.adapter._active_turns)
+        self.assertEqual(self.adapter.messages, [])
+        error = self.connection.messages[-1]
+        self.assertEqual(error["type"], "protocol.error")
+        self.assertEqual(error["requestId"], "start-atomic-config")
+
+    async def test_cancelled_configuration_restores_prior_state(self):
+        thread_id = "thread-cancelled-config"
+        session_id = await self._ensure_thread(thread_id)
+        runner = FakeGatewayRunner()
+        configuration_mutated = asyncio.Event()
+        session_entry = types.SimpleNamespace(
+            session_id="cancelled-durable-session",
+            was_auto_reset=True,
+        )
+
+        class FakeAsyncSessionStore:
+            def __init__(self):
+                self.model_overrides = {}
+
+            async def get_or_create_session(self, source):
+                del source
+                return session_entry
+
+            async def get_model_override(self, key):
+                return self.model_overrides.get(key)
+
+            async def set_model_override(self, key, value):
+                if value is None:
+                    self.model_overrides.pop(key, None)
+                else:
+                    self.model_overrides[key] = dict(value)
+
+        prior_db_row = {
+            "model": None,
+            "model_config": '{"browser_model_lock":"old-browser-model"}',
+            "system_prompt": "prior nullable-model prompt",
+        }
+
+        class FakeSessionDB:
+            def __init__(self):
+                self.rows = {session_entry.session_id: dict(prior_db_row)}
+
+            async def get_session(self, key):
+                return dict(self.rows[key])
+
+            async def update_session_model(self, key, model):
+                row = self.rows[key]
+                row["model"] = model
+                row["model_config"] = None
+                row["system_prompt"] = None
+
+            async def update_session_meta(self, key, model_config, model=None):
+                row = self.rows[key]
+                row["model_config"] = model_config
+                if model is not None:
+                    row["model"] = model
+
+            async def update_system_prompt(self, key, system_prompt):
+                self.rows[key]["system_prompt"] = system_prompt
+
+        runner.async_session_store = FakeAsyncSessionStore()
+        runner._session_db = FakeSessionDB()
+        cached_agent = types.SimpleNamespace(model="old-model")
+        cached_entry = (cached_agent, "prior-cache-signature")
+        runner._agent_cache = {session_id: cached_entry}
+        runner._agent_cache_lock = None
+
+        async def handler(event):
+            tokens = shlex.split(event.text)
+            command_session_id = runner._session_key_for_source(event.source)
+            cached = runner._agent_cache.get(command_session_id)
+            if cached is not None:
+                cached[0].model = tokens[1]
+            durable_entry = await runner.async_session_store.get_or_create_session(
+                event.source
+            )
+            durable_entry.was_auto_reset = False
+            await runner._session_db.update_session_model(
+                durable_entry.session_id, tokens[1]
+            )
+            runner._session_model_overrides[command_session_id] = {
+                "model": tokens[1],
+                "provider": tokens[tokens.index("--provider") + 1],
+            }
+            if not hasattr(runner, "_pending_model_notes"):
+                runner._pending_model_notes = {}
+            runner._pending_model_notes[command_session_id] = "new model note"
+            await runner.async_session_store.set_model_override(
+                command_session_id,
+                runner._session_model_overrides[command_session_id],
+            )
+            runner._agent_cache.pop(command_session_id, None)
+            configuration_mutated.set()
+            await asyncio.Event().wait()
+
+        self.adapter.gateway_runner = runner
+        self.adapter._message_handler = handler
+        start = asyncio.create_task(
+            self.adapter._handle_server_frame(
+                {
+                    "type": "turn.start",
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                    "requestId": "start-cancelled-config",
+                    "threadId": thread_id,
+                    "sessionId": session_id,
+                    "turnId": "turn-cancelled-config",
+                    "text": "Must not run",
+                    "modelSelection": {
+                        "mode": "specific",
+                        "provider": "openai-codex",
+                        "model": "gpt-5.4",
+                    },
+                }
+            )
+        )
+        await asyncio.wait_for(configuration_mutated.wait(), timeout=1)
+
+        start.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await start
+
+        self.assertEqual(runner._session_model_overrides, {})
+        self.assertEqual(runner._session_reasoning_overrides, {})
+        self.assertFalse(hasattr(runner, "_pending_model_notes"))
+        self.assertEqual(runner.async_session_store.model_overrides, {})
+        self.assertTrue(session_entry.was_auto_reset)
+        self.assertEqual(
+            runner._session_db.rows,
+            {session_entry.session_id: prior_db_row},
+        )
+        self.assertIs(runner._agent_cache[session_id], cached_entry)
+        self.assertEqual(cached_agent.model, "old-model")
+        self.assertNotIn(thread_id, self.adapter._applied_turn_configuration)
+        self.assertNotIn(thread_id, self.adapter._turn_start_reservations)
+        self.assertNotIn(thread_id, self.adapter._active_turns)
+
+    async def test_configuration_cache_is_idempotent_and_isolated_per_thread(self):
+        runner, commands, _ = self._install_configuration_handler()
+
+        async def start(thread_id: str, turn_id: str) -> str:
+            session_id = self.adapter._sessions.get(thread_id)
+            if session_id is None:
+                session_id = await self._ensure_thread(thread_id)
+            await self.adapter._handle_server_frame(
+                {
+                    "type": "turn.start",
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                    "requestId": f"start-{turn_id}",
+                    "threadId": thread_id,
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "text": "Run",
+                    "modelSelection": {
+                        "mode": "specific",
+                        "provider": "openai-codex",
+                        "model": "gpt-5.4",
+                    },
+                    "reasoningEffort": "medium",
+                }
+            )
+            return session_id
+
+        first_session = await start("thread-cache-a", "turn-a1")
+        await self.adapter.send(
+            "thread-cache-a", "done", metadata={"notify": True}
+        )
+        cached_agent = types.SimpleNamespace(model="gpt-5.4")
+        cached_entry = (cached_agent, "verified-cache-signature")
+        runner._agent_cache = {first_session: cached_entry}
+        runner._agent_cache_lock = None
+        evicted = []
+
+        def evict_cached_agent(key):
+            evicted.append(runner._agent_cache.pop(key, None))
+
+        runner._evict_cached_agent = evict_cached_agent
+        await start("thread-cache-a", "turn-a2")
+        # The runner still matches the cached verified state: no repeat
+        # control commands or agent eviction for another turn in the same
+        # session.
+        self.assertEqual(len(commands), 2)
+        self.assertIs(runner._agent_cache[first_session], cached_entry)
+        self.assertEqual(evicted, [])
+        await self.adapter.send(
+            "thread-cache-a", "done again", metadata={"notify": True}
+        )
+
+        second_session = await start("thread-cache-b", "turn-b1")
+        self.assertEqual(len(commands), 4)
+        self.assertNotEqual(first_session, second_session)
+        self.assertEqual(
+            set(runner._session_model_overrides),
+            {first_session, second_session},
+        )
+
+    async def test_busy_turn_rejects_configuration_without_mutating_it(self):
+        session_id = await self._ensure_thread("thread-busy-config")
+        runner, commands, _ = self._install_configuration_handler()
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-busy-first",
+                "threadId": "thread-busy-config",
+                "sessionId": session_id,
+                "turnId": "turn-busy-first",
+                "text": "First",
+            }
+        )
+
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-busy-second",
+                "threadId": "thread-busy-config",
+                "sessionId": session_id,
+                "turnId": "turn-busy-second",
+                "text": "Second",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "high",
+            }
+        )
+
+        self.assertEqual(commands, [])
+        self.assertEqual(runner._session_model_overrides, {})
+        error = self.connection.messages[-1]
+        self.assertEqual(error["type"], "protocol.error")
+        self.assertEqual(error["requestId"], "start-busy-second")
+
+    async def test_steer_ignores_model_and_reasoning_fields(self):
+        session_id = await self._ensure_thread("thread-steer-config")
+        runner, commands, _ = self._install_configuration_handler()
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-steer-config",
+                "threadId": "thread-steer-config",
+                "sessionId": session_id,
+                "turnId": "turn-steer-config",
+                "text": "Start",
+            }
+        )
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.steer",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "steer-config",
+                "threadId": "thread-steer-config",
+                "sessionId": session_id,
+                "turnId": "turn-steer-config",
+                "text": "Focus",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "high",
+            }
+        )
+
+        self.assertEqual(commands, ["/steer Focus"])
+        self.assertEqual(runner._session_model_overrides, {})
+        self.assertEqual(runner._session_reasoning_overrides, {})
 
     async def test_tool_progress_bubble_edits_never_complete_the_turn(self):
         """Regression: the gateway's progress loop must not end a T3 turn.
@@ -839,7 +1756,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "ensure-reconnect",
                 "threadId": "thread-reconnect",
                 "resumeSessionId": session_id,
@@ -855,7 +1772,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "ensure-2",
                 "threadId": "thread-2",
             }
@@ -864,7 +1781,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-2",
                 "threadId": "thread-2",
                 "sessionId": session_id,
@@ -883,7 +1800,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.steer",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "steer-2",
                 "threadId": "thread-2",
                 "sessionId": session_id,
@@ -955,7 +1872,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.steer",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "steer-race",
                 "threadId": "thread-steer-race",
                 "sessionId": session_id,
@@ -1004,7 +1921,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.steer",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "steer-edit",
                 "threadId": "thread-steer-edit",
                 "sessionId": session_id,
@@ -1023,7 +1940,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "ensure-rejected-steer",
                 "threadId": "thread-rejected-steer",
             }
@@ -1032,7 +1949,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-rejected-steer",
                 "threadId": "thread-rejected-steer",
                 "sessionId": session_id,
@@ -1049,7 +1966,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.steer",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "steer-rejected",
                 "threadId": "thread-rejected-steer",
                 "sessionId": session_id,
@@ -1096,7 +2013,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "ensure-failed-steer",
                 "threadId": "thread-failed-steer",
             }
@@ -1105,7 +2022,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-failed-steer",
                 "threadId": "thread-failed-steer",
                 "sessionId": session_id,
@@ -1122,7 +2039,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.steer",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "steer-failed",
                 "threadId": "thread-failed-steer",
                 "sessionId": session_id,
@@ -1210,7 +2127,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "ensure-3",
                 "threadId": "thread-3",
             }
@@ -1220,7 +2137,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.stop",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "stop-3",
                 "threadId": "thread-3",
                 "sessionId": session_id,
@@ -1241,7 +2158,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._handle_server_frame(
                 {
                     "type": "describe.request",
-                    "protocolVersion": 4,
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
                     "requestId": "describe-1",
                 }
             )
@@ -1250,11 +2167,49 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply["type"], "describe.response")
         # Correlation, exactly like ping -> pong.
         self.assertEqual(reply["requestId"], "describe-1")
-        self.assertEqual(reply["protocolVersion"], 4)
+        self.assertEqual(
+            reply["protocolVersion"], protocol_module.PROTOCOL_VERSION
+        )
         self.assertEqual(reply["hermesVersion"], "0.19.0")
         self.assertIsInstance(reply["skills"], list)
         self.assertIn("capabilities", reply)
         self.assertEqual(describe.call_count, 1)
+
+    async def test_models_list_request_builds_catalog_off_the_event_loop(self):
+        catalog = {
+            "currentProvider": "openai-codex",
+            "currentModel": "gpt-5.4",
+            "currentReasoningEffort": "high",
+            "models": [
+                {
+                    "provider": "openai-codex",
+                    "providerName": "OpenAI Codex",
+                    "model": "gpt-5.4",
+                    "supportsReasoning": True,
+                }
+            ],
+        }
+        with unittest.mock.patch.object(
+            adapter_module, "models_catalog"
+        ) as build_catalog, unittest.mock.patch.object(
+            adapter_module.asyncio,
+            "to_thread",
+            new=unittest.mock.AsyncMock(return_value=catalog),
+        ) as to_thread:
+            await self.adapter._handle_server_frame(
+                {
+                    "type": "models.list.request",
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                    "requestId": "models-1",
+                }
+            )
+
+        to_thread.assert_awaited_once_with(build_catalog)
+        reply = self.connection.messages[-1]
+        self.assertEqual(reply["type"], "models.list.response")
+        self.assertEqual(reply["requestId"], "models-1")
+        self.assertEqual(reply["models"], catalog["models"])
+        self.assertEqual(reply["currentReasoningEffort"], "high")
 
     async def test_describe_request_survives_hermes_being_unreadable(self):
         # An older Hermes whose modules exist but export none of the accessors
@@ -1264,7 +2219,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._handle_server_frame(
                 {
                     "type": "describe.request",
-                    "protocolVersion": 4,
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
                     "requestId": "describe-degraded",
                 }
             )
@@ -1281,7 +2236,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._handle_server_frame(
                 {
                     "type": "skill.body.request",
-                    "protocolVersion": 4,
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
                     "requestId": "body-degraded",
                     "skillName": "codex",
                 }
@@ -1299,7 +2254,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._handle_server_frame(
                 {
                     "type": "skill.body.request",
-                    "protocolVersion": 4,
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
                     "requestId": "body-1",
                     "skillName": "codex",
                 }
@@ -1316,7 +2271,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "skill.body.request",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "body-2",
                 "skillName": "does-not-exist",
             }
@@ -1336,7 +2291,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "skill.body.request",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "body-3",
             }
         )
@@ -1350,12 +2305,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         for message in (
             {
                 "type": "describe.request",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "describe-no-error",
             },
             {
                 "type": "skill.body.request",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "body-no-error",
                 "skillName": "codex",
             },
@@ -1601,7 +2556,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "ensure-wedged",
                 "threadId": "thread-wedged",
             }
@@ -1621,7 +2576,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._handle_server_frame(
                 {
                     "type": "turn.start",
-                    "protocolVersion": 4,
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
                     "requestId": "start-wedged",
                     "threadId": "thread-wedged",
                     "sessionId": session_id,
@@ -1639,7 +2594,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-recovered",
                 "threadId": "thread-wedged",
                 "sessionId": session_id,
@@ -1698,7 +2653,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": f"ensure-{thread_id}",
                 "threadId": thread_id,
             }
@@ -1707,7 +2662,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": f"start-{thread_id}",
                 "threadId": thread_id,
                 "sessionId": session_id,
@@ -1729,7 +2684,9 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
         frames = self.connection.messages[frames_before:]
         self.assertEqual([frame["type"] for frame in frames], ["home.deliver"])
         delivery = frames[0]
-        self.assertEqual(delivery["protocolVersion"], 4)
+        self.assertEqual(
+            delivery["protocolVersion"], protocol_module.PROTOCOL_VERSION
+        )
         self.assertEqual(delivery["threadId"], self.HOME)
         self.assertEqual(delivery["kind"], "cron")
         self.assertEqual(delivery["label"], "Cron: nightly")
@@ -1878,7 +2835,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "home.deliver.ack",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "deliveryId": delivery_id,
             }
         )
@@ -1908,7 +2865,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_connection_accepted(
             {
                 "type": "connection.accepted",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "hello-1",
                 "instanceId": "instance",
                 "nickname": "Hermes",
@@ -1926,7 +2883,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "home.deliver.ack",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "deliveryId": offline.message_id,
             }
         )
@@ -2026,7 +2983,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._handle_connection_accepted(
                 {
                     "type": "connection.accepted",
-                    "protocolVersion": 4,
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
                     "requestId": "hello-1",
                     "instanceId": "instance",
                     "nickname": "Hermes",
@@ -2043,7 +3000,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter._handle_connection_accepted(
                 {
                     "type": "connection.accepted",
-                    "protocolVersion": 4,
+                    "protocolVersion": protocol_module.PROTOCOL_VERSION,
                     "requestId": "hello-1",
                     "instanceId": "instance",
                     "nickname": "Hermes",
@@ -2054,7 +3011,11 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_nameless_ack_is_a_correlated_protocol_error(self):
         await self.adapter._handle_server_frame(
-            {"type": "home.deliver.ack", "protocolVersion": 4, "requestId": "ack-1"}
+            {
+                "type": "home.deliver.ack",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "ack-1",
+            }
         )
         reply = self.connection.messages[-1]
         self.assertEqual(reply["type"], "protocol.error")
@@ -2062,7 +3023,7 @@ class HomeDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
-    """v4 turn attachments: base64 on the frame → temp files → media_urls."""
+    """v4+ turn attachments: base64 on the frame → temp files → media_urls."""
 
     async def asyncSetUp(self):
         self.adapter = adapter_module.T3PlatformAdapter(
@@ -2081,7 +3042,7 @@ class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": f"ensure-{thread_id}",
                 "threadId": thread_id,
             }
@@ -2095,7 +3056,7 @@ class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-attach",
                 "threadId": "thread-attach",
                 "sessionId": session_id,
@@ -2145,7 +3106,7 @@ class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-hostile",
                 "threadId": "thread-hostile",
                 "sessionId": session_id,
@@ -2175,7 +3136,7 @@ class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-plain",
                 "threadId": "thread-plain",
                 "sessionId": session_id,
@@ -2193,7 +3154,7 @@ class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-bad",
                 "threadId": "thread-bad-attach",
                 "sessionId": session_id,
@@ -2220,7 +3181,7 @@ class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "start-steer-attach",
                 "threadId": "thread-steer-attach",
                 "sessionId": session_id,
@@ -2236,7 +3197,7 @@ class InboundAttachmentTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.steer",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "steer-attach",
                 "threadId": "thread-steer-attach",
                 "sessionId": session_id,
@@ -2308,7 +3269,7 @@ class MediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "session.ensure",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": f"ensure-{thread_id}",
                 "threadId": thread_id,
             }
@@ -2317,7 +3278,7 @@ class MediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "turn.start",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": f"start-{thread_id}",
                 "threadId": thread_id,
                 "sessionId": session_id,
@@ -2338,7 +3299,9 @@ class MediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         frames = self.connection.messages[frames_before:]
         self.assertEqual([frame["type"] for frame in frames], ["media.deliver"])
         delivery = frames[0]
-        self.assertEqual(delivery["protocolVersion"], 4)
+        self.assertEqual(
+            delivery["protocolVersion"], protocol_module.PROTOCOL_VERSION
+        )
         self.assertEqual(delivery["threadId"], "thread-media")
         self.assertEqual(delivery["turnId"], "turn-media")
         self.assertEqual(delivery["name"], "chart.png")
@@ -2632,7 +3595,7 @@ class MediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "media.deliver.ack",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "deliveryId": "unrelated",
             }
         )
@@ -2641,7 +3604,7 @@ class MediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "media.deliver.ack",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "deliveryId": delivery_id,
             }
         )
@@ -2665,7 +3628,7 @@ class MediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_connection_accepted(
             {
                 "type": "connection.accepted",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "requestId": "hello-1",
                 "instanceId": "instance",
                 "nickname": "Hermes",
@@ -2682,7 +3645,7 @@ class MediaDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.adapter._handle_server_frame(
             {
                 "type": "media.deliver.ack",
-                "protocolVersion": 4,
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
                 "deliveryId": offline.message_id,
             }
         )

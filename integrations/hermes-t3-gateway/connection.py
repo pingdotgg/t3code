@@ -63,7 +63,7 @@ async def _open_socket(url: str):
         ping_interval=20,
         ping_timeout=20,
         close_timeout=5,
-        # Protocol v4 turn frames may carry inline base64 attachments up to
+        # Protocol v4+ turn frames may carry inline base64 attachments up to
         # 25MB raw (~34MB encoded, `protocol.MAX_MEDIA_BYTES`). 64MB leaves
         # room for the JSON envelope and T3's per-turn total while still
         # bounding a pathological frame.

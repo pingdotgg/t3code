@@ -1,7 +1,7 @@
 name: hermes-t3-gateway
 label: T3 Code
 kind: platform
-version: 0.4.0
+version: 0.5.0
 description: >
   Experimental outbound gateway that exposes one Hermes Agent process as a
   named T3 Code provider instance over an authenticated WebSocket.

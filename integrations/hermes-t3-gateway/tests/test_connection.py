@@ -64,7 +64,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         socket = FakeSocket(
             {
                 "type": "connection.accepted",
-                "protocolVersion": 4,
+                "protocolVersion": connection.PROTOCOL_VERSION,
                 "instanceId": "provider-instance",
                 "nickname": "Research",
                 "credential": "persistent-secret",
@@ -85,9 +85,9 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         socket = FakeSocket(
             {
                 "type": "connection.accepted",
-                # A v3 server: the version policy stays fail-closed across the
-                # v4 bump, so this must not be silently accepted.
-                "protocolVersion": 3,
+                # A v4 server: the version policy stays fail-closed across the
+                # v5 bump, so this must not be silently accepted.
+                "protocolVersion": 4,
                 "instanceId": "provider-instance",
                 "nickname": "Research",
             }
@@ -149,14 +149,14 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                             json.dumps(
                                 {
                                     "type": "ping",
-                                    "protocolVersion": 4,
+                                    "protocolVersion": connection.PROTOCOL_VERSION,
                                     "requestId": "server-ping-1",
                                 }
                             ),
                             json.dumps(
                                 {
                                     "type": "connection.accepted",
-                                    "protocolVersion": 4,
+                                    "protocolVersion": connection.PROTOCOL_VERSION,
                                     "requestId": hello_id,
                                     "instanceId": "provider-instance",
                                     "nickname": "Hermes",
@@ -207,7 +207,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 return json.dumps(
                     {
                         "type": "connection.accepted",
-                        "protocolVersion": 4,
+                        "protocolVersion": connection.PROTOCOL_VERSION,
                         "requestId": self.sent[0]["requestId"],
                         "instanceId": "provider-instance",
                         "nickname": "Hermes",
@@ -221,7 +221,11 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
                 async def frames():
                     yield json.dumps({"type": "turn.start", "requestId": "turn-1"})
                     yield json.dumps(
-                        {"type": "ping", "protocolVersion": 4, "requestId": "ping-1"}
+                        {
+                            "type": "ping",
+                            "protocolVersion": connection.PROTOCOL_VERSION,
+                            "requestId": "ping-1",
+                        }
                     )
                     await released.wait()
 

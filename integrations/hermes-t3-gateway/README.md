@@ -4,7 +4,7 @@ Experimental Hermes platform plugin for connecting one already-running Hermes
 process to T3 Code. The plugin makes an outbound WebSocket connection; Hermes
 does not need to listen on a public port.
 
-The gateway wire protocol is v4. The T3 server and Hermes plugin must be updated
+The gateway wire protocol is v5. The T3 server and Hermes plugin must be updated
 together; mismatched versions fail the connection handshake closed.
 
 Each T3 thread maps deterministically to one Hermes gateway session. A new T3
@@ -50,9 +50,11 @@ The long-lived credential is never printed. Run `hermes gateway restart` after
 enrollment. `hermes t3 status` reports the local enrollment without revealing
 the credential.
 
-The handshake also reports Hermes' configured default model so T3 can show a
-truthful label in its picker. It is read-only — Hermes owns model selection —
-and is omitted entirely if it cannot be read.
+T3 loads the selectable model catalog on demand from Hermes' explicitly
+configured providers. Changing model or reasoning in T3 applies Hermes'
+official `/model ... --session` and `/reasoning ...` commands before the next
+turn starts. These are per-session overrides: they never rewrite Hermes'
+global `config.yaml`, and each T3 thread remains isolated from the others.
 
 ## The Home thread
 
@@ -97,6 +99,7 @@ Every send result also reports `media_count`, `acked_count`, and `delivery_ids`.
 - Text input and live assistant streaming
 - Authoritative text replacement when Hermes revises cumulative streamed output
 - Multiple concurrent Hermes sessions in one process
+- On-demand model catalog plus per-session model and reasoning selection
 - Active-turn steering and interrupt
 - Dangerous-command approvals
 - Structured `clarify` questions
@@ -114,10 +117,11 @@ Every send result also reports `media_count`, `acked_count`, and `delivery_ids`.
 Non-home T3 threads remain session-only: Hermes cannot message them unprompted,
 and an unsolicited send to one still fails with `no active T3 turn`.
 
-Attachments are pinned to `true`. It is part of the v4 contract rather than a
-negotiated option — T3's schema fixes the capability at that literal, so a plugin
-that cannot handle attachments is by definition a v3 plugin and is rejected at
-the version gate. Inbound files arrive on `turn.start` / `turn.steer` and are
+Attachments are pinned to `true`. It has been part of the contract since v4
+rather than a negotiated option — T3's schema fixes the capability at that
+literal, so a plugin that cannot handle attachments is by definition a v3
+plugin and is rejected at the version gate. Inbound files arrive on
+`turn.start` / `turn.steer` and are
 materialized to private temp files before the turn starts; outbound files leave
 as `media.deliver` frames.
 

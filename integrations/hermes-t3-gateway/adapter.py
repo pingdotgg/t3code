@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import contextvars
 import logging
 import os
 import re
+import shlex
 import tempfile
 import time
 import uuid
 import weakref
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -41,11 +43,15 @@ from .protocol import (
     PROTOCOL_VERSION,
     canonical_tool_data,
     canonical_tool_item_type,
+    configured_model_selection,
     describe_response,
     frame,
     iso_now,
     item_id,
+    models_catalog,
+    models_list_response,
     protocol_error,
+    REASONING_EFFORTS,
     skill_body,
     skill_body_response,
     turn_attachments,
@@ -171,6 +177,52 @@ class _TurnState:
 
 
 @dataclass
+class _TurnStartReservation:
+    """Fence one thread's pre-start configuration from concurrent lifecycle calls."""
+
+    session_id: str
+    cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class _MappingEntrySnapshot:
+    """One session-scoped mapping value captured before a control command."""
+
+    existed: bool
+    value: Any = None
+
+
+def _snapshot_mapping_entry(
+    mapping: Any,
+    key: str,
+    *,
+    deep: bool = True,
+) -> _MappingEntrySnapshot:
+    if not isinstance(mapping, dict):
+        return _MappingEntrySnapshot(existed=False)
+    if key not in mapping:
+        return _MappingEntrySnapshot(existed=False)
+    value = mapping[key]
+    return _MappingEntrySnapshot(
+        existed=True,
+        value=copy.deepcopy(value) if deep else value,
+    )
+
+
+def _restore_mapping_entry(
+    mapping: Any,
+    key: str,
+    snapshot: _MappingEntrySnapshot,
+) -> None:
+    if not isinstance(mapping, dict):
+        return
+    if snapshot.existed:
+        mapping[key] = snapshot.value
+    else:
+        mapping.pop(key, None)
+
+
+@dataclass
 class _SteerControlResponse:
     thread_id: str
     request_id: str
@@ -191,6 +243,59 @@ _steer_control_response = contextvars.ContextVar[_SteerControlResponse | None](
     "hermes_t3_steer_control_response",
     default=None,
 )
+
+
+class _TurnConfigurationError(ValueError):
+    """A requested session configuration could not be applied safely."""
+
+
+def _model_selection_from_turn(
+    message: dict[str, Any],
+) -> tuple[tuple[str, ...], dict[str, str]] | None:
+    """Validate and resolve the optional v5 ``modelSelection`` request.
+
+    The returned tuple contains a stable cache key and the explicit
+    provider/model pair Hermes' session command needs. ``default`` is resolved
+    to the current global config now, before any session state is changed.
+    """
+    raw = message.get("modelSelection")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise _TurnConfigurationError("modelSelection must be an object")
+    mode = str(raw.get("mode") or "").strip().lower()
+    if mode == "default":
+        configured = configured_model_selection()
+        if configured is None:
+            raise _TurnConfigurationError(
+                "Hermes has no configured default model to select"
+            )
+        return (("default",), configured)
+    if mode != "specific":
+        raise _TurnConfigurationError(
+            "modelSelection.mode must be 'default' or 'specific'"
+        )
+    provider = raw.get("provider")
+    model = raw.get("model")
+    if not isinstance(provider, str) or not provider.strip():
+        raise _TurnConfigurationError(
+            "A specific modelSelection requires a provider"
+        )
+    if not isinstance(model, str) or not model.strip():
+        raise _TurnConfigurationError("A specific modelSelection requires a model")
+    normalized = {"provider": provider.strip(), "model": model.strip()}
+    return (("specific", normalized["provider"], normalized["model"]), normalized)
+
+
+def _reasoning_effort_from_turn(message: dict[str, Any]) -> str | None:
+    raw = message.get("reasoningEffort")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or raw.strip().lower() not in REASONING_EFFORTS:
+        raise _TurnConfigurationError(
+            "reasoningEffort must be one of " + ", ".join(REASONING_EFFORTS)
+        )
+    return raw.strip().lower()
 
 
 class T3PlatformAdapter(BasePlatformAdapter):
@@ -226,6 +331,18 @@ class T3PlatformAdapter(BasePlatformAdapter):
         self._active_session_threads: set[str] = set()
         self._thread_by_session: dict[str, str] = {}
         self._active_turns: dict[str, _TurnState] = {}
+        # A turn is not active until its requested model/reasoning has been
+        # verified. Reserve that pre-start window separately so a second
+        # turn.start cannot pass the active-turn guard while the first one is
+        # awaiting Hermes' command handler. session.stop marks the reservation
+        # cancelled; the first start then rolls its configuration back and can
+        # never register or run, even if session.ensure races in afterward.
+        self._turn_start_reservations: dict[str, _TurnStartReservation] = {}
+        # Last requested and verified session-local model/reasoning state per
+        # T3 thread. This is only an idempotency cache: every skip also checks
+        # the runner's live override, and a plugin restart naturally starts
+        # empty so the first v5 turn reapplies its requested configuration.
+        self._applied_turn_configuration: dict[str, dict[str, Any]] = {}
         # The most recently COMPLETED turn per thread. The base adapter's
         # delivery pipeline sends the final text (notify-marked, which
         # completes the turn here) BEFORE it sends the reply's media files
@@ -514,8 +631,8 @@ class T3PlatformAdapter(BasePlatformAdapter):
         entry queued by an older plugin carries the version it was built under,
         and T3's strict-lockstep decoder closes the socket on any other version
         — turning one stale queued frame into a reconnect loop that outlives
-        the upgrade. The delivery fields themselves are version-stable (the
-        v3→v4 change only added frame types), so restamping is honest.
+        the upgrade. The delivery schemas themselves are unchanged in v5, and
+        v3 home deliveries remain a valid subset, so restamping is honest.
         """
         pending = self._home_queue.entries()
         if not pending:
@@ -991,6 +1108,8 @@ class T3PlatformAdapter(BasePlatformAdapter):
                 )
             elif frame_type == "describe.request":
                 await self._describe(message)
+            elif frame_type == "models.list.request":
+                await self._list_models(message)
             elif frame_type == "skill.body.request":
                 await self._send_skill_body(message)
             elif frame_type in {"home.deliver.ack", "media.deliver.ack"}:
@@ -1031,6 +1150,22 @@ class T3PlatformAdapter(BasePlatformAdapter):
             )
         )
 
+    async def _list_models(self, message: dict[str, Any]) -> None:
+        """Enumerate selectable models only when T3 explicitly asks.
+
+        Hermes' inventory may consult a stale disk cache through synchronous
+        provider code, so it must not occupy the gateway event loop. The
+        protocol helper degrades inventory failures to a truthful empty list
+        plus whatever current config remains readable.
+        """
+        catalog = await asyncio.to_thread(models_catalog)
+        await self._send_frame(
+            models_list_response(
+                request_id_value=str(message["requestId"]),
+                catalog=catalog,
+            )
+        )
+
     async def _send_skill_body(self, message: dict[str, Any]) -> None:
         """Answer `skill.body.request` with one skill's markdown.
 
@@ -1058,7 +1193,7 @@ class T3PlatformAdapter(BasePlatformAdapter):
     async def _ensure_session(self, message: dict[str, Any]) -> None:
         thread_id = str(message["threadId"])
         source = self._source(thread_id, str(message["requestId"]))
-        session_id = build_session_key(source)
+        session_id = self._session_id_for_source(source)
         resume_id = str(message.get("resumeSessionId") or "")
         self._sessions[thread_id] = session_id
         self._active_session_threads.add(thread_id)
@@ -1080,10 +1215,502 @@ class T3PlatformAdapter(BasePlatformAdapter):
         )
         await self._send_status()
 
+    def _session_id_for_source(self, source: Any) -> str:
+        """Resolve the same profile-aware key Hermes' command handlers use."""
+        runner = getattr(self, "gateway_runner", None)
+        resolver = getattr(runner, "_session_key_for_source", None)
+        session_id = (
+            resolver(source) if callable(resolver) else build_session_key(source)
+        )
+        resolved = str(session_id or "").strip()
+        if not resolved:
+            raise ValueError("Hermes could not resolve a session key for this thread")
+        return resolved
+
+    def _configuration_surfaces(
+        self,
+        *,
+        needs_model: bool,
+        needs_reasoning: bool,
+    ) -> tuple[Any, Any]:
+        """Validate every Hermes surface before the first state mutation."""
+        handler = self._message_handler
+        runner = getattr(self, "gateway_runner", None)
+        if not callable(handler) or runner is None:
+            raise _TurnConfigurationError(
+                "Hermes cannot apply session configuration on this gateway"
+            )
+        if needs_model or needs_reasoning:
+            if not isinstance(
+                getattr(runner, "_session_model_overrides", None), dict
+            ) or not callable(
+                getattr(runner, "_resolve_session_agent_runtime", None)
+            ):
+                raise _TurnConfigurationError(
+                    "This Hermes version cannot resolve session model state"
+                )
+        if needs_reasoning:
+            if not isinstance(
+                getattr(runner, "_session_reasoning_overrides", None), dict
+            ) or not callable(
+                getattr(runner, "_resolve_session_reasoning_config", None)
+            ):
+                raise _TurnConfigurationError(
+                    "This Hermes version does not support session reasoning selection"
+                )
+        return runner, handler
+
+    @staticmethod
+    def _effective_model_selection(runner: Any, session_id: str) -> dict[str, str]:
+        override = runner._session_model_overrides.get(session_id)
+        if not isinstance(override, dict):
+            raise _TurnConfigurationError(
+                "Hermes did not install the requested session model override"
+            )
+        override_model = str(override.get("model") or "").strip()
+        override_provider = str(override.get("provider") or "").strip()
+        if not override_model or not override_provider:
+            raise _TurnConfigurationError(
+                "Hermes installed an incomplete session model override"
+            )
+        try:
+            effective_model, runtime = runner._resolve_session_agent_runtime(
+                session_key=session_id
+            )
+        except Exception as exc:
+            raise _TurnConfigurationError(
+                "Hermes could not resolve the requested session model"
+            ) from exc
+        resolved_model = str(effective_model or "").strip()
+        resolved_provider = ""
+        if isinstance(runtime, dict):
+            resolved_provider = str(runtime.get("provider") or "").strip()
+        resolved_provider = resolved_provider or override_provider
+        if resolved_model != override_model or resolved_provider != override_provider:
+            raise _TurnConfigurationError(
+                "Hermes did not make the requested session model effective"
+            )
+        return {"provider": resolved_provider, "model": resolved_model}
+
+    @staticmethod
+    def _effective_reasoning_effort(
+        runner: Any,
+        session_id: str,
+        *,
+        model: str,
+    ) -> str:
+        override = runner._session_reasoning_overrides.get(session_id)
+        if not isinstance(override, dict):
+            raise _TurnConfigurationError(
+                "Hermes did not install the requested session reasoning override"
+            )
+        try:
+            effective = runner._resolve_session_reasoning_config(
+                session_key=session_id,
+                model=model,
+            )
+        except Exception as exc:
+            raise _TurnConfigurationError(
+                "Hermes could not resolve the requested reasoning effort"
+            ) from exc
+        if not isinstance(effective, dict) or effective != override:
+            raise _TurnConfigurationError(
+                "Hermes did not make the requested reasoning effort effective"
+            )
+        if effective.get("enabled") is False:
+            return "none"
+        effort = str(effective.get("effort") or "").strip().lower()
+        if effort not in REASONING_EFFORTS:
+            raise _TurnConfigurationError(
+                "Hermes installed an invalid session reasoning override"
+            )
+        return effort
+
+    @staticmethod
+    def _current_effective_model(runner: Any, session_id: str) -> str:
+        try:
+            model, _runtime = runner._resolve_session_agent_runtime(
+                session_key=session_id
+            )
+        except Exception as exc:
+            raise _TurnConfigurationError(
+                "Hermes could not resolve the session model for reasoning"
+            ) from exc
+        resolved = str(model or "").strip()
+        if not resolved:
+            raise _TurnConfigurationError(
+                "Hermes has no effective session model for reasoning"
+            )
+        return resolved
+
+    async def _apply_turn_configuration(
+        self,
+        message: dict[str, Any],
+        *,
+        thread_id: str,
+        session_id: str,
+        can_commit: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Apply v5 model/reasoning requests through Hermes' command surface.
+
+        Commands go straight to the runner's registered message handler, not
+        ``handle_message``. Their control acknowledgements are therefore never
+        sent through this adapter or leaked into the T3 transcript.
+        """
+        model_request = _model_selection_from_turn(message)
+        reasoning_effort = _reasoning_effort_from_turn(message)
+        if model_request is None and reasoning_effort is None:
+            if can_commit is not None and not can_commit():
+                raise _TurnConfigurationError(
+                    "The Hermes session stopped while its turn was starting"
+                )
+            return {}
+
+        runner, handler = self._configuration_surfaces(
+            needs_model=model_request is not None,
+            needs_reasoning=reasoning_effort is not None,
+        )
+        source = self._source(thread_id, str(message["requestId"]))
+        command_session_id = self._session_id_for_source(source)
+        if command_session_id != session_id:
+            raise _TurnConfigurationError(
+                "The Hermes session profile changed; call session.ensure again"
+            )
+
+        model_overrides = runner._session_model_overrides
+        reasoning_overrides = getattr(runner, "_session_reasoning_overrides", None)
+        model_override_snapshot = _snapshot_mapping_entry(
+            model_overrides, session_id
+        )
+        reasoning_override_snapshot = _snapshot_mapping_entry(
+            reasoning_overrides, session_id
+        )
+        had_pending_notes_attribute = hasattr(runner, "_pending_model_notes")
+        pending_notes_snapshot = _snapshot_mapping_entry(
+            getattr(runner, "_pending_model_notes", None), session_id
+        )
+        one_turn_restore_snapshot = _snapshot_mapping_entry(
+            getattr(runner, "_pending_one_turn_model_restores", None), session_id
+        )
+        ephemeral_pin_snapshot = _snapshot_mapping_entry(
+            getattr(runner, "_session_ephemeral_pin", None), session_id
+        )
+        voice_channel_snapshot = _snapshot_mapping_entry(
+            getattr(runner, "_session_vc_last", None), session_id
+        )
+        had_reasoning_config = hasattr(runner, "_reasoning_config")
+        prior_reasoning_config = copy.deepcopy(
+            getattr(runner, "_reasoning_config", None)
+        )
+
+        durable_store = None
+        durable_entry = None
+        durable_override_snapshot: dict[str, Any] | None = None
+        durable_entry_was_auto_reset: bool | None = None
+        session_db = None
+        session_db_id = ""
+        session_db_row: dict[str, Any] | None = None
+        if model_request is not None:
+            durable_store = getattr(runner, "async_session_store", None)
+            if durable_store is not None:
+                get_or_create = getattr(
+                    durable_store, "get_or_create_session", None
+                )
+                get_override = getattr(durable_store, "get_model_override", None)
+                set_override = getattr(durable_store, "set_model_override", None)
+                if not all(
+                    callable(method)
+                    for method in (get_or_create, get_override, set_override)
+                ):
+                    raise _TurnConfigurationError(
+                        "This Hermes version cannot transact session model state"
+                    )
+                try:
+                    durable_entry = await get_or_create(source)
+                    durable_override_snapshot = copy.deepcopy(
+                        await get_override(session_id)
+                    )
+                except Exception as exc:
+                    raise _TurnConfigurationError(
+                        "Hermes could not snapshot its persisted session model"
+                    ) from exc
+                durable_entry_was_auto_reset = bool(
+                    getattr(durable_entry, "was_auto_reset", False)
+                )
+                session_db_id = str(
+                    getattr(durable_entry, "session_id", "") or ""
+                )
+
+            session_db = getattr(runner, "_session_db", None)
+            if session_db is not None and session_db_id:
+                get_session = getattr(session_db, "get_session", None)
+                restore_methods = (
+                    getattr(session_db, "update_session_model", None),
+                    getattr(session_db, "update_session_meta", None),
+                    getattr(session_db, "update_system_prompt", None),
+                )
+                if not callable(get_session) or not all(
+                    callable(method) for method in restore_methods
+                ):
+                    raise _TurnConfigurationError(
+                        "This Hermes version cannot transact its session database"
+                    )
+                try:
+                    row = await get_session(session_db_id)
+                except Exception as exc:
+                    raise _TurnConfigurationError(
+                        "Hermes could not snapshot its session database"
+                    ) from exc
+                if isinstance(row, dict):
+                    session_db_row = copy.deepcopy(row)
+
+        had_cache = thread_id in self._applied_turn_configuration
+        prior_cache = copy.deepcopy(
+            self._applied_turn_configuration.get(thread_id)
+        )
+        cache = self._applied_turn_configuration.setdefault(thread_id, {})
+        applied: dict[str, Any] = {}
+
+        # Hermes' /model handler switches a cached agent in place and then
+        # releases it. Keep the prior agent outside that command transaction:
+        # a failed /reasoning verification can then put the untouched cache
+        # entry back, while a successful transaction still disposes it through
+        # Hermes' own eviction path.
+        agent_cache = getattr(runner, "_agent_cache", None)
+        agent_cache_lock = getattr(runner, "_agent_cache_lock", None)
+        detached_agent_cache = _MappingEntrySnapshot(existed=False)
+        if isinstance(agent_cache, dict):
+            if agent_cache_lock is not None:
+                with agent_cache_lock:
+                    detached_agent_cache = _snapshot_mapping_entry(
+                        agent_cache, session_id, deep=False
+                    )
+                    agent_cache.pop(session_id, None)
+            else:
+                detached_agent_cache = _snapshot_mapping_entry(
+                    agent_cache, session_id, deep=False
+                )
+                agent_cache.pop(session_id, None)
+
+        def restore_prior_memory_configuration() -> None:
+            _restore_mapping_entry(
+                model_overrides, session_id, model_override_snapshot
+            )
+            _restore_mapping_entry(
+                reasoning_overrides, session_id, reasoning_override_snapshot
+            )
+            _restore_mapping_entry(
+                getattr(runner, "_pending_model_notes", None),
+                session_id,
+                pending_notes_snapshot,
+            )
+            current_pending_notes = getattr(runner, "_pending_model_notes", None)
+            if (
+                not had_pending_notes_attribute
+                and isinstance(current_pending_notes, dict)
+                and not current_pending_notes
+            ):
+                delattr(runner, "_pending_model_notes")
+            _restore_mapping_entry(
+                getattr(runner, "_pending_one_turn_model_restores", None),
+                session_id,
+                one_turn_restore_snapshot,
+            )
+            _restore_mapping_entry(
+                getattr(runner, "_session_ephemeral_pin", None),
+                session_id,
+                ephemeral_pin_snapshot,
+            )
+            _restore_mapping_entry(
+                getattr(runner, "_session_vc_last", None),
+                session_id,
+                voice_channel_snapshot,
+            )
+            if had_reasoning_config:
+                runner._reasoning_config = prior_reasoning_config
+            elif hasattr(runner, "_reasoning_config"):
+                delattr(runner, "_reasoning_config")
+            if had_cache:
+                self._applied_turn_configuration[thread_id] = prior_cache
+            else:
+                self._applied_turn_configuration.pop(thread_id, None)
+
+        def restore_detached_agent_cache() -> None:
+            if not isinstance(agent_cache, dict):
+                return
+            if agent_cache_lock is not None:
+                with agent_cache_lock:
+                    _restore_mapping_entry(
+                        agent_cache, session_id, detached_agent_cache
+                    )
+            else:
+                _restore_mapping_entry(
+                    agent_cache, session_id, detached_agent_cache
+                )
+
+        async def restore_prior_durable_configuration() -> None:
+            if durable_store is not None:
+                await durable_store.set_model_override(
+                    session_id, durable_override_snapshot
+                )
+                if (
+                    durable_entry is not None
+                    and durable_entry_was_auto_reset is not None
+                ):
+                    durable_entry.was_auto_reset = durable_entry_was_auto_reset
+            if session_db is not None and session_db_id and session_db_row is not None:
+                prior_db_model = session_db_row.get("model")
+                await session_db.update_session_model(
+                    session_db_id, prior_db_model
+                )
+                await session_db.update_session_meta(
+                    session_db_id,
+                    session_db_row.get("model_config"),
+                    prior_db_model,
+                )
+                await session_db.update_system_prompt(
+                    session_db_id, session_db_row.get("system_prompt")
+                )
+
+        def release_detached_agent_cache() -> None:
+            if not detached_agent_cache.existed:
+                return
+            restore_detached_agent_cache()
+            evict = getattr(runner, "_evict_cached_agent", None)
+            if not callable(evict):
+                raise _TurnConfigurationError(
+                    "This Hermes version cannot retire its prior cached agent"
+                )
+            evict(session_id)
+
+        dispatched_configuration = False
+
+        async def dispatch(command: str) -> None:
+            nonlocal dispatched_configuration
+            dispatched_configuration = True
+            await handler(
+                MessageEvent(
+                    text=command,
+                    message_type=MessageType.COMMAND,
+                    source=source,
+                    message_id=str(message["requestId"]),
+                    metadata={"t3_control": "turn-configuration"},
+                )
+            )
+
+        try:
+            effective_model: dict[str, str] | None = None
+            if model_request is not None:
+                request_key, target = model_request
+                if cache.get("modelRequest") == request_key:
+                    try:
+                        cached_effective = self._effective_model_selection(
+                            runner, session_id
+                        )
+                    except _TurnConfigurationError:
+                        cached_effective = None
+                    if (
+                        cached_effective == cache.get("modelEffective")
+                        and cached_effective == target
+                    ):
+                        effective_model = cached_effective
+
+                if effective_model is None:
+                    command = (
+                        f"/model {shlex.quote(target['model'])} "
+                        f"--provider {shlex.quote(target['provider'])} --session"
+                    )
+                    try:
+                        await dispatch(command)
+                        effective_model = self._effective_model_selection(
+                            runner, session_id
+                        )
+                    except Exception as exc:
+                        if isinstance(exc, _TurnConfigurationError):
+                            raise
+                        raise _TurnConfigurationError(
+                            "Hermes could not apply the requested session model"
+                        ) from exc
+                    if effective_model != target:
+                        raise _TurnConfigurationError(
+                            "Hermes resolved the requested model to a different selection"
+                        )
+                    cache["modelRequest"] = request_key
+                    cache["modelEffective"] = dict(effective_model)
+                applied["appliedModelSelection"] = dict(effective_model)
+
+            if reasoning_effort is not None:
+                reasoning_model = (
+                    effective_model["model"]
+                    if effective_model is not None
+                    else self._current_effective_model(runner, session_id)
+                )
+                if cache.get("reasoningRequest") == reasoning_effort:
+                    try:
+                        cached_effort = self._effective_reasoning_effort(
+                            runner,
+                            session_id,
+                            model=reasoning_model,
+                        )
+                    except _TurnConfigurationError:
+                        cached_effort = None
+                    if cached_effort == cache.get("reasoningEffective"):
+                        applied_effort = cached_effort
+                    else:
+                        applied_effort = None
+                else:
+                    applied_effort = None
+
+                if applied_effort is None:
+                    try:
+                        await dispatch(f"/reasoning {reasoning_effort}")
+                        applied_effort = self._effective_reasoning_effort(
+                            runner,
+                            session_id,
+                            model=reasoning_model,
+                        )
+                    except Exception as exc:
+                        if isinstance(exc, _TurnConfigurationError):
+                            raise
+                        raise _TurnConfigurationError(
+                            "Hermes could not apply the requested reasoning effort"
+                        ) from exc
+                    if applied_effort != reasoning_effort:
+                        raise _TurnConfigurationError(
+                            "Hermes resolved a different reasoning effort than requested"
+                        )
+                    cache["reasoningRequest"] = reasoning_effort
+                    cache["reasoningEffective"] = applied_effort
+                applied["appliedReasoningEffort"] = applied_effort
+
+            if can_commit is not None and not can_commit():
+                raise _TurnConfigurationError(
+                    "The Hermes session stopped while its turn was starting"
+                )
+            if dispatched_configuration:
+                release_detached_agent_cache()
+            else:
+                restore_detached_agent_cache()
+            return applied
+        except BaseException:
+            # Hermes' slash handlers update several durable and in-memory
+            # surfaces. If verification fails (or startup is cancelled), roll
+            # all of them back before exposing the failed turn to T3.
+            restore_prior_memory_configuration()
+            try:
+                await restore_prior_durable_configuration()
+            finally:
+                restore_detached_agent_cache()
+            raise
+
     async def _start_turn(self, message: dict[str, Any]) -> None:
         thread_id = str(message["threadId"])
         session_id = self._sessions.get(thread_id)
-        if not session_id or session_id != str(message["sessionId"]):
+        if (
+            not session_id
+            or session_id != str(message["sessionId"])
+            or thread_id not in self._active_session_threads
+        ):
             await self._send_frame(
                 protocol_error(
                     "session-not-found",
@@ -1093,16 +1720,32 @@ class T3PlatformAdapter(BasePlatformAdapter):
                 )
             )
             return
-        if thread_id in self._active_turns:
+        if (
+            thread_id in self._active_turns
+            or thread_id in self._turn_start_reservations
+        ):
             await self._send_frame(
                 protocol_error(
                     "invalid-message",
-                    "This Hermes session already has an active turn; use turn.steer.",
+                    "This Hermes session already has an active or starting turn; "
+                    "use turn.steer.",
                     recoverable=True,
                     related_request_id=str(message["requestId"]),
                 )
             )
             return
+        reservation = _TurnStartReservation(session_id=session_id)
+        self._turn_start_reservations[thread_id] = reservation
+
+        def can_commit() -> bool:
+            return (
+                self._turn_start_reservations.get(thread_id) is reservation
+                and not reservation.cancelled
+                and self._sessions.get(thread_id) == session_id
+                and thread_id in self._active_session_threads
+                and thread_id not in self._active_turns
+            )
+
         # Decode and materialize attachments BEFORE any turn state exists: a
         # malformed attachment raises ValueError into the correlated
         # `protocol.error` path with no half-started turn to clean up.
@@ -1114,16 +1757,39 @@ class T3PlatformAdapter(BasePlatformAdapter):
         # vision routing for images, STT for voice, and path-pointing context
         # notes for documents (`gateway/run.py:12420+`). No prompt-text
         # injection is needed on this path.
-        media_paths, media_types = _materialize_attachments(
-            turn_attachments(message)
-        )
-        turn = _TurnState(
-            thread_id=thread_id,
-            session_id=session_id,
-            turn_id=str(message["turnId"]),
-            request_id=str(message["requestId"]),
-        )
-        self._active_turns[thread_id] = turn
+        try:
+            media_paths, media_types = _materialize_attachments(
+                turn_attachments(message)
+            )
+            try:
+                applied_configuration = await self._apply_turn_configuration(
+                    message,
+                    thread_id=thread_id,
+                    session_id=session_id,
+                    can_commit=can_commit,
+                )
+            except _TurnConfigurationError as exc:
+                await self._send_frame(
+                    protocol_error(
+                        "invalid-message",
+                        str(exc),
+                        recoverable=True,
+                        related_request_id=str(message["requestId"]),
+                    )
+                )
+                return
+            turn = _TurnState(
+                thread_id=thread_id,
+                session_id=session_id,
+                turn_id=str(message["turnId"]),
+                request_id=str(message["requestId"]),
+            )
+            # No await separates the final fence check in
+            # _apply_turn_configuration from this registration.
+            self._active_turns[thread_id] = turn
+        finally:
+            if self._turn_start_reservations.get(thread_id) is reservation:
+                self._turn_start_reservations.pop(thread_id, None)
         # Roll the registration back if starting the turn raises. Without this
         # a failed `turn.started` send (a socket that dropped between the
         # decode and the write) leaves a phantom turn no completion path will
@@ -1140,9 +1806,20 @@ class T3PlatformAdapter(BasePlatformAdapter):
                     threadId=thread_id,
                     sessionId=session_id,
                     turnId=turn.turn_id,
+                    **applied_configuration,
                 )
             )
             await self._send_status()
+            # session.stop can run while either frame above is awaiting I/O.
+            # It owns the turn after popping it and must prevent a late call
+            # into Hermes' agent pipeline.
+            if (
+                self._active_turns.get(thread_id) is not turn
+                or thread_id not in self._active_session_threads
+            ):
+                if self._active_turns.get(thread_id) is turn:
+                    self._active_turns.pop(thread_id, None)
+                return
             await self.handle_message(
                 MessageEvent(
                     text=str(message["text"]),
@@ -1399,6 +2076,9 @@ class T3PlatformAdapter(BasePlatformAdapter):
                 )
             )
             return
+        reservation = self._turn_start_reservations.get(thread_id)
+        if reservation is not None and reservation.session_id == session_id:
+            reservation.cancelled = True
         turn = self._active_turns.pop(thread_id, None)
         if turn is not None:
             await self.interrupt_session_activity(session_id, thread_id)

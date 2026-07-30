@@ -66,14 +66,16 @@ Home-channel surfaces, added for protocol v3:
 | `HERMES_SESSION_USER_ID` binding           | `gateway/run.py:17372`             |
 | Session-context lifetime around a turn     | `gateway/run.py:12972` → `:14626`  |
 
-This inventory describes gateway wire protocol v4. Protocol v2 added active-turn
+This inventory describes gateway wire protocol v5. Protocol v2 added active-turn
 recovery in `session.ready` and authoritative `content.snapshot` replacement; v3
 added `role` on `connection.hello`, `homeThreadId` on `connection.accepted`, and
 the `home.deliver` / `home.deliver.ack` pair; v4 adds media — optional inline
 `attachments` on `turn.start` / `turn.steer`, the `media.deliver` /
 `media.deliver.ack` pair, and the `attachments` capability flipping to the
-literal `true`. Older server/plugin pairs are rejected during the handshake —
-the version policy stays fail-closed.
+literal `true`; v5 adds on-demand `models.list.request` /
+`models.list.response`, requested model/reasoning fields on `turn.start`, and
+verified applied selections on `turn.started`. Older server/plugin pairs are
+rejected during the handshake — the version policy stays fail-closed.
 
 ## Mapped in the initial scope
 
@@ -89,6 +91,8 @@ the version policy stays fail-closed.
 | `/steer` gateway command                              | `turn.steer`                                      |
 | Adapter interrupt event                               | `turn.interrupt`                                  |
 | `load_config_readonly()["agent"]["reasoning_effort"]` | Optional `reasoningEffort` on `describe.response` |
+| `inventory.build_models_payload(...)`                 | `models.list.response` on explicit request        |
+| Session-scoped `/model` and `/reasoning` commands     | v5 `turn.start` selection fields                  |
 | `skills_list()` metadata                              | `skills` on `describe.response`                   |
 | `skill_view(name, preprocess=False)`                  | `markdown` on `skill.body.response`               |
 | Cron `deliver=t3`, `send_message t3`, lifecycle       | `home.deliver` / `home.deliver.ack`               |
@@ -180,7 +184,12 @@ the version policy stays fail-closed.
   That accessor returns the shared process-wide config cache and its docstring
   forbids mutation, so the plugin copies out only a trimmed string. Any failure
   — missing key, import error, older Hermes — omits the optional `model` field
-  from `connection.hello` rather than sending null or empty.
+  from `connection.hello` rather than sending null or empty. On an explicit
+  `models.list.request`, the plugin also calls `load_picker_context()` and
+  `build_models_payload()` off the event loop, requesting only explicitly
+  configured providers and no refresh or custom-provider probes. Inventory
+  failures return an empty model list while preserving the readable current
+  selection.
 - Hermes' configured reasoning effort is read from
   `load_config_readonly()["agent"]["reasoning_effort"]` on every
   `describe.request`, with the same discipline as the model read above: a
@@ -190,6 +199,16 @@ the version policy stays fail-closed.
   `agent.reasoning_overrides` (per-model) and `delegation.reasoning_effort`
   (subagents); neither is resolved here, so a user with a per-model override
   active sees the global value on the Agent page.
+- A v5 `turn.start` may request a default or specific model plus one of
+  `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `ultra`.
+  Before registering the turn, the adapter dispatches synthetic command
+  events directly to Hermes' registered runner handler: `/model ... --session`
+  first, then `/reasoning ...`. Control acknowledgements are discarded rather
+  than entering the transcript, and the runner's effective session overrides
+  are verified before `turn.started` is emitted. A model failure prevents the
+  reasoning command and the user message from running. Repeated selections
+  are cached per T3 thread but skipped only while the runner's live override
+  still matches; no global config is written.
 - Skills are enumerated through the registered `skills_list()` tool surface
   (`tools/skills_tool.py:785`), not the private `_find_all_skills()` scanner
   behind it. Consequences of that choice, all verified at 62e07223:
@@ -231,7 +250,8 @@ the version policy stays fail-closed.
   `skillName` cannot be answered, because the response echoes the name back
   and the wire type is non-empty. That takes the ordinary correlated
   `protocol.error` path.
-- Attachments are part of protocol v4; the capability is fixed to `true`
+- Attachments have been part of the protocol since v4; the capability is fixed
+  to `true`
   (T3's schema pins the literal, so a plugin that cannot handle them is a v3
   plugin and is rejected at the version gate). Inbound, `turn.start` /
   `turn.steer` may carry inline base64 files (≤25MB each): turn-start files

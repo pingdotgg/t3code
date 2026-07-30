@@ -16,6 +16,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   DEFAULT_SERVER_SETTINGS,
+  HERMES_DRIVER_KIND,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -783,6 +784,95 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
+        ]);
+      });
+
+      it("retains pending Hermes catalogs and treats completed refreshes as authoritative", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("hermes-mac-mini"),
+          driver: HERMES_DRIVER_KIND,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-07-30T00:00:00.000Z",
+          version: "0.19.0",
+          models: [
+            {
+              slug: "hermes",
+              name: "gpt-5.6-sol (Hermes default)",
+              isCustom: false,
+              isDefault: true,
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  selectDescriptor("reasoningEffort", "Reasoning", [
+                    { id: "high", label: "High", isDefault: true },
+                  ]),
+                ],
+              }),
+            },
+            {
+              slug: "hermes-model:openai-codex:gpt-5.4",
+              name: "gpt-5.4",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const pendingReconnectProvider = {
+          ...previousProvider,
+          checkedAt: "2026-07-30T00:01:00.000Z",
+          models: [
+            {
+              slug: "hermes",
+              name: "gpt-5.6-sol (Hermes default)",
+              isCustom: false,
+              isDefault: true,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        } satisfies ServerProvider;
+        const exhaustedDiscoveryProvider = {
+          ...pendingReconnectProvider,
+          checkedAt: "2026-07-30T00:02:00.000Z",
+        } satisfies ServerProvider;
+        const refreshedProvider = {
+          ...pendingReconnectProvider,
+          checkedAt: "2026-07-30T00:03:00.000Z",
+          models: [
+            {
+              slug: "hermes",
+              name: "gpt-5.6-sol (Hermes default)",
+              isCustom: false,
+              isDefault: true,
+              // A completed v5 response with a genuinely empty model list
+              // still carries the unresolved reasoning choices. That makes it
+              // authoritative without inventing a user-selected default.
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  selectDescriptor("reasoningEffort", "Reasoning", [
+                    { id: "none", label: "None" },
+                    { id: "high", label: "High" },
+                  ]),
+                ],
+              }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, pendingReconnectProvider).models,
+          [...previousProvider.models],
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, exhaustedDiscoveryProvider).models,
+          [...previousProvider.models],
+        );
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...refreshedProvider.models,
         ]);
       });
 

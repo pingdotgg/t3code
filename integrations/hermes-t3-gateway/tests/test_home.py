@@ -285,7 +285,7 @@ class FrameTests(unittest.TestCase):
             created_at="2026-07-26T00:00:00Z",
         )
         self.assertEqual(frame["type"], "home.deliver")
-        self.assertEqual(frame["protocolVersion"], 4)
+        self.assertEqual(frame["protocolVersion"], protocol.PROTOCOL_VERSION)
         self.assertEqual(frame["deliveryId"], "delivery-1")
         self.assertEqual(frame["threadId"], "home-thread")
         self.assertEqual(frame["kind"], "cron")
@@ -310,7 +310,10 @@ class FrameTests(unittest.TestCase):
         self.assertTrue(len(frame["text"]) >= 1)
 
     def test_home_deliver_ack_is_an_accepted_server_command(self):
-        message = {"type": "home.deliver.ack", "protocolVersion": 4}
+        message = {
+            "type": "home.deliver.ack",
+            "protocolVersion": protocol.PROTOCOL_VERSION,
+        }
         self.assertEqual(protocol.validate_server_frame(message), message)
 
     def test_build_media_delivery_reads_the_file_and_guesses_the_mime(self):
@@ -476,7 +479,7 @@ class StandaloneSenderTests(unittest.IsolatedAsyncioTestCase):
         )
         hello, delivery = server.sent
         self.assertEqual(hello["role"], "delivery")
-        self.assertEqual(hello["protocolVersion"], 4)
+        self.assertEqual(hello["protocolVersion"], protocol.PROTOCOL_VERSION)
         self.assertEqual(
             hello["authentication"],
             {
@@ -539,7 +542,7 @@ class StandaloneSenderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(server.sent[1]["threadId"], "home-thread")
 
     async def test_standalone_send_delivers_media_files_as_media_frames(self):
-        """`deliver=t3` cron output with files rides the v4 media framing."""
+        """`deliver=t3` cron output with files rides the v4+ media framing."""
         chart = pathlib.Path(self._tmp.name) / "chart.png"
         chart.write_bytes(b"\x89PNG fake bytes")
         server = MockDeliveryServer()

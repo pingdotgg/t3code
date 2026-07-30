@@ -8,6 +8,8 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  resolveComposerModelPickerContinuationGroupKey,
+  shouldRenderStaticComposerModelLabel,
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
@@ -23,6 +25,59 @@ describe("shouldSubmitComposerOnEnter", () => {
 
   it("inserts a newline for Shift+Enter", () => {
     expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+  });
+});
+
+describe("shouldRenderStaticComposerModelLabel", () => {
+  it("keeps a bound composer static when its instance has no model choice", () => {
+    expect(
+      shouldRenderStaticComposerModelLabel({ isBoundComposer: true, modelOptionCount: 1 }),
+    ).toBe(true);
+  });
+
+  it("makes a bound composer interactive when its instance advertises multiple models", () => {
+    expect(
+      shouldRenderStaticComposerModelLabel({ isBoundComposer: true, modelOptionCount: 2 }),
+    ).toBe(false);
+  });
+
+  it("preserves the interactive picker for ordinary composers", () => {
+    expect(
+      shouldRenderStaticComposerModelLabel({ isBoundComposer: false, modelOptionCount: 1 }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveComposerModelPickerContinuationGroupKey", () => {
+  const instanceEntries = [
+    { instanceId: "hermes-mac-mini", continuationGroupKey: "hermes:mac-mini" },
+    { instanceId: "hermes-laptop", continuationGroupKey: "hermes:laptop" },
+  ];
+
+  it("locks an agent-project draft to its exact bound instance", () => {
+    expect(
+      resolveComposerModelPickerContinuationGroupKey({
+        isProviderLocked: false,
+        isHomeThread: false,
+        projectAgentInstanceId: "hermes-mac-mini",
+        threadInstanceId: undefined,
+        threadModelInstanceId: undefined,
+        instanceEntries,
+      }),
+    ).toBe("hermes:mac-mini");
+  });
+
+  it("does not lock an ordinary draft from its current model selection alone", () => {
+    expect(
+      resolveComposerModelPickerContinuationGroupKey({
+        isProviderLocked: false,
+        isHomeThread: false,
+        projectAgentInstanceId: null,
+        threadInstanceId: undefined,
+        threadModelInstanceId: "hermes-mac-mini",
+        instanceEntries,
+      }),
+    ).toBeNull();
   });
 });
 

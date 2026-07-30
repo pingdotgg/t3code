@@ -24,6 +24,7 @@
  */
 import {
   defaultInstanceIdForDriver,
+  HERMES_DRIVER_KIND,
   ProviderDescribeError,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -81,6 +82,18 @@ const makeManualProviderMaintenanceCapabilities = (provider: ProviderDriverKind)
 const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
+/**
+ * A pending Hermes snapshot contains only its stable default sentinel with no
+ * controls. A completed v5 catalog always adds at least one provider-qualified
+ * model, or (for a genuinely empty inventory) advertises the reasoning selector
+ * on that sentinel. That distinction lets the registry keep the last good
+ * catalog through startup, reconnect, and exhausted discovery without making a
+ * real empty response unable to remove stale models or capabilities.
+ */
+const hasDiscoveredHermesCatalog = (
+  models: ReadonlyArray<ServerProvider["models"][number]>,
+): boolean => models.length > 1 || models.some(hasModelCapabilities);
+
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   if (provider.driver !== ProviderDriverKind.make("opencode")) {
     return true;
@@ -103,6 +116,15 @@ const mergeProviderModels = (
   previousModels: ReadonlyArray<ServerProvider["models"][number]>,
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
+  if (provider.driver === HERMES_DRIVER_KIND) {
+    // Only a completed catalog response is authoritative. The driver's first
+    // snapshot for a new connection generation is intentionally non-blocking,
+    // so replacing a cached catalog with that sentinel would make model and
+    // reasoning controls disappear whenever discovery is slow or exhausted.
+    if (hasDiscoveredHermesCatalog(nextModels)) return nextModels;
+    return hasDiscoveredHermesCatalog(previousModels) ? previousModels : nextModels;
+  }
+
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
 
   if (shouldRetainMissingModels && nextModels.length === 0 && previousModels.length > 0) {

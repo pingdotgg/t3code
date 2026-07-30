@@ -18,6 +18,36 @@ export function shouldSubmitComposerOnEnter(input: {
   return !input.isMobileViewport && !input.shiftKey;
 }
 
+export function shouldRenderStaticComposerModelLabel(input: {
+  isBoundComposer: boolean;
+  modelOptionCount: number;
+}): boolean {
+  return input.isBoundComposer && input.modelOptionCount <= 1;
+}
+
+export function resolveComposerModelPickerContinuationGroupKey(input: {
+  isProviderLocked: boolean;
+  isHomeThread: boolean;
+  projectAgentInstanceId: string | null;
+  threadInstanceId: string | undefined;
+  threadModelInstanceId: string | undefined;
+  instanceEntries: ReadonlyArray<{
+    instanceId: string;
+    continuationGroupKey?: string | undefined;
+  }>;
+}): string | null {
+  if (!input.isProviderLocked && !input.isHomeThread && input.projectAgentInstanceId === null) {
+    return null;
+  }
+  const lockedInstanceId =
+    input.threadInstanceId ?? input.threadModelInstanceId ?? input.projectAgentInstanceId;
+  if (!lockedInstanceId) return null;
+  return (
+    input.instanceEntries.find((entry) => entry.instanceId === lockedInstanceId)
+      ?.continuationGroupKey ?? null
+  );
+}
+
 const isInlineTokenSegment = (
   segment:
     | { type: "text"; text: string }

@@ -22,7 +22,7 @@ import { ProviderApprovalDecision, ProviderUserInputAnswers } from "./orchestrat
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { CanonicalItemType, CanonicalRequestType, UserInputQuestion } from "./providerRuntime.ts";
 
-export const HERMES_GATEWAY_PROTOCOL_VERSION = 4 as const;
+export const HERMES_GATEWAY_PROTOCOL_VERSION = 5 as const;
 
 /**
  * Base64 payload ceiling for a single media frame, both directions.
@@ -91,9 +91,9 @@ export const HermesGatewayCapabilities = Schema.Struct({
   activity: Schema.Boolean,
   approvals: Schema.Boolean,
   userInput: Schema.Boolean,
-  // Literal by design: attachments are part of the v4 contract itself, not a
-  // negotiated option. A plugin speaking v4 must handle them; one that cannot
-  // is a v3 plugin and is rejected at the version gate.
+  // Literal by design: attachments are part of the current contract, not a
+  // negotiated option. A plugin speaking v5 must handle them; one that cannot
+  // is a pre-v4 plugin and is rejected at the version gate.
   attachments: Schema.Literal(true),
 });
 export type HermesGatewayCapabilities = typeof HermesGatewayCapabilities.Type;
@@ -128,8 +128,9 @@ export type HermesGatewayConnectionState = typeof HermesGatewayConnectionState.T
 /**
  * Public instance state used by settings and provider-picker surfaces.
  *
- * `protocolVersion` is not restricted to v2 here so the UI can report the
- * unsupported version observed from a plugin that needs an upgrade.
+ * `protocolVersion` is not restricted to the current version here so the UI
+ * can report the unsupported version observed from a plugin that needs an
+ * upgrade.
  */
 export const HermesGatewayInstanceStatus = Schema.Struct({
   instanceId: ProviderInstanceId,
@@ -299,9 +300,8 @@ export const HermesGatewayConnectionHello = Schema.Struct({
   capabilities: HermesGatewayHelloCapabilities,
   authentication: HermesGatewayAuthentication,
   /**
-   * The model Hermes is configured to run, reported so T3 can show something
-   * truthful in the picker instead of a placeholder. Read-only — Hermes owns
-   * model selection, and T3 declares `sessionModelSwitch: "unsupported"`.
+   * The model Hermes is configured to run, reported as a lightweight handshake
+   * summary. T3 requests the selectable catalog after connecting.
    *
    * Optional so a plugin that predates this field still connects: an absent
    * value degrades to the generic label rather than failing the handshake.
@@ -309,8 +309,9 @@ export const HermesGatewayConnectionHello = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   /**
    * Defaults to `"gateway"` on decode so the field stays honest about intent
-   * rather than making every caller repeat the common case. v3 requires both
-   * sides updated regardless, so this default is ergonomics, not tolerance.
+   * rather than making every caller repeat the common case. Protocol changes
+   * require both sides updated regardless, so this default is ergonomics, not
+   * tolerance.
    */
   role: HermesGatewayConnectionRole.pipe(Schema.withDecodingDefault(Effect.succeed("gateway"))),
 });
@@ -362,6 +363,51 @@ export const HermesGatewayConnectionStatus = Schema.Struct({
 });
 export type HermesGatewayConnectionStatus = typeof HermesGatewayConnectionStatus.Type;
 
+export const HermesGatewayReasoningEffort = Schema.Literals([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
+export type HermesGatewayReasoningEffort = typeof HermesGatewayReasoningEffort.Type;
+
+const HermesGatewayDefaultModelSelection = Schema.Struct({
+  mode: Schema.Literal("default"),
+});
+
+const HermesGatewaySpecificModelSelection = Schema.Struct({
+  mode: Schema.Literal("specific"),
+  provider: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+});
+
+/** A turn's requested model, before Hermes resolves its configured default. */
+export const HermesGatewayRequestedModelSelection = Schema.Union([
+  HermesGatewayDefaultModelSelection,
+  HermesGatewaySpecificModelSelection,
+]);
+export type HermesGatewayRequestedModelSelection = typeof HermesGatewayRequestedModelSelection.Type;
+
+/** The concrete provider and model Hermes applied to a turn. */
+export const HermesGatewayEffectiveModel = Schema.Struct({
+  provider: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+});
+export type HermesGatewayEffectiveModel = typeof HermesGatewayEffectiveModel.Type;
+
+/** One selectable model in the catalog reported by the connected Hermes process. */
+export const HermesGatewayCatalogModel = Schema.Struct({
+  provider: TrimmedNonEmptyString,
+  providerName: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  supportsReasoning: Schema.Boolean,
+});
+export type HermesGatewayCatalogModel = typeof HermesGatewayCatalogModel.Type;
+
 const HermesGatewaySessionContext = Schema.Struct({
   threadId: ThreadId,
   sessionId: HermesGatewaySessionId,
@@ -410,6 +456,8 @@ export const HermesGatewayTurnStart = Schema.Struct({
   ...HermesGatewayTurnContext.fields,
   text: HermesGatewayTurnText,
   attachments: Schema.optional(Schema.Array(HermesGatewayTurnAttachment)),
+  modelSelection: Schema.optional(HermesGatewayRequestedModelSelection),
+  reasoningEffort: Schema.optional(HermesGatewayReasoningEffort),
 });
 export type HermesGatewayTurnStart = typeof HermesGatewayTurnStart.Type;
 
@@ -468,6 +516,14 @@ export const HermesGatewayDescribeRequest = Schema.Struct({
 });
 export type HermesGatewayDescribeRequest = typeof HermesGatewayDescribeRequest.Type;
 
+/** Ask the connected Hermes process for its current selectable model catalog. */
+export const HermesGatewayModelsListRequest = Schema.Struct({
+  type: Schema.Literal("models.list.request"),
+  protocolVersion: HermesGatewayProtocolVersion,
+  requestId: HermesGatewayRequestId,
+});
+export type HermesGatewayModelsListRequest = typeof HermesGatewayModelsListRequest.Type;
+
 /** Ask for one skill's markdown body. Fired on row expand, never eagerly. */
 export const HermesGatewaySkillBodyRequest = Schema.Struct({
   type: Schema.Literal("skill.body.request"),
@@ -501,6 +557,8 @@ export const HermesGatewayTurnStarted = Schema.Struct({
   protocolVersion: HermesGatewayProtocolVersion,
   requestId: HermesGatewayRequestId,
   ...HermesGatewayTurnContext.fields,
+  appliedModelSelection: Schema.optional(HermesGatewayEffectiveModel),
+  appliedReasoningEffort: Schema.optional(HermesGatewayReasoningEffort),
 });
 export type HermesGatewayTurnStarted = typeof HermesGatewayTurnStarted.Type;
 
@@ -660,6 +718,18 @@ export const HermesGatewayDescribedSkill = Schema.Struct({
   enabled: Schema.Boolean,
 });
 export type HermesGatewayDescribedSkill = typeof HermesGatewayDescribedSkill.Type;
+
+export const HermesGatewayModelsListResponse = Schema.Struct({
+  type: Schema.Literal("models.list.response"),
+  protocolVersion: HermesGatewayProtocolVersion,
+  requestId: HermesGatewayRequestId,
+  currentProvider: Schema.optional(TrimmedNonEmptyString),
+  currentModel: Schema.optional(TrimmedNonEmptyString),
+  currentReasoningEffort: Schema.optional(HermesGatewayReasoningEffort),
+  reasoningEfforts: Schema.Array(HermesGatewayReasoningEffort),
+  models: Schema.Array(HermesGatewayCatalogModel),
+});
+export type HermesGatewayModelsListResponse = typeof HermesGatewayModelsListResponse.Type;
 
 export const HermesGatewayDescribeResponse = Schema.Struct({
   type: Schema.Literal("describe.response"),
@@ -843,6 +913,7 @@ export const HermesGatewayT3ToPluginMessage = Schema.Union([
   HermesGatewayUserInputResponse,
   HermesGatewaySessionStop,
   HermesGatewayDescribeRequest,
+  HermesGatewayModelsListRequest,
   HermesGatewaySkillBodyRequest,
   HermesGatewayPing,
   HermesGatewayHomeDeliverAck,
@@ -868,6 +939,7 @@ export const HermesGatewayPluginToT3Message = Schema.Union([
   HermesGatewayTurnAborted,
   HermesGatewaySessionExited,
   HermesGatewayDescribeResponse,
+  HermesGatewayModelsListResponse,
   HermesGatewaySkillBodyResponse,
   HermesGatewayPong,
   HermesGatewayProtocolError,
