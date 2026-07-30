@@ -1487,6 +1487,9 @@ const NO_CLAUDE_NATIVE_TOOL_OUTPUT = { type: "none" } satisfies ClaudeNativeTool
 // The CLI opens the steered native turn within a second or two, so this only
 // fires when it never opens one at all.
 const CLAUDE_STEERING_HANDOFF_TIMEOUT = Duration.seconds(60);
+// Give a same-thread background notification time to attach its summary
+// before stranded assistant text requests a continuation on its own.
+const CLAUDE_STRANDED_OUTPUT_FALLBACK_TIMEOUT = Duration.seconds(2);
 
 function claudeNativeToolOutputFromToolResult(
   toolResult: ClaudeToolResultContentBlock,
@@ -2018,6 +2021,7 @@ interface ActiveClaudeProviderRetry {
 
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
+  readonly nativeThreadId: string | null;
   readonly childThreadId: ThreadId;
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
@@ -2165,6 +2169,7 @@ export function makeClaudeAdapterV2(
           >(),
         );
         const requestedContinuations = yield* Ref.make(new Set<string>());
+        const strandedOutputFallbackTokens = yield* Ref.make(new Map<string, object>());
         const runtimeContext = yield* Effect.context<never>();
         const runFork = Effect.runForkWith(runtimeContext);
         const runPromise = Effect.runPromiseWith(runtimeContext);
@@ -2290,6 +2295,24 @@ export function makeClaudeAdapterV2(
               taskId,
             );
           });
+
+        const hasWakeEligibleBackgroundWorkOnNativeThread = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+        ) {
+          const opaqueTasks = taskIdSetForNativeThread(
+            yield* Ref.get(wakeEligibleBackgroundTasksByNativeThread),
+            nativeThreadId,
+          );
+          if (opaqueTasks.size > 0) {
+            return true;
+          }
+          for (const subagent of (yield* Ref.get(sessionSubagentsByTaskId)).values()) {
+            if (subagent.nativeThreadId === nativeThreadId && subagent.task.status === "running") {
+              return true;
+            }
+          }
+          return false;
+        });
 
         // Admit onto wake eligibility only. Replay tombstones are created when
         // the first idle notification is buffered, not at task start.
@@ -2440,6 +2463,14 @@ export function makeClaudeAdapterV2(
                 return current;
               }
               const updated = new Set(current);
+              updated.delete(nativeThreadId);
+              return updated;
+            });
+            yield* Ref.update(strandedOutputFallbackTokens, (current) => {
+              if (!current.has(nativeThreadId)) {
+                return current;
+              }
+              const updated = new Map(current);
               updated.delete(nativeThreadId);
               return updated;
             });
@@ -2843,6 +2874,10 @@ export function makeClaudeAdapterV2(
           } satisfies OrchestrationV2Subagent;
           const subagent = {
             task,
+            nativeThreadId:
+              existingSubagent?.nativeThreadId ??
+              input.context.input.providerThread.nativeThreadRef?.nativeId ??
+              null,
             childThreadId,
             childRootNodeId,
             turnItemId:
@@ -3626,6 +3661,91 @@ export function makeClaudeAdapterV2(
           }
         });
 
+        const clearStrandedOutputFallback = (nativeThreadId: string) =>
+          Ref.update(strandedOutputFallbackTokens, (current) => {
+            if (!current.has(nativeThreadId)) {
+              return current;
+            }
+            const updated = new Map(current);
+            updated.delete(nativeThreadId);
+            return updated;
+          });
+
+        const offerBufferedContinuation = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(nativeThreadId);
+          if (route === undefined) {
+            yield* clearStrandedOutputFallback(nativeThreadId);
+            yield* Effect.logWarning("orchestration-v2.claude-wake-turn-unroutable", {
+              providerSessionId: input.providerSessionId,
+              nativeThreadId,
+            });
+            return;
+          }
+          const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
+            if (current.has(nativeThreadId)) {
+              return [false, current] as const;
+            }
+            const updated = new Set(current);
+            updated.add(nativeThreadId);
+            return [true, updated] as const;
+          });
+          if (!shouldOffer) {
+            yield* clearStrandedOutputFallback(nativeThreadId);
+            return;
+          }
+          yield* clearStrandedOutputFallback(nativeThreadId);
+          const detail = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.detail ?? null;
+          yield* Effect.logInfo("orchestration-v2.claude-wake-turn-detected", {
+            providerSessionId: input.providerSessionId,
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+          });
+          yield* continuationRequests.offer({
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+            driver: CLAUDE_PROVIDER,
+            detail,
+          });
+        });
+
+        const scheduleStrandedOutputFallback = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+        ) {
+          const token = {};
+          const shouldSchedule = yield* Ref.modify(strandedOutputFallbackTokens, (current) => {
+            if (current.has(nativeThreadId)) {
+              return [false, current] as const;
+            }
+            return [true, new Map(current).set(nativeThreadId, token)] as const;
+          });
+          if (!shouldSchedule) {
+            return;
+          }
+          yield* Effect.gen(function* () {
+            yield* Effect.sleep(CLAUDE_STRANDED_OUTPUT_FALLBACK_TIMEOUT);
+            const ownsFallback = yield* Ref.modify(strandedOutputFallbackTokens, (current) => {
+              if (current.get(nativeThreadId) !== token) {
+                return [false, current] as const;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeThreadId);
+              return [true, updated] as const;
+            });
+            if (!ownsFallback) {
+              return;
+            }
+            const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId);
+            const stillHasStrandedOutput =
+              buffered?.messages.some(
+                (entry) => (assistantTextFromSdkMessage(entry)?.text.length ?? 0) > 0,
+              ) ?? false;
+            if (!stillHasStrandedOutput) {
+              return;
+            }
+            yield* offerBufferedContinuation(nativeThreadId);
+          }).pipe(Effect.forkIn(sessionScope));
+        });
+
         const bufferWakeMessage = Effect.fnUntraced(function* (wakeInput: {
           readonly nativeThreadId: string;
           readonly message: SDKMessage;
@@ -3728,13 +3848,18 @@ export function makeClaudeAdapterV2(
             buffered?.messages.some(
               (entry) => entry.type === "system" && entry.subtype === "task_notification",
             ) ?? false;
+          const hasBufferedStrandedOutput =
+            buffered?.messages.some(
+              (entry) => (assistantTextFromSdkMessage(entry)?.text.length ?? 0) > 0,
+            ) ?? false;
           const isNativeOpaqueWakeFrame =
             hasBufferedNotification && (message.type === "assistant" || message.type === "user");
           // Assistant text with no active turn is the other exception: an early
-          // terminal settled the run while the query kept working, so no
-          // notification is coming and the next result may be minutes away or
-          // never arrive. Without an offer here those frames sit in the buffer
-          // until the session recycles and are never projected.
+          // terminal settled the run while the query kept working. Without an
+          // offer those frames sit in the buffer until the session recycles
+          // and are never projected. When same-thread background work is still
+          // wake-eligible, wait briefly for its notification to contribute the
+          // continuation detail before using the bounded text fallback.
           //
           // Only text qualifies. A tool_use or tool_result frame is the model
           // working rather than speaking, and the notification or result that
@@ -3742,46 +3867,26 @@ export function makeClaudeAdapterV2(
           // the continuation early and strip that detail from it.
           const isStrandedNativeOutput =
             (assistantTextFromSdkMessage(message)?.text.length ?? 0) > 0;
+          const isNotificationForBufferedOutput =
+            isPendingTaskNotification && hasBufferedStrandedOutput;
           if (
             !isPendingSubagentNotification &&
+            !isNotificationForBufferedOutput &&
             !isNativeOpaqueWakeFrame &&
             !isStrandedNativeOutput &&
             message.type !== "result"
           ) {
             return;
           }
-          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(wakeInput.nativeThreadId);
-          if (route === undefined) {
-            yield* Effect.logWarning("orchestration-v2.claude-wake-turn-unroutable", {
-              providerSessionId: input.providerSessionId,
-              nativeThreadId: wakeInput.nativeThreadId,
-            });
+          if (
+            isStrandedNativeOutput &&
+            !hasBufferedNotification &&
+            (yield* hasWakeEligibleBackgroundWorkOnNativeThread(wakeInput.nativeThreadId))
+          ) {
+            yield* scheduleStrandedOutputFallback(wakeInput.nativeThreadId);
             return;
           }
-          const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
-            if (current.has(wakeInput.nativeThreadId)) {
-              return [false, current] as const;
-            }
-            const updated = new Set(current);
-            updated.add(wakeInput.nativeThreadId);
-            return [true, updated] as const;
-          });
-          if (!shouldOffer) {
-            return;
-          }
-          const detail =
-            (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId)?.detail ?? null;
-          yield* Effect.logInfo("orchestration-v2.claude-wake-turn-detected", {
-            providerSessionId: input.providerSessionId,
-            threadId: route.threadId,
-            providerThreadId: route.providerThreadId,
-          });
-          yield* continuationRequests.offer({
-            threadId: route.threadId,
-            providerThreadId: route.providerThreadId,
-            driver: CLAUDE_PROVIDER,
-            detail,
-          });
+          yield* offerBufferedContinuation(wakeInput.nativeThreadId);
         });
 
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
@@ -4410,7 +4515,6 @@ export function makeClaudeAdapterV2(
                 // native-session reset events.
                 closedExistingNativeThreadId === nativeThreadId
                   ? Effect.gen(function* () {
-                      yield* clearWakeStateForNativeThread(nativeThreadId);
                       yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
                         status: "idle",
                       });
