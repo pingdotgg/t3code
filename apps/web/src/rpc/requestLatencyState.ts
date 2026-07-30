@@ -22,7 +22,10 @@ interface PendingRpcAckRequest {
 }
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
-const untrackedRpcAckTags = new Set<string>([WS_METHODS.previewAutomationConnect]);
+const untrackedRpcAckTags = new Set<string>([
+  WS_METHODS.previewAutomationConnect,
+  WS_METHODS.serverUpdateServer,
+]);
 
 const slowRpcAckRequestsAtom = Atom.make<ReadonlyArray<SlowRpcAckRequest>>([]).pipe(
   Atom.keepAlive,
@@ -38,7 +41,11 @@ function getSlowRpcAckRequestsValue(): ReadonlyArray<SlowRpcAckRequest> {
 }
 
 function shouldTrackRpcAck(tag: string): boolean {
-  return !tag.includes("subscribe") && !untrackedRpcAckTags.has(tag);
+  if (tag.includes("subscribe")) return false;
+  for (const untrackedTag of untrackedRpcAckTags) {
+    if (tag === untrackedTag || tag.startsWith(`${untrackedTag} · `)) return false;
+  }
+  return true;
 }
 
 export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {

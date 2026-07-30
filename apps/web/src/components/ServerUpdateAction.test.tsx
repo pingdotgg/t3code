@@ -5,6 +5,9 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => ({
+  beginPendingServerUpdate: vi.fn(() => 1),
+  clearPendingServerUpdate: vi.fn(),
+  markPendingServerUpdateRestartAccepted: vi.fn(),
   updateServer: vi.fn(),
   toast: vi.fn(),
 }));
@@ -72,6 +75,12 @@ vi.mock("~/hooks/useCopyToClipboard", () => ({
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateServer: Symbol("updateServer") },
 }));
+vi.mock("~/state/serverUpdate", () => ({
+  beginPendingServerUpdate: testState.beginPendingServerUpdate,
+  clearPendingServerUpdate: testState.clearPendingServerUpdate,
+  markPendingServerUpdateRestartAccepted: testState.markPendingServerUpdateRestartAccepted,
+  SERVER_UPDATE_PENDING_EXPIRY_MS: 12 * 60_000,
+}));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => testState.updateServer,
 }));
@@ -116,6 +125,9 @@ describe("ServerUpdateAction", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     hooks.reset();
+    testState.beginPendingServerUpdate.mockClear();
+    testState.clearPendingServerUpdate.mockReset();
+    testState.markPendingServerUpdateRestartAccepted.mockReset();
     testState.updateServer.mockReset();
     testState.toast.mockReset();
   });
@@ -194,5 +206,17 @@ describe("ServerUpdateAction", () => {
     expect(testState.toast).not.toHaveBeenCalledWith(
       expect.objectContaining({ title: "Server update failed" }),
     );
+    expect(testState.clearPendingServerUpdate).not.toHaveBeenCalled();
+  });
+
+  it("clears the expected-restart state when the update fails", async () => {
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.failure(Cause.fail(new Error("install failed"))),
+    );
+
+    renderAction().props.onClick?.();
+    await flushPromises();
+
+    expect(testState.clearPendingServerUpdate).toHaveBeenCalledWith("env-test", 1);
   });
 });

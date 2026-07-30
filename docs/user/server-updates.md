@@ -45,6 +45,9 @@ commands.
 Keep the web or desktop app open while the server restarts. When it reconnects with the matching
 version, the warning and update action disappear.
 
+While an update-triggered restart is in progress, T3 Code identifies it as an update and reconnects
+automatically instead of reporting the expected disconnect as a connection failure.
+
 If the client reports a timeout, the server may still be finishing the update. Wait a minute, then
 reconnect or open **Settings** → **Connections** again. If the warning remains:
 

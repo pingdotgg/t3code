@@ -52,7 +52,14 @@ describe("requestLatencyState", () => {
   });
 
   it("ignores the long-lived preview automation connection", () => {
-    trackRpcRequestSent("1", WS_METHODS.previewAutomationConnect);
+    trackRpcRequestSent("1", `${WS_METHODS.previewAutomationConnect} · environment-1`);
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+  });
+
+  it("ignores server updates because their install phase is intentionally long-running", () => {
+    trackRpcRequestSent("1", `${WS_METHODS.serverUpdateServer} · environment-1`);
     vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
 
     expect(getSlowRpcAckRequests()).toEqual([]);

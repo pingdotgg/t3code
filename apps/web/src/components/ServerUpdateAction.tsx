@@ -7,6 +7,12 @@ import {
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { serverEnvironment } from "~/state/server";
+import {
+  beginPendingServerUpdate,
+  clearPendingServerUpdate,
+  markPendingServerUpdateRestartAccepted,
+  SERVER_UPDATE_PENDING_EXPIRY_MS,
+} from "~/state/serverUpdate";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { manualServerUpdateCommand } from "~/versionSkew";
 import { Button } from "./ui/button";
@@ -18,8 +24,6 @@ import { toastManager } from "./ui/toast";
  * spinner a bit beyond that so a dead transport never strands a disabled
  * button, while a legitimately slow install is never cut off.
  */
-const UPDATE_PENDING_EXPIRY_MS = 12 * 60_000;
-
 function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
@@ -89,6 +93,7 @@ export function ServerUpdateAction({
     inFlightRef.current = true;
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
+    const updateStateAttempt = beginPendingServerUpdate(environmentId, targetVersion);
     const ownsAttempt = () => attemptRef.current === attempt;
     setPending(true);
     const armExpiry = () => {
@@ -103,7 +108,7 @@ export function ServerUpdateAction({
           title: "Server update timed out",
           description: "The update may still be running on the server — check again in a minute.",
         });
-      }, UPDATE_PENDING_EXPIRY_MS);
+      }, SERVER_UPDATE_PENDING_EXPIRY_MS);
       expiryRef.current = expiry;
       return expiry;
     };
@@ -111,6 +116,7 @@ export function ServerUpdateAction({
     let restartAccepted = false;
     const keepPendingForRestart = () => {
       restartAccepted = true;
+      markPendingServerUpdateRestartAccepted(environmentId, updateStateAttempt);
       if (expiryRef.current === expiry) {
         clearTimeout(expiry);
         expiry = armExpiry();
@@ -133,6 +139,7 @@ export function ServerUpdateAction({
           if (isAtomCommandInterrupted(result)) {
             return;
           }
+          clearPendingServerUpdate(environmentId, updateStateAttempt);
           toastManager.add({
             type: "error",
             title: "Server update failed",
@@ -152,6 +159,7 @@ export function ServerUpdateAction({
       })
       .catch((error: unknown) => {
         if (!ownsAttempt()) return;
+        clearPendingServerUpdate(environmentId, updateStateAttempt);
         toastManager.add({
           type: "error",
           title: "Server update failed",

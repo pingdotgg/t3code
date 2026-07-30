@@ -207,6 +207,7 @@ import {
   primaryServerSettingsAtom,
   serverEnvironment,
 } from "../state/server";
+import { clearPendingServerUpdate, usePendingServerUpdate } from "../state/serverUpdate";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -1879,21 +1880,43 @@ function ChatViewContent(props: ChatViewProps) {
   const versionMismatchEnvironmentId =
     versionMismatch && activeThread ? activeThread.environmentId : null;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
+  const pendingServerUpdate = usePendingServerUpdate(activeThread?.environmentId ?? null);
+  useEffect(() => {
+    if (
+      pendingServerUpdate &&
+      activeThread &&
+      activeEnvironmentConnectionPhase === "connected" &&
+      serverConfig !== null &&
+      versionMismatch === null
+    ) {
+      clearPendingServerUpdate(activeThread.environmentId, pendingServerUpdate.attempt);
+    }
+  }, [
+    activeEnvironmentConnectionPhase,
+    activeThread,
+    pendingServerUpdate,
+    serverConfig,
+    versionMismatch,
+  ]);
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     if (activeEnvironmentUnavailableState) {
       const connection = activeEnvironmentUnavailableState.connection;
       const isReconnecting =
         connection.phase === "connecting" || connection.phase === "reconnecting";
+      const isUpdatingServer = pendingServerUpdate !== null;
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: connection.phase === "error" ? "error" : "warning",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(connection)}`,
-        description:
-          connection.error ??
-          "Reconnect this environment before sending messages or running actions.",
-        actions: (
+        title: isUpdatingServer
+          ? `${activeEnvironmentUnavailableState.label}: Updating server...`
+          : `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(connection)}`,
+        description: isUpdatingServer
+          ? "The server is restarting and will reconnect automatically."
+          : (connection.error ??
+            "Reconnect this environment before sending messages or running actions."),
+        actions: isUpdatingServer ? undefined : (
           <>
             <Button
               size="xs"
@@ -1958,6 +1981,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeEnvironmentUnavailableState,
     handleReconnectActiveEnvironment,
     navigate,
+    pendingServerUpdate,
     setDismissedVersionMismatchKey,
     showVersionMismatchBanner,
     versionMismatch,
