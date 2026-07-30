@@ -165,7 +165,8 @@ function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpF
       return failure("thread_not_found", error.message);
     case "ThreadManagementRunNotFoundError":
       return failure("run_not_found", error.message);
-    case "ThreadManagementThreadNotSendableError":
+    case "ThreadManagementThreadArchivedError":
+    case "ThreadManagementNoSteerableRunError":
       return failure("thread_not_sendable", error.message);
     case "ThreadManagementThreadNotInterruptibleError":
       return failure("thread_not_interruptible", error.message);
