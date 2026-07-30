@@ -4,6 +4,20 @@ const CONNECT_AUTH_STATE_PARAM = "state";
 const CONNECT_AUTH_CHALLENGE_PARAM = "challenge";
 const CONNECT_AUTH_CODE_SEPARATOR = ".";
 
+/**
+ * The CLI generates both values with `encodeBase64Url`, so they have known
+ * lengths: `state` is base64url(16 random bytes) and the PKCE `challenge` is
+ * base64url(SHA-256 digest = 32 bytes). Base64url has no padding, so 16 bytes
+ * encode to 22 characters and 32 bytes to 43.
+ */
+const CONNECT_AUTH_STATE_LENGTH = 22;
+const CONNECT_AUTH_CHALLENGE_LENGTH = 43;
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function isBase64UrlOfLength(value: string, length: number): boolean {
+  return value.length === length && BASE64URL_PATTERN.test(value);
+}
+
 const CONNECT_AUTHORIZE_PATH = "/connect";
 const CONNECT_CALLBACK_PATH = "/connect/callback";
 
@@ -47,7 +61,16 @@ export function readConnectAuthorizeRequest(url: URL): ConnectAuthorizeRequest |
   const params = readHashParams(url);
   const state = params.get(CONNECT_AUTH_STATE_PARAM)?.trim() ?? "";
   const challenge = params.get(CONNECT_AUTH_CHALLENGE_PARAM)?.trim() ?? "";
-  if (!state || !challenge) {
+  // Reject anything that is not a well-formed T3-generated value. A connect
+  // URL that wraps in a narrow terminal can pick up stray characters (spaces,
+  // multiplexer pane borders) during native text selection; validating the
+  // known base64url shape here fails such requests before the browser flow
+  // instead of after, so the /connect page can tell the user to re-copy the
+  // freshly printed URL.
+  if (
+    !isBase64UrlOfLength(state, CONNECT_AUTH_STATE_LENGTH) ||
+    !isBase64UrlOfLength(challenge, CONNECT_AUTH_CHALLENGE_LENGTH)
+  ) {
     return null;
   }
   return { state, challenge };

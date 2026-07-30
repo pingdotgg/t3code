@@ -37,6 +37,63 @@ describe("connectAuth", () => {
     ).toBeNull();
   });
 
+  it("rejects malformed state or challenge before starting the browser flow", () => {
+    const state = "q7mK9xV2pL4nR8sT6wYzAQ";
+    const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+    // A stray space (e.g. from a URL that wrapped in a narrow terminal).
+    expect(
+      readConnectAuthorizeRequest(
+        new URL(
+          buildConnectAuthorizeRequestUrl({
+            hostedAppUrl: "https://app.t3.codes",
+            state: "q7mK9xV2pL4nR8sT6w Yz",
+            challenge,
+          }),
+        ),
+      ),
+    ).toBeNull();
+
+    // A non-base64url character pasted from a multiplexer pane border.
+    expect(
+      readConnectAuthorizeRequest(
+        new URL(
+          buildConnectAuthorizeRequestUrl({
+            hostedAppUrl: "https://app.t3.codes",
+            state,
+            challenge: `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw│cM`,
+          }),
+        ),
+      ),
+    ).toBeNull();
+
+    // Wrong length (truncated challenge) even though every character is valid.
+    expect(
+      readConnectAuthorizeRequest(
+        new URL(
+          buildConnectAuthorizeRequestUrl({
+            hostedAppUrl: "https://app.t3.codes",
+            state,
+            challenge: challenge.slice(0, 42),
+          }),
+        ),
+      ),
+    ).toBeNull();
+
+    // The well-formed pair still round-trips.
+    expect(
+      readConnectAuthorizeRequest(
+        new URL(
+          buildConnectAuthorizeRequestUrl({
+            hostedAppUrl: "https://app.t3.codes",
+            state,
+            challenge,
+          }),
+        ),
+      ),
+    ).toEqual({ state, challenge });
+  });
+
   it("builds a PKCE authorize URL against the Clerk endpoint", () => {
     const url = new URL(
       buildConnectClerkAuthorizeUrl({
