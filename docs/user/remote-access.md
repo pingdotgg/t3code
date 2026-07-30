@@ -14,14 +14,15 @@ That gives you:
 
 ## Enabling Network Access
 
-There are two ways to expose your server for remote connections: from the desktop app or from the CLI.
+There are three ways to reach your server from another device: expose the desktop app's backend,
+run a headless server from the CLI, or have the desktop app launch T3 Code over SSH.
 
 ### Option 1: Desktop App
 
 If you are already running the desktop app and want to make it reachable from other devices:
 
 1. Open **Settings** → **Connections**.
-2. Under **Manage Local Backend**, toggle **Network access** on. This will restart the app and run the backend on all network interfaces.
+2. Under **This environment**, toggle **Network access** on. This will restart the app and run the backend on all network interfaces.
 3. The settings panel will show the default reachable endpoint, with a `+N` control when more endpoints are available. Expand it to inspect alternatives such as loopback, LAN, private-network, or HTTPS endpoints.
 4. Use **Create Link** to generate a pairing link you can share with another device.
 
@@ -37,6 +38,8 @@ available. You can set another endpoint as the default from the expanded endpoin
 
 If the copied link points directly at `http://192.168.x.y:3773`, open it from a client that can reach that LAN address. If it points at `https://app.t3.codes/pair?...`, the hosted web app will save the environment and connect directly to the backend URL in the link.
 
+In the mobile app's **Add Environment** form, a numeric IP address without a scheme uses HTTP. Include `https://` explicitly when the backend is served over HTTPS.
+
 ### Tailscale Endpoints
 
 When the desktop app can detect Tailscale, it adds Tailnet endpoints to the reachable endpoint list.
@@ -48,10 +51,10 @@ Depending on your Tailscale setup, this may include:
 - an HTTPS MagicDNS endpoint when Tailscale Serve is configured for this backend
 
 The Tailscale HTTPS endpoint uses the clean MagicDNS URL, such as
-`https://machine.tailnet.ts.net/`, and is disabled until the app verifies that the URL reaches this
-backend. Use **Setup** on the Tailscale HTTPS row to opt in. The desktop app restarts the backend
-with the same server-side behavior as `t3 serve --tailscale-serve`, then the server asks Tailscale
-Serve to proxy HTTPS traffic to the local backend.
+`https://machine.tailnet.ts.net/`, and is off until you opt in. Turn on **Enable Tailscale HTTPS**
+on the **Tailscale HTTPS** row in **Settings** → **Connections**. The desktop app restarts the
+backend with the same server-side behavior as `t3 serve --tailscale-serve`, then the server asks
+Tailscale Serve to proxy HTTPS traffic to the local backend. Turn the same switch off to stop it.
 
 The Tailscale support is an endpoint provider add-on. The core remote model still works without Tailscale: LAN HTTP endpoints, custom HTTPS endpoints, future tunnels, and SSH-launched environments all use the same saved environment and pairing flow.
 
@@ -96,10 +99,8 @@ By default this configures Tailscale Serve on HTTPS port 443 and advertises
 npx t3 serve --tailscale-serve --tailscale-serve-port 8443
 ```
 
-> Note
-> The GUIs do not currently support adding projects on remote environments.
-> For now, use `t3 project ...` on the server machine instead.
-> Full GUI support for remote project management is coming soon.
+Once paired, add projects normally: open the Command Palette and choose **Add Project**, then pick
+the environment the project lives on. Every saved environment is offered, not only the local one.
 
 ### Option 3: Desktop-Managed SSH Launch
 
@@ -125,16 +126,10 @@ The remote host must have a compatible Node.js runtime. T3 Code uses the server 
 ^22.16 || ^23.11 || >=24.10
 ```
 
-During SSH launch, T3 Code first checks whether `node` is already available on `PATH`. If it is missing, the launcher tries common non-interactive shell locations and version-manager shims/activation hooks:
-
-- `~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`
-- Volta via `~/.volta/bin`
-- asdf via `~/.asdf/shims`, `~/.asdf/bin`, or `~/.asdf/asdf.sh`
-- mise via `~/.local/share/mise/shims`, `~/.mise/shims`, or `mise activate sh`
-- fnm via `fnm env --use-on-cd --shell sh` or `fnm env --shell sh`
-- nodenv via `~/.nodenv/bin`, `~/.nodenv/shims`, or `nodenv init -`
-- nvm via `$NVM_DIR/nvm.sh`, then `nvm use default`, `nvm use node`, or `nvm use --lts`
-- installed nvm versions under `$NVM_DIR/versions/node/*/bin`
+During SSH launch, T3 Code first checks whether `node` is on `PATH`. If it is missing, the launcher
+looks in the usual install directories and tries to activate a version manager if it finds one
+(Volta, asdf, mise, fnm, nodenv, nvm). That covers most setups, but a version manager that only
+initializes from an interactive shell profile will not be picked up.
 
 If launch fails with `node: command not found`, a port-scan failure, or a message that the remote Node version does not satisfy the required range, SSH into the host and check the same non-interactive shell path T3 Code uses:
 
@@ -148,7 +143,7 @@ If that does not print a compatible Node version, configure your version manager
 nvm alias default 24
 ```
 
-With mise/asdf/fnm/nodenv, make sure the tool's shim directory is installed and points at a Node version satisfying the range above.
+With mise, asdf, fnm, or nodenv, make sure the tool's shim directory is installed and resolves to a Node version satisfying the range above without an interactive shell.
 
 If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
 
@@ -160,7 +155,7 @@ be able to update and reconnect the server for you, or it may ask you to update 
 run a copied command on the server machine.
 
 Finish active work before updating because the server restarts briefly. For step-by-step guidance,
-see [Keeping T3 Code in Sync](./server-updates.md).
+see [Keeping T3 Code in Sync](./updating.md).
 
 On a Linux host, you can keep the server running after logout and manage it independently of the
 connection method. See [Running T3 Code in the Background](./background-service.md).
