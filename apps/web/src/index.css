@@ -374,10 +374,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     border-radius: 0.75rem;
   }
 
-  .settings-page-scroll-fade .settings-search-target-pulse:focus {
-    outline: none;
-  }
-
   .workspace-titlebar-controls {
     position: absolute;
     top: var(--workspace-controls-top);
