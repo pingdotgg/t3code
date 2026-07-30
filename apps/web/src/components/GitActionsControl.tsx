@@ -348,7 +348,13 @@ function GitQuickActionIcon({
   return <InfoIcon className={iconClassName} />;
 }
 
-function GitActionProgressButtonContent({ progress }: { progress: GitActionProgressPresentation }) {
+function GitActionProgressButtonContent({
+  progress,
+  isPanel,
+}: {
+  progress: GitActionProgressPresentation;
+  isPanel: boolean;
+}) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -369,7 +375,13 @@ function GitActionProgressButtonContent({ progress }: { progress: GitActionProgr
     <div
       aria-atomic="false"
       aria-live="polite"
-      className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5"
+      className={cn(
+        "grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5",
+        // Pin the title row to the button's minimum content height (min-height
+        // minus vertical padding) so revealing the output row extends the
+        // button downward without re-centering — the title must not shift.
+        isPanel ? "grid-rows-[1.75rem]" : "grid-rows-[1.25rem] sm:grid-rows-[1rem]",
+      )}
       role="status"
     >
       <Spinner
@@ -1636,7 +1648,7 @@ export default function GitActionsControl({
               size="xs"
               variant={isPanel ? "ghost" : "outline"}
             >
-              <GitActionProgressButtonContent progress={gitActionProgress} />
+              <GitActionProgressButtonContent isPanel={isPanel} progress={gitActionProgress} />
             </Button>
           ) : quickActionDisabledReason ? (
             <Popover>
