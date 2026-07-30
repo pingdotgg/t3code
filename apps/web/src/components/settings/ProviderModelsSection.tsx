@@ -101,6 +101,26 @@ export function nextCustomModelLabels(
 }
 
 /**
+ * Content equality for label maps. Parent often rebuilds a new object with
+ * the same entries (e.g. `Object.fromEntries` on every render); identity
+ * alone must not reset the write-through label cache.
+ */
+export function areCustomModelLabelMapsEqual(
+  a: Readonly<Record<string, string>>,
+  b: Readonly<Record<string, string>>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key) || a[key] !== b[key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Primary row text for a model entry. Custom rows always show the API slug
  * because the optional display label is edited in a sibling input.
  */
@@ -142,8 +162,16 @@ export function ProviderModelsSection({
   const listRef = useRef<HTMLDivElement | null>(null);
   // Keep a write-through cache so sequential label blurs before the parent
   // re-renders do not clobber each other by spreading a stale prop snapshot.
+  // Only adopt the prop when its *content* changes — parents often rebuild a
+  // new object reference with identical entries, which must not wipe local
+  // edits that have not landed in parent state yet.
   const labelsRef = useRef(customModelLabels);
+  const lastPropLabelsRef = useRef(customModelLabels);
   useEffect(() => {
+    if (areCustomModelLabelMapsEqual(lastPropLabelsRef.current, customModelLabels)) {
+      return;
+    }
+    lastPropLabelsRef.current = customModelLabels;
     labelsRef.current = customModelLabels;
   }, [customModelLabels]);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
