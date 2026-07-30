@@ -298,7 +298,7 @@ function taskStatusForRun(
   }
 }
 
-function delegatedTaskRun(
+export function delegatedTaskRun(
   childProjection: OrchestrationV2ThreadProjection,
   task: OrchestrationV2Subagent,
 ): OrchestrationV2Run | undefined {
@@ -310,11 +310,22 @@ function delegatedTaskRun(
   );
   if (spawnTransfer === undefined) {
     // Legacy delegated-task projections predate the durable spawn transfer.
-    return latestRun(childProjection);
+    return childProjection.runs[0];
   }
   return spawnTransfer.targetRunId === null
     ? undefined
     : childProjection.runs.find((run) => run.id === spawnTransfer.targetRunId);
+}
+
+export function hasPendingChildRuns(
+  childProjection: OrchestrationV2ThreadProjection,
+  delegatedRun: OrchestrationV2Run | undefined,
+): boolean {
+  return childProjection.runs.some(
+    (run) =>
+      !isTerminalRunStatus(run.status) &&
+      (delegatedRun === undefined || run.ordinal > delegatedRun.ordinal),
+  );
 }
 
 function isTerminalTaskStatus(
@@ -906,9 +917,7 @@ const make = Effect.gen(function* () {
         childRunId: childRun?.id ?? null,
         childNodeId: task.id,
         status,
-        hasPendingChildRuns: childProjection.runs.some(
-          (run) => run.id !== childRun?.id && !isTerminalRunStatus(run.status),
-        ),
+        hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
         providerInstanceId: task.providerInstanceId,
         model: task.model,
         summary: derivedResult,
