@@ -1017,6 +1017,11 @@ export interface DesktopBridge {
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /**
+   * Authenticated local VoiceBud handoff. The external process never receives
+   * this renderer bridge and cannot choose a composer destination directly.
+   */
+  voiceBud?: import("./voiceBud.ts").DesktopVoiceBudBridge;
+  /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
    */
