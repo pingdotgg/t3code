@@ -63,6 +63,7 @@ import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistr
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
 
 const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
 const projectId = ProjectId.make("project:mcp-orchestrator");
@@ -1431,6 +1432,29 @@ describe("orchestrator MCP toolkit", () => {
               latestTerminalRunId: childFollowup.runId,
               latestTerminalStatus: "completed",
             });
+            const activeChildProjection = yield* orchestrator.getThreadProjection(
+              delegated.childThreadId,
+            );
+            const legacyChildProjection = {
+              ...activeChildProjection,
+              contextTransfers: activeChildProjection.contextTransfers.filter(
+                (transfer) => transfer.type !== "subagent_spawn",
+              ),
+            };
+            const legacyDelegatedRun = delegatedTaskRun(legacyChildProjection, completedTask!);
+            expect(legacyDelegatedRun?.id).toBe(delegated.childRunId);
+            expect(hasPendingChildRuns(legacyChildProjection, legacyDelegatedRun)).toBe(true);
+            expect(
+              hasPendingChildRuns(
+                {
+                  ...legacyChildProjection,
+                  runs: legacyChildProjection.runs.map((run) =>
+                    run.id === activeChildFollowup.runId ? { ...run, status: "queued" } : run,
+                  ),
+                },
+                legacyDelegatedRun,
+              ),
+            ).toBe(true);
             const completedTaskCancelCall = yield* invoke("task_cancel", {
               taskId: delegated.taskId,
               reason: "Must not interrupt a later unrelated child run.",
