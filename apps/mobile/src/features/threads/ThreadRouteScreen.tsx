@@ -2,6 +2,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
   useFocusEffect,
+  useIsFocused,
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
@@ -58,6 +59,7 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { resolveOpenThreadVisitedAt, useThreadVisits } from "../../state/thread-visits";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -188,6 +190,8 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const isFocused = useIsFocused();
+  const { markVisited } = useThreadVisits();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -203,6 +207,12 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const openThreadVisitedAt =
+    selectedThread === null ? null : resolveOpenThreadVisitedAt(selectedThread);
+  useEffect(() => {
+    if (!isFocused || routeThreadIdentity === null || openThreadVisitedAt === null) return;
+    markVisited(routeThreadIdentity, openThreadVisitedAt);
+  }, [isFocused, markVisited, openThreadVisitedAt, routeThreadIdentity]);
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );

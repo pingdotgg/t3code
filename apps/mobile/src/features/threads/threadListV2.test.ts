@@ -94,6 +94,100 @@ describe("resolveThreadListV2Status", () => {
       "ready",
     );
   });
+
+  it("resolves done when a turn completed after the thread was last visited", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "completed",
+        requestedAt: "2026-06-01T12:00:00.000Z",
+        startedAt: "2026-06-01T12:00:01.000Z",
+        completedAt: "2026-06-01T12:01:00.000Z",
+        assistantMessageId: MessageId.make("assistant-1"),
+      },
+    });
+
+    expect(
+      resolveThreadListV2Status(thread, {
+        lastVisitedAt: "2026-06-01T12:00:30.000Z",
+      }),
+    ).toBe("done");
+  });
+
+  it("keeps a completion read when the thread was visited at completion", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "completed",
+        requestedAt: "2026-06-01T12:00:00.000Z",
+        startedAt: "2026-06-01T12:00:01.000Z",
+        completedAt: "2026-06-01T12:01:00.000Z",
+        assistantMessageId: MessageId.make("assistant-1"),
+      },
+    });
+
+    expect(
+      resolveThreadListV2Status(thread, {
+        lastVisitedAt: "2026-06-01T12:01:00.000Z",
+      }),
+    ).toBe("ready");
+  });
+
+  it("does not label an interrupted turn Done", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "interrupted",
+        requestedAt: "2026-06-01T12:00:00.000Z",
+        startedAt: "2026-06-01T12:00:01.000Z",
+        completedAt: "2026-06-01T12:01:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+
+    expect(
+      resolveThreadListV2Status(thread, {
+        lastVisitedAt: "2026-06-01T12:00:30.000Z",
+      }),
+    ).toBe("ready");
+  });
+
+  it("prioritizes an active session over an unread completion", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "completed",
+        requestedAt: "2026-06-01T12:00:00.000Z",
+        startedAt: "2026-06-01T12:00:01.000Z",
+        completedAt: "2026-06-01T12:01:00.000Z",
+        assistantMessageId: MessageId.make("assistant-1"),
+      },
+      session: {
+        threadId: ThreadId.make("t"),
+        status: "running",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+
+    expect(
+      resolveThreadListV2Status(thread, {
+        lastVisitedAt: "2026-06-01T12:00:30.000Z",
+      }),
+    ).toBe("working");
+  });
 });
 
 describe("sortThreadsForListV2", () => {
