@@ -1,5 +1,24 @@
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 
+export type WorkingTimelineObservation = {
+  readonly startedAt: string;
+  readonly observedAtMs: number;
+};
+
+export function resolveWorkingTimelineObservation(
+  current: WorkingTimelineObservation | null,
+  startedAt: string | null,
+  nowMs: number,
+): WorkingTimelineObservation | null {
+  if (startedAt === null) {
+    return null;
+  }
+  if (current?.startedAt === startedAt) {
+    return current;
+  }
+  return { startedAt, observedAtMs: nowMs };
+}
+
 export function formatWorkingTimelineDuration(
   startedAt: string,
   observedAtMs: number,

@@ -103,7 +103,11 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
-import { formatWorkingTimelineDuration } from "../../lib/workingTimelineDuration";
+import {
+  formatWorkingTimelineDuration,
+  resolveWorkingTimelineObservation,
+  type WorkingTimelineObservation,
+} from "../../lib/workingTimelineDuration";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -836,13 +840,19 @@ function renderFeedEntry(
     readonly reviewCommentColors: ReviewCommentColors;
     readonly reviewCommentBubbleWidth: number;
     readonly userBubbleMaxWidth: number;
+    readonly workingTimelineObservation: WorkingTimelineObservation | null;
   },
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
   if (entry.type === "working") {
-    return <WorkingTimelineRow key={entry.createdAt} startedAt={entry.createdAt} />;
+    if (props.workingTimelineObservation?.startedAt !== entry.createdAt) {
+      return null;
+    }
+    return (
+      <WorkingTimelineRow key={entry.createdAt} observation={props.workingTimelineObservation} />
+    );
   }
 
   if (entry.type === "turn-fold") {
@@ -1022,9 +1032,10 @@ function renderFeedEntry(
   );
 }
 
-const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
-  const [observedAtMs] = useState(() => Date.now());
-  const [nowMs, setNowMs] = useState(observedAtMs);
+const WorkingTimelineRow = memo(function WorkingTimelineRow(props: {
+  readonly observation: WorkingTimelineObservation;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -1033,7 +1044,11 @@ const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly st
     return () => clearInterval(intervalId);
   }, []);
 
-  const durationLabel = formatWorkingTimelineDuration(props.startedAt, observedAtMs, nowMs);
+  const durationLabel = formatWorkingTimelineDuration(
+    props.observation.startedAt,
+    props.observation.observedAtMs,
+    nowMs,
+  );
 
   return (
     <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
@@ -1501,6 +1516,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return ids;
   }, [expandedWorkGroups]);
+  const workingTimelineObservationRef = useRef<WorkingTimelineObservation | null>(null);
+  const workingTimelineObservation = resolveWorkingTimelineObservation(
+    workingTimelineObservationRef.current,
+    props.activeWorkStartedAt,
+    Date.now(),
+  );
+  workingTimelineObservationRef.current = workingTimelineObservation;
   const presentedFeed = useMemo(
     () =>
       deriveThreadFeedPresentation(
@@ -1749,6 +1771,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         reviewCommentColors,
         reviewCommentBubbleWidth,
         userBubbleMaxWidth,
+        workingTimelineObservation,
         skills: props.skills,
       }),
     [
@@ -1762,6 +1785,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       reviewCommentBubbleWidth,
       userBubbleMaxWidth,
+      workingTimelineObservation,
       onCopyWorkRow,
       onMarkdownLinkPress,
       onPressImage,
