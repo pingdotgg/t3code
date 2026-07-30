@@ -36,6 +36,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+export const DESKTOP_HOMEPAGE_URL = "https://github.com/pingdotgg/t3code";
+// Debian control files need an RFC 822 maintainer address. Reuses the project
+// identity the server already commits checkpoints under (see GitVcsDriver), so
+// the contact survives team changes.
+export const DESKTOP_LINUX_MAINTAINER = "T3 Tools <t3code@users.noreply.github.com>";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -617,6 +622,7 @@ interface StagePackageJson {
   readonly packageManager: string;
   readonly description: string;
   readonly author: string;
+  readonly homepage: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -627,6 +633,9 @@ interface StagePackageJson {
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
+// Extra Linux packages built alongside the AppImage. electron-builder produces
+// them from the same staged app, so the release only pays the packaging cost.
+export const LINUX_APPIMAGE_COMPANION_TARGETS = ["deb"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
   // T3 Code always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
@@ -1585,7 +1594,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "linux") {
     buildConfig.linux = {
-      target: [target],
+      // The AppImage stays the download that self-updates in place; a companion
+      // .deb from the same build serves users who install through dpkg/apt and
+      // upgrade there instead.
+      target: target === "AppImage" ? [target, ...LINUX_APPIMAGE_COMPANION_TARGETS] : [target],
+      maintainer: DESKTOP_LINUX_MAINTAINER,
       executableName: "t3code",
       icon: "icons",
       category: "Development",
@@ -1911,6 +1924,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",
     author: "T3 Tools",
+    // The .deb control file requires a project URL, and electron-builder only
+    // reads it from the packaged app's metadata (never from the build config).
+    homepage: DESKTOP_HOMEPAGE_URL,
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,

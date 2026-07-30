@@ -16,11 +16,13 @@ import {
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
+  DESKTOP_LINUX_MAINTAINER,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
   UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
+  LINUX_APPIMAGE_COMPANION_TARGETS,
   LinuxIconResizeError,
   MacPasskeySigningConfigurationResolutionError,
   MissingMacPasskeyProvisioningProfileError,
@@ -353,6 +355,41 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
         assert.deepStrictEqual(config.files, DESKTOP_FILE_EXCLUSIONS);
       }
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("packages a companion .deb alongside the Linux AppImage", () =>
+    Effect.gen(function* () {
+      const appImage = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const debOnly = yield* createBuildConfig(
+        "linux",
+        "deb",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.deepStrictEqual((appImage.linux as { target: ReadonlyArray<string> }).target, [
+        "AppImage",
+        ...LINUX_APPIMAGE_COMPANION_TARGETS,
+      ]);
+      assert.deepStrictEqual((debOnly.linux as { target: ReadonlyArray<string> }).target, ["deb"]);
+
+      // fpm refuses to build a .deb without a maintainer address.
+      for (const config of [appImage, debOnly]) {
+        assert.equal((config.linux as { maintainer: string }).maintainer, DESKTOP_LINUX_MAINTAINER);
+      }
+      assert.match(DESKTOP_LINUX_MAINTAINER, /^.+ <[^@\s]+@[^@\s]+>$/u);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
