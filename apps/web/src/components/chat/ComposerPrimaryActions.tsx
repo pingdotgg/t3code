@@ -296,6 +296,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     hasSendableContent,
   });
   const canInterrupt = action.kind === "interrupt";
+  const showStageBackdrop = Boolean(stageBackdropVariant && !canInterrupt && !action.disabled);
 
   return (
     <Button
@@ -304,8 +305,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       variant={canInterrupt ? "destructive-outline" : "default"}
       className={cn(
         "rounded-full",
-        stageBackdropVariant &&
-          !canInterrupt &&
+        showStageBackdrop &&
           "isolate overflow-hidden border-transparent bg-transparent text-primary-foreground shadow-black/24 hover:bg-transparent hover:brightness-110",
       )}
       {...pointerFocusProps}
@@ -314,7 +314,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       title={action.label}
       onClick={canInterrupt ? onInterrupt : undefined}
     >
-      {!canInterrupt && stageBackdropVariant ? (
+      {showStageBackdrop && stageBackdropVariant ? (
         <span className="absolute inset-0 -z-10" aria-hidden="true">
           <StageBackdropButtonArt variant={stageBackdropVariant} />
         </span>
