@@ -227,7 +227,7 @@ describe("RpcSessionFactory", () => {
       const socketUrl = new URL(socket.url);
       expect(socketUrl.searchParams.get("wsTicket")).toBe("test");
       expect(socketUrl.searchParams.get(WS_KEYBINDING_COMMAND_SET_QUERY_PARAM)).toBe(
-        CURRENT_KEYBINDING_COMMAND_SET_VERSION,
+        String(CURRENT_KEYBINDING_COMMAND_SET_VERSION),
       );
       socket.open();
       yield* completeInitialConfig(socket);

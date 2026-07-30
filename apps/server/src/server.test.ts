@@ -4369,7 +4369,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const currentClientUrl = new URL(unnegotiatedUrl);
       currentClientUrl.searchParams.set(
         WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
-        CURRENT_KEYBINDING_COMMAND_SET_VERSION,
+        String(CURRENT_KEYBINDING_COMMAND_SET_VERSION),
+      );
+      const futureClientUrl = new URL(unnegotiatedUrl);
+      futureClientUrl.searchParams.set(
+        WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
+        String(CURRENT_KEYBINDING_COMMAND_SET_VERSION + 1),
       );
       const legacyCommands = ["terminal.toggle", "script.format.run"];
       const commands = (rules: ReadonlyArray<ResolvedKeybindingRule>) =>
@@ -4389,6 +4394,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       const currentClientConfig = yield* Effect.scoped(
         withWsRpcClient(currentClientUrl.toString(), (client) =>
+          client[WS_METHODS.serverGetConfig]({}),
+        ),
+      );
+      const futureClientConfig = yield* Effect.scoped(
+        withWsRpcClient(futureClientUrl.toString(), (client) =>
           client[WS_METHODS.serverGetConfig]({}),
         ),
       );
@@ -4426,6 +4436,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(commands(unnegotiatedConfig.keybindings), legacyCommands);
       assert.deepEqual(commands(oldClientConfig.keybindings), legacyCommands);
       assert.deepEqual(commands(currentClientConfig.keybindings), currentCommands);
+      assert.deepEqual(commands(futureClientConfig.keybindings), currentCommands);
       assert.deepEqual(unnegotiatedConfig.issues, issues);
       assert.deepEqual(currentClientConfig.issues, issues);
 

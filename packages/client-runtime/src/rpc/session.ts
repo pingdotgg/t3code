@@ -100,7 +100,7 @@ export const make = Effect.gen(function* () {
     const socketUrl = new URL(connection.socketUrl);
     socketUrl.searchParams.set(
       WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
-      CURRENT_KEYBINDING_COMMAND_SET_VERSION,
+      String(CURRENT_KEYBINDING_COMMAND_SET_VERSION),
     );
     const socketLayer = Socket.layerWebSocket(socketUrl.toString(), {
       openTimeout: SOCKET_OPEN_TIMEOUT,

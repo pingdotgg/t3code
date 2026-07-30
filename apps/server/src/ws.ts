@@ -138,6 +138,11 @@ const projectKeybindingsForClient = (
         ({ command }) => command !== "filePicker.toggle" && command !== "projectSearch.toggle",
       );
 
+const supportsCurrentKeybindingCommandSet = (url: URL) => {
+  const version = Number(url.searchParams.get(WS_KEYBINDING_COMMAND_SET_QUERY_PARAM));
+  return Number.isSafeInteger(version) && version >= CURRENT_KEYBINDING_COMMAND_SET_VERSION;
+};
+
 export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
 ) =>
@@ -2129,9 +2134,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const requestUrl = HttpServerRequest.toURL(request);
         const supportsCurrentKeybindingCommands =
-          Option.isSome(requestUrl) &&
-          requestUrl.value.searchParams.get(WS_KEYBINDING_COMMAND_SET_QUERY_PARAM) ===
-            CURRENT_KEYBINDING_COMMAND_SET_VERSION;
+          Option.isSome(requestUrl) && supportsCurrentKeybindingCommandSet(requestUrl.value);
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
