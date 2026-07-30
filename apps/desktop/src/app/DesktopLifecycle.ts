@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -7,7 +8,11 @@ import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
+import type { DesktopDeepLinkTarget } from "@t3tools/contracts";
+import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { findDesktopDeepLink, parseDesktopDeepLink } from "./DesktopDeepLink.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -175,8 +180,47 @@ export const make = DesktopLifecycle.of({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const context = yield* Effect.context<DesktopLifecycleRuntimeServices>();
     const runEffect = Effect.runPromiseWith(context);
+    const expectedDeepLinkScheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+    const processArguments = yield* HostProcessArguments;
     let quitAllowed = false;
     let updaterQuitAllowed = false;
+
+    const dispatchDeepLinkTarget = (target: DesktopDeepLinkTarget) =>
+      desktopWindow.dispatchDeepLink(target).pipe(
+        Effect.catchCause((cause) =>
+          logLifecycleError("failed to dispatch desktop deep link", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+        Effect.withSpan("desktop.lifecycle.dispatchDeepLink"),
+      );
+
+    const dispatchDeepLinkUrl = (value: string) => {
+      const target = parseDesktopDeepLink(value, expectedDeepLinkScheme);
+      if (target === null) return;
+      void runEffect(dispatchDeepLinkTarget(target));
+    };
+
+    const initialDeepLink = findDesktopDeepLink(processArguments, expectedDeepLinkScheme);
+    if (initialDeepLink !== null) {
+      yield* dispatchDeepLinkTarget(initialDeepLink);
+    }
+
+    if (environment.platform === "darwin") {
+      yield* electronApp.on("open-url", (event: Electron.Event, url: string) => {
+        event.preventDefault();
+        dispatchDeepLinkUrl(url);
+      });
+    }
+    yield* electronApp.on(
+      "second-instance",
+      (_event: Electron.Event, commandLine: ReadonlyArray<string>) => {
+        const target = findDesktopDeepLink(commandLine, expectedDeepLinkScheme);
+        if (target !== null) {
+          void runEffect(dispatchDeepLinkTarget(target));
+        }
+      },
+    );
     yield* electronTheme.onUpdated(() => {
       void runEffect(
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),

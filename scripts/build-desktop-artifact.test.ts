@@ -547,8 +547,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       const win = config.win as Record<string, unknown>;
       assert.equal(win.icon, "icon.ico");
+      assert.deepStrictEqual(win.protocols, [
+        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
+      ]);
       assert.equal(win.signAndEditExecutable, true);
       assert.notProperty(win, "azureSignOptions");
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("registers renderer protocols in Linux builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const linux = config.linux as Record<string, unknown>;
+      assert.deepStrictEqual(linux.protocols, [
+        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
+      ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
