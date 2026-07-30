@@ -102,6 +102,44 @@ const seedReadModel = Effect.gen(function* () {
   });
 });
 
+const seedReadModelWithOnlyArchivedThread = Effect.gen(function* () {
+  const readModel = yield* seedReadModel;
+  const withoutSecondThread = yield* projectEvent(readModel, {
+    sequence: 4,
+    eventId: asEventId("evt-thread-delete-2"),
+    aggregateKind: "thread",
+    aggregateId: asThreadId("thread-delete-2"),
+    type: "thread.deleted",
+    occurredAt: "2026-01-01T00:01:00.000Z",
+    commandId: asCommandId("cmd-thread-delete-2"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-delete-2"),
+    metadata: {},
+    payload: {
+      threadId: asThreadId("thread-delete-2"),
+      deletedAt: "2026-01-01T00:01:00.000Z",
+    },
+  });
+
+  return yield* projectEvent(withoutSecondThread, {
+    sequence: 5,
+    eventId: asEventId("evt-thread-archive-1"),
+    aggregateKind: "thread",
+    aggregateId: asThreadId("thread-delete-1"),
+    type: "thread.archived",
+    occurredAt: "2026-01-01T00:02:00.000Z",
+    commandId: asCommandId("cmd-thread-archive-1"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-archive-1"),
+    metadata: {},
+    payload: {
+      threadId: asThreadId("thread-delete-1"),
+      archivedAt: "2026-01-01T00:02:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    },
+  });
+});
+
 type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
 
 function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>) {
@@ -151,6 +189,27 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
         }),
       );
       expect(error.message).toContain("cannot be deleted without force=true");
+    }),
+  );
+
+  it.effect("deletes a project whose only threads are archived without force", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithOnlyArchivedThread;
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-archived-only"),
+          projectId: asProjectId("project-delete"),
+        },
+        readModel,
+      });
+      const events = Array.isArray(result) ? result : [result];
+
+      expect(events.map((event) => event.type)).toEqual(["thread.deleted", "project.deleted"]);
+      const threadDeleted = events[0];
+      expect(threadDeleted?.type === "thread.deleted" && threadDeleted.payload.threadId).toBe(
+        asThreadId("thread-delete-1"),
+      );
     }),
   );
 
