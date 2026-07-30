@@ -1,5 +1,9 @@
 import { useAuth, useClerk, useUser } from "@clerk/react";
-import { encodeConnectAuthCode, readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
+import {
+  type ConnectAuthorizeRequestProblem,
+  encodeConnectAuthCode,
+  readConnectAuthorizeRequest,
+} from "@t3tools/shared/connectAuth";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -36,19 +40,31 @@ function ConnectCliAuthMessage({
   );
 }
 
-const invalidLinkMessage = {
-  eyebrow: "Authorization request",
-  title: "This connect link is incomplete",
-  description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
-} as const;
+const invalidLinkMessages = {
+  missing: {
+    eyebrow: "Authorization request",
+    title: "This connect link is incomplete",
+    description:
+      "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
+  },
+  malformed: {
+    eyebrow: "Authorization request",
+    title: "This connect link is incomplete or corrupted",
+    description:
+      "The authorization request in this URL is not the one `t3 connect` printed, so part of it was lost or extra characters were copied with it. This happens when the URL wraps across terminal lines. Copy the whole URL again — re-run `t3 connect` if it has scrolled away — and open the freshly printed URL.",
+  },
+} as const satisfies Record<
+  ConnectAuthorizeRequestProblem,
+  { readonly eyebrow: string; readonly title: string; readonly description: string }
+>;
 
 /**
  * /connect: the URL a headless CLI prints. Waits for a Clerk session, then
  * forwards the CLI's PKCE request to Clerk's authorize endpoint.
  */
 export function ConnectCliAuthorizeSurface() {
-  const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
+  const [parsed] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
+  const request = parsed.ok ? parsed.request : null;
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
   const signInOpened = useRef(false);
@@ -74,10 +90,10 @@ export function ConnectCliAuthorizeSurface() {
     window.location.assign(authorizeUrl);
   }, [clerk, isLoaded, isSignedIn, request]);
 
-  if (!request) {
+  if (!parsed.ok) {
     return (
       <AuthSurfaceShell>
-        <ConnectCliAuthMessage {...invalidLinkMessage} />
+        <ConnectCliAuthMessage {...invalidLinkMessages[parsed.problem]} />
       </AuthSurfaceShell>
     );
   }
