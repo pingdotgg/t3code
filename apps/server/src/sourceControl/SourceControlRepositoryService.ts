@@ -26,7 +26,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
-function cloneFailureDetail(stderr: string, remoteUrl: string): string {
+function cloneFailureDetail(stderr: string): string {
   if (/host key verification failed/iu.test(stderr)) {
     return "SSH could not verify the source control host. Add its host key to known_hosts and try again.";
   }
@@ -50,8 +50,7 @@ function cloneFailureDetail(stderr: string, remoteUrl: string): string {
     return "The repository could not be read. Check that it exists and that your Git credentials have access.";
   }
 
-  const transport = /^(?:ssh:\/\/|[^@/\s]+@[^:/\s]+:)/u.test(remoteUrl) ? "SSH" : "HTTPS";
-  return `Git could not clone the repository over ${transport}. Verify that this Git transport works in a terminal and try again.`;
+  return "Git could not clone the repository. Verify that the remote works in a terminal and try again.";
 }
 
 export class SourceControlRepositoryService extends Context.Service<
@@ -246,7 +245,7 @@ export const make = Effect.gen(function* () {
     });
 
     if (cloneResult.exitCode !== 0) {
-      const detail = cloneFailureDetail(cloneResult.stderr, remoteUrl);
+      const detail = cloneFailureDetail(cloneResult.stderr);
       return yield* new SourceControlRepositoryError({
         operation: "cloneRepository",
         provider,

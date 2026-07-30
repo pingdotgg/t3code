@@ -219,6 +219,11 @@ it.effect("returns actionable, transport-safe clone failures", () => {
       expected:
         "The source control host could not be resolved. Check your network or VPN connection and try again.",
     },
+    {
+      stderr: "fatal: an unrecognized clone failure\n",
+      expected:
+        "Git could not clone the repository. Verify that the remote works in a terminal and try again.",
+    },
   ] as const;
 
   return Effect.forEach(cases, ({ stderr, expected }) =>
