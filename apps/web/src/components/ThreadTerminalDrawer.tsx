@@ -22,6 +22,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -281,6 +282,7 @@ interface TerminalViewportProps {
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   autoFocus: boolean;
+  visible: boolean;
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
@@ -290,6 +292,46 @@ interface TerminalLaunchLocation {
   readonly cwd: string;
   readonly worktreePath?: string | null;
   readonly runtimeEnv?: Record<string, string>;
+}
+
+function useFitTerminalOnViewportChange({
+  visible,
+  drawerHeight,
+  environmentId,
+  resizeEpoch,
+  terminalId,
+  threadId,
+  terminalRef,
+  fitAddonRef,
+  resizeTerminal,
+}: {
+  visible: boolean;
+  drawerHeight: number;
+  environmentId: string;
+  resizeEpoch: number;
+  terminalId: string;
+  threadId: ThreadId;
+  terminalRef: RefObject<Terminal | null>;
+  fitAddonRef: RefObject<FitAddon | null>;
+  resizeTerminal: (cols: number, rows: number) => unknown;
+}) {
+  useEffect(() => {
+    if (!visible) return;
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!terminal || !fitAddon) return;
+    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+    const frame = window.requestAnimationFrame(() => {
+      fitTerminalSafely(fitAddon);
+      if (wasAtBottom) {
+        terminal.scrollToBottom();
+      }
+      void resizeTerminal(terminal.cols, terminal.rows);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [drawerHeight, environmentId, resizeEpoch, resizeTerminal, terminalId, threadId, visible]);
 }
 
 export function TerminalViewport({
@@ -304,6 +346,7 @@ export function TerminalViewport({
   onAddTerminalContext,
   focusRequestId,
   autoFocus,
+  visible,
   resizeEpoch,
   drawerHeight,
   keybindings,
@@ -358,11 +401,13 @@ export function TerminalViewport({
       input: { threadId, terminalId, data },
     }),
   );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) =>
-    runTerminalResize({
-      environmentId,
-      input: { threadId, terminalId, cols, rows },
-    }),
+  const resizeTerminal = useCallback(
+    (cols: number, rows: number) =>
+      runTerminalResize({
+        environmentId,
+        input: { threadId, terminalId, cols, rows },
+      }),
+    [environmentId, runTerminalResize, terminalId, threadId],
   );
   const terminalBuffer = terminalSession.buffer;
   const terminalError = terminalSession.error;
@@ -807,22 +852,17 @@ export function TerminalViewport({
     };
   }, [autoFocus, focusRequestId]);
 
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    const fitAddon = fitAddonRef.current;
-    if (!terminal || !fitAddon) return;
-    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
-    const frame = window.requestAnimationFrame(() => {
-      fitTerminalSafely(fitAddon);
-      if (wasAtBottom) {
-        terminal.scrollToBottom();
-      }
-      void resizeTerminal(terminal.cols, terminal.rows);
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
+  useFitTerminalOnViewportChange({
+    visible,
+    drawerHeight,
+    environmentId,
+    resizeEpoch,
+    terminalId,
+    threadId,
+    terminalRef,
+    fitAddonRef,
+    resizeTerminal,
+  });
   return (
     <div
       ref={containerRef}
@@ -1208,13 +1248,6 @@ export default function ThreadTerminalDrawer({
   }, [syncHeight, visible]);
 
   useEffect(() => {
-    if (!visible) {
-      return;
-    }
-    setResizeEpoch((value) => value + 1);
-  }, [visible]);
-
-  useEffect(() => {
     return () => {
       syncHeight(drawerHeightRef.current);
     };
@@ -1373,6 +1406,7 @@ export default function ThreadTerminalDrawer({
                           onAddTerminalContext={onAddTerminalContext}
                           focusRequestId={focusRequestId}
                           autoFocus={terminalId === resolvedActiveTerminalId}
+                          visible={visible}
                           resizeEpoch={resizeEpoch}
                           drawerHeight={drawerHeight}
                           keybindings={keybindings}
@@ -1401,6 +1435,7 @@ export default function ThreadTerminalDrawer({
                   onAddTerminalContext={onAddTerminalContext}
                   focusRequestId={focusRequestId}
                   autoFocus
+                  visible={visible}
                   resizeEpoch={resizeEpoch}
                   drawerHeight={drawerHeight}
                   keybindings={keybindings}
