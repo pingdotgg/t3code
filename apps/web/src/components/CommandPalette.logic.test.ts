@@ -169,6 +169,29 @@ describe("buildThreadActionItems", () => {
     expect(groups[0]?.items.map((item) => item.value)).toEqual(["thread:project-context-only"]);
   });
 
+  it("keeps message excerpts searchable without replacing thread metadata", () => {
+    const [item] = buildThreadActionItems({
+      threads: [makeThread({ branch: "feat/search" })],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      getContentMatch: () => ({
+        source: "assistant",
+        snippet: "The relay reconnect is now bounded.",
+        query: "reconnect",
+      }),
+      runThread: async (_thread) => undefined,
+    });
+
+    expect(item?.searchTerms).toContain("The relay reconnect is now bounded.");
+    expect(item?.threadContentMatch).toEqual({
+      source: "assistant",
+      snippet: "The relay reconnect is now bounded.",
+      query: "reconnect",
+    });
+    expect(item?.description).toBe("T3 Code · #feat/search");
+  });
+
   it("filters archived threads out of thread search items", () => {
     const items = buildThreadActionItems({
       threads: [

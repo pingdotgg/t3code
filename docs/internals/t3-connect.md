@@ -1,8 +1,16 @@
-# T3 Connect Clerk Setup
+# T3 Connect
 
-T3 Connect uses one Clerk application for web, desktop, and mobile authentication. The relay accepts
-Clerk JWTs only when they are generated from the `t3-relay` template with the shared
-`t3-code-relay` audience.
+> For maintainers. Using T3 Code? See [docs/user](../user/).
+
+T3 Connect uses one Clerk application for web, desktop, and mobile authentication. The relay verifies
+two kinds of bearer credential: template JWTs generated from the `t3-relay` template with the shared
+`t3-code-relay` audience, and Clerk OAuth tokens issued to the CLI. `verifyRelayClientBearerToken` in
+`infra/relay/src/http/Api.ts` tries the template/session path first and falls back to OAuth
+verification (`acceptsToken: "oauth_token"`), so the CLI's OAuth credential works without a JWT
+template.
+
+For the wider system diagram, see
+[t3-code-connect-auth-flow.html](./t3-code-connect-auth-flow.html).
 
 ## Application Keys
 
@@ -35,10 +43,11 @@ should set `T3CODE_CLERK_PUBLISHABLE_KEY`, `T3CODE_CLERK_JWT_TEMPLATE`,
 production builds only need the Clerk publishable key, JWT template name, and relay URL in their EAS
 environment.
 
-When any client-facing public value is absent, cloud UI is omitted. When the CLI public values are
-absent, the `t3 connect` CLI command group is omitted. The bundled server still accepts runtime
-overrides for self-hosted or operator-managed
-deployments.
+When any client-facing public value is absent, cloud UI is omitted. The `t3 connect` command group is
+always registered: when the CLI public values are absent, `makeCli` in `apps/server/src/bin.ts`
+registers a hidden fallback `connect` command that reports the missing configuration instead of
+silently vanishing from help. The bundled server still accepts runtime overrides for self-hosted or
+operator-managed deployments.
 
 For a hosted relay deployment, copy `infra/relay/.env.example` to `infra/relay/.env`. The relay
 deployment reads `RELAY_DOMAIN`, `RELAY_API_ZONE_NAME`, `RELAY_TUNNEL_ZONE_NAME`,
@@ -63,7 +72,12 @@ In **Clerk Dashboard > OAuth applications**:
 
 1. Create an OAuth application for the T3 CLI.
 2. Enable the **Public** option so authorization-code exchange uses PKCE.
-3. Add `http://127.0.0.1:34338/callback` as an allowed redirect URI.
+3. Add **both** allowed redirect URIs:
+   - `http://127.0.0.1:34338/callback` for the loopback listener;
+   - `https://app.t3.codes/connect/callback` for the hosted out-of-band flow. This is
+     `connectCallbackUrl(DEFAULT_HOSTED_APP_URL)` from `packages/shared/src/connectAuth.ts`, so a
+     custom `T3CODE_HOSTED_APP_URL` means `$T3CODE_HOSTED_APP_URL/connect/callback` instead.
+     Omitting it breaks headless and SSH authorization.
 4. Enable the `openid`, `profile`, and `email` scopes.
 5. Set `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` in the repository-root `.env` file and release build
    environment to the generated public client ID.
@@ -72,16 +86,19 @@ The CLI derives Clerk's frontend API URL from the publishable key and calls Cler
 `/oauth/authorize` and `/oauth/token` endpoints directly. The relay is not involved in the OAuth
 handshake; it only validates the issued Clerk bearer token when the CLI manages an environment link.
 
-The CLI supports these headless operations:
+The connect command group is:
 
 ```sh
+t3 connect            # default: onboarding
 t3 connect login
-t3 connect link
-t3 connect status
+t3 connect link       # --publish-only
+t3 connect status     # --json
+t3 connect publish    # --disable
 t3 connect unlink
 t3 connect logout
-t3 serve
 ```
+
+`t3 serve` is a separate top-level command, not a connect subcommand.
 
 `t3 connect login` opens the Clerk authorization flow and stores the CLI credential without enabling
 cloud exposure. `t3 connect link` installs the pinned managed `cloudflared` binary when needed,
@@ -95,15 +112,20 @@ logout` performs the same cleanup and removes the stored CLI authorization.
 The background service has an independent lifecycle. Connect setup may offer to install it, but
 logout leaves it running; manage it with `t3 service status`, `install`, `update`, and `uninstall`.
 
-The current OAuth callback listener binds to loopback port `34338`. When running the CLI over SSH,
-forward that port before running `t3 connect login` or `t3 connect link`:
+### Headless and SSH authorization
+
+The loopback OAuth callback listener binds to port `34338`. That path only works when a browser on
+the same machine can reach it, so `authorizeCli` in `apps/server/src/cli/connect.ts` automatically
+selects the out-of-band flow when `--headless` is passed or when it detects SSH through
+`SSH_CONNECTION` or `SSH_TTY`. The out-of-band flow prints the hosted `/connect` authorization URL
+and accepts a pasted authorization code, so no port is involved.
+
+Port forwarding is therefore optional, not required. Forward the port only if you specifically want
+the loopback flow over SSH:
 
 ```sh
 ssh -L 34338:127.0.0.1:34338 <host>
 ```
-
-A relay-hosted callback broker can remove this port-forward requirement later without changing the
-stored PKCE token model.
 
 ## JWT Template
 
@@ -207,34 +229,26 @@ codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
 The current mobile UI uses Clerk's native authentication view. If a future mobile browser OAuth
 flow uses a custom redirect URI, add that exact URI to the same allowlist.
 
-## Enable Waitlist Access
+## Sign-in Surfaces
 
-For a private beta where people should request access, use **Clerk Dashboard > Waitlist**:
+Signed-in users manage T3 Connect under **Connections**. The settings sidebar also has dedicated
+controls, rendered by `SettingsSidebarNav.tsx`: `T3ConnectSidebarSignIn` in the footer shows a
+**Sign in to T3 Connect** button while signed out, and `T3ConnectSidebarAvatar` shows a Clerk
+`UserButton` account control while signed in. Both are gated on cloud public configuration.
+Desktop renders the same web bundle, so it has them too. The waitlist enrollment flow from the
+private beta was removed when Connect went GA; sign-up is open unless a Clerk restriction below is
+enabled.
 
-1. Toggle on **Enable waitlist** and save.
-2. Review requests on the same page and select **Invite** or **Deny**.
+## Restricting Sign-ups: Known-User Allowlist
 
-Approved signed-in users manage T3 Connect under **Connections**. The web and desktop sidebars do
-not expose a dedicated account or waitlist control. Signed-out users reach Clerk's waitlist and
-sign-in flow contextually from the T3 Connect controls on the Connections page.
-
-On mobile, signed-out users open **Settings > T3 Account** to reach `/settings/waitlist` within the
-Settings form sheet. It submits enrollment through Clerk's `useWaitlist()` flow because the prebuilt
-`<Waitlist />` component is web-only in the Expo SDK. Approved users can use **Sign in** from that
-screen.
-
-## Alternative: Known-User Allowlist
-
-For a closed beta where all permitted users are known in advance, use an allowlist instead of a
-request-and-approval waitlist:
-
-To restrict the beta to permitted email addresses or domains:
+For a closed deployment where all permitted users are known in advance, restrict sign-up to
+permitted email addresses or domains:
 
 1. In **Clerk Dashboard > Restrictions > Allowlist**, add each permitted email address or email
    domain.
 2. Enable the allowlist and save.
 3. Alternatively, enable **Restricted mode** when all new users must be explicitly invited or
-   manually created without a waitlist request flow.
+   manually created.
 
 Do not enable an empty allowlist: it blocks all new sign-ups.
 

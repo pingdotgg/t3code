@@ -3,6 +3,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -66,6 +67,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
+import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -510,6 +512,26 @@ function OpenCommandPaletteDialog(props: {
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
+  const environmentIds = useMemo(
+    () =>
+      environments
+        .filter((environment) => environment.connection.phase === "connected")
+        .map((environment) => environment.environmentId),
+    [environments],
+  );
+  const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
+  const threadSearch = useThreadSearch(environmentIds, threadSearchQuery);
+  const threadContentMatchByKey = useMemo(
+    () =>
+      new Map(
+        threadSearch.matches.flatMap((match) =>
+          match.source === "user" || match.source === "assistant"
+            ? [[threadSearchMatchKey(match), match] as const]
+            : [],
+        ),
+      ),
+    [threadSearch.matches],
+  );
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const browseNavigationRef = useRef<ReturnType<typeof createBrowseNavigationCoordinator> | null>(
     null,
@@ -916,6 +938,21 @@ function OpenCommandPaletteDialog(props: {
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
+        getContentMatch: (thread) => {
+          const match = threadContentMatchByKey.get(
+            threadSearchMatchKey({
+              environmentId: thread.environmentId,
+              threadId: thread.id,
+            }),
+          );
+          return match && (match.source === "user" || match.source === "assistant")
+            ? {
+                source: match.source,
+                snippet: match.snippet,
+                query: threadSearchQuery,
+              }
+            : undefined;
+        },
         runThread: async (thread) => {
           await navigate({
             to: "/$environmentId/$threadId",
@@ -923,7 +960,15 @@ function OpenCommandPaletteDialog(props: {
           });
         },
       }),
-    [activeThreadId, clientSettings.sidebarThreadSortOrder, navigate, projectTitleById, threads],
+    [
+      activeThreadId,
+      clientSettings.sidebarThreadSortOrder,
+      navigate,
+      projectTitleById,
+      threadContentMatchByKey,
+      threadSearchQuery,
+      threads,
+    ],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
 
@@ -2194,7 +2239,9 @@ function OpenCommandPaletteDialog(props: {
                         emptyStateMessage:
                           "Press Enter to create this folder and add it as a project.",
                       }
-                    : {})}
+                    : threadSearch.isPending
+                      ? { emptyStateMessage: "Searching thread messages…" }
+                      : {})}
           />
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
