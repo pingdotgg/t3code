@@ -449,7 +449,15 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
   }
 }
 
-const CLAUDE_REAUTHENTICATION_ARGS = ["setup-token"] as const;
+// `claude auth login` ("Sign in to your Anthropic account") is the command that
+// actually refreshes the stored OAuth credentials the SDK reads on the next
+// turn. Deliberately NOT `claude setup-token`: that mints a long-lived
+// CLAUDE_CODE_OAUTH_TOKEN for headless/CI use (and requires a Claude
+// subscription) which T3 Code never passes into turns, so it would print a
+// token while leaving the expired keychain/CLAUDE_CONFIG_DIR credentials in
+// place. `auth login` matches what the README and this provider's docs tell
+// users to run.
+const CLAUDE_REAUTHENTICATION_ARGS = ["auth", "login"] as const;
 
 const FALSY_ENV_FLAG_VALUES = new Set(["", "0", "false", "no", "off", "n"]);
 
@@ -460,11 +468,11 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 /**
- * Whether `claude setup-token` (interactive first-party OAuth login) is a valid
- * recovery for this instance's credentials.
+ * Whether `claude auth login` (interactive first-party OAuth sign-in) is a
+ * valid recovery for this instance's credentials.
  *
  * OAuth login only applies to first-party Anthropic auth. When the instance is
- * configured for a non-OAuth backend, `setup-token` cannot fix a credential
+ * configured for a non-OAuth backend, `auth login` cannot fix a credential
  * failure and offering it would be misleading, so we skip the re-authenticate
  * action entirely. Detected from the resolved instance environment (the same
  * env Claude Code itself reads to select a backend):
@@ -488,16 +496,17 @@ function claudeUsesOAuthLogin(environment: NodeJS.ProcessEnv): boolean {
  * instance, or `undefined` when OAuth re-authentication does not apply (see
  * {@link claudeUsesOAuthLogin} — Bedrock/Vertex/API-key/auth-token instances).
  *
- * Runs `claude setup-token`, which performs the interactive OAuth login
- * (prints a URL, then accepts the pasted authorization code) and stores a
- * fresh long-lived token. Surfacing this to the client lets users recover
- * from an expired Claude OAuth access token — e.g. a
- * `401 OAuth access token has expired` turn failure — from within T3 Code's
- * integrated terminal instead of dropping to an external shell.
+ * Runs `claude auth login`, which performs the interactive OAuth sign-in
+ * (prints a URL, then accepts the pasted authorization code) and refreshes the
+ * credentials Claude Code reads on the next turn. Surfacing this to the client
+ * lets users recover from an expired or rejected Claude credential — e.g. a
+ * `401 OAuth access token has expired` or `401 Invalid authentication
+ * credentials` turn failure — from within T3 Code's integrated terminal instead
+ * of dropping to an external shell.
  *
  * The configured `binaryPath` is preserved so custom Claude installs
  * re-authenticate the same binary they run, and `CLAUDE_CONFIG_DIR` is
- * propagated so `setup-token` refreshes the credentials of that exact instance
+ * propagated so the sign-in refreshes the credentials of that exact instance
  * rather than the default config dir. The dir is resolved with the same
  * precedence {@link makeClaudeEnvironment} uses: a custom `homePath` wins;
  * otherwise a `CLAUDE_CONFIG_DIR` supplied via the instance's own environment

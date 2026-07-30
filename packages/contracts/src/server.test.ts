@@ -40,9 +40,9 @@ describe("ServerProvider", () => {
         status: "unauthenticated",
       },
       reauthentication: {
-        command: "claude setup-token",
+        command: "claude auth login",
         executable: "claude",
-        args: ["setup-token"],
+        args: ["auth", "login"],
         label: "Re-authenticate Claude",
         env: { CLAUDE_CONFIG_DIR: "/home/dev/.claude_work" },
       },
@@ -50,9 +50,9 @@ describe("ServerProvider", () => {
       models: [],
     });
 
-    expect(parsed.reauthentication?.command).toBe("claude setup-token");
+    expect(parsed.reauthentication?.command).toBe("claude auth login");
     expect(parsed.reauthentication?.executable).toBe("claude");
-    expect(parsed.reauthentication?.args).toEqual(["setup-token"]);
+    expect(parsed.reauthentication?.args).toEqual(["auth", "login"]);
     expect(parsed.reauthentication?.label).toBe("Re-authenticate Claude");
     expect(parsed.reauthentication?.env).toEqual({
       CLAUDE_CONFIG_DIR: "/home/dev/.claude_work",
@@ -71,7 +71,7 @@ describe("ServerProvider", () => {
         status: "authenticated",
       },
       reauthentication: {
-        command: "claude setup-token",
+        command: "claude auth login",
         executable: "claude",
       },
       checkedAt: "2026-04-10T00:00:00.000Z",

@@ -1849,9 +1849,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
           assert.deepStrictEqual(status.reauthentication, {
-            command: "claude setup-token",
+            command: "claude auth login",
             executable: "claude",
-            args: ["setup-token"],
+            args: ["auth", "login"],
             label: "Re-authenticate Claude",
           });
         }).pipe(
@@ -1878,7 +1878,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             claudeCapabilities(),
             {},
           );
-          assert.strictEqual(status.reauthentication?.command, "claude setup-token");
+          assert.strictEqual(status.reauthentication?.command, "claude auth login");
           assert.deepStrictEqual(status.reauthentication?.env, {
             CLAUDE_CONFIG_DIR: "/tmp/t3-claude-home",
           });
@@ -1902,7 +1902,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       it.effect("honors an instance-env CLAUDE_CONFIG_DIR in the re-auth descriptor", () =>
         Effect.gen(function* () {
           // No custom homePath, but the instance environment supplies a config
-          // dir directly — setup-token must target it, not the default dir.
+          // dir directly — `auth login` must target it, not the default dir.
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
             claudeCapabilities(),
@@ -1937,7 +1937,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               CLAUDE_CODE_USE_BEDROCK: "no",
             },
           );
-          assert.strictEqual(status.reauthentication?.command, "claude setup-token");
+          assert.strictEqual(status.reauthentication?.command, "claude auth login");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -1953,7 +1953,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("omits re-authentication for a Bedrock-backed Claude instance", () =>
         Effect.gen(function* () {
-          // Bedrock authenticates via external AWS credentials; `setup-token`
+          // Bedrock authenticates via external AWS credentials; `auth login`
           // (OAuth) cannot fix its auth, so no re-authenticate action is offered.
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
@@ -2451,7 +2451,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.ok(!(status.message ?? "").includes(secretStderr));
           // An installed CLI that failed its health check may still be
           // recoverable (e.g. expired credentials), so re-auth is offered.
-          assert.strictEqual(status.reauthentication?.command, "claude setup-token");
+          assert.strictEqual(status.reauthentication?.command, "claude auth login");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

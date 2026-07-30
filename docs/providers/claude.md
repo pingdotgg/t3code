@@ -45,10 +45,9 @@ Failed to authenticate. API Error: 401 Invalid authentication credentials
 You do not need to leave T3 Code. T3 Code recognizes these authentication
 failures automatically and offers a **Re-authenticate** button on the error
 banner (and on the provider's status banner when it reports "unauthenticated").
-Clicking it opens an integrated terminal and runs `claude setup-token` for that
-provider,
-using its configured binary and Claude HOME. Follow the prompt — open the
-printed URL, approve access, and paste the authorization code back into the
+Clicking it opens an integrated terminal and runs `claude auth login` for that
+provider, using its configured binary and Claude HOME. Follow the prompt — open
+the printed URL, approve access, and paste the authorization code back into the
 terminal. Once it finishes, retry your turn.
 
 The re-authenticate action runs against the same Claude provider you were using,
