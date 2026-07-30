@@ -40,12 +40,15 @@ import * as React from "react";
 import { derivePendingApprovals } from "../approvals.ts";
 import {
   type ComposerImageAttachment,
+  findPromptImagePathLines,
   imageExtensionForMimeType,
+  imageMimeTypeForPath,
   isSupportedImagePath,
   prepareComposerImage,
   prepareComposerImageBytes,
   removeComposerImage,
-  resolvePastedWorkspaceImagePath,
+  removePromptLines,
+  resolvePastedImagePath,
 } from "../composerAttachments.ts";
 import { normalizeEditedPrompt, resolveEditorCommand } from "../promptEditor.ts";
 import type { TuiClient } from "../connection.ts";
@@ -2254,12 +2257,13 @@ export function ChatView({
   };
 
   const pasteComposerImagePath = (pastedText: string): Promise<boolean> | null => {
-    const relativePath = resolvePastedWorkspaceImagePath(
+    const imagePath = resolvePastedImagePath(
       pastedText,
       composerCwd,
+      NodeOS.homedir(),
       client.hostPlatform,
     );
-    if (!relativePath) return null;
+    if (!imagePath) return null;
 
     return (async () => {
       if (!detail && focus !== "new") {
@@ -2270,8 +2274,8 @@ export function ChatView({
         store.setStatus("Answer the pending question before attaching an image.", "error");
         return false;
       }
-      if (activeComposerImages.some((image) => image.relativePath === relativePath)) {
-        store.setStatus(`${NodePath.basename(relativePath)} is already attached.`, "info");
+      if (activeComposerImages.some((image) => image.relativePath === imagePath)) {
+        store.setStatus(`${NodePath.basename(imagePath)} is already attached.`, "info");
         return true;
       }
       if (
@@ -2286,16 +2290,34 @@ export function ChatView({
       }
 
       clipboardImageLoadsRef.current += 1;
-      const imageName = relativePath.split(/[\\/]/u).at(-1) ?? relativePath;
+      const imageName = imagePath.split(/[\\/]/u).at(-1) ?? imagePath;
       store.setStatus(`Adding ${imageName}…`, "busy");
       try {
-        const file = await client.readFileBase64(composerCwd, relativePath);
-        if (!file) throw new Error("Could not read the pasted image path.");
-        const image = await prepareComposerImage(relativePath, file);
+        const platformPath = client.hostPlatform === "win32" ? NodePath.win32 : NodePath.posix;
+        const image = platformPath.isAbsolute(imagePath)
+          ? await (async () => {
+              const stat = await NodeFSP.stat(imagePath);
+              if (!stat.isFile()) throw new Error("The pasted image path is not a file.");
+              if (stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+                throw new Error("Image exceeds the 10MB attachment limit.");
+              }
+              const mimeType = imageMimeTypeForPath(imagePath);
+              if (!mimeType) throw new Error("Paste a supported image format.");
+              return prepareComposerImageBytes(
+                imagePath,
+                mimeType,
+                await NodeFSP.readFile(imagePath),
+              );
+            })()
+          : await (async () => {
+              const file = await client.readFileBase64(composerCwd, imagePath);
+              if (!file) throw new Error("Could not read the pasted image path.");
+              return prepareComposerImage(imagePath, file);
+            })();
         updateActiveComposerImages((current) => {
           if (
             current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ||
-            current.some((entry) => entry.relativePath === relativePath)
+            current.some((entry) => entry.relativePath === imagePath)
           ) {
             return current;
           }
@@ -2372,10 +2394,33 @@ export function ChatView({
           renderer.requestRender();
         }
         const edited = normalizeEditedPrompt(await NodeFSP.readFile(file, "utf8"));
-        if (focus === "new") setDraft(edited);
-        else setReply(edited);
+        const availableImageSlots = Math.max(
+          0,
+          PROVIDER_SEND_TURN_MAX_ATTACHMENTS - activeComposerImages.length,
+        );
+        const imagePathLines = findPromptImagePathLines(
+          edited,
+          composerCwd,
+          NodeOS.homedir(),
+          client.hostPlatform,
+        ).slice(0, availableImageSlots);
+        const attachedLineIndexes = new Set<number>();
+        for (const imagePathLine of imagePathLines) {
+          const attachment = pasteComposerImagePath(imagePathLine.text);
+          if (attachment && (await attachment)) {
+            attachedLineIndexes.add(imagePathLine.lineIndex);
+          }
+        }
+        const prompt = normalizeEditedPrompt(removePromptLines(edited, attachedLineIndexes));
+        if (focus === "new") setDraft(prompt);
+        else setReply(prompt);
         setComposerEpoch((epoch) => epoch + 1);
-        store.setStatus("Prompt updated from $EDITOR.", "success");
+        store.setStatus(
+          attachedLineIndexes.size > 0
+            ? `Prompt updated; attached ${attachedLineIndexes.size} image path${attachedLineIndexes.size === 1 ? "" : "s"}.`
+            : "Prompt updated from $EDITOR.",
+          "success",
+        );
       } catch {
         store.setStatus("Could not open $EDITOR.", "error");
       } finally {

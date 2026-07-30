@@ -56,16 +56,18 @@ export function isSupportedImagePath(relativePath: string): boolean {
 }
 
 /**
- * Resolve a complete prompt paste into a workspace-relative image path.
+ * Resolve a complete prompt paste into either a workspace-relative path or an
+ * explicit local path.
  *
  * Terminal file paste/drag-and-drop usually supplies a path rather than image
  * clipboard bytes. Keep recognition intentionally narrow: one path, a supported
- * extension, and a destination inside the active workspace. The server performs
- * the authoritative realpath check when the file is read.
+ * extension. Workspace files keep using the server's guarded reader; explicit
+ * paths (including `~/Pictures/...`) are read by the local TUI process.
  */
-export function resolvePastedWorkspaceImagePath(
+export function resolvePastedImagePath(
   pastedText: string,
   workspaceRoot: string,
+  homeDirectory: string,
   platform: NodeJS.Platform,
 ): string | null {
   if (workspaceRoot.trim().length === 0 || pastedText.includes("\n") || pastedText.includes("\0")) {
@@ -74,6 +76,7 @@ export function resolvePastedWorkspaceImagePath(
 
   let candidate = pastedText.trim();
   if (candidate.length === 0) return null;
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const quote = candidate[0];
   const wasQuoted = (quote === "'" || quote === '"') && candidate.at(-1) === quote;
   if (wasQuoted) {
@@ -84,25 +87,59 @@ export function resolvePastedWorkspaceImagePath(
     // Terminal drag/drop commonly shell-escapes spaces and punctuation.
     candidate = candidate.replace(/\\(.)/gu, "$1");
   }
+  if (candidate === "~") {
+    candidate = homeDirectory;
+  } else if (candidate.startsWith("~/") || candidate.startsWith("~\\")) {
+    candidate = path.join(homeDirectory, candidate.slice(2));
+  } else if (candidate.startsWith("~")) {
+    // `~other-user` expansion is shell-specific and cannot be resolved safely.
+    return null;
+  }
   if (!isSupportedImagePath(candidate)) return null;
 
-  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   if (/\s/u.test(candidate) && !wasQuoted && !wasShellEscaped && !path.isAbsolute(candidate)) {
     return null;
   }
   const normalizedRoot = path.resolve(workspaceRoot);
-  const relativePath = path.isAbsolute(candidate)
-    ? path.relative(normalizedRoot, path.resolve(candidate))
-    : path.normalize(candidate);
-  if (
-    relativePath.length === 0 ||
-    relativePath === ".." ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  ) {
-    return null;
+  if (path.isAbsolute(candidate)) {
+    const absolutePath = path.resolve(candidate);
+    const workspaceRelativePath = path.relative(normalizedRoot, absolutePath);
+    return workspaceRelativePath !== ".." &&
+      !workspaceRelativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(workspaceRelativePath)
+      ? workspaceRelativePath
+      : absolutePath;
   }
-  return relativePath;
+  return path.normalize(candidate);
+}
+
+export interface PromptImagePathLine {
+  readonly lineIndex: number;
+  readonly text: string;
+  readonly imagePath: string;
+}
+
+/** Find path-only image lines in prompt text, including content returned by `$EDITOR`. */
+export function findPromptImagePathLines(
+  prompt: string,
+  workspaceRoot: string,
+  homeDirectory: string,
+  platform: NodeJS.Platform,
+): ReadonlyArray<PromptImagePathLine> {
+  const matches: PromptImagePathLine[] = [];
+  for (const [lineIndex, text] of prompt.split("\n").entries()) {
+    const imagePath = resolvePastedImagePath(text, workspaceRoot, homeDirectory, platform);
+    if (imagePath) matches.push({ lineIndex, text, imagePath });
+  }
+  return matches;
+}
+
+/** Remove only successfully attached path lines while preserving all other editor text. */
+export function removePromptLines(prompt: string, lineIndexes: ReadonlySet<number>): string {
+  return prompt
+    .split("\n")
+    .filter((_, index) => !lineIndexes.has(index))
+    .join("\n");
 }
 
 export function imageExtensionForMimeType(mimeType: string): string | null {

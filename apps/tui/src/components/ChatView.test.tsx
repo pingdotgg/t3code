@@ -3,6 +3,9 @@ import { CliRenderEvents, type Renderable, ScrollBoxRenderable } from "@opentui/
 import { setRendererCapabilities } from "@opentui/core/testing";
 import { testRender } from "@opentui/react/test-utils";
 import { installKittyImageExtension, type RgbaImage } from "@t3tools/opentui-image";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as React from "react";
 
 import {
@@ -1339,6 +1342,39 @@ describe("ChatView acknowledged submissions", () => {
       sizeBytes: 68,
     });
     setup.renderer.destroy();
+  });
+
+  it("Given the terminal pastes an explicit local image outside the workspace, when it is readable, then the prompt stages it without using the workspace reader", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-prompt-image-"));
+    const imagePath = NodePath.join(directory, "outside workspace.png");
+    await NodeFSP.writeFile(imagePath, Buffer.from(PNG_BASE64, "base64"));
+    try {
+      let workspaceReads = 0;
+      const fake = fakeClient({
+        detail: thread(),
+        readFileBase64: async () => {
+          workspaceReads += 1;
+          return null;
+        },
+      });
+      const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+        width: 110,
+        height: 28,
+      });
+
+      await selectThread(setup, fake.connect);
+      await React.act(async () => {
+        await setup.mockInput.pasteBracketedText(`'${imagePath}'`);
+        await setup.renderOnce();
+      });
+      await setup.waitForFrame(
+        (frame) => frame.includes("outside workspace.png") && !frame.includes(directory),
+      );
+      expect(workspaceReads).toBe(0);
+      setup.renderer.destroy();
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("Given a reply is in flight, when Enter repeats and the request fails, then one request is made and the exact draft remains", async () => {

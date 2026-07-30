@@ -1,13 +1,15 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+  findPromptImagePathLines,
   imageMimeTypeForPath,
   imageExtensionForMimeType,
   isSupportedImagePath,
   prepareComposerImage,
   prepareComposerImageBytes,
   removeComposerImage,
-  resolvePastedWorkspaceImagePath,
+  removePromptLines,
+  resolvePastedImagePath,
 } from "./composerAttachments.ts";
 
 const PNG_BASE64 =
@@ -24,42 +26,101 @@ describe("composer image attachments", () => {
 
   it("Given a terminal path paste, when it identifies a workspace image, then it resolves a safe relative path", () => {
     expect(
-      resolvePastedWorkspaceImagePath(
+      resolvePastedImagePath(
         "'/workspace/project/docs/error screenshot.PNG'",
         "/workspace/project",
+        "/home/olafura",
         "linux",
       ),
     ).toBe("docs/error screenshot.PNG");
     expect(
-      resolvePastedWorkspaceImagePath(
+      resolvePastedImagePath(
         "./docs/error\\ screenshot.webp",
         "/workspace/project",
+        "/home/olafura",
         "linux",
       ),
     ).toBe("docs/error screenshot.webp");
     expect(
-      resolvePastedWorkspaceImagePath(
+      resolvePastedImagePath(
         "C:\\workspace\\project\\shots\\error.jpg",
         "C:\\workspace\\project",
+        "C:\\Users\\olafura",
         "win32",
       ),
     ).toBe("shots\\error.jpg");
   });
 
-  it("Given prompt text or an unsafe path, when image-path recognition runs, then it leaves the paste as text", () => {
+  it("Given prompt prose or multiple paths, when image-path recognition runs, then it leaves the paste as text", () => {
     expect(
-      resolvePastedWorkspaceImagePath(
+      resolvePastedImagePath(
         "please inspect docs/error.png",
         "/workspace/project",
+        "/home/olafura",
         "linux",
       ),
     ).toBeNull();
     expect(
-      resolvePastedWorkspaceImagePath("/workspace/other/secret.png", "/workspace/project", "linux"),
+      resolvePastedImagePath(
+        "docs/one.png\ndocs/two.png",
+        "/workspace/project",
+        "/home/olafura",
+        "linux",
+      ),
     ).toBeNull();
+  });
+
+  it("Given a home-relative or explicit local image path, when it is recognized, then it resolves outside the workspace", () => {
     expect(
-      resolvePastedWorkspaceImagePath("docs/one.png\ndocs/two.png", "/workspace/project", "linux"),
-    ).toBeNull();
+      resolvePastedImagePath(
+        "~/Pictures/screenshot.png",
+        "/workspace/project",
+        "/home/olafura",
+        "linux",
+      ),
+    ).toBe("/home/olafura/Pictures/screenshot.png");
+    expect(
+      resolvePastedImagePath(
+        "/workspace/other/reference.webp",
+        "/workspace/project",
+        "/home/olafura",
+        "linux",
+      ),
+    ).toBe("/workspace/other/reference.webp");
+    expect(
+      resolvePastedImagePath(
+        "~\\Pictures\\screenshot.png",
+        "C:\\workspace\\project",
+        "C:\\Users\\olafura",
+        "win32",
+      ),
+    ).toBe("C:\\Users\\olafura\\Pictures\\screenshot.png");
+  });
+
+  it("Given editor content with path-only image lines, when recognized, then successful attachments can be removed without changing prose", () => {
+    const prompt =
+      "Compare these screenshots:\n~/Pictures/before.png\n\n./docs/after.webp\nKeep this line.";
+    const matches = findPromptImagePathLines(
+      prompt,
+      "/home/olafura/project",
+      "/home/olafura",
+      "linux",
+    );
+    expect(matches).toEqual([
+      {
+        lineIndex: 1,
+        text: "~/Pictures/before.png",
+        imagePath: "/home/olafura/Pictures/before.png",
+      },
+      {
+        lineIndex: 3,
+        text: "./docs/after.webp",
+        imagePath: "docs/after.webp",
+      },
+    ]);
+    expect(removePromptLines(prompt, new Set([1, 3]))).toBe(
+      "Compare these screenshots:\n\nKeep this line.",
+    );
   });
 
   it("builds an upload attachment and bounded RGBA preview", async () => {
