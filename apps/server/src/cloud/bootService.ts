@@ -100,6 +100,15 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "[Service]",
     "Type=simple",
     "WorkingDirectory=%h",
+    // A systemd user unit inherits the user manager's minimal PATH, which does
+    // NOT include ~/.local/bin — the directory Ubuntu's ~/.profile prepends and
+    // where user-scoped provider CLIs (claude, codex) land on a headless
+    // install. Without this, `t3 serve` finds every provider by hand from a
+    // login shell but the service starts with zero providers. Prepend the
+    // user-local bins to the standard system PATH; %h expands to the home dir
+    // (like WorkingDirectory), and absent entries (e.g. /snap/bin on non-Debian
+    // distros) are simply skipped during lookup.
+    "Environment=PATH=%h/.local/bin:%h/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.t3EntryPath)} serve`,

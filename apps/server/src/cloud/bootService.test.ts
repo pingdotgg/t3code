@@ -108,6 +108,7 @@ it("renders a systemd unit with absolute paths and append-mode logging", () => {
       "[Service]",
       "Type=simple",
       "WorkingDirectory=%h",
+      "Environment=PATH=%h/.local/bin:%h/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
       "Environment=T3CODE_HOME=/home/theo/.t3",
       "Environment=T3_BOOT_SERVICE_UNIT=t3code.service",
       "ExecStart=/usr/local/bin/node /home/theo/.t3/runtime/versions/0.0.27/node_modules/t3/dist/bin.mjs serve",
@@ -137,6 +138,8 @@ it("quotes systemd values containing spaces and escapes percent specifiers", () 
   });
   assert.include(unit, 'ExecStart="/home/me/my tools/node" "/home/me/T3 Data/bin.mjs" serve');
   assert.include(unit, 'Environment=T3CODE_HOME="/home/me/T3 Data"');
+  // ~/.local/bin is prepended so user-scoped provider CLIs resolve.
+  assert.include(unit, "Environment=PATH=%h/.local/bin:%h/bin:");
   // append: paths take the rest of the line literally (spaces are fine,
   // quoting is not), but % still goes through specifier expansion.
   assert.include(unit, "StandardOutput=append:/home/me/100%%logs/boot.log");
