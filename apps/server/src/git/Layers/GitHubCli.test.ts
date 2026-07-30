@@ -76,6 +76,34 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("reads the aggregate pull request diff instead of per-commit patches", () =>
+    Effect.gen(function* () {
+      const diff = "diff --git a/src/example.ts b/src/example.ts\n";
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: diff,
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      const result = yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.getPullRequestPatch({
+          cwd: "/repo",
+          reference: "42",
+        });
+      });
+
+      assert.equal(result, diff);
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh",
+        ["pr", "diff", "42"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+    }),
+  );
+
   it.effect("trims pull request fields decoded from gh json", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockResolvedValueOnce({

@@ -62,6 +62,10 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly reference: string;
   }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
+  /**
+   * Read the aggregate base-to-head diff. Per-commit patches can repeat paths
+   * and cannot be rendered as one current pull request file.
+   */
   readonly getPullRequestPatch: (input: {
     readonly cwd: string;
     readonly reference: string;

@@ -219,7 +219,7 @@ const makeGitHubCli = Effect.sync(() => {
     getPullRequestPatch: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["pr", "diff", input.reference, "--patch"],
+        args: ["pr", "diff", input.reference],
       }).pipe(Effect.map((result) => result.stdout)),
     getRepositoryCloneUrls: (input) =>
       execute({
