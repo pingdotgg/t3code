@@ -15,9 +15,9 @@ import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 
 const UPDATE_STEPS = [
-  { stage: "downloading", label: "Download" },
-  { stage: "installing", label: "Install" },
-  { stage: "resuming", label: "Resume" },
+  { stage: "downloading", label: "Download", activeLabel: "Downloading" },
+  { stage: "installing", label: "Install", activeLabel: "Installing" },
+  { stage: "resuming", label: "Resume", activeLabel: "Resuming" },
 ] as const;
 const pendingUpdateEnvironmentIds = new Set<EnvironmentId>();
 
@@ -25,37 +25,24 @@ function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
 
-function updateStatusCopy(
-  state: Exclude<ServerUpdateState, { status: "idle" }>,
-  serverLabel: string,
-): string {
-  if (state.status === "failed") {
-    return state.message;
-  }
-  switch (state.stage) {
-    case "downloading":
-      return "Downloading the matching server version.";
-    case "installing":
-      return `Installing and verifying t3@${state.targetVersion}.`;
-    case "resuming":
-      return `Waiting for ${serverLabel} to accept commands.`;
-  }
-}
-
+/**
+ * Monochrome step rail for an in-flight server update. The update is a
+ * wait, not a warning: done steps recede to gray, the active step is the
+ * only bright element and pulses. Failure keeps the rail but surfaces the
+ * error below it.
+ */
 export function ServerUpdateProgress({
   fromVersion,
-  serverLabel,
   state,
 }: {
   readonly fromVersion: string;
-  readonly serverLabel: string;
   readonly state: Exclude<ServerUpdateState, { status: "idle" }>;
 }) {
   const currentIndex = UPDATE_STEPS.findIndex(({ stage }) => stage === state.stage);
 
   return (
     <div className="mt-1 min-w-0 space-y-2.5">
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground/70">
         {fromVersion} <span aria-hidden="true">→</span> {state.targetVersion}
       </p>
       <ol className="flex min-w-0 items-center" aria-label="Server update progress">
@@ -63,6 +50,7 @@ export function ServerUpdateProgress({
           const complete = index < currentIndex;
           const current = index === currentIndex;
           const failed = current && state.status === "failed";
+          const running = current && state.status === "running";
           return (
             <li
               key={step.stage}
@@ -70,36 +58,40 @@ export function ServerUpdateProgress({
                 "flex min-w-0 items-center text-xs font-medium",
                 index < UPDATE_STEPS.length - 1 ? "flex-1" : null,
                 complete
-                  ? "text-success"
+                  ? "text-muted-foreground"
                   : failed
                     ? "text-destructive"
-                    : current
-                      ? "text-primary"
-                      : "text-muted-foreground/60",
+                    : running
+                      ? "animate-status-pulse text-foreground"
+                      : "text-muted-foreground/50",
               )}
-              aria-current={current && state.status === "running" ? "step" : undefined}
+              aria-current={running ? "step" : undefined}
             >
-              <span
-                className={cn(
-                  "grid size-4 shrink-0 place-items-center rounded-full border",
-                  complete
-                    ? "border-success bg-success text-success-foreground"
-                    : failed
-                      ? "border-destructive bg-destructive text-destructive-foreground"
-                      : current
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-muted-foreground/35",
-                )}
-                aria-hidden="true"
-              >
-                {complete ? <CheckIcon className="size-3" strokeWidth={3} /> : null}
-              </span>
-              <span className="ml-1.5 truncate">{step.label}</span>
+              {complete ? (
+                <CheckIcon
+                  className="size-3.5 shrink-0 opacity-70"
+                  strokeWidth={2.5}
+                  aria-hidden="true"
+                />
+              ) : (
+                <span
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    failed
+                      ? "bg-destructive"
+                      : running
+                        ? "bg-foreground"
+                        : "border border-muted-foreground/40",
+                  )}
+                  aria-hidden="true"
+                />
+              )}
+              <span className="ml-1.5 truncate">{running ? step.activeLabel : step.label}</span>
               {index < UPDATE_STEPS.length - 1 ? (
                 <span
                   className={cn(
                     "mx-2 h-px min-w-3 flex-1",
-                    complete ? "bg-success/60" : "bg-border",
+                    complete ? "bg-muted-foreground/40" : "bg-border",
                   )}
                   aria-hidden="true"
                 />
@@ -108,15 +100,11 @@ export function ServerUpdateProgress({
           );
         })}
       </ol>
-      <p
-        className={cn(
-          "text-xs",
-          state.status === "failed" ? "text-destructive" : "text-muted-foreground",
-        )}
-        role={state.status === "failed" ? "alert" : "status"}
-      >
-        {updateStatusCopy(state, serverLabel)}
-      </p>
+      {state.status === "failed" ? (
+        <p className="text-xs text-destructive" role="alert">
+          {state.message}
+        </p>
+      ) : null}
     </div>
   );
 }
