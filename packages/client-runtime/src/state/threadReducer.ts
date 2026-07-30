@@ -94,6 +94,7 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           archivedAt: event.payload.archivedAt,
+          titleRegeneration: null,
           updatedAt: event.payload.updatedAt,
         },
       };
