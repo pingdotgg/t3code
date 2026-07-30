@@ -435,6 +435,26 @@ describe("expandGitHubInstances", () => {
     expect(Option.getOrNull(instances[1]!.auth.account)).toBe("dev2");
   });
 
+  it("collapses two authenticated accounts on the same enterprise host into one row", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(
+        authStatusJson({
+          "github.com": [{ login: "octocat", state: "success", active: true }],
+          "git.corp.com": [
+            { login: "dev", state: "success", active: true },
+            { login: "dev2", state: "success", active: false },
+          ],
+        }),
+      ),
+    );
+
+    expect(instances.map((instance) => instance.id)).toEqual([
+      "github",
+      "github-enterprise:git.corp.com",
+    ]);
+    expect(instances).toHaveLength(2);
+  });
+
   it("still emits a github row when github.com is not logged in", () => {
     const instances = GitHubSourceControlProvider.expandGitHubInstances(
       probe(authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] })),
