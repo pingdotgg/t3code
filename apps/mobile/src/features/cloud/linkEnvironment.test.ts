@@ -164,6 +164,25 @@ function requestBodyText(body: BodyInit | null | undefined): string {
   return body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body ?? "");
 }
 
+function successfulEnvironmentLinkResponse(url: string | URL) {
+  const requestUrl = String(url);
+  if (requestUrl.endsWith("/v1/client/environment-link-challenges")) {
+    return Promise.resolve(Response.json(validLinkChallengeResponse()));
+  }
+  if (requestUrl.endsWith("/api/connect/link-proof")) {
+    return Promise.resolve(Response.json(validLinkProof()));
+  }
+  if (requestUrl.endsWith("/v1/client/environment-links")) {
+    return Promise.resolve(Response.json(validLinkResponse()));
+  }
+  if (requestUrl.endsWith("/api/connect/preferences")) {
+    return Promise.resolve(Response.json(validCloudLinkState()));
+  }
+  return Promise.resolve(
+    Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+  );
+}
+
 function validDpopAccessTokenResponse(scope = "environment:status environment:connect") {
   return {
     access_token: "relay-dpop-token",
@@ -759,18 +778,7 @@ describe("mobile cloud link environment client", () => {
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           bodies.push(JSON.parse(requestBodyText(init.body)));
         }
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
+        return successfulEnvironmentLinkResponse(url);
       });
       vi.stubGlobal("fetch", fetchMock);
 
@@ -818,21 +826,7 @@ describe("mobile cloud link environment client", () => {
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           bodies.push(JSON.parse(requestBodyText(init.body)) as Record<string, unknown>);
         }
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        if (String(url).endsWith("/api/connect/preferences")) {
-          return Promise.resolve(Response.json(validCloudLinkState()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
+        return successfulEnvironmentLinkResponse(url);
       });
       vi.stubGlobal("fetch", fetchMock);
 
@@ -864,20 +858,7 @@ describe("mobile cloud link environment client", () => {
   it.effect("does not enable environment activity publishing on Android", () =>
     Effect.gen(function* () {
       Object.defineProperty(Platform, "OS", { value: "android", configurable: true });
-      const fetchMock = vi.fn((url: string | URL) => {
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
-      });
+      const fetchMock = vi.fn(successfulEnvironmentLinkResponse);
       vi.stubGlobal("fetch", fetchMock);
 
       yield* withCloudServices(
