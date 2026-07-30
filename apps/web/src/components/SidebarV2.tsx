@@ -511,10 +511,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const isDefaultBranch =
     defaultBranchRef?.name === thread.branch ||
     (gitStatus.data?.isDefaultRef === true && gitStatus.data.refName === thread.branch);
-  const branchLabel =
-    branchRefs.isPending && branchRefs.data === null
-      ? null
-      : resolveSidebarBranchLabel(thread.branch, isDefaultBranch);
+  const isDefaultBranchPending =
+    thread.worktreePath === null
+      ? branchRefs.isPending && branchRefs.data === null
+      : gitStatus.isPending && gitStatus.data === null;
+  const branchLabel = isDefaultBranchPending
+    ? null
+    : resolveSidebarBranchLabel(thread.branch, isDefaultBranch);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
