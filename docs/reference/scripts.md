@@ -18,6 +18,7 @@
 - `vp run dist:desktop:dmg` — Builds a shareable macOS `.dmg` into `./release`.
 - `vp run dist:desktop:dmg:x64` — Builds an Intel macOS `.dmg`.
 - `vp run dist:desktop:linux` — Builds a Linux AppImage into `./release`.
+- `vp run dist:desktop:linux:deb` — Builds a Linux `.deb` into `./release`.
 - `vp run dist:desktop:win` — Builds a Windows NSIS installer into `./release`.
 
 ## Desktop `.dmg` packaging notes

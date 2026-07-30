@@ -36,6 +36,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+// fpm-backed Linux targets (deb, rpm) refuse to build without a project URL and
+// a `Name <email>` maintainer; AppImage never asked for either. The maintainer
+// string becomes both the deb Maintainer and Vendor fields.
+const DESKTOP_HOMEPAGE = "https://t3.codes";
+const DESKTOP_LINUX_MAINTAINER = "pingdotgg <support@t3.codes>";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -617,6 +622,7 @@ interface StagePackageJson {
   readonly packageManager: string;
   readonly description: string;
   readonly author: string;
+  readonly homepage: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -1589,6 +1595,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       executableName: "t3code",
       icon: "icons",
       category: "Development",
+      maintainer: DESKTOP_LINUX_MAINTAINER,
       desktop: {
         entry: {
           StartupWMClass: "t3code",
@@ -1911,6 +1918,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",
     author: "T3 Tools",
+    homepage: DESKTOP_HOMEPAGE,
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,
