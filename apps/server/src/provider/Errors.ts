@@ -86,6 +86,22 @@ export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<Provide
 }
 
 /**
+ * ProviderWorkspaceMissingError - The session's working directory no longer
+ * exists on disk, so no provider process can start in it.
+ */
+export class ProviderWorkspaceMissingError extends Schema.TaggedErrorClass<ProviderWorkspaceMissingError>()(
+  "ProviderWorkspaceMissingError",
+  {
+    threadId: Schema.String,
+    cwd: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `This thread's workspace folder no longer exists: ${this.cwd}. Move the folder back to this path, or add the project again from its new location.`;
+  }
+}
+
+/**
  * ProviderValidationError - Invalid provider API input.
  */
 export class ProviderValidationError extends Schema.TaggedErrorClass<ProviderValidationError>()(
@@ -197,6 +213,7 @@ export type ProviderAdapterError =
 export type ProviderServiceError =
   | ProviderValidationError
   | ProviderUnsupportedError
+  | ProviderWorkspaceMissingError
   | ProviderInstanceNotFoundError
   | ProviderSessionNotFoundError
   | ProviderSessionDirectoryPersistenceError
