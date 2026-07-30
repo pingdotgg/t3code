@@ -1,10 +1,67 @@
-import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
-import { Schema } from "effect";
+import {
+  isProviderDriverKind,
+  isProviderAvailable,
+  type ModelSelection,
+  type ProviderDriverKind,
+  type ServerProvider,
+  ServerSettings,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 import { createModelSelection } from "./model.ts";
+import {
+  getBackgroundActivityBaseProfile,
+  normalizeBackgroundActivitySettings,
+  normalizeServerBackgroundActivitySettings,
+  resolveBackgroundActivitySettings,
+} from "./backgroundActivitySettings.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
+const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
+
+type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
+
+const getLegacyProviderSettings = (
+  settings: ServerSettings,
+  provider: ProviderDriverKind,
+): LegacyProviderSettings | undefined =>
+  (settings.providers as Record<string, LegacyProviderSettings | undefined>)[provider];
+
+export function isModelSelectionProviderEnabled(
+  settings: ServerSettings,
+  selection: ModelSelection,
+): boolean {
+  const instanceConfig = settings.providerInstances[selection.instanceId];
+  if (instanceConfig !== undefined) {
+    return instanceConfig.enabled ?? true;
+  }
+
+  return (
+    isProviderDriverKind(selection.instanceId) &&
+    getLegacyProviderSettings(settings, selection.instanceId)?.enabled === true
+  );
+}
+
+export function resolveSourceControlWriterModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const selection = settings.sourceControlWriterModelSelection;
+  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+    return settings.textGenerationModelSelection;
+  }
+  if (providers === undefined) {
+    return selection;
+  }
+
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  return provider?.enabled === true && isProviderAvailable(provider)
+    ? selection
+    : settings.textGenerationModelSelection;
+}
 
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
@@ -33,18 +90,17 @@ export function extractPersistedServerObservabilitySettings(input: {
 export function parsePersistedServerObservabilitySettings(
   raw: string,
 ): PersistedServerObservabilitySettings {
-  try {
-    const decoded = Schema.decodeUnknownSync(ServerSettingsJson)(raw);
-    return extractPersistedServerObservabilitySettings(decoded);
-  } catch {
-    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+  const decoded = decodeServerSettingsJson(raw);
+  if (Option.isSome(decoded)) {
+    return extractPersistedServerObservabilitySettings(decoded.value);
   }
+  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
 }
 
 function shouldReplaceTextGenerationModelSelection(
   patch: ServerSettingsPatch["textGenerationModelSelection"] | undefined,
 ): boolean {
-  return Boolean(patch && (patch.provider !== undefined || patch.model !== undefined));
+  return Boolean(patch && (patch.instanceId !== undefined || patch.model !== undefined));
 }
 
 function mergeModelSelectionOptionsById(input: {
@@ -65,22 +121,96 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
-/**
- * Applies a server settings patch while treating textGenerationModelSelection as
- * replace-on-provider/model updates. This prevents stale nested options from
- * surviving a reset patch that intentionally omits options.
- */
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
-  const next = deepMerge(current, patch);
+  const {
+    automaticGitFetchInterval,
+    providerHealthRefreshInterval,
+    backgroundActivityProfile,
+    backgroundActivity,
+    ...patchForMerge
+  } = patch;
+  const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
+  const backgroundActivityPatch =
+    backgroundActivityProfile !== undefined
+      ? {
+          schemaVersion: 1 as const,
+          profile:
+            automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
+              ? ("custom" as const)
+              : backgroundActivityProfile,
+          ...(automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
+            ? { baseProfile: backgroundActivityProfile }
+            : {}),
+          overrides: {
+            ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+            ...(providerHealthRefreshInterval !== undefined
+              ? { providerHealthRefreshInterval }
+              : {}),
+          },
+        }
+      : automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
+        ? {
+            schemaVersion: 1 as const,
+            profile: "custom" as const,
+            baseProfile: getBackgroundActivityBaseProfile(currentBackgroundActivity),
+            overrides: {
+              ...(currentBackgroundActivity.profile === "custom"
+                ? currentBackgroundActivity.overrides
+                : {}),
+              ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+              ...(providerHealthRefreshInterval !== undefined
+                ? { providerHealthRefreshInterval }
+                : {}),
+            },
+          }
+        : undefined;
+  const next = deepMerge(current, patchForMerge);
+  const nextWithReplacementsBase = {
+    ...next,
+    ...(backgroundActivity !== undefined
+      ? {
+          backgroundActivity: {
+            ...deepMerge(currentBackgroundActivity, backgroundActivity),
+            ...(backgroundActivity.overrides !== undefined
+              ? { overrides: backgroundActivity.overrides }
+              : {}),
+          },
+        }
+      : { backgroundActivity: currentBackgroundActivity }),
+    ...(backgroundActivity === undefined && backgroundActivityPatch !== undefined
+      ? { backgroundActivity: backgroundActivityPatch }
+      : {}),
+    ...(patch.providerInstances !== undefined
+      ? { providerInstances: patch.providerInstances }
+      : {}),
+    ...(patch.sourceControlWriterModelSelection !== undefined
+      ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
+      : {}),
+    ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+    ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
+  };
+  const normalizedBackgroundActivity = normalizeBackgroundActivitySettings(
+    nextWithReplacementsBase.backgroundActivity,
+  );
+  const resolvedBackgroundActivity = resolveBackgroundActivitySettings(
+    normalizedBackgroundActivity,
+  );
+  const nextWithReplacements = {
+    ...nextWithReplacementsBase,
+    backgroundActivity: normalizedBackgroundActivity,
+    automaticGitFetchInterval: resolvedBackgroundActivity.automaticGitFetchInterval,
+    providerHealthRefreshInterval: resolvedBackgroundActivity.providerHealthRefreshInterval,
+    backgroundActivityProfile: resolvedBackgroundActivity.profile,
+  };
   if (!selectionPatch) {
-    return next;
+    return nextWithReplacements;
   }
 
-  const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
+  const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
   const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
   const options = shouldReplaceTextGenerationModelSelection(selectionPatch)
     ? selectionPatch.options
@@ -90,7 +220,7 @@ export function applyServerSettingsPatch(
       });
 
   return {
-    ...next,
-    textGenerationModelSelection: createModelSelection(provider, model, options),
+    ...nextWithReplacements,
+    textGenerationModelSelection: createModelSelection(instanceId, model, options),
   };
 }

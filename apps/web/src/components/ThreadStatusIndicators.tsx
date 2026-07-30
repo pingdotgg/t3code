@@ -1,94 +1,125 @@
-import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import type { GitStatusResult } from "@t3tools/contracts";
 import {
-  CircleAlertIcon,
-  CircleQuestionMarkIcon,
-  CloudIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestIcon,
-  TerminalIcon,
-  type LucideIcon,
-} from "lucide-react";
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import type { VcsStatusResult } from "@t3tools/contracts";
+import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
-import { usePrimaryEnvironmentId } from "../environments/primary";
-import {
-  useSavedEnvironmentRegistryStore,
-  useSavedEnvironmentRuntimeStore,
-} from "../environments/runtime";
-import { useGitStatus } from "../lib/gitStatusState";
-import { cn } from "../lib/utils";
-import { type AppState, selectProjectByRef, useStore } from "../store";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import { useProject } from "../state/entities";
+import { useEnvironmentQuery } from "../state/query";
+import { useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
+import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
-import { PixelGridLoader } from "./ui/pixel-grid-loader";
+import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { SidebarCompletedIcon, SidebarPlanReadyIcon } from "./icons/custom";
 
 export interface PrStatusIndicator {
-  label: "PR open" | "PR closed" | "PR merged";
-  icon: LucideIcon;
-  toneClass: string;
+  label: string;
+  colorClass: string;
   tooltip: string;
+  tooltipLead: string;
+  tooltipTitle: string;
   url: string;
 }
 
 export interface TerminalStatusIndicator {
   label: "Terminal process running";
-  toneClass: string;
+  colorClass: string;
   pulse: boolean;
 }
 
-export type ThreadPr = GitStatusResult["pr"];
+export type ThreadPr = VcsStatusResult["pr"];
 
-const THREAD_STATUS_ICON_BY_GLYPH: Record<
-  Exclude<ThreadStatusPill["glyph"], "grid" | "file-text" | "check-check">,
-  LucideIcon
-> = {
-  "circle-alert": CircleAlertIcon,
-  "circle-question-mark": CircleQuestionMarkIcon,
-};
+export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]): string {
+  switch (state) {
+    case "open":
+      return "group-hover/v2-row:text-emerald-600 dark:group-hover/v2-row:text-emerald-300/90";
+    case "merged":
+      return "group-hover/v2-row:text-violet-600 dark:group-hover/v2-row:text-violet-300/90";
+    case "closed":
+      return "group-hover/v2-row:text-red-600 dark:group-hover/v2-row:text-red-300/90";
+  }
+}
 
-export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
+export function prStatusIndicator(
+  pr: ThreadPr,
+  provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+): PrStatusIndicator | null {
+  function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
+    return state.charAt(0).toUpperCase() + state.slice(1);
+  }
+
+  function formatPrStatusLead(pr: NonNullable<ThreadPr>, changeRequestShortName: string): string {
+    return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr.state)}`;
+  }
   if (!pr) return null;
+  const presentation = resolveChangeRequestPresentation(provider);
+
+  const tooltipLead = formatPrStatusLead(pr, presentation.shortName);
+  const tooltip = `${tooltipLead}: ${pr.title}`;
 
   if (pr.state === "open") {
     return {
-      label: "PR open",
-      icon: GitPullRequestIcon,
-      toneClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} PR open: ${pr.title}`,
+      label: `${presentation.shortName} open`,
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
   if (pr.state === "closed") {
     return {
-      label: "PR closed",
-      icon: GitPullRequestClosedIcon,
-      toneClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} PR closed: ${pr.title}`,
+      label: `${presentation.shortName} closed`,
+      colorClass: "text-red-600 dark:text-red-300/90",
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
   if (pr.state === "merged") {
     return {
-      label: "PR merged",
-      icon: GitMergeIcon,
-      toneClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} PR merged: ${pr.title}`,
+      label: `${presentation.shortName} merged`,
+      colorClass: "text-violet-600 dark:text-violet-300/90",
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
   return null;
 }
 
-export function resolveThreadPr(
-  threadBranch: string | null,
-  gitStatus: GitStatusResult | null,
-): ThreadPr | null {
-  if (threadBranch === null || gitStatus === null || gitStatus.branch !== threadBranch) {
+export function ChangeRequestStatusIcon({ className }: { className?: string }) {
+  return <GitPullRequestIcon className={className} />;
+}
+
+export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
+  return (
+    <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
+      <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
+      <span className="min-h-4 shrink-0 border-border/70 border-l" aria-hidden="true" />
+      <span className="min-w-0 truncate pl-2">{status.tooltipTitle}</span>
+    </span>
+  );
+}
+
+export function resolveThreadPr(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+}): ThreadPr | null {
+  const { threadBranch, gitStatus } = input;
+  if (gitStatus === null) {
+    return null;
+  }
+
+  if (threadBranch === null || gitStatus.refName !== threadBranch) {
     return null;
   }
 
@@ -96,138 +127,134 @@ export function resolveThreadPr(
 }
 
 export function terminalStatusFromRunningIds(
-  runningTerminalIds: string[],
+  runningTerminalIds: ReadonlyArray<string>,
 ): TerminalStatusIndicator | null {
   if (runningTerminalIds.length === 0) {
     return null;
   }
   return {
     label: "Terminal process running",
-    toneClass: "text-teal-600 dark:text-teal-300/90",
+    colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
 }
 
-export function getSidebarIndicatorClassName(input: {
-  toneClass: string;
-  className?: string | undefined;
-}) {
-  return cn(
-    "inline-flex size-4 shrink-0 items-center justify-center",
-    input.toneClass,
-    input.className,
-  );
-}
-
-export function SidebarStatusGlyph({
-  status,
-  compact = false,
-  className,
+export function ThreadWorktreeIndicator({
+  thread,
 }: {
-  status: ThreadStatusPill;
-  compact?: boolean;
-  className?: string;
+  thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
 }) {
+  const worktreePath = thread.worktreePath?.trim();
+  if (!worktreePath) {
+    return null;
+  }
+
+  const displayPath = formatWorktreePathForDisplay(worktreePath);
+  const tooltip = thread.branch
+    ? `Worktree: ${displayPath} (${thread.branch})`
+    : `Worktree: ${displayPath}`;
+
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center",
-        compact ? "size-3.5" : "size-3",
-        className,
-      )}
-      data-slot="sidebar-status-glyph"
-      data-status-glyph={status.glyph}
-    >
-      {status.glyph === "grid" ? (
-        <PixelGridLoader variant="sidebar" className="text-current" />
-      ) : status.glyph === "file-text" ? (
-        <SidebarPlanReadyIcon className="size-3" />
-      ) : status.glyph === "check-check" ? (
-        <SidebarCompletedIcon className="size-3" />
-      ) : (
-        (() => {
-          const Icon = THREAD_STATUS_ICON_BY_GLYPH[status.glyph];
-          return <Icon className="size-3" strokeWidth={2.25} />;
-        })()
-      )}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={tooltip}
+            data-testid={`thread-worktree-${thread.id}`}
+            className="inline-flex items-center justify-center"
+          />
+        }
+      >
+        <FolderGit2Icon className="size-3 text-muted-foreground/40" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{tooltip}</TooltipPopup>
+    </Tooltip>
   );
 }
 
 export function ThreadStatusLabel({
   status,
   compact = false,
-  className,
 }: {
   status: ThreadStatusPill;
   compact?: boolean;
-  className?: string;
 }) {
   if (compact) {
     return (
-      <span
-        title={status.label}
-        className={getSidebarIndicatorClassName({
-          toneClass: status.toneClass,
-          className,
-        })}
-      >
-        <SidebarStatusGlyph compact status={status} />
-        <span className="sr-only">{status.label}</span>
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              aria-label={status.label}
+              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+            />
+          }
+        >
+          <span
+            className={`size-[9px] rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-status-pulse" : ""
+            }`}
+          />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{status.label}</TooltipPopup>
+      </Tooltip>
     );
   }
 
   return (
-    <span title={status.label} className={cn("inline-flex items-center gap-1.5", className)}>
-      <span
-        className={getSidebarIndicatorClassName({
-          toneClass: status.toneClass,
-        })}
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={status.label}
+            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+          />
+        }
       >
-        <SidebarStatusGlyph status={status} />
-      </span>
-      <span
-        className={cn("text-ui-2xs hidden font-medium tracking-tight md:inline", status.toneClass)}
-      >
-        {status.label}
-      </span>
-    </span>
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+            status.pulse ? "animate-status-pulse" : ""
+          }`}
+        />
+        <span className="hidden md:inline">{status.label}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{status.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
 /**
  * Non-interactive leading status icons for a thread row in compact contexts
- * like the command palette. Shows the PR state icon (if present) and the
- * thread status glyph, matching the sidebar's leading indicators.
+ * like the command palette. Shows the change request state icon (if present) and the
+ * thread status dot, matching the sidebar's leading indicators.
  */
-export function ThreadRowLeadingStatus({
-  thread,
-  compact = false,
-}: {
-  thread: SidebarThreadSummary;
-  compact?: boolean;
-}) {
+export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
-  const threadProjectCwd = useStore(
+  const threadProject = useProject(
     useMemo(
-      () => (state: AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
+      () => scopeProjectRef(thread.environmentId, thread.projectId),
       [thread.environmentId, thread.projectId],
     ),
   );
+  const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
-  const gitStatus = useGitStatus({
-    environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
+  const gitStatus = useEnvironmentQuery(
+    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const pr = resolveThreadPr({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
   });
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
-  const prStatus = prStatusIndicator(pr);
+  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -240,31 +267,25 @@ export function ThreadRowLeadingStatus({
   }
 
   return (
-    <span className={cn("inline-flex shrink-0 items-center", compact ? "gap-1" : "gap-1.5")}>
-      {prStatus
-        ? (() => {
-            const PrIcon = prStatus.icon;
-
-            return (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span
-                      aria-label={prStatus.tooltip}
-                      className={getSidebarIndicatorClassName({
-                        toneClass: prStatus.toneClass,
-                      })}
-                    />
-                  }
-                >
-                  <PrIcon className="size-3" strokeWidth={2.25} />
-                </TooltipTrigger>
-                <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-              </Tooltip>
-            );
-          })()
-        : null}
-      {threadStatus ? <ThreadStatusLabel status={threadStatus} compact={compact} /> : null}
+    <span className="inline-flex shrink-0 items-center gap-1.5">
+      {prStatus ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                aria-label={prStatus.tooltip}
+                className={`inline-flex items-center justify-center ${prStatus.colorClass}`}
+              />
+            }
+          >
+            <ChangeRequestStatusIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            <PrStatusTooltipContent status={prStatus} />
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
     </span>
   );
 }
@@ -275,23 +296,16 @@ export function ThreadRowLeadingStatus({
  * environment indicator, matching the sidebar's trailing indicators.
  */
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
-  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const runningTerminalIds = useTerminalStateStore(
-    (state) =>
-      selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).runningTerminalIds,
-  );
+  const runningTerminalIds = useThreadRunningTerminalIds({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
+  const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
-  const remoteEnvLabel = useSavedEnvironmentRuntimeStore(
-    (state) => state.byId[thread.environmentId]?.descriptor?.label ?? null,
-  );
-  const remoteEnvSavedLabel = useSavedEnvironmentRegistryStore(
-    (state) => state.byId[thread.environmentId]?.label ?? null,
-  );
-  const threadEnvironmentLabel = isRemoteThread
-    ? (remoteEnvLabel ?? remoteEnvSavedLabel ?? "Remote")
-    : null;
+  const remoteEnvLabel = environment?.label ?? null;
+  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 
   if (!terminalStatus && !isRemoteThread) {
@@ -301,16 +315,22 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
       {terminalStatus ? (
-        <span
-          role="img"
-          aria-label={terminalStatus.label}
-          title={terminalStatus.label}
-          className={getSidebarIndicatorClassName({
-            toneClass: terminalStatus.toneClass,
-          })}
-        >
-          <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="img"
+                aria-label={terminalStatus.label}
+                className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              />
+            }
+          >
+            <TerminalIcon
+              className={`size-3 ${terminalStatus.pulse ? "animate-status-pulse" : ""}`}
+            />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
+        </Tooltip>
       ) : null}
       {isRemoteThread ? (
         <Tooltip>
@@ -322,7 +342,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
               />
             }
           >
-            <CloudIcon className="size-3 text-muted-foreground/60" strokeWidth={2.25} />
+            <CloudIcon className="size-3 text-muted-foreground/60" />
           </TooltipTrigger>
           <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
         </Tooltip>

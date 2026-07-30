@@ -1,0 +1,23 @@
+{
+  "$schema": "../../node_modules/@effect/docgen/schema.json",
+  "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/sql/clickhouse/src/",
+  "exclude": ["src/internal/**/*.ts"],
+  "examplesCompilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "module": "ES2022",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "rewriteRelativeImportExtensions": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "effect": ["../../../effect/src/index.js"],
+      "effect/*": ["../../../effect/src/*.js"]
+    },
+    "plugins": [
+      { "name": "@effect/language-service", "includeSuggestionsInTsc": false }
+    ]
+  }
+}

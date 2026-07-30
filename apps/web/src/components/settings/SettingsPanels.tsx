@@ -1,44 +1,53 @@
 import {
-  IconArchivebox as ArchiveIcon,
-  IconArchivebox as ArchiveX,
-  IconCircleLefthalfFilledRighthalfStripedHorizontalInverse as ContrastIcon,
-  IconChevronDown as ChevronDownIcon,
-  IconDisplay as DisplayIcon,
-  IconInfoCircle as InfoIcon,
-  IconMoonFill as MoonIcon,
-  IconProgressIndicator as LoaderIcon,
-  IconPlus as PlusIcon,
-  IconArrowClockwise as RefreshCwIcon,
-  IconSunMaxFill as SunIcon,
-  IconXmark as XIcon,
-} from "symbols-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+  ArchiveIcon,
+  ArchiveX,
+  InfoIcon,
+  LoaderIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SettingsIcon,
+} from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import type { CSSProperties } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import {
+  defaultInstanceIdForDriver,
+  type BackgroundActivityProfile,
+  type BackgroundActivitySettings,
   type DesktopUpdateChannel,
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
   type ScopedThreadRef,
-  type ProviderKind,
-  type ServerProvider,
-  type ServerProviderModel,
+  type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
-  DEFAULT_CODE_FONT_SIZE_PX,
-  DEFAULT_APP_ICON_ID,
-  DEFAULT_MAC_OS_FONT_SMOOTHING,
-  DEFAULT_UI_FONT_SIZE_PX,
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
-  MAX_INTERFACE_FONT_SIZE_PX,
-  MIN_INTERFACE_FONT_SIZE_PX,
-  type ThreadCleanupInactiveDays,
-  type AppIconId,
-  type CodeFontSizePx,
-  type UiFontSizePx,
+  type EnvironmentIdentificationMode,
+  MAX_GLASS_OPACITY,
+  MIN_GLASS_OPACITY,
 } from "@t3tools/contracts/settings";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { Equal } from "effect";
-import { APP_VERSION } from "../../branding";
-import { APP_ICON_OPTIONS, resolveAppIconOption } from "../../appIcon";
+import {
+  getBackgroundActivityBaseProfile,
+  getBackgroundActivityPresetSettings,
+  resolveServerBackgroundActivitySettings,
+} from "@t3tools/shared/backgroundActivitySettings";
+import { createModelSelection } from "@t3tools/shared/model";
+import * as Arr from "effect/Array";
+import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
+import * as Result from "effect/Result";
+import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -48,41 +57,78 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
+import {
+  resolveEnvironmentIdentificationPillLabel,
+  useEnvironmentStageLabel,
+} from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
+import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
-import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
-  setDesktopUpdateStateQueryData,
-  useDesktopUpdateState,
-} from "../../lib/desktopUpdateReactQuery";
-import {
-  MAX_CUSTOM_MODEL_LENGTH,
-  getCustomModelOptionsByProvider,
-  getProviderSettingsModelList,
+  getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { useShallow } from "zustand/react/shallow";
 import {
-  selectProjectsAcrossEnvironments,
-  selectThreadShellsAcrossEnvironments,
-  useStore,
-} from "../../store";
-import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
-import { cn } from "../../lib/utils";
-import { formatThreadCleanupWindowLabel } from "../../lib/threadCleanup";
-import { Badge } from "../ui/badge";
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../../providerInstances";
+import { ensureLocalApi, readLocalApi } from "../../localApi";
+import {
+  primaryServerObservabilityAtom,
+  primaryServerProvidersAtom,
+  serverEnvironment,
+} from "../../state/server";
+import { usePrimaryEnvironment } from "../../state/environments";
+import { useProjects } from "../../state/entities";
+import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsibleContent } from "../ui/collapsible";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
-import { Input } from "../ui/input";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { DraftInput } from "../ui/draft-input";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import {
+  canOneClickUpdateProviderCandidate,
+  collectProviderUpdateCandidates,
+  hasOneClickUpdateProviderCandidate,
+  isProviderUpdateActive,
+  type ProviderUpdateCandidate,
+} from "../ProviderUpdateLaunchNotification.logic";
+import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
+import {
+  backgroundActivitySharedPolicySettings,
+  buildProviderInstanceUpdatePatch,
+  formatDiagnosticsDescription,
+  hasChangedBackgroundActivitySettings,
+  isProjectGroupingEnabled,
+  projectGroupingModeFromToggle,
+  readLastEnabledProjectGroupingMode,
+  rememberEnabledProjectGroupingMode,
+  resolveBackgroundActivityProfileOption,
+} from "./SettingsPanels.logic";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -90,19 +136,29 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
-import type { SettingsRestoreScope } from "./settingsNavigation";
-import { NotificationsSettingsIcon } from "../icons/custom";
 import { ProjectFavicon } from "../ProjectFavicon";
-import {
-  useServerAvailableEditors,
-  useServerConfig,
-  useServerKeybindingsConfigPath,
-  useServerObservability,
-  useServerProviders,
-} from "../../rpc/serverState";
-import { ThemePreferenceSelector } from "./ThemePreferenceSelector";
-import { DEFAULT_CUSTOM_THEME_SETTINGS, type ThemeMode } from "../../theme";
-import { formatProviderKindLabel } from "../../providerModels";
+import { useAtomCommand } from "../../state/use-atom-command";
+
+const THEME_OPTIONS = [
+  {
+    value: "system",
+    label: "System",
+  },
+  {
+    value: "light",
+    label: "Light",
+  },
+  {
+    value: "dark",
+    label: "Dark",
+  },
+] as const;
+
+const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
+  artwork: "Artwork",
+  pill: "Version pill",
+  none: "None",
+};
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -110,240 +166,164 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
-const THREAD_CLEANUP_DAY_OPTIONS: readonly ThreadCleanupInactiveDays[] = [1, 3, 7, 14, 30];
-const THEME_MODE_LABELS = {
-  system: "System",
-  light: "Light",
-  dark: "Dark",
-  highContrast: "High Contrast",
-} as const;
-
-const THEME_MODE_ICONS = {
-  system: DisplayIcon,
-  light: SunIcon,
-  dark: MoonIcon,
-  highContrast: ContrastIcon,
-} as const satisfies Record<ThemeMode, typeof DisplayIcon>;
-
-function ThemeModeOptionLabel({ mode }: { mode: ThemeMode }) {
-  const Icon = THEME_MODE_ICONS[mode];
-
-  return (
-    <span className="flex items-center gap-2">
-      <Icon className="size-3.5 shrink-0 fill-current opacity-40" />
-      <span className="truncate">{THEME_MODE_LABELS[mode]}</span>
-    </span>
-  );
-}
-
-function ThemeModeTriggerLabel({ mode }: { mode: ThemeMode }) {
-  return <span className="truncate">{THEME_MODE_LABELS[mode]}</span>;
-}
-
-type InstallProviderSettings = {
-  provider: ProviderKind;
-  title: string;
-  badgeLabel?: string;
-  binaryPlaceholder: string;
-  binaryDescription: ReactNode;
-  serverUrlPlaceholder?: string;
-  serverUrlDescription?: ReactNode;
-  serverPasswordPlaceholder?: string;
-  serverPasswordDescription?: ReactNode;
-  homePathKey?: "codexHomePath";
-  homePlaceholder?: string;
-  homeDescription?: ReactNode;
+const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
+  balanced: "Balanced",
+  performance: "Performance",
+  "battery-saver": "Battery saver",
 };
 
-const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
-  {
-    provider: "codex",
-    title: "Codex",
-    binaryPlaceholder: "Codex binary path",
-    binaryDescription: "Path to the Codex binary",
-    homePathKey: "codexHomePath",
-    homePlaceholder: "CODEX_HOME",
-    homeDescription: "Optional custom Codex home and config directory.",
-  },
-  {
-    provider: "claudeAgent",
-    title: "Claude",
-    binaryPlaceholder: "Claude binary path",
-    binaryDescription: "Path to the Claude binary",
-  },
-  {
-    provider: "cursor",
-    title: "Cursor",
-    badgeLabel: "Early Access",
-    binaryPlaceholder: "Cursor agent binary path",
-    binaryDescription: "Path to the Cursor agent binary",
-  },
-  {
-    provider: "grok",
-    title: "Grok",
-    badgeLabel: "Early Access",
-    binaryPlaceholder: "Grok binary path",
-    binaryDescription: "Path to the Grok binary",
-  },
-  {
-    provider: "opencode",
-    title: "OpenCode",
-    binaryPlaceholder: "OpenCode binary path",
-    binaryDescription: "Path to the OpenCode binary",
-    serverUrlPlaceholder: "http://127.0.0.1:4096",
-    serverUrlDescription: "Leave blank to let Forma spawn the server when needed",
-    serverPasswordPlaceholder: "Server password (optional)",
-    serverPasswordDescription:
-      "If your OpenCode server requires authentication, enter the password here. NOTE: Stored in plain text on disk",
-  },
-] as const;
+type BackgroundActivityProfileOption = BackgroundActivityProfile | "advanced";
+type BackgroundActivityOverridePatch = Partial<{
+  [K in keyof BackgroundActivitySettings["overrides"]]:
+    | BackgroundActivitySettings["overrides"][K]
+    | undefined;
+}>;
 
-const PROVIDER_STATUS_STYLES = {
-  disabled: {
-    dot: "bg-amber-400",
-  },
-  error: {
-    dot: "bg-destructive",
-  },
-  ready: {
-    dot: "bg-success",
-  },
-  warning: {
-    dot: "bg-warning",
-  },
-} as const;
+const BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS: Record<BackgroundActivityProfileOption, string> = {
+  ...BACKGROUND_ACTIVITY_PROFILE_LABELS,
+  advanced: "Advanced",
+};
 
-function parseFontSizeInput(value: string): number | null {
-  if (value.trim() === "") {
-    return null;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-  return Math.max(MIN_INTERFACE_FONT_SIZE_PX, Math.min(MAX_INTERFACE_FONT_SIZE_PX, parsed));
+const BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS: Record<BackgroundActivityProfile, string> = {
+  balanced:
+    "Pauses background probes when clients are idle, the host is locked, or low power mode is active.",
+  performance: "Allows scoped background probes while any subscribed client remains connected.",
+  "battery-saver": "Also pauses background probes when the host or client is on battery.",
+};
+
+const ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION =
+  "Uses custom background intervals with the selected shared power policy.";
+
+const PROVIDER_HEALTH_INTERVAL_STEP_SECONDS = 30;
+const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
+const BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES: ReadonlyArray<{
+  readonly key:
+    | "pauseWhenHostLocked"
+    | "pauseWhenHostLowPower"
+    | "pauseWhenClientLowPower"
+    | "pauseWhenOnBattery";
+  readonly label: string;
+}> = [
+  { key: "pauseWhenHostLocked", label: "Pause when host is locked" },
+  { key: "pauseWhenHostLowPower", label: "Pause on host low power" },
+  { key: "pauseWhenClientLowPower", label: "Pause on client low power" },
+  { key: "pauseWhenOnBattery", label: "Pause on battery" },
+];
+
+function durationToSeconds(duration: Duration.Duration): number {
+  return Math.round(Duration.toMillis(duration) / 1_000);
 }
 
-function PixelSettingInput({
-  ariaLabel,
-  value,
-  onCommit,
-}: {
-  ariaLabel: string;
-  value: number;
-  onCommit: (value: UiFontSizePx | CodeFontSizePx) => void;
-}) {
-  const [draftValue, setDraftValue] = useState(String(value));
-
-  useEffect(() => {
-    setDraftValue(String(value));
-  }, [value]);
-
-  const commitDraft = useCallback(() => {
-    const parsed = parseFontSizeInput(draftValue);
-    if (parsed === null) {
-      setDraftValue(String(value));
-      return;
-    }
-    setDraftValue(String(parsed));
-    if (parsed !== value) {
-      onCommit(parsed as UiFontSizePx | CodeFontSizePx);
-    }
-  }, [draftValue, onCommit, value]);
-
-  return (
-    <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
-      <Input
-        aria-label={ariaLabel}
-        className="w-full sm:w-24"
-        max={MAX_INTERFACE_FONT_SIZE_PX}
-        min={MIN_INTERFACE_FONT_SIZE_PX}
-        nativeInput
-        onBlur={commitDraft}
-        onChange={(event) => setDraftValue(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-        }}
-        step={1}
-        type="number"
-        value={draftValue}
-      />
-      <span className="text-ui-xs text-muted-foreground">px</span>
-    </div>
-  );
+function normalizeIntervalSeconds(value: number | null, minimum = 0): number {
+  if (value === null || !Number.isFinite(value)) {
+    return minimum;
+  }
+  return Math.max(minimum, Math.round(value));
 }
 
-function getProviderSummary(provider: ServerProvider | undefined) {
-  if (!provider) {
-    return {
-      headline: "Checking provider status",
-      detail: "Waiting for the server to report installation and authentication details.",
-    };
-  }
-  if (!provider.enabled) {
-    return {
-      headline: "Disabled",
-      detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in Forma.",
-    };
-  }
-  if (!provider.installed) {
-    return {
-      headline: "Not found",
-      detail: provider.message ?? "CLI not detected on PATH.",
-    };
-  }
-  if (provider.auth.status === "authenticated") {
-    const authLabel = provider.auth.label ?? provider.auth.type;
-    return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
-      detail: provider.message ?? null,
-    };
-  }
-  if (provider.auth.status === "unauthenticated") {
-    return {
-      headline: "Not authenticated",
-      detail: provider.message ?? null,
-    };
-  }
-  if (provider.status === "warning") {
-    return {
-      headline: "Needs attention",
-      detail:
-        provider.message ?? "The provider is installed, but the server could not fully verify it.",
-    };
-  }
-  if (provider.status === "error") {
-    return {
-      headline: "Unavailable",
-      detail: provider.message ?? "The provider failed its startup checks.",
-    };
-  }
+function resetBackgroundActivitySettings() {
   return {
-    headline: "Available",
-    detail:
-      provider.message ??
-      "Installed and ready. This provider does not expose separate authentication details.",
+    backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   };
 }
 
-function getProviderVersionLabel(version: string | null | undefined) {
-  if (!version) return null;
-  return version.startsWith("v") ? version : `v${version}`;
+function backgroundActivityProfileSettings(profile: BackgroundActivityProfile) {
+  return {
+    backgroundActivity: {
+      schemaVersion: 1 as const,
+      profile,
+      overrides: {},
+    },
+  };
 }
+
+function backgroundActivityOverrideSettings(
+  current: BackgroundActivitySettings,
+  resolved: ReturnType<typeof resolveServerBackgroundActivitySettings>,
+  overrides: BackgroundActivityOverridePatch,
+) {
+  const nextOverrides: BackgroundActivityOverridePatch = {
+    automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+    providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+    hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
+    hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
+    idleClientTtl: resolved.idleClientTtl,
+    pauseWhenHostLocked: resolved.pauseWhenHostLocked,
+    pauseWhenHostLowPower: resolved.pauseWhenHostLowPower,
+    pauseWhenClientLowPower: resolved.pauseWhenClientLowPower,
+    pauseWhenOnBattery: resolved.pauseWhenOnBattery,
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(nextOverrides)) {
+    if (value === undefined) {
+      delete nextOverrides[key as keyof typeof nextOverrides];
+    }
+  }
+  return {
+    backgroundActivity: {
+      schemaVersion: 1 as const,
+      profile: "custom" as const,
+      baseProfile: getBackgroundActivityBaseProfile(current),
+      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
+    },
+  };
+}
+
+function PolicyTooltip({ children }: { readonly children: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+            aria-label="Background policy details"
+          >
+            <InfoIcon className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-72">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function withoutProviderInstanceKey<V>(
+  record: Readonly<Record<ProviderInstanceId, V>> | undefined,
+  key: ProviderInstanceId,
+): Record<ProviderInstanceId, V> {
+  const next = { ...record } as Record<ProviderInstanceId, V>;
+  delete next[key];
+  return next;
+}
+
+function withoutProviderInstanceFavorites(
+  favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
+  instanceId: ProviderInstanceId,
+) {
+  return favorites.filter((favorite) => favorite.provider !== instanceId);
+}
+
+const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
+  provider: definition.value,
+}));
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
   useRelativeTimeTick();
-  const lastCheckedRelative = lastCheckedAt ? formatRelativeTime(lastCheckedAt) : null;
+  const lastCheckedRelative = getRelativeTimeState(lastCheckedAt);
 
-  if (!lastCheckedRelative) {
+  if (lastCheckedRelative.status === "missing") {
     return null;
   }
 
+  if (lastCheckedRelative.status === "invalid") {
+    return <span className="text-[11px] text-muted-foreground/50">Checked unavailable</span>;
+  }
+
   return (
-    <span className="text-ui-xs text-muted-foreground/60">
+    <span className="text-[11px] text-muted-foreground/60">
       {lastCheckedRelative.suffix ? (
         <>
           Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
@@ -356,39 +336,22 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   );
 }
 
-function ProviderFreshnessLabel({ provider }: { provider: ServerProvider | undefined }) {
-  const freshness = provider?.freshness;
-  if (!freshness) return null;
-  const label =
-    freshness.source === "live" ? "Live" : freshness.source === "cache" ? "Cached" : "Fallback";
-  return (
-    <span
-      className="text-ui-2xs rounded-sm border border-border/60 px-1.5 py-0.5 text-muted-foreground"
-      title={freshness.detail}
-    >
-      {label}
-      {freshness.stale ? " · stale" : ""}
-    </span>
-  );
-}
-
 function AboutVersionTitle() {
   return (
     <span className="inline-flex items-center gap-2">
       <span>Version</span>
-      <code className="text-ui-xs font-medium text-muted-foreground">{APP_VERSION}</code>
+      <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
     </span>
   );
 }
 
 function AboutVersionSection() {
-  const queryClient = useQueryClient();
-  const updateStateQuery = useDesktopUpdateState();
+  const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
 
-  const updateState = updateStateQuery.data ?? null;
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
+  const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -404,9 +367,6 @@ function AboutVersionSection() {
       setIsChangingUpdateChannel(true);
       void bridge
         .setUpdateChannel(channel)
-        .then((state) => {
-          setDesktopUpdateStateQueryData(queryClient, state);
-        })
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({
@@ -420,7 +380,7 @@ function AboutVersionSection() {
           setIsChangingUpdateChannel(false);
         });
     },
-    [queryClient, selectedUpdateChannel],
+    [selectedUpdateChannel],
   );
 
   const handleButtonClick = useCallback(() => {
@@ -430,20 +390,15 @@ function AboutVersionSection() {
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
 
     if (action === "download") {
-      void bridge
-        .downloadUpdate()
-        .then((result) => {
-          setDesktopUpdateStateQueryData(queryClient, result.state);
-        })
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not download update",
-              description: error instanceof Error ? error.message : "Download failed.",
-            }),
-          );
-        });
+      void bridge.downloadUpdate().catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not download update",
+            description: error instanceof Error ? error.message : "Download failed.",
+          }),
+        );
+      });
       return;
     }
 
@@ -451,23 +406,19 @@ function AboutVersionSection() {
       const confirmed = window.confirm(
         getDesktopUpdateInstallConfirmationMessage(
           updateState ?? { availableVersion: null, downloadedVersion: null },
+          navigator.platform,
         ),
       );
       if (!confirmed) return;
-      void bridge
-        .installUpdate()
-        .then((result) => {
-          setDesktopUpdateStateQueryData(queryClient, result.state);
-        })
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "Install failed.",
-            }),
-          );
-        });
+      void bridge.installUpdate().catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not install update",
+            description: error instanceof Error ? error.message : "Install failed.",
+          }),
+        );
+      });
       return;
     }
 
@@ -475,7 +426,6 @@ function AboutVersionSection() {
     void bridge
       .checkForUpdate()
       .then((result) => {
-        setDesktopUpdateStateQueryData(queryClient, result.state);
         if (!result.checked) {
           toastManager.add(
             stackedThreadToast({
@@ -496,7 +446,7 @@ function AboutVersionSection() {
           }),
         );
       });
-  }, [queryClient, updateState]);
+  }, [updateState]);
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
   const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
@@ -541,311 +491,156 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
-      <SettingsRow
-        title="Update track"
-        description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
-        control={
-          <Select
-            value={selectedUpdateChannel}
-            onValueChange={(value) => {
-              handleUpdateChannelChange(value as DesktopUpdateChannel);
-            }}
-          >
-            <SelectTrigger
-              className="w-full sm:w-40"
-              aria-label="Update track"
-              disabled={!hasDesktopBridge || isChangingUpdateChannel}
+      {hasDesktopBridge ? (
+        <SettingsRow
+          title="Update track"
+          description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
+          control={
+            <Select
+              value={selectedUpdateChannel}
+              onValueChange={(value) => {
+                handleUpdateChannelChange(value as DesktopUpdateChannel);
+              }}
             >
-              <SelectValue>
-                {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem hideIndicator value="latest">
-                Stable
-              </SelectItem>
-              <SelectItem hideIndicator value="nightly">
-                Nightly
-              </SelectItem>
-            </SelectPopup>
-          </Select>
-        }
-      />
+              <SelectTrigger
+                className="w-full sm:w-40"
+                aria-label="Update track"
+                disabled={isChangingUpdateChannel}
+              >
+                <SelectValue>
+                  {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="latest">
+                  Stable
+                </SelectItem>
+                <SelectItem hideIndicator value="nightly">
+                  Nightly
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+      ) : selectedHostedAppChannel ? (
+        <SettingsRow
+          title="Update track"
+          description="Switches the hosted app release channel."
+          control={
+            <Select
+              value={selectedHostedAppChannel}
+              onValueChange={(value) => {
+                if (value === selectedHostedAppChannel) return;
+                window.location.assign(
+                  buildHostedChannelSelectionUrl({ channel: value as HostedAppChannel }),
+                );
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Update track">
+                <SelectValue>{HOSTED_APP_CHANNEL_LABEL}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="latest">
+                  Latest
+                </SelectItem>
+                <SelectItem hideIndicator value="nightly">
+                  Nightly
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+      ) : null}
     </>
   );
 }
 
-function AppIconPreview({ id, src }: { id: AppIconId; src: string }) {
-  const [failed, setFailed] = useState(false);
-  const initials = id
-    .replace("forma-", "")
-    .split("-")
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("")
-    .slice(0, 2);
+export function useSettingsRestore(onRestored?: () => void) {
+  const { theme, setTheme } = useTheme();
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
 
-  return (
-    <span className="relative flex size-20">
-      {!failed ? (
-        <img
-          src={src}
-          alt=""
-          className="size-full object-cover"
-          draggable={false}
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <span className="text-ui-xs font-semibold text-muted-foreground">{initials}</span>
-      )}
-    </span>
-  );
-}
-
-function AppIconPicker({
-  value,
-  onChange,
-}: {
-  value: AppIconId;
-  onChange: (value: AppIconId) => void;
-}) {
-  return (
-    <div className="grid grid-cols-5 gap-2 pt-4 pb-5">
-      {APP_ICON_OPTIONS.map((option) => {
-        const selected = option.id === value;
-        return (
-          <button
-            key={option.id}
-            type="button"
-            aria-pressed={selected}
-            className={cn(
-              "group flex min-h-0 flex-col items-center justify-center gap-1.5 rounded-xl border px-1.5 py-2 text-center transition-colors",
-              selected
-                ? "border-foreground/55 bg-foreground/[0.04] text-foreground"
-                : "border-border/70 bg-background/40 text-muted-foreground hover:border-foreground/25 hover:bg-muted/50 hover:text-foreground",
-            )}
-            onClick={() => onChange(option.id)}
-          >
-            <AppIconPreview id={option.id} src={option.previewSrc} />
-            <span className="text-xs leading-tight font-medium">{option.label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function isTextGenerationModelDirty(settings: typeof DEFAULT_UNIFIED_SETTINGS) {
-  return !Equal.equals(
+  const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-}
+  const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
-function hasProviderSettingsChanges(settings: typeof DEFAULT_UNIFIED_SETTINGS) {
-  return PROVIDER_SETTINGS.some((providerSettings) => {
-    const currentSettings = settings.providers[providerSettings.provider];
-    const defaultSettings = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
-    return !Equal.equals(currentSettings, defaultSettings);
-  });
-}
-
-function hasDesktopBridgeSupport() {
-  return typeof window !== "undefined" && Boolean(window.desktopBridge);
-}
-
-function DesktopNotificationSettingsSection() {
-  const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
-
-  return (
-    <SettingsSection title="Thread attention">
-      <SettingsRow
-        title="Approval requests"
-        description="Notify when an agent needs permission to continue while Forma is not focused."
-        resetAction={
-          settings.desktopNotifyOnApprovalRequests !==
-          DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests ? (
-            <SettingResetButton
-              label="approval request notifications"
-              onClick={() =>
-                updateSettings({
-                  desktopNotifyOnApprovalRequests:
-                    DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests,
-                })
-              }
-            />
-          ) : null
-        }
-        control={
-          <Switch
-            checked={settings.desktopNotifyOnApprovalRequests}
-            onCheckedChange={(checked) =>
-              updateSettings({ desktopNotifyOnApprovalRequests: Boolean(checked) })
-            }
-            aria-label="Approval request notifications"
-          />
-        }
-      />
-
-      <SettingsRow
-        title="Question prompts"
-        description="Notify when an agent asks you for input to continue while Forma is not focused."
-        resetAction={
-          settings.desktopNotifyOnUserInputRequests !==
-          DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests ? (
-            <SettingResetButton
-              label="question prompt notifications"
-              onClick={() =>
-                updateSettings({
-                  desktopNotifyOnUserInputRequests:
-                    DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests,
-                })
-              }
-            />
-          ) : null
-        }
-        control={
-          <Switch
-            checked={settings.desktopNotifyOnUserInputRequests}
-            onCheckedChange={(checked) =>
-              updateSettings({ desktopNotifyOnUserInputRequests: Boolean(checked) })
-            }
-            aria-label="Question prompt notifications"
-          />
-        }
-      />
-    </SettingsSection>
+  const changedSettingLabels = useMemo(
+    () => [
+      ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.environmentIdentificationMode !==
+      DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
+        ? ["Environment identification"]
+        : []),
+      ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
+        ? ["Time format"]
+        : []),
+      ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
+        ? ["Visible threads"]
+        : []),
+      ...(settings.sidebarProjectGroupingMode !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
+        ? ["Project Grouping"]
+        : []),
+      ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
+        ? ["Diff whitespace changes"]
+        : []),
+      ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
+        ? ["Auto-open task panel"]
+        : []),
+      ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
+        ? ["Assistant output"]
+        : []),
+      ...(settings.enableProviderUpdateChecks !==
+      DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
+        ? ["Provider update checks"]
+        : []),
+      ...(isBackgroundActivityDirty ? ["Background activity"] : []),
+      ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
+        ? ["New thread mode"]
+        : []),
+      ...(settings.newWorktreesStartFromOrigin !==
+      DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
+        ? ["New worktrees start from origin"]
+        : []),
+      ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
+        ? ["Add project base directory"]
+        : []),
+      ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
+        ? ["Archive confirmation"]
+        : []),
+      ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
+        ? ["Delete confirmation"]
+        : []),
+      ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+    ],
+    [
+      isTextGenerationModelDirty,
+      isBackgroundActivityDirty,
+      settings.autoOpenPlanSidebar,
+      settings.confirmThreadArchive,
+      settings.confirmThreadDelete,
+      settings.addProjectBaseDirectory,
+      settings.defaultThreadEnvMode,
+      settings.newWorktreesStartFromOrigin,
+      settings.diffIgnoreWhitespace,
+      settings.environmentIdentificationMode,
+      settings.glassOpacity,
+      settings.enableAssistantStreaming,
+      settings.enableProviderUpdateChecks,
+      settings.sidebarProjectGroupingMode,
+      settings.sidebarThreadPreviewCount,
+      settings.timestampFormat,
+      settings.wordWrap,
+      theme,
+    ],
   );
-}
-
-function NotificationsUnavailableSection() {
-  return (
-    <SettingsSection title="Thread attention">
-      <Empty className="min-h-88">
-        <EmptyMedia variant="icon">
-          <NotificationsSettingsIcon className="size-4.5" />
-        </EmptyMedia>
-        <EmptyHeader>
-          <EmptyTitle>Desktop notifications unavailable</EmptyTitle>
-          <EmptyDescription>
-            Open Forma in the desktop app to receive attention notifications for approval requests
-            and question prompts.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    </SettingsSection>
-  );
-}
-
-export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () => void) {
-  const { theme, setThemeHue, setThemeMode, setThemeSaturation } = useTheme();
-  const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
-  const hasDesktopBridge = hasDesktopBridgeSupport();
-
-  const isGitWritingModelDirty = isTextGenerationModelDirty(settings);
-  const areProviderSettingsDirty = hasProviderSettingsChanges(settings);
-
-  const changedSettingLabels = useMemo(() => {
-    switch (scope) {
-      case "interface":
-        return [
-          ...(theme.mode !== DEFAULT_CUSTOM_THEME_SETTINGS.mode ? ["Theme mode"] : []),
-          ...(theme.hue !== DEFAULT_CUSTOM_THEME_SETTINGS.hue ? ["Theme hue"] : []),
-          ...(theme.saturation !== DEFAULT_CUSTOM_THEME_SETTINGS.saturation
-            ? ["Theme saturation"]
-            : []),
-          ...(settings.appIcon !== DEFAULT_APP_ICON_ID ? ["App icon"] : []),
-          ...(settings.uiFontScale !== DEFAULT_UI_FONT_SIZE_PX ? ["UI font size"] : []),
-          ...(settings.codeFontScale !== DEFAULT_CODE_FONT_SIZE_PX ? ["Code font size"] : []),
-          ...(settings.macOsFontSmoothing !== DEFAULT_MAC_OS_FONT_SMOOTHING
-            ? ["Font smoothing"]
-            : []),
-          ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
-            ? ["Time format"]
-            : []),
-          ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
-            ? ["Diff line wrapping"]
-            : []),
-          ...(settings.enableAssistantStreaming !==
-          DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
-            ? ["Assistant output"]
-            : []),
-        ];
-      case "threads":
-        return [
-          ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
-            ? ["New thread mode"]
-            : []),
-          ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
-            ? ["Add project base directory"]
-            : []),
-          ...(settings.threadCleanupInactiveDays !==
-          DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays
-            ? ["Thread cleanup window"]
-            : []),
-          ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
-            ? ["Archive confirmation"]
-            : []),
-          ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
-            ? ["Delete confirmation"]
-            : []),
-        ];
-      case "notifications":
-        if (!hasDesktopBridge) {
-          return [];
-        }
-        return [
-          ...(settings.desktopNotifyOnApprovalRequests !==
-          DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests
-            ? ["Approval request notifications"]
-            : []),
-          ...(settings.desktopNotifyOnUserInputRequests !==
-          DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests
-            ? ["Question prompt notifications"]
-            : []),
-        ];
-      case "providers":
-        return [
-          ...(isGitWritingModelDirty ? ["Text generation model"] : []),
-          ...(areProviderSettingsDirty ? ["Providers"] : []),
-        ];
-      case "safety":
-        return [
-          ...(settings.safety.protectedFilesystemPathsEnabled !==
-          DEFAULT_UNIFIED_SETTINGS.safety.protectedFilesystemPathsEnabled
-            ? ["Protected paths"]
-            : []),
-        ];
-    }
-  }, [
-    areProviderSettingsDirty,
-    hasDesktopBridge,
-    isGitWritingModelDirty,
-    scope,
-    settings.addProjectBaseDirectory,
-    settings.appIcon,
-    settings.codeFontScale,
-    settings.confirmThreadArchive,
-    settings.confirmThreadDelete,
-    settings.desktopNotifyOnApprovalRequests,
-    settings.desktopNotifyOnUserInputRequests,
-    settings.defaultThreadEnvMode,
-    settings.diffWordWrap,
-    settings.enableAssistantStreaming,
-    settings.macOsFontSmoothing,
-    settings.safety.protectedFilesystemPathsEnabled,
-    settings.threadCleanupInactiveDays,
-    settings.timestampFormat,
-    settings.uiFontScale,
-    theme.hue,
-    theme.mode,
-    theme.saturation,
-  ]);
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
-
     const api = readLocalApi();
     const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
@@ -854,64 +649,31 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     );
     if (!confirmed) return;
 
-    switch (scope) {
-      case "interface":
-        setThemeMode(DEFAULT_CUSTOM_THEME_SETTINGS.mode);
-        setThemeHue(DEFAULT_CUSTOM_THEME_SETTINGS.hue);
-        setThemeSaturation(DEFAULT_CUSTOM_THEME_SETTINGS.saturation);
-        updateSettings({
-          uiFontScale: DEFAULT_UI_FONT_SIZE_PX,
-          appIcon: DEFAULT_APP_ICON_ID,
-          codeFontScale: DEFAULT_CODE_FONT_SIZE_PX,
-          macOsFontSmoothing: DEFAULT_MAC_OS_FONT_SMOOTHING,
-          timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
-          diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
-          enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
-        });
-        break;
-      case "threads":
-        updateSettings({
-          defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
-          addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-          threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
-          confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-          confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
-        });
-        break;
-      case "notifications":
-        if (!hasDesktopBridge) {
-          return;
-        }
-        updateSettings({
-          desktopNotifyOnApprovalRequests: DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests,
-          desktopNotifyOnUserInputRequests:
-            DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests,
-        });
-        break;
-      case "providers":
-        updateSettings({
-          textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-          providers: DEFAULT_UNIFIED_SETTINGS.providers,
-        });
-        break;
-      case "safety":
-        updateSettings({
-          safety: DEFAULT_UNIFIED_SETTINGS.safety,
-        });
-        break;
-    }
-
+    setTheme("system");
+    updateSettings({
+      timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
+      glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+      sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+      autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+      backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+      providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
+      defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+      newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+      confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+    });
     onRestored?.();
-  }, [
-    changedSettingLabels,
-    hasDesktopBridge,
-    onRestored,
-    scope,
-    setThemeHue,
-    setThemeMode,
-    setThemeSaturation,
-    updateSettings,
-  ]);
+  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -919,49 +681,420 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
   };
 }
 
-export function SafetySettingsPanel() {
-  const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
-  const endpointPath = "/api/orchestration/events";
-  const { copyToClipboard, isCopied } = useCopyToClipboard({
-    onCopy: () => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "success",
-          title: "Event stream URL copied",
-        }),
-      );
-    },
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not copy event stream URL",
-          description: error.message,
-        }),
-      );
-    },
-  });
+function BackgroundActivityAdvancedDialog({
+  open,
+  onOpenChange,
+}: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}) {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const activeProfile = resolvedBackgroundActivity.profile;
+  const automaticGitFetchIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.automaticGitFetchInterval,
+  );
+  const providerHealthRefreshIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.providerHealthRefreshInterval,
+  );
+  const hostPowerMonitorActiveIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.hostPowerMonitorActiveInterval,
+  );
+  const hostPowerMonitorIdleIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.hostPowerMonitorIdleInterval,
+  );
 
-  const protectedPathsEnabled = settings.safety.protectedFilesystemPathsEnabled;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Background Activity</DialogTitle>
+          <DialogDescription>
+            Tune the shared power policy and the background intervals that feed it.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-0 px-6 pb-5">
+          <div className="overflow-hidden rounded-xl border bg-card text-card-foreground">
+            <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Shared policy</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Controls whether background work may run after a subscribed interval fires.
+                </p>
+              </div>
+              <Select
+                value={activeProfile}
+                onValueChange={(value) => {
+                  if (
+                    value === "balanced" ||
+                    value === "performance" ||
+                    value === "battery-saver"
+                  ) {
+                    updateSettings({
+                      backgroundActivity: backgroundActivitySharedPolicySettings(settings, value),
+                    });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Shared background policy">
+                  <SelectValue>{BACKGROUND_ACTIVITY_PROFILE_LABELS[activeProfile]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="balanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="performance">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="battery-saver">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Git fetch interval</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Refresh remote branch status in the background.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={automaticGitFetchIntervalSeconds}
+                  min={0}
+                  step={5}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          automaticGitFetchInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease Git fetch interval" />
+                    <NumberFieldInput aria-label="Git fetch interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase Git fetch interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Provider health interval</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Refresh provider availability, versions, auth state, and model metadata.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={providerHealthRefreshIntervalSeconds}
+                  min={0}
+                  step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          providerHealthRefreshInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease provider health interval" />
+                    <NumberFieldInput aria-label="Provider health interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase provider health interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Host power monitor</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Poll host power state while clients are active.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={hostPowerMonitorActiveIntervalSeconds}
+                  min={5}
+                  step={5}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          hostPowerMonitorActiveInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value, 5),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease active host power interval" />
+                    <NumberFieldInput aria-label="Active host power interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase active host power interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Idle host monitor</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Poll host power state when no foreground client is active.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={hostPowerMonitorIdleIntervalSeconds}
+                  min={5}
+                  step={30}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          hostPowerMonitorIdleInterval: Duration.seconds(
+                            normalizeIntervalSeconds(value, 5),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease idle host power interval" />
+                    <NumberFieldInput aria-label="Idle host power interval in seconds" />
+                    <NumberFieldIncrement aria-label="Increase idle host power interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="grid gap-0 border-t sm:grid-cols-2">
+              {BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES.map(({ key, label }) => (
+                <label
+                  key={key}
+                  className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0 sm:border-r sm:even:border-r-0"
+                >
+                  <span className="text-sm font-medium">{label}</span>
+                  <Switch
+                    checked={resolvedBackgroundActivity[key]}
+                    onCheckedChange={(checked) =>
+                      updateSettings(
+                        backgroundActivityOverrideSettings(
+                          settings.backgroundActivity,
+                          resolvedBackgroundActivity,
+                          {
+                            [key]: Boolean(checked),
+                          },
+                        ),
+                      )
+                    }
+                    aria-label={label}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        </DialogPanel>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => updateSettings(resetBackgroundActivitySettings())}
+          >
+            Reset all
+          </Button>
+          <Button onClick={() => onOpenChange(false)}>Done</Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+export function AppearanceSettingsPanel() {
+  const { theme, setTheme } = useTheme();
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const environmentStageLabel = useEnvironmentStageLabel();
+  const showEnvironmentIdentification =
+    resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
+  const glassOpacityRatio =
+    (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
+  const glassOpacitySliderStyle = {
+    "--glass-slider-progress": `${glassOpacityRatio * 100}%`,
+    "--glass-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
+  } as CSSProperties;
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Filesystem">
+      <SettingsSection title="Appearance">
         <SettingsRow
-          title="Protected paths"
-          description="Skip OS-sensitive folders during browse and workspace scans."
+          title="Theme"
+          description="Choose how T3 Code looks across the app."
           resetAction={
-            protectedPathsEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.safety.protectedFilesystemPathsEnabled ? (
+            theme !== "system" ? (
+              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+            ) : null
+          }
+          control={
+            <Select
+              value={theme}
+              onValueChange={(value) => {
+                if (value === "system" || value === "light" || value === "dark") {
+                  setTheme(value);
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
+                <SelectValue>
+                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THEME_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Glass opacity"
+          description="Control how transparent glass surfaces are. Higher values make menus, dialogs, and the composer more solid."
+          resetAction={
+            settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
-                label="protected paths"
+                label="glass opacity"
+                onClick={() =>
+                  updateSettings({ glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full items-center gap-3 sm:w-52">
+              <output
+                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                htmlFor="glass-opacity"
+              >
+                {settings.glassOpacity}%
+              </output>
+              <input
+                aria-label="Glass opacity"
+                className="glass-opacity-slider min-w-0 flex-1"
+                id="glass-opacity"
+                max={MAX_GLASS_OPACITY}
+                min={MIN_GLASS_OPACITY}
+                onChange={(event) => {
+                  const glassOpacity = Number(event.currentTarget.value);
+                  if (
+                    Number.isInteger(glassOpacity) &&
+                    glassOpacity >= MIN_GLASS_OPACITY &&
+                    glassOpacity <= MAX_GLASS_OPACITY
+                  ) {
+                    updateSettings({ glassOpacity });
+                  }
+                }}
+                step={5}
+                style={glassOpacitySliderStyle}
+                type="range"
+                value={settings.glassOpacity}
+              />
+            </div>
+          }
+        />
+
+        {showEnvironmentIdentification ? (
+          <SettingsRow
+            title="Environment identification"
+            description="Choose how Dev and Nightly environments are identified."
+            resetAction={
+              settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
+                <SettingResetButton
+                  label="environment identification"
+                  onClick={() =>
+                    updateSettings({
+                      environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.environmentIdentificationMode}
+                onValueChange={(value) => {
+                  if (value === "artwork" || value === "pill" || value === "none") {
+                    updateSettings({ environmentIdentificationMode: value });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Environment identification">
+                  <SelectValue>
+                    {ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {Object.entries(ENVIRONMENT_IDENTIFICATION_LABELS).map(([value, label]) => (
+                    <SelectItem hideIndicator key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        ) : null}
+
+        <SettingsRow
+          title="Word wrap"
+          description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
+          resetAction={
+            settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
+              <SettingResetButton
+                label="word wrapping"
                 onClick={() =>
                   updateSettings({
-                    safety: {
-                      protectedFilesystemPathsEnabled:
-                        DEFAULT_UNIFIED_SETTINGS.safety.protectedFilesystemPathsEnabled,
-                    },
+                    wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
                   })
                 }
               />
@@ -969,50 +1102,10 @@ export function SafetySettingsPanel() {
           }
           control={
             <Switch
-              checked={protectedPathsEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  safety: {
-                    protectedFilesystemPathsEnabled: Boolean(checked),
-                  },
-                })
-              }
-              aria-label="Protected paths"
+              checked={settings.wordWrap}
+              onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
+              aria-label="Wrap code, tables, diffs, and file previews by default"
             />
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Diagnostics">
-        <SettingsRow
-          title="Event stream"
-          description="Authenticated read-only stream for debugging orchestration events."
-          status={
-            <span className="text-code-compact block break-all font-mono text-foreground">
-              {endpointPath}
-            </span>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => copyToClipboard(endpointPath, undefined)}
-            >
-              {isCopied ? "Copied" : "Copy URL"}
-            </Button>
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Provider status">
-        <SettingsRow
-          title="Freshness"
-          description="Provider status may be reported from a live check, cached startup data, or fallback defaults while checks are still warming."
-          status={
-            <span className="text-ui-xs text-muted-foreground">
-              Live means current process verification succeeded. Cached and fallback states are
-              informational and do not block provider use by themselves.
-            </span>
           }
         />
       </SettingsSection>
@@ -1020,172 +1113,98 @@ export function SafetySettingsPanel() {
   );
 }
 
-export function InterfaceSettingsPanel() {
-  const { theme, setThemeHue, setThemeMode, setThemeSaturation, resolvedTheme } = useTheme();
-  const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
-  const serverConfig = useServerConfig();
-  const isMacOs = serverConfig?.environment.platform.os === "darwin";
+export function GeneralSettingsPanel() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
+    readLastEnabledProjectGroupingMode(),
+  );
+  const observability = useAtomValue(primaryServerObservabilityAtom);
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const diagnosticsDescription = formatDiagnosticsDescription({
+    localTracingEnabled: observability?.localTracingEnabled ?? false,
+    otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
+    otlpTracesUrl: observability?.otlpTracesUrl,
+    otlpMetricsEnabled: observability?.otlpMetricsEnabled ?? false,
+    otlpMetricsUrl: observability?.otlpMetricsUrl,
+  });
+
+  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenInstanceId = textGenerationModelSelection.instanceId;
+  const textGenModel = textGenerationModelSelection.model;
+  const textGenModelOptions = textGenerationModelSelection.options;
+  const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+  );
+  const textGenInstanceEntry = textGenerationModelInstanceEntries.find(
+    (entry) => entry.instanceId === textGenInstanceId,
+  );
+  const textGenProvider: ProviderDriverKind =
+    textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
+  const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    serverProviders,
+    textGenInstanceId,
+    textGenModel,
+  );
+  const isTextGenerationModelDirty = !Equal.equals(
+    settings.textGenerationModelSelection ?? null,
+    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  );
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
+  const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
+  const backgroundActivityDescription =
+    backgroundActivityProfileOption === "advanced"
+      ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Current shared policy: ${
+          BACKGROUND_ACTIVITY_PROFILE_LABELS[activeBackgroundActivityProfile]
+        }.`
+      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
+  const canResetBackgroundActivity = !Equal.equals(
+    settings.backgroundActivity,
+    DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+  );
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Theme">
+      <SettingsSection title="General">
         <SettingsRow
-          title="Theme"
-          description="Build a theme from mode, hue, and saturation."
+          title="Project Grouping"
+          description="Combine matching repositories across environments."
           resetAction={
-            theme.mode !== DEFAULT_CUSTOM_THEME_SETTINGS.mode ||
-            theme.hue !== DEFAULT_CUSTOM_THEME_SETTINGS.hue ||
-            theme.saturation !== DEFAULT_CUSTOM_THEME_SETTINGS.saturation ? (
+            settings.sidebarProjectGroupingMode !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode ? (
               <SettingResetButton
-                label="theme"
-                onClick={() => {
-                  setThemeMode(DEFAULT_CUSTOM_THEME_SETTINGS.mode);
-                  setThemeHue(DEFAULT_CUSTOM_THEME_SETTINGS.hue);
-                  setThemeSaturation(DEFAULT_CUSTOM_THEME_SETTINGS.saturation);
-                }}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={theme.mode}
-              onValueChange={(value) => setThemeMode(value as typeof theme.mode)}
-            >
-              <SelectTrigger className="w-full sm:w-44" aria-label="Theme mode">
-                <SelectValue>
-                  <ThemeModeTriggerLabel mode={theme.mode} />
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="system">
-                  <ThemeModeOptionLabel mode="system" />
-                </SelectItem>
-                <SelectItem hideIndicator value="light">
-                  <ThemeModeOptionLabel mode="light" />
-                </SelectItem>
-                <SelectItem hideIndicator value="dark">
-                  <ThemeModeOptionLabel mode="dark" />
-                </SelectItem>
-                <SelectItem hideIndicator value="highContrast">
-                  <ThemeModeOptionLabel mode="highContrast" />
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        >
-          <ThemePreferenceSelector
-            onHueChange={setThemeHue}
-            onSaturationChange={setThemeSaturation}
-            resolvedTheme={resolvedTheme}
-            theme={theme}
-          />
-        </SettingsRow>
-      </SettingsSection>
-
-      <SettingsSection title="Icons">
-        <SettingsRow
-          title="App icon"
-          description="Choose the app artwork used for browser chrome and the desktop dock or window icon."
-          resetAction={
-            settings.appIcon !== DEFAULT_APP_ICON_ID ? (
-              <SettingResetButton
-                label="app icon"
+                label="project grouping"
                 onClick={() =>
                   updateSettings({
-                    appIcon: DEFAULT_APP_ICON_ID,
-                  })
-                }
-              />
-            ) : null
-          }
-        >
-          <AppIconPicker
-            value={settings.appIcon}
-            onChange={(appIcon) => updateSettings({ appIcon })}
-          />
-        </SettingsRow>
-      </SettingsSection>
-
-      <SettingsSection title="Typography">
-        <SettingsRow
-          title="UI font size"
-          description="Applies directly to the app interface root size."
-          resetAction={
-            settings.uiFontScale !== DEFAULT_UI_FONT_SIZE_PX ? (
-              <SettingResetButton
-                label="UI font size"
-                onClick={() =>
-                  updateSettings({
-                    uiFontScale: DEFAULT_UI_FONT_SIZE_PX,
+                    sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
                   })
                 }
               />
             ) : null
           }
           control={
-            <PixelSettingInput
-              ariaLabel="UI font size"
-              onCommit={(value) => updateSettings({ uiFontScale: value as UiFontSizePx })}
-              value={settings.uiFontScale}
+            <Switch
+              checked={isProjectGroupingEnabled(settings.sidebarProjectGroupingMode)}
+              onCheckedChange={(checked) => {
+                if (!checked && settings.sidebarProjectGroupingMode !== "separate") {
+                  lastEnabledProjectGroupingMode.current = settings.sidebarProjectGroupingMode;
+                  rememberEnabledProjectGroupingMode(settings.sidebarProjectGroupingMode);
+                }
+                updateSettings({
+                  sidebarProjectGroupingMode: projectGroupingModeFromToggle(
+                    checked,
+                    lastEnabledProjectGroupingMode.current,
+                  ),
+                });
+              }}
+              aria-label="Project Grouping"
             />
           }
         />
 
-        <SettingsRow
-          title="Code font size"
-          description="Applies to the diff editor, terminal, and read-only code surfaces."
-          resetAction={
-            settings.codeFontScale !== DEFAULT_CODE_FONT_SIZE_PX ? (
-              <SettingResetButton
-                label="code font size"
-                onClick={() =>
-                  updateSettings({
-                    codeFontScale: DEFAULT_CODE_FONT_SIZE_PX,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <PixelSettingInput
-              ariaLabel="Code font size"
-              onCommit={(value) => updateSettings({ codeFontScale: value as CodeFontSizePx })}
-              value={settings.codeFontScale}
-            />
-          }
-        />
-
-        {isMacOs ? (
-          <SettingsRow
-            title="Font smoothing"
-            description="macOS only. Toggle grayscale text smoothing."
-            resetAction={
-              settings.macOsFontSmoothing !== DEFAULT_MAC_OS_FONT_SMOOTHING ? (
-                <SettingResetButton
-                  label="font smoothing"
-                  onClick={() =>
-                    updateSettings({
-                      macOsFontSmoothing: DEFAULT_MAC_OS_FONT_SMOOTHING,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                aria-label="Font smoothing"
-                checked={settings.macOsFontSmoothing === "grayscale"}
-                onCheckedChange={(checked) =>
-                  updateSettings({ macOsFontSmoothing: checked ? "grayscale" : "auto" })
-                }
-              />
-            }
-          />
-        ) : null}
-      </SettingsSection>
-
-      <SettingsSection title="Display">
         <SettingsRow
           title="Time format"
           description="System default follows your browser or OS clock preference."
@@ -1229,15 +1248,15 @@ export function InterfaceSettingsPanel() {
         />
 
         <SettingsRow
-          title="Diff line wrapping"
-          description="Set the default wrap state when the diff panel opens."
+          title="Hide whitespace changes"
+          description="Set whether the diff panel ignores whitespace-only edits by default."
           resetAction={
-            settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
+            settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
               <SettingResetButton
-                label="diff line wrapping"
+                label="diff whitespace changes"
                 onClick={() =>
                   updateSettings({
-                    diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
+                    diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
                   })
                 }
               />
@@ -1245,9 +1264,11 @@ export function InterfaceSettingsPanel() {
           }
           control={
             <Switch
-              checked={settings.diffWordWrap}
-              onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
-              aria-label="Wrap diff lines by default"
+              checked={settings.diffIgnoreWhitespace}
+              onCheckedChange={(checked) =>
+                updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
+              }
+              aria-label="Hide whitespace changes by default"
             />
           }
         />
@@ -1278,159 +1299,156 @@ export function InterfaceSettingsPanel() {
             />
           }
         />
-      </SettingsSection>
-    </SettingsPageContainer>
-  );
-}
 
-function ArchivedThreadsSections() {
-  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
-  const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
-  const archivedGroups = useMemo(() => {
-    return projects
-      .map((project) => ({
-        project,
-        threads: threads
-          .filter((thread) => thread.projectId === project.id && thread.archivedAt !== null)
-          .toSorted((left, right) => {
-            const leftKey = left.archivedAt ?? left.createdAt;
-            const rightKey = right.archivedAt ?? right.createdAt;
-            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
-          }),
-      }))
-      .filter((group) => group.threads.length > 0);
-  }, [projects, threads]);
-
-  const handleArchivedThreadContextMenu = useCallback(
-    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "unarchive", label: "Unarchive" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
-
-      if (clicked === "unarchive") {
-        try {
-          await unarchiveThread(threadRef);
-        } catch (error) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to unarchive thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-
-      if (clicked === "delete") {
-        await confirmAndDeleteThread(threadRef);
-      }
-    },
-    [confirmAndDeleteThread, unarchiveThread],
-  );
-
-  if (archivedGroups.length === 0) {
-    return (
-      <SettingsSection title="Archived threads">
-        <Empty className="min-h-88">
-          <EmptyMedia variant="icon">
-            <ArchiveIcon />
-          </EmptyMedia>
-          <EmptyHeader>
-            <EmptyTitle>No archived threads</EmptyTitle>
-            <EmptyDescription>Archived threads will appear here.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      </SettingsSection>
-    );
-  }
-
-  return (
-    <>
-      {archivedGroups.map(({ project, threads: projectThreads }) => (
-        <SettingsSection
-          key={project.id}
-          title={project.name}
-          icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
-        >
-          {projectThreads.map((thread) => (
-            <div
-              key={thread.id}
-              className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
-              onContextMenu={(event) => {
-                event.preventDefault();
-                void handleArchivedThreadContextMenu(
-                  scopeThreadRef(thread.environmentId, thread.id),
-                  {
-                    x: event.clientX,
-                    y: event.clientY,
-                  },
-                );
-              }}
-            >
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
-                <p className="text-xs text-muted-foreground">
-                  Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                  {" \u00b7 Created "}
-                  {formatRelativeTimeLabel(thread.createdAt)}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
+        <SettingsRow
+          title="Provider update checks"
+          description="Check installed provider CLIs for newer available versions."
+          resetAction={
+            settings.enableProviderUpdateChecks !==
+            DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
+              <SettingResetButton
+                label="provider update checks"
                 onClick={() =>
-                  void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
-                    (error) => {
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: "Failed to unarchive thread",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
-                        }),
-                      );
-                    },
-                  )
+                  updateSettings({
+                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+                  })
                 }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableProviderUpdateChecks}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
+              }
+              aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Background activity
+              <PolicyTooltip>
+                This shared policy gates background work such as Git refreshes and provider health
+                probes after their individual intervals elapse.
+              </PolicyTooltip>
+            </span>
+          }
+          description={backgroundActivityDescription}
+          resetAction={
+            canResetBackgroundActivity ? (
+              <SettingResetButton
+                label="background activity"
+                onClick={() => updateSettings(resetBackgroundActivitySettings())}
+              />
+            ) : null
+          }
+          control={
+            <>
+              <Select
+                value={backgroundActivityProfileOption}
+                onValueChange={(value) => {
+                  if (value === "advanced") {
+                    setBackgroundActivityDialogOpen(true);
+                    return;
+                  }
+                  if (
+                    value === "balanced" ||
+                    value === "performance" ||
+                    value === "battery-saver"
+                  ) {
+                    updateSettings(backgroundActivityProfileSettings(value));
+                  }
+                }}
               >
-                <ArchiveX className="size-3.5" />
-                <span>Unarchive</span>
-              </Button>
-            </div>
-          ))}
-        </SettingsSection>
-      ))}
-    </>
-  );
-}
+                <SelectTrigger className="w-full sm:w-40" aria-label="Background activity profile">
+                  <SelectValue>
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[backgroundActivityProfileOption]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="balanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.balanced}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="performance">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS.performance}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="battery-saver">
+                    {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="advanced">
+                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+              {backgroundActivityProfileOption === "advanced" ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        aria-label="Configure advanced background activity"
+                        onClick={() => setBackgroundActivityDialogOpen(true)}
+                      >
+                        <SettingsIcon className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Configure background activity</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              <BackgroundActivityAdvancedDialog
+                open={backgroundActivityDialogOpen}
+                onOpenChange={setBackgroundActivityDialogOpen}
+              />
+            </>
+          }
+        />
 
-export function ThreadsSettingsPanel() {
-  const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+        <SettingsRow
+          title="Auto-open task panel"
+          description="Open the right-side plan and task panel automatically when steps appear."
+          resetAction={
+            settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar ? (
+              <SettingResetButton
+                label="auto-open task panel"
+                onClick={() =>
+                  updateSettings({
+                    autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.autoOpenPlanSidebar}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoOpenPlanSidebar: Boolean(checked) })
+              }
+              aria-label="Open the task panel automatically"
+            />
+          }
+        />
 
-  return (
-    <SettingsPageContainer>
-      <SettingsSection title="Defaults">
         <SettingsRow
           title="New threads"
           description="Pick the default workspace mode for newly created draft threads."
           resetAction={
-            settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ? (
+            settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ||
+            settings.newWorktreesStartFromOrigin !==
+              DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
               <SettingResetButton
                 label="new threads"
                 onClick={() =>
                   updateSettings({
                     defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+                    newWorktreesStartFromOrigin:
+                      DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
                   })
                 }
               />
@@ -1462,6 +1480,37 @@ export function ThreadsSettingsPanel() {
           }
         />
 
+        {settings.defaultThreadEnvMode === "worktree" ? (
+          <SettingsRow
+            className="bg-muted/20 sm:pl-9"
+            title="Start from origin"
+            description="Creates the worktree from the latest matching branch on origin instead of your local branch."
+            resetAction={
+              settings.newWorktreesStartFromOrigin !==
+              DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
+                <SettingResetButton
+                  label="new worktrees start from origin"
+                  onClick={() =>
+                    updateSettings({
+                      newWorktreesStartFromOrigin:
+                        DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.newWorktreesStartFromOrigin}
+                onCheckedChange={(checked) =>
+                  updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
+                }
+                aria-label="Start new worktrees from origin by default"
+              />
+            }
+          />
+        ) : null}
+
         <SettingsRow
           title="Add project starts in"
           description='Leave empty to use "~/" when the Add Project browser opens.'
@@ -1479,60 +1528,14 @@ export function ThreadsSettingsPanel() {
             ) : null
           }
           control={
-            <Input
+            <DraftInput
               className="w-full sm:w-72"
               value={settings.addProjectBaseDirectory}
-              onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
+              onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
               placeholder="~/"
               spellCheck={false}
               aria-label="Add project base directory"
             />
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Safety & cleanup">
-        <SettingsRow
-          title="Thread cleanup window"
-          description="Sidebar cleanup archives threads with no user message in this many days."
-          resetAction={
-            settings.threadCleanupInactiveDays !==
-            DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays ? (
-              <SettingResetButton
-                label="thread cleanup window"
-                onClick={() =>
-                  updateSettings({
-                    threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.threadCleanupInactiveDays)}
-              onValueChange={(value) => {
-                const nextValue = Number(value);
-                if (THREAD_CLEANUP_DAY_OPTIONS.includes(nextValue as ThreadCleanupInactiveDays)) {
-                  updateSettings({
-                    threadCleanupInactiveDays: nextValue as ThreadCleanupInactiveDays,
-                  });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Thread cleanup window">
-                <SelectValue>
-                  {formatThreadCleanupWindowLabel(settings.threadCleanupInactiveDays)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THREAD_CLEANUP_DAY_OPTIONS.map((days) => (
-                  <SelectItem key={days} hideIndicator value={String(days)}>
-                    {formatThreadCleanupWindowLabel(days)}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
           }
         />
 
@@ -1587,255 +1590,12 @@ export function ThreadsSettingsPanel() {
             />
           }
         />
-      </SettingsSection>
 
-      <ArchivedThreadsSections />
-    </SettingsPageContainer>
-  );
-}
-
-export function NotificationsSettingsPanel() {
-  return (
-    <SettingsPageContainer>
-      {hasDesktopBridgeSupport() ? (
-        <DesktopNotificationSettingsSection />
-      ) : (
-        <NotificationsUnavailableSection />
-      )}
-    </SettingsPageContainer>
-  );
-}
-
-export function ProvidersSettingsPanel() {
-  const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
-  const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
-    codex: Boolean(
-      settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
-      settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
-      settings.providers.codex.customModels.length > 0,
-    ),
-    claudeAgent: Boolean(
-      settings.providers.claudeAgent.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
-      settings.providers.claudeAgent.customModels.length > 0 ||
-      settings.providers.claudeAgent.launchArgs !== "",
-    ),
-    cursor: Boolean(
-      settings.providers.cursor.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
-      settings.providers.cursor.customModels.length > 0,
-    ),
-    grok: Boolean(
-      settings.providers.grok.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.grok.binaryPath ||
-      settings.providers.grok.customModels.length > 0,
-    ),
-    opencode: Boolean(
-      settings.providers.opencode.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.binaryPath ||
-      settings.providers.opencode.serverUrl !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverUrl ||
-      settings.providers.opencode.serverPassword !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverPassword ||
-      settings.providers.opencode.customModels.length > 0,
-    ),
-  });
-  const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
-    Record<ProviderKind, string>
-  >({
-    codex: "",
-    claudeAgent: "",
-    cursor: "",
-    grok: "",
-    opencode: "",
-  });
-  const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
-    Partial<Record<ProviderKind, string | null>>
-  >({});
-  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const refreshingRef = useRef(false);
-  const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
-  const serverProviders = useServerProviders();
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some((provider) => provider.provider === "cursor"),
-  );
-  const codexHomePath = settings.providers.codex.homePath;
-  const refreshProviders = useCallback(() => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setIsRefreshingProviders(true);
-    void ensureLocalApi()
-      .server.refreshProviders()
-      .catch((error: unknown) => {
-        console.warn("Failed to refresh providers", error);
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        setIsRefreshingProviders(false);
-      });
-  }, []);
-
-  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
-  const textGenProvider = textGenerationModelSelection.provider;
-  const textGenModel = textGenerationModelSelection.model;
-  const textGenModelOptions = textGenerationModelSelection.options;
-  const gitModelOptionsByProvider = getCustomModelOptionsByProvider(
-    settings,
-    serverProviders,
-    textGenProvider,
-    textGenModel,
-  );
-  const isGitWritingModelDirty = isTextGenerationModelDirty(settings);
-
-  const addCustomModel = useCallback(
-    (provider: ProviderKind) => {
-      const customModelInput = customModelInputByProvider[provider];
-      const customModels = settings.providers[provider].customModels;
-      const normalized = normalizeModelSlug(customModelInput, provider);
-      if (!normalized) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "Enter a model slug.",
-        }));
-        return;
-      }
-      if (
-        serverProviders
-          .find((candidate) => candidate.provider === provider)
-          ?.models.some((option) => !option.isCustom && option.slug === normalized)
-      ) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That model is already built in.",
-        }));
-        return;
-      }
-      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-        }));
-        return;
-      }
-      if (customModels.includes(normalized)) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That custom model is already saved.",
-        }));
-        return;
-      }
-
-      updateSettings({
-        providers: {
-          ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: [...customModels, normalized],
-          },
-        },
-      });
-      setCustomModelInputByProvider((existing) => ({
-        ...existing,
-        [provider]: "",
-      }));
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: null,
-      }));
-
-      const el = modelListRefs.current[provider];
-      if (!el) return;
-      const scrollToEnd = () => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-      requestAnimationFrame(scrollToEnd);
-      const observer = new MutationObserver(() => {
-        scrollToEnd();
-        observer.disconnect();
-      });
-      observer.observe(el, { childList: true, subtree: true });
-      setTimeout(() => observer.disconnect(), 2_000);
-    },
-    [customModelInputByProvider, serverProviders, settings, updateSettings],
-  );
-
-  const removeCustomModel = useCallback(
-    (provider: ProviderKind, slug: string) => {
-      updateSettings({
-        providers: {
-          ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: settings.providers[provider].customModels.filter(
-              (model) => model !== slug,
-            ),
-          },
-        },
-      });
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: null,
-      }));
-    },
-    [settings, updateSettings],
-  );
-
-  const providerCards = visibleProviderSettings.map((providerSettings) => {
-    const liveProvider = serverProviders.find(
-      (candidate) => candidate.provider === providerSettings.provider,
-    );
-    const providerConfig = settings.providers[providerSettings.provider];
-    const defaultProviderConfig = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
-    const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
-    const summary = getProviderSummary(liveProvider);
-    const models: ReadonlyArray<ServerProviderModel> = getProviderSettingsModelList(
-      settings,
-      serverProviders,
-      providerSettings.provider,
-    );
-
-    return {
-      provider: providerSettings.provider,
-      title: providerSettings.title,
-      badgeLabel: providerSettings.badgeLabel,
-      binaryPlaceholder: providerSettings.binaryPlaceholder,
-      binaryDescription: providerSettings.binaryDescription,
-      serverUrlPlaceholder: providerSettings.serverUrlPlaceholder,
-      serverUrlDescription: providerSettings.serverUrlDescription,
-      serverPasswordPlaceholder: providerSettings.serverPasswordPlaceholder,
-      serverPasswordDescription: providerSettings.serverPasswordDescription,
-      homePathKey: providerSettings.homePathKey,
-      homePlaceholder: providerSettings.homePlaceholder,
-      homeDescription: providerSettings.homeDescription,
-      binaryPathValue: providerConfig.binaryPath,
-      serverUrlValue: "serverUrl" in providerConfig ? providerConfig.serverUrl : "",
-      serverPasswordValue: "serverPassword" in providerConfig ? providerConfig.serverPassword : "",
-      isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
-      liveProvider,
-      models,
-      providerConfig,
-      statusStyle: PROVIDER_STATUS_STYLES[statusKey],
-      summary,
-      versionLabel: getProviderVersionLabel(liveProvider?.version),
-    };
-  });
-
-  const lastCheckedAt =
-    serverProviders.length > 0
-      ? serverProviders.reduce(
-          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
-          serverProviders[0]!.checkedAt,
-        )
-      : null;
-
-  return (
-    <SettingsPageContainer>
-      <SettingsSection title="Text generation">
         <SettingsRow
           title="Text generation model"
-          description="Configure the model used for generated commit messages, PR titles, and similar Git text."
+          description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
           resetAction={
-            isGitWritingModelDirty ? (
+            isTextGenerationModelDirty ? (
               <SettingResetButton
                 label="text generation model"
                 onClick={() =>
@@ -1850,19 +1610,19 @@ export function ProvidersSettingsPanel() {
           control={
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               <ProviderModelPicker
-                provider={textGenProvider}
+                activeInstanceId={textGenInstanceId}
                 model={textGenModel}
                 lockedProvider={null}
-                providers={serverProviders}
-                modelOptionsByProvider={gitModelOptionsByProvider}
+                instanceEntries={textGenerationModelInstanceEntries}
+                modelOptionsByInstance={textGenerationModelOptionsByInstance}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onProviderModelChange={(provider, model) => {
+                onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: createModelSelection(provider, model),
+                        textGenerationModelSelection: createModelSelection(instanceId, model),
                       },
                       serverProviders,
                     ),
@@ -1872,8 +1632,11 @@ export function ProvidersSettingsPanel() {
               <TraitsPicker
                 provider={textGenProvider}
                 models={
-                  serverProviders.find((provider) => provider.provider === textGenProvider)
-                    ?.models ?? []
+                  // Use the exact instance's models (rather than the
+                  // first-kind-match) so a custom text-gen instance like
+                  // `codex_personal` gets its own model list, not the
+                  // default Codex one.
+                  textGenInstanceEntry?.models ?? []
                 }
                 model={textGenModel}
                 prompt=""
@@ -1888,7 +1651,7 @@ export function ProvidersSettingsPanel() {
                       {
                         ...settings,
                         textGenerationModelSelection: createModelSelection(
-                          textGenProvider,
+                          textGenInstanceId,
                           textGenModel,
                           nextOptions,
                         ),
@@ -1903,11 +1666,351 @@ export function ProvidersSettingsPanel() {
         />
       </SettingsSection>
 
+      <SettingsSection title="About">
+        {isElectron || HOSTED_APP_CHANNEL ? (
+          <AboutVersionSection />
+        ) : (
+          <SettingsRow
+            title={<AboutVersionTitle />}
+            description="Current version of the application."
+          />
+        )}
+        <SettingsRow
+          title="Diagnostics"
+          description={diagnosticsDescription}
+          control={
+            <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
+              View diagnostics
+            </Button>
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+export function ProviderSettingsPanel() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const primaryEnvironment = usePrimaryEnvironment();
+  const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
+    reportFailure: false,
+  });
+  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
+    ReadonlySet<ProviderDriverKind>
+  >(() => new Set());
+  const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
+  const refreshingRef = useRef(false);
+
+  const providerUpdateCandidates = useMemo(
+    () => collectProviderUpdateCandidates(serverProviders),
+    [serverProviders],
+  );
+  const providerUpdateCandidateByInstanceId = useMemo(
+    () => new Map(providerUpdateCandidates.map((candidate) => [candidate.instanceId, candidate])),
+    [providerUpdateCandidates],
+  );
+  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
+    (providerSettings) =>
+      providerSettings.provider !== "cursor" ||
+      serverProviders.some(
+        (provider) =>
+          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
+      ),
+  );
+  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenInstanceId = textGenerationModelSelection.instanceId;
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const providerHealthPreset = getBackgroundActivityPresetSettings(
+    resolvedBackgroundActivity.profile,
+  ).providerHealthRefreshInterval;
+  const providerHealthRefreshIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.providerHealthRefreshInterval,
+  );
+  const defaultProviderHealthRefreshIntervalSeconds = durationToSeconds(providerHealthPreset);
+  const lastCheckedAt =
+    serverProviders.length > 0
+      ? serverProviders.reduce(
+          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
+          serverProviders[0]!.checkedAt,
+        )
+      : null;
+
+  const refreshProviders = useCallback(() => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setIsRefreshingProviders(true);
+    if (!primaryEnvironment) {
+      refreshingRef.current = false;
+      setIsRefreshingProviders(false);
+      return;
+    }
+    void (async () => {
+      const result = await refreshServerProviders({
+        environmentId: primaryEnvironment.environmentId,
+        input: {},
+      });
+      refreshingRef.current = false;
+      setIsRefreshingProviders(false);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        console.warn("Failed to refresh providers", {
+          operation: "refresh-providers",
+          environmentId: primaryEnvironment.environmentId,
+          ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
+        });
+      }
+    })();
+  }, [primaryEnvironment, refreshServerProviders]);
+
+  const runProviderUpdate = useCallback(
+    async (candidate: ProviderUpdateCandidate) => {
+      if (!primaryEnvironment) return;
+      let started = false;
+      setUpdatingProviderDrivers((previous) => {
+        if (previous.has(candidate.driver)) {
+          return previous;
+        }
+        started = true;
+        const next = new Set(previous);
+        next.add(candidate.driver);
+        return next;
+      });
+      if (!started) {
+        return;
+      }
+
+      const result = await updateProvider({
+        environmentId: primaryEnvironment.environmentId,
+        input: {
+          provider: candidate.driver,
+          instanceId: candidate.instanceId,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not update ${PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver}`,
+            description:
+              error instanceof Error
+                ? error.message
+                : "The provider update command could not be started.",
+          }),
+        );
+      }
+      setUpdatingProviderDrivers((previous) => {
+        if (!previous.has(candidate.driver)) {
+          return previous;
+        }
+        const next = new Set(previous);
+        next.delete(candidate.driver);
+        return next;
+      });
+    },
+    [primaryEnvironment, updateProvider],
+  );
+
+  interface InstanceRow {
+    readonly instanceId: ProviderInstanceId;
+    readonly instance: ProviderInstanceConfig;
+    readonly driver: ProviderDriverKind;
+    readonly isDefault: boolean;
+    readonly isDirty?: boolean;
+  }
+
+  const instancesByDriver = new Map<
+    ProviderDriverKind,
+    Array<[ProviderInstanceId, ProviderInstanceConfig]>
+  >();
+  for (const [rawId, instance] of Object.entries(settings.providerInstances ?? {})) {
+    const driver = instance.driver;
+    const list = instancesByDriver.get(driver) ?? [];
+    list.push([rawId as ProviderInstanceId, instance]);
+    instancesByDriver.set(driver, list);
+  }
+
+  const defaultSlotIdsBySource = new Set<string>(
+    visibleProviderSettings.map((providerSettings) =>
+      String(defaultInstanceIdForDriver(providerSettings.provider)),
+    ),
+  );
+
+  const rows: InstanceRow[] = [];
+  const visibleDriverKinds = new Set<ProviderDriverKind>(
+    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
+  );
+
+  for (const providerSettings of visibleProviderSettings) {
+    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
+    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
+    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+      string,
+      LegacyProviderSettings
+    >;
+    const driver = providerSettings.provider;
+    const defaultInstanceId = defaultInstanceIdForDriver(driver);
+    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
+    const legacyConfig = legacyProviders[providerSettings.provider]!;
+    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
+    const effectiveInstance: ProviderInstanceConfig =
+      explicitInstance ??
+      ({
+        driver,
+        enabled: legacyConfig.enabled,
+        config: legacyConfig,
+      } satisfies ProviderInstanceConfig);
+    const isDirty =
+      explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
+    rows.push({
+      instanceId: defaultInstanceId,
+      instance: effectiveInstance,
+      driver,
+      isDefault: true,
+      isDirty,
+    });
+    for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
+      if (id === defaultInstanceId) continue;
+      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+    }
+  }
+  for (const [driver, list] of instancesByDriver) {
+    if (visibleDriverKinds.has(driver)) continue;
+    for (const [id, instance] of list) {
+      rows.push({
+        instanceId: id,
+        instance,
+        driver: instance.driver,
+        isDefault: defaultSlotIdsBySource.has(String(id)),
+      });
+    }
+  }
+
+  const updateProviderInstance = (
+    row: InstanceRow,
+    next: ProviderInstanceConfig,
+    options?: {
+      readonly textGenerationModelSelection?: Parameters<
+        typeof buildProviderInstanceUpdatePatch
+      >[0]["textGenerationModelSelection"];
+    },
+  ) => {
+    updateSettings(
+      buildProviderInstanceUpdatePatch({
+        settings,
+        instanceId: row.instanceId,
+        instance: next,
+        driver: row.driver,
+        isDefault: row.isDefault,
+        textGenerationModelSelection: options?.textGenerationModelSelection,
+      }),
+    );
+  };
+
+  const deleteProviderInstance = (id: ProviderInstanceId) => {
+    updateSettings({
+      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
+      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
+    });
+  };
+
+  const updateProviderModelPreferences = (
+    instanceId: ProviderInstanceId,
+    next: {
+      readonly hiddenModels: ReadonlyArray<string>;
+      readonly modelOrder: ReadonlyArray<string>;
+    },
+  ) => {
+    const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
+    const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
+    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
+    updateSettings({
+      providerModelPreferences:
+        hiddenModels.length === 0 && modelOrder.length === 0
+          ? rest
+          : {
+              ...rest,
+              [instanceId]: {
+                hiddenModels,
+                modelOrder,
+              },
+            },
+    });
+  };
+
+  const updateProviderFavoriteModels = (
+    instanceId: ProviderInstanceId,
+    nextFavoriteModels: ReadonlyArray<string>,
+  ) => {
+    const favoriteModels = [
+      ...new Set(
+        Arr.filterMap(nextFavoriteModels, (slug) => {
+          const trimmedSlug = slug.trim();
+          return trimmedSlug.length > 0 ? Result.succeed(trimmedSlug) : Result.failVoid;
+        }),
+      ),
+    ];
+    updateSettings({
+      favorites: [
+        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
+        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
+      ],
+    });
+  };
+
+  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
+    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
+    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+      string,
+      LegacyProviderSettings | undefined
+    >;
+    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
+    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
+    if (defaultLegacyProvider === undefined) return;
+    updateSettings({
+      providers: {
+        ...settings.providers,
+        [driverKind]: defaultLegacyProvider,
+      } as typeof settings.providers,
+      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
+      providerModelPreferences: withoutProviderInstanceKey(
+        settings.providerModelPreferences,
+        defaultInstanceId,
+      ),
+      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
+    });
+  };
+
+  return (
+    <SettingsPageContainer>
       <SettingsSection
         title="Providers"
         headerAction={
           <div className="flex items-center gap-1.5">
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                    aria-label="Add provider instance"
+                  >
+                    <PlusIcon className="size-3" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Add provider instance</TooltipPopup>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1932,623 +2035,395 @@ export function ProvidersSettingsPanel() {
           </div>
         }
       >
-        {providerCards.map((providerCard) => {
-          const customModelInput = customModelInputByProvider[providerCard.provider];
-          const customModelError = customModelErrorByProvider[providerCard.provider] ?? null;
-          const providerDisplayName =
-            providerCard.liveProvider?.displayName?.trim() ||
-            providerCard.title ||
-            formatProviderKindLabel(providerCard.provider);
-
-          return (
-            <div key={providerCard.provider} className="border-t border-border first:border-t-0">
-              <div className="px-4 py-4 sm:px-5">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex min-h-5 items-center gap-1.5">
-                      <span
-                        className={cn("size-2 shrink-0 rounded-full", providerCard.statusStyle.dot)}
-                      />
-                      <h3 className="text-sm font-medium text-foreground">{providerDisplayName}</h3>
-                      {providerCard.badgeLabel ? (
-                        <Badge variant="warning" size="sm" className="shrink-0">
-                          {providerCard.badgeLabel}
-                        </Badge>
-                      ) : null}
-                      {providerCard.versionLabel ? (
-                        <code className="text-xs text-muted-foreground">
-                          {providerCard.versionLabel}
-                        </code>
-                      ) : null}
-                      <ProviderFreshnessLabel provider={providerCard.liveProvider} />
-                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                        {providerCard.isDirty ? (
-                          <SettingResetButton
-                            label={`${providerDisplayName} provider settings`}
-                            onClick={() => {
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]:
-                                    DEFAULT_UNIFIED_SETTINGS.providers[providerCard.provider],
-                                },
-                              });
-                              setCustomModelErrorByProvider((existing) => ({
-                                ...existing,
-                                [providerCard.provider]: null,
-                              }));
-                            }}
-                          />
-                        ) : null}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {providerCard.summary.headline}
-                      {providerCard.summary.detail ? ` - ${providerCard.summary.detail}` : null}
-                    </p>
-                  </div>
-                  <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      onClick={() =>
-                        setOpenProviderDetails((existing) => ({
-                          ...existing,
-                          [providerCard.provider]: !existing[providerCard.provider],
-                        }))
-                      }
-                      aria-label={`Toggle ${providerDisplayName} details`}
-                    >
-                      <ChevronDownIcon
-                        className={cn(
-                          "size-2.5 transition-transform",
-                          openProviderDetails[providerCard.provider] && "rotate-180",
-                        )}
-                      />
-                    </Button>
-                    <Switch
-                      checked={providerCard.providerConfig.enabled}
-                      onCheckedChange={(checked) => {
-                        const isDisabling = !checked;
-                        const shouldClearModelSelection =
-                          isDisabling && textGenProvider === providerCard.provider;
-                        updateSettings({
-                          providers: {
-                            ...settings.providers,
-                            [providerCard.provider]: {
-                              ...settings.providers[providerCard.provider],
-                              enabled: Boolean(checked),
-                            },
-                          },
-                          ...(shouldClearModelSelection
-                            ? {
-                                textGenerationModelSelection:
-                                  DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                              }
-                            : {}),
-                        });
-                      }}
-                      aria-label={`Enable ${providerDisplayName}`}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <Collapsible
-                open={openProviderDetails[providerCard.provider]}
-                onOpenChange={(open) =>
-                  setOpenProviderDetails((existing) => ({
-                    ...existing,
-                    [providerCard.provider]: open,
-                  }))
+        <SettingsRow
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Health check interval
+              <PolicyTooltip>
+                This interval is configured here, then the shared Background activity policy decides
+                whether provider probes may run when the timer fires. Custom intervals appear as
+                Advanced in General settings.
+              </PolicyTooltip>
+            </span>
+          }
+          description="Refresh provider availability, versions, auth state, and model metadata in the background. Set this to 0 seconds to rely on manual refreshes."
+          resetAction={
+            providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
+              <SettingResetButton
+                label="provider health check interval"
+                onClick={() =>
+                  updateSettings(
+                    backgroundActivityOverrideSettings(
+                      settings.backgroundActivity,
+                      resolvedBackgroundActivity,
+                      {
+                        providerHealthRefreshInterval: undefined,
+                      },
+                    ),
+                  )
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex shrink-0 items-center gap-2">
+              <NumberField
+                value={providerHealthRefreshIntervalSeconds}
+                min={0}
+                step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
+                size="sm"
+                className="w-32"
+                onValueChange={(value) =>
+                  updateSettings(
+                    backgroundActivityOverrideSettings(
+                      settings.backgroundActivity,
+                      resolvedBackgroundActivity,
+                      {
+                        providerHealthRefreshInterval: Duration.seconds(
+                          normalizeIntervalSeconds(value),
+                        ),
+                      },
+                    ),
+                  )
                 }
               >
-                <CollapsibleContent>
-                  <div className="space-y-0">
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                      <label
-                        htmlFor={`provider-install-${providerCard.provider}-binary-path`}
-                        className="block"
-                      >
-                        <span className="text-xs font-medium text-foreground">
-                          {providerDisplayName} binary path
-                        </span>
-                        <Input
-                          id={`provider-install-${providerCard.provider}-binary-path`}
-                          className="mt-1.5"
-                          value={providerCard.binaryPathValue}
-                          onChange={(event) =>
-                            updateSettings({
-                              providers: {
-                                ...settings.providers,
-                                [providerCard.provider]: {
-                                  ...settings.providers[providerCard.provider],
-                                  binaryPath: event.target.value,
-                                },
-                              },
-                            })
-                          }
-                          placeholder={providerCard.binaryPlaceholder}
-                          spellCheck={false}
-                        />
-                        <span className="mt-1 block text-xs text-muted-foreground">
-                          {providerCard.binaryDescription}
-                        </span>
-                      </label>
-                    </div>
-
-                    {providerCard.serverUrlPlaceholder ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.provider}-server-url`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            {providerDisplayName} server URL
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.provider}-server-url`}
-                            className="mt-1.5"
-                            value={providerCard.serverUrlValue}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverUrl: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.serverUrlPlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.serverUrlDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.serverUrlDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
-
-                    {providerCard.serverPasswordPlaceholder ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.provider}-server-password`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            {providerDisplayName} server password
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.provider}-server-password`}
-                            className="mt-1.5"
-                            type="password"
-                            autoComplete="off"
-                            value={providerCard.serverPasswordValue}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverPassword: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.serverPasswordPlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.serverPasswordDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.serverPasswordDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
-
-                    {providerCard.homePathKey ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.homePathKey}`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            CODEX_HOME path
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.homePathKey}`}
-                            className="mt-1.5"
-                            value={codexHomePath}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  codex: {
-                                    ...settings.providers.codex,
-                                    homePath: event.target.value,
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.homePlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.homeDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.homeDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
-
-                    {providerCard.provider === "claudeAgent" ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label htmlFor="provider-install-claudeAgent-launch-args" className="block">
-                          <span className="text-xs font-medium text-foreground">
-                            Launch arguments
-                          </span>
-                          <Input
-                            id="provider-install-claudeAgent-launch-args"
-                            className="mt-1.5"
-                            value={settings.providers.claudeAgent.launchArgs}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  claudeAgent: {
-                                    ...settings.providers.claudeAgent,
-                                    launchArgs: event.target.value,
-                                  },
-                                },
-                              })
-                            }
-                            placeholder="e.g. --chrome"
-                            spellCheck={false}
-                          />
-                          <span className="mt-1 block text-xs text-muted-foreground">
-                            Additional CLI arguments passed to Claude Code on session start.
-                          </span>
-                        </label>
-                      </div>
-                    ) : null}
-
-                    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                      <div className="text-xs font-medium text-foreground">Models</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {providerCard.models.length} model
-                        {providerCard.models.length === 1 ? "" : "s"} available.
-                      </div>
-                      <div
-                        ref={(el) => {
-                          modelListRefs.current[providerCard.provider] = el;
-                        }}
-                        className="mt-2 max-h-40 overflow-y-auto pb-1"
-                      >
-                        {providerCard.models.map((model) => {
-                          const caps = model.capabilities;
-                          const capLabels: string[] = [];
-                          const descriptors = caps?.optionDescriptors ?? [];
-                          if (descriptors.some((descriptor) => descriptor.id === "fastMode")) {
-                            capLabels.push("Fast mode");
-                          }
-                          if (descriptors.some((descriptor) => descriptor.id === "thinking")) {
-                            capLabels.push("Thinking");
-                          }
-                          if (
-                            descriptors.some(
-                              (descriptor) =>
-                                descriptor.type === "select" &&
-                                (descriptor.id === "reasoningEffort" ||
-                                  descriptor.id === "effort" ||
-                                  descriptor.id === "reasoning" ||
-                                  descriptor.id === "variant"),
-                            )
-                          ) {
-                            capLabels.push("Reasoning");
-                          }
-                          const hasDetails = capLabels.length > 0 || model.name !== model.slug;
-
-                          return (
-                            <div
-                              key={`${providerCard.provider}:${model.slug}`}
-                              className="flex items-center gap-2 py-1"
-                            >
-                              <span className="min-w-0 truncate text-xs text-foreground/90">
-                                {model.name}
-                              </span>
-                              {hasDetails ? (
-                                <Tooltip>
-                                  <TooltipTrigger
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="shrink-0 text-muted-foreground/40 transition-colors hover:text-muted-foreground"
-                                        aria-label={`Details for ${model.name}`}
-                                      />
-                                    }
-                                  >
-                                    <InfoIcon className="size-3" />
-                                  </TooltipTrigger>
-                                  <TooltipPopup side="top" className="max-w-56">
-                                    <div className="space-y-1">
-                                      <code className="text-ui-xs block text-foreground">
-                                        {model.slug}
-                                      </code>
-                                      {capLabels.length > 0 ? (
-                                        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-                                          {capLabels.map((label) => (
-                                            <span
-                                              key={label}
-                                              className="text-ui-2xs text-muted-foreground"
-                                            >
-                                              {label}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </TooltipPopup>
-                                </Tooltip>
-                              ) : null}
-                              {model.isCustom ? (
-                                <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                                  <span className="text-ui-2xs text-muted-foreground">custom</span>
-                                  <button
-                                    type="button"
-                                    className="text-muted-foreground transition-colors hover:text-foreground"
-                                    aria-label={`Remove ${model.slug}`}
-                                    onClick={() =>
-                                      removeCustomModel(providerCard.provider, model.slug)
-                                    }
-                                  >
-                                    <XIcon className="size-3" />
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                        <Input
-                          id={`custom-model-${providerCard.provider}`}
-                          value={customModelInput}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setCustomModelInputByProvider((existing) => ({
-                              ...existing,
-                              [providerCard.provider]: value,
-                            }));
-                            if (customModelError) {
-                              setCustomModelErrorByProvider((existing) => ({
-                                ...existing,
-                                [providerCard.provider]: null,
-                              }));
-                            }
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            addCustomModel(providerCard.provider);
-                          }}
-                          placeholder={
-                            providerCard.provider === "codex"
-                              ? "gpt-6.7-codex-ultra-preview"
-                              : providerCard.provider === "opencode"
-                                ? "openai/gpt-5"
-                                : providerCard.provider === "grok"
-                                  ? "grok-build"
-                                  : "claude-sonnet-5-0"
-                          }
-                          spellCheck={false}
-                        />
-                        <Button
-                          className="shrink-0"
-                          variant="outline"
-                          onClick={() => addCustomModel(providerCard.provider)}
-                        >
-                          <PlusIcon className="size-3.5" />
-                          Add
-                        </Button>
-                      </div>
-
-                      {customModelError ? (
-                        <p className="mt-2 text-xs text-destructive">{customModelError}</p>
-                      ) : null}
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
+                <NumberFieldGroup>
+                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
+                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
+                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
+                </NumberFieldGroup>
+              </NumberField>
+              <span className="text-xs text-muted-foreground">seconds</span>
             </div>
+          }
+        />
+
+        {rows.map((row) => {
+          const driverOption = getDriverOption(row.driver);
+          const liveProvider = serverProviders.find(
+            (candidate) => candidate.instanceId === row.instanceId,
+          );
+          const updateCandidate = liveProvider
+            ? providerUpdateCandidateByInstanceId.get(liveProvider.instanceId)
+            : undefined;
+          const isDriverUpdateRunning =
+            updateCandidate !== undefined &&
+            (updatingProviderDrivers.has(updateCandidate.driver) ||
+              serverProviders.some(
+                (provider) =>
+                  provider.driver === updateCandidate.driver && isProviderUpdateActive(provider),
+              ));
+          const showInlineUpdateButton =
+            updateCandidate !== undefined &&
+            hasOneClickUpdateProviderCandidate(updateCandidate, serverProviders);
+          const canRunInlineUpdate =
+            updateCandidate !== undefined &&
+            canOneClickUpdateProviderCandidate(updateCandidate, serverProviders) &&
+            !updatingProviderDrivers.has(updateCandidate.driver);
+          const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
+            hiddenModels: [],
+            modelOrder: [],
+          };
+          const favoriteModels = Arr.filterMap(settings.favorites ?? [], (favorite) =>
+            favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
+          );
+          const resetLabel = driverOption?.label ?? String(row.driver);
+          const headerAction =
+            row.isDefault && row.isDirty ? (
+              <SettingResetButton
+                label={`${resetLabel} provider settings`}
+                onClick={() => resetDefaultInstance(row.driver)}
+              />
+            ) : null;
+          return (
+            <ProviderInstanceCard
+              key={row.instanceId}
+              instanceId={row.instanceId}
+              instance={row.instance}
+              driverOption={driverOption}
+              liveProvider={liveProvider}
+              isExpanded={openInstanceDetails[row.instanceId] ?? false}
+              onExpandedChange={(open) =>
+                setOpenInstanceDetails((existing) => ({
+                  ...existing,
+                  [row.instanceId]: open,
+                }))
+              }
+              onUpdate={(next) => {
+                const wasEnabled = row.instance.enabled ?? true;
+                const isDisabling = next.enabled === false && wasEnabled;
+                const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
+                if (shouldClearTextGen) {
+                  updateProviderInstance(row, next, {
+                    textGenerationModelSelection:
+                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+                  });
+                } else {
+                  updateProviderInstance(row, next);
+                }
+              }}
+              onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
+              headerAction={headerAction}
+              hiddenModels={modelPreferences.hiddenModels}
+              favoriteModels={favoriteModels}
+              modelOrder={modelPreferences.modelOrder}
+              onHiddenModelsChange={(hiddenModels) =>
+                updateProviderModelPreferences(row.instanceId, {
+                  ...modelPreferences,
+                  hiddenModels,
+                })
+              }
+              onFavoriteModelsChange={(favoriteModels) =>
+                updateProviderFavoriteModels(row.instanceId, favoriteModels)
+              }
+              onModelOrderChange={(modelOrder) =>
+                updateProviderModelPreferences(row.instanceId, {
+                  ...modelPreferences,
+                  modelOrder,
+                })
+              }
+              onRunUpdate={
+                showInlineUpdateButton && updateCandidate
+                  ? () => {
+                      if (!canRunInlineUpdate) {
+                        return;
+                      }
+                      void runProviderUpdate(updateCandidate);
+                    }
+                  : undefined
+              }
+              isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
+            />
           );
         })}
       </SettingsSection>
-    </SettingsPageContainer>
-  );
-}
 
-function useAdvancedSettingsPanelState() {
-  const [openingPathByTarget, setOpeningPathByTarget] = useState({
-    keybindings: false,
-    logsDirectory: false,
-  });
-  const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
-    Partial<Record<"keybindings" | "logsDirectory", string | null>>
-  >({});
-
-  const keybindingsConfigPath = useServerKeybindingsConfigPath();
-  const availableEditors = useServerAvailableEditors();
-  const observability = useServerObservability();
-  const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
-  const diagnosticsDescription = (() => {
-    const exports: string[] = [];
-    if (observability?.otlpTracesEnabled && observability.otlpTracesUrl) {
-      exports.push(`traces to ${observability.otlpTracesUrl}`);
-    }
-    if (observability?.otlpMetricsEnabled && observability.otlpMetricsUrl) {
-      exports.push(`metrics to ${observability.otlpMetricsUrl}`);
-    }
-    const mode = observability?.localTracingEnabled ? "Local trace file" : "Terminal logs only";
-    return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
-  })();
-
-  const openInPreferredEditor = useCallback(
-    (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
-      if (!path) return;
-      setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
-      setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
-
-      const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-      if (!editor) {
-        setOpenPathErrorByTarget((existing) => ({
-          ...existing,
-          [target]: "No available editors found.",
-        }));
-        setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        return;
-      }
-
-      void ensureLocalApi()
-        .shell.openInEditor(path, editor)
-        .catch((error) => {
-          setOpenPathErrorByTarget((existing) => ({
-            ...existing,
-            [target]: error instanceof Error ? error.message : failureMessage,
-          }));
-        })
-        .finally(() => {
-          setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        });
-    },
-    [availableEditors],
-  );
-
-  const openKeybindingsFile = useCallback(() => {
-    openInPreferredEditor("keybindings", keybindingsConfigPath, "Unable to open keybindings file.");
-  }, [keybindingsConfigPath, openInPreferredEditor]);
-
-  const openLogsDirectory = useCallback(() => {
-    openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
-  }, [logsDirectoryPath, openInPreferredEditor]);
-
-  return {
-    diagnosticsDescription,
-    isOpeningKeybindings: openingPathByTarget.keybindings,
-    isOpeningLogsDirectory: openingPathByTarget.logsDirectory,
-    keybindingsConfigPath,
-    logsDirectoryPath,
-    openDiagnosticsError: openPathErrorByTarget.logsDirectory ?? null,
-    openKeybindingsError: openPathErrorByTarget.keybindings ?? null,
-    openKeybindingsFile,
-    openLogsDirectory,
-  };
-}
-
-export function AdvancedSettingsPanel() {
-  const {
-    diagnosticsDescription,
-    isOpeningKeybindings,
-    isOpeningLogsDirectory,
-    keybindingsConfigPath,
-    logsDirectoryPath,
-    openDiagnosticsError,
-    openKeybindingsError,
-    openKeybindingsFile,
-    openLogsDirectory,
-  } = useAdvancedSettingsPanelState();
-
-  return (
-    <SettingsPageContainer>
-      <SettingsSection title="Files">
-        <SettingsRow
-          title="Keybindings"
-          description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
-          status={
-            <>
-              <span className="text-code-compact block break-all font-mono text-foreground">
-                {keybindingsConfigPath ?? "Resolving keybindings path..."}
-              </span>
-              {openKeybindingsError ? (
-                <span className="mt-1 block text-destructive">{openKeybindingsError}</span>
-              ) : (
-                <span className="mt-1 block">Opens in your preferred editor.</span>
-              )}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!keybindingsConfigPath || isOpeningKeybindings}
-              onClick={openKeybindingsFile}
-            >
-              {isOpeningKeybindings ? "Opening..." : "Open file"}
-            </Button>
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Diagnostics">
-        <SettingsRow
-          title="Logs"
-          description={diagnosticsDescription}
-          status={
-            <>
-              <span className="text-code-compact block break-all font-mono text-foreground">
-                {logsDirectoryPath ?? "Resolving logs directory..."}
-              </span>
-              {openDiagnosticsError ? (
-                <span className="mt-1 block text-destructive">{openDiagnosticsError}</span>
-              ) : null}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!logsDirectoryPath || isOpeningLogsDirectory}
-              onClick={openLogsDirectory}
-            >
-              {isOpeningLogsDirectory ? "Opening..." : "Open logs folder"}
-            </Button>
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Updates">
-        {isElectron ? (
-          <AboutVersionSection />
-        ) : (
-          <SettingsRow
-            title={<AboutVersionTitle />}
-            description="Current version of the application."
-          />
-        )}
-      </SettingsSection>
+      {isAddInstanceDialogOpen ? (
+        <AddProviderInstanceDialog open onOpenChange={setIsAddInstanceDialogOpen} />
+      ) : null}
     </SettingsPageContainer>
   );
 }
 
 export function ArchivedThreadsPanel() {
+  const projects = useProjects();
+  const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const environmentIds = useMemo(
+    () => [...new Set(projects.map((project) => project.environmentId))],
+    [projects],
+  );
+  const {
+    snapshots: archivedSnapshots,
+    error: archiveError,
+    isLoading: isLoadingArchive,
+    refresh: refreshArchivedThreads,
+  } = useArchivedThreadSnapshots(environmentIds);
+
+  const archivedGroups = useMemo(() => {
+    const projectsByEnvironmentAndId = new Map(
+      archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+        snapshot.projects.map(
+          (project) =>
+            [
+              `${environmentId}:${project.id}`,
+              {
+                id: project.id,
+                environmentId,
+                name: project.title,
+                cwd: project.workspaceRoot,
+              },
+            ] as const,
+        ),
+      ),
+    );
+    const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+      snapshot.threads.map((thread) => ({
+        ...thread,
+        environmentId,
+      })),
+    );
+
+    const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
+    const groups: Array<{
+      readonly project: (typeof archivedProjects)[number];
+      readonly threads: Array<(typeof threads)[number]>;
+    }> = [];
+    for (const project of archivedProjects) {
+      const projectThreads: Array<(typeof threads)[number]> = [];
+      for (const thread of threads) {
+        if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
+          projectThreads.push(thread);
+        }
+      }
+      if (projectThreads.length > 0) {
+        groups.push({
+          project,
+          threads: projectThreads.toSorted((left, right) => {
+            const leftKey = left.archivedAt ?? left.createdAt;
+            const rightKey = right.archivedAt ?? right.createdAt;
+            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
+          }),
+        });
+      }
+    }
+    return groups;
+  }, [archivedSnapshots]);
+
+  const handleArchivedThreadContextMenu = useCallback(
+    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "unarchive", label: "Unarchive" },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position,
+      );
+
+      if (clicked === "unarchive") {
+        const result = await unarchiveThread(threadRef);
+        if (result._tag === "Success") {
+          refreshArchivedThreads();
+        } else if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to unarchive thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+
+      if (clicked === "delete") {
+        const result = await confirmAndDeleteThread(threadRef);
+        if (result._tag === "Success") {
+          refreshArchivedThreads();
+        } else if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to delete thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+      }
+    },
+    [confirmAndDeleteThread, refreshArchivedThreads, unarchiveThread],
+  );
+
   return (
     <SettingsPageContainer>
-      <ArchivedThreadsSections />
+      {archivedGroups.length === 0 ? (
+        <SettingsSection title="Archived threads">
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                {isLoadingArchive ? (
+                  <LoaderIcon className="size-3.5 animate-spin text-muted-foreground" />
+                ) : (
+                  <ArchiveIcon className="size-3.5 text-muted-foreground" />
+                )}
+                {isLoadingArchive
+                  ? "Loading archived threads"
+                  : archiveError
+                    ? "Could not load archived threads"
+                    : "No archived threads"}
+              </span>
+            }
+            description={
+              isLoadingArchive
+                ? "Checking connected environments."
+                : (archiveError ?? "Archived threads will appear here.")
+            }
+          />
+        </SettingsSection>
+      ) : (
+        archivedGroups.map(({ project, threads: projectThreads }) => (
+          <SettingsSection
+            key={project.id}
+            title={project.name}
+            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+          >
+            {projectThreads.map((thread) => (
+              <SettingsRow
+                key={thread.id}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  void (async () => {
+                    const result = await settlePromise(() =>
+                      handleArchivedThreadContextMenu(
+                        scopeThreadRef(thread.environmentId, thread.id),
+                        {
+                          x: event.clientX,
+                          y: event.clientY,
+                        },
+                      ),
+                    );
+                    if (result._tag === "Failure") {
+                      const error = squashAtomCommandFailure(result);
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: "Archived thread action failed",
+                          description:
+                            error instanceof Error ? error.message : "An error occurred.",
+                        }),
+                      );
+                    }
+                  })();
+                }}
+                title={thread.title}
+                description={
+                  <>
+                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                    {" \u00b7 Created "}
+                    {formatRelativeTimeLabel(thread.createdAt)}
+                  </>
+                }
+                control={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
+                    onClick={() => {
+                      void (async () => {
+                        const result = await unarchiveThread(
+                          scopeThreadRef(thread.environmentId, thread.id),
+                        );
+                        if (result._tag === "Success") {
+                          refreshArchivedThreads();
+                          return;
+                        }
+                        if (!isAtomCommandInterrupted(result)) {
+                          const error = squashAtomCommandFailure(result);
+                          toastManager.add(
+                            stackedThreadToast({
+                              type: "error",
+                              title: "Failed to unarchive thread",
+                              description:
+                                error instanceof Error ? error.message : "An error occurred.",
+                            }),
+                          );
+                        }
+                      })();
+                    }}
+                  >
+                    <ArchiveX className="size-3.5" />
+                    <span>Unarchive</span>
+                  </Button>
+                }
+              />
+            ))}
+          </SettingsSection>
+        ))
+      )}
     </SettingsPageContainer>
   );
-}
-
-export function GeneralSettingsPanel() {
-  return <InterfaceSettingsPanel />;
 }

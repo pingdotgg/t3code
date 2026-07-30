@@ -1,5 +1,5 @@
-import type { GitStatusRemoteResult, GitStatusResult } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
@@ -52,17 +52,47 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
 });
 
 describe("isTemporaryWorktreeBranch", () => {
-  it("matches the generated temporary worktree branch format", () => {
-    expect(isTemporaryWorktreeBranch(buildTemporaryWorktreeBranchName())).toBe(true);
+  it("matches the generated temporary worktree refName format", () => {
+    expect(
+      isTemporaryWorktreeBranch(
+        buildTemporaryWorktreeBranchName((byteLength) => {
+          expect(byteLength).toBe(4);
+          return "DEADBEEF";
+        }),
+      ),
+    ).toBe(true);
   });
 
-  it("matches generated temporary worktree branches", () => {
+  it("matches generated temporary worktree refs", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
     expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
   });
 
-  it("rejects non-temporary branch names", () => {
+  it("normalizes a UUID-shaped random callback to the canonical 8-hex form", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12")).toBe(
+      `${WORKTREE_BRANCH_PREFIX}/f4ae4e0e`,
+    );
+  });
+
+  it("matches legacy UUID-shaped temporary worktree refs from older mobile builds", () => {
+    expect(
+      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-b4f2-9cf0aa54ab12`),
+    ).toBe(true);
+  });
+
+  it("rejects UUID-shaped refs that are not RFC 4122 v4", () => {
+    // version nibble is not 4
+    expect(
+      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-1d48-b4f2-9cf0aa54ab12`),
+    ).toBe(false);
+    // variant nibble is not [89ab]
+    expect(
+      isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/f4ae4e0e-f971-4d48-c4f2-9cf0aa54ab12`),
+    ).toBe(false);
+  });
+
+  it("rejects non-temporary refName names", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
@@ -71,7 +101,7 @@ describe("isTemporaryWorktreeBranch", () => {
 
 describe("applyGitStatusStreamEvent", () => {
   it("treats a remote-only update as a repository when local state is missing", () => {
-    const remote: GitStatusRemoteResult = {
+    const remote: VcsStatusRemoteResult = {
       hasUpstream: true,
       aheadCount: 2,
       behindCount: 1,
@@ -80,9 +110,9 @@ describe("applyGitStatusStreamEvent", () => {
 
     expect(applyGitStatusStreamEvent(null, { _tag: "remoteUpdated", remote })).toEqual({
       isRepo: true,
-      hasOriginRemote: false,
-      isDefaultBranch: false,
-      branch: null,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
       hasWorkingTreeChanges: false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
       hasUpstream: true,
@@ -93,16 +123,16 @@ describe("applyGitStatusStreamEvent", () => {
   });
 
   it("preserves local-only fields when applying a remote update", () => {
-    const current: GitStatusResult = {
+    const current: VcsStatusResult = {
       isRepo: true,
-      hostingProvider: {
+      sourceControlProvider: {
         kind: "github",
         name: "GitHub",
         baseUrl: "https://github.com",
       },
-      hasOriginRemote: true,
-      isDefaultBranch: false,
-      branch: "feature/demo",
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/demo",
       hasWorkingTreeChanges: true,
       workingTree: {
         files: [{ path: "src/demo.ts", insertions: 1, deletions: 0 }],
@@ -115,7 +145,7 @@ describe("applyGitStatusStreamEvent", () => {
       pr: null,
     };
 
-    const remote: GitStatusRemoteResult = {
+    const remote: VcsStatusRemoteResult = {
       hasUpstream: true,
       aheadCount: 2,
       behindCount: 1,

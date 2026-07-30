@@ -27,14 +27,31 @@ function Input({
     props.type === "file" &&
       "text-muted-foreground file:me-3 file:bg-transparent file:font-medium file:text-foreground file:text-sm",
   );
+  let inputElement: React.ReactElement;
 
-  const {
-    onValueChange: _unusedOnValueChange,
-    render: _unusedRender,
-    style: rawNativeStyle,
-    ...nativeInputProps
-  } = props;
-  const nativeInputStyle = typeof rawNativeStyle === "function" ? undefined : rawNativeStyle;
+  if (nativeInput) {
+    const { style, onValueChange: _onValueChange, ...nativeInputProps } = props;
+    const nativeStyle = typeof style === "function" ? undefined : style;
+
+    inputElement = (
+      <input
+        className={inputClassName}
+        data-slot="input"
+        size={typeof size === "number" ? size : undefined}
+        style={nativeStyle}
+        {...(nativeInputProps as React.ComponentProps<"input">)}
+      />
+    );
+  } else {
+    inputElement = (
+      <InputPrimitive
+        className={inputClassName}
+        data-slot="input"
+        size={typeof size === "number" ? size : undefined}
+        {...props}
+      />
+    );
+  }
 
   return (
     <span
@@ -48,22 +65,7 @@ function Input({
       data-size={size}
       data-slot="input-control"
     >
-      {nativeInput ? (
-        <input
-          className={inputClassName}
-          data-slot="input"
-          size={typeof size === "number" ? size : undefined}
-          style={nativeInputStyle}
-          {...nativeInputProps}
-        />
-      ) : (
-        <InputPrimitive
-          className={inputClassName}
-          data-slot="input"
-          size={typeof size === "number" ? size : undefined}
-          {...props}
-        />
-      )}
+      {inputElement}
     </span>
   );
 }

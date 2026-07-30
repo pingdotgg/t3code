@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": [
+    "scripts/**/*.ts",
+    "scripts/nuke.sh"
+  ],
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [
+      "bun",
+      "node"
+    ]
+  }
+}

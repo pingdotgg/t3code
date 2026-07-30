@@ -1,19 +1,10 @@
-import { scopeProjectRef } from "@t3tools/client-runtime";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
-import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import { getLatestThreadForProject, type ThreadSortInput } from "./threadSort";
-import type { Project, SidebarThreadSummary } from "../types";
 
 interface ThreadContextLike {
   environmentId: EnvironmentId;
   projectId: ProjectId;
-  branch: string | null;
-  worktreePath: string | null;
-}
-
-interface DraftThreadContextLike extends ThreadContextLike {
-  envMode: DraftThreadEnvMode;
 }
 
 interface NewThreadHandler {
@@ -23,24 +14,24 @@ interface NewThreadHandler {
       branch?: string | null;
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
+      startFromOrigin?: boolean;
     },
   ): Promise<void>;
 }
 
-type NewThreadOptions = NonNullable<Parameters<NewThreadHandler>[1]>;
-
 export interface ChatThreadActionContext {
-  readonly activeDraftThread: DraftThreadContextLike | null;
+  readonly activeDraftThread: ThreadContextLike | null;
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
-  readonly defaultThreadEnvMode: DraftThreadEnvMode;
   readonly handleNewThread: NewThreadHandler;
 }
 
-type OpenProjectThreadContext = Pick<
-  ChatThreadActionContext,
-  "defaultThreadEnvMode" | "handleNewThread"
->;
+export function resolveNewDraftStartFromOrigin(input: {
+  envMode: DraftThreadEnvMode;
+  newWorktreesStartFromOrigin: boolean;
+}): boolean {
+  return input.envMode === "worktree" && input.newWorktreesStartFromOrigin;
+}
 
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
@@ -57,30 +48,12 @@ export function resolveThreadActionProjectRef(
   return context.defaultProjectRef;
 }
 
-function buildContextualThreadOptions(context: ChatThreadActionContext): NewThreadOptions {
-  return {
-    branch: context.activeThread?.branch ?? context.activeDraftThread?.branch ?? null,
-    worktreePath:
-      context.activeThread?.worktreePath ?? context.activeDraftThread?.worktreePath ?? null,
-    envMode:
-      context.activeDraftThread?.envMode ??
-      (context.activeThread?.worktreePath ? "worktree" : "local"),
-  };
-}
-
-function buildDefaultThreadOptions(context: ChatThreadActionContext): NewThreadOptions {
-  return {
-    envMode: context.defaultThreadEnvMode,
-  };
-}
-
-export async function startNewThreadInProjectFromContext(
-  context: ChatThreadActionContext,
-  projectRef: ScopedProjectRef,
-): Promise<void> {
-  await context.handleNewThread(projectRef, buildContextualThreadOptions(context));
-}
-
+// New threads inherit only the *project* from the current context. Branch,
+// worktree, and env mode always come from the user's configured defaults —
+// carrying them over from the viewed thread meant "new thread" silently
+// reused checkouts and branches. Explicit affordances (branch toolbar's
+// "new thread in this worktree") pass those options to handleNewThread
+// directly instead.
 export async function startNewThreadFromContext(
   context: ChatThreadActionContext,
 ): Promise<boolean> {
@@ -89,43 +62,6 @@ export async function startNewThreadFromContext(
     return false;
   }
 
-  await startNewThreadInProjectFromContext(context, projectRef);
+  await context.handleNewThread(projectRef);
   return true;
-}
-
-export async function startNewLocalThreadFromContext(
-  context: ChatThreadActionContext,
-): Promise<boolean> {
-  const projectRef = resolveThreadActionProjectRef(context);
-  if (!projectRef) {
-    return false;
-  }
-
-  await context.handleNewThread(projectRef, buildDefaultThreadOptions(context));
-  return true;
-}
-
-export async function openProjectOrCreateThread<
-  TProject extends Pick<Project, "environmentId" | "id">,
-  TThread extends Pick<SidebarThreadSummary, "environmentId" | "id" | "projectId" | "archivedAt"> &
-    ThreadSortInput,
->(input: {
-  project: TProject;
-  threads: readonly TThread[];
-  sortOrder: SidebarThreadSortOrder;
-  context: OpenProjectThreadContext;
-  openThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
-}): Promise<void> {
-  const latestThread = getLatestThreadForProject(input.threads, input.project.id, input.sortOrder);
-  if (latestThread) {
-    await input.openThread(latestThread);
-    return;
-  }
-
-  await input.context.handleNewThread(
-    scopeProjectRef(input.project.environmentId, input.project.id),
-    {
-      envMode: input.context.defaultThreadEnvMode,
-    },
-  );
 }

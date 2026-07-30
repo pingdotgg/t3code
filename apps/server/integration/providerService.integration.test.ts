@@ -1,13 +1,22 @@
 import type { ProviderRuntimeEvent } from "@t3tools/contracts";
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Queue, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 
-import { ProviderUnsupportedError } from "../src/provider/Errors.ts";
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
+import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapterRegistryMock.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
+import {
+  NoOpProviderEventLoggers,
+  ProviderEventLoggers,
+} from "../src/provider/Layers/ProviderEventLoggers.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import {
   ProviderService,
@@ -16,7 +25,7 @@ import {
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
-import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
+import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -29,6 +38,8 @@ import {
   codexTurnTextFixture,
 } from "./fixtures/providerRuntime.ts";
 
+const codexInstanceId = ProviderInstanceId.make("codex");
+
 const makeWorkspaceDirectory = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
@@ -39,24 +50,20 @@ const makeWorkspaceDirectory = Effect.gen(function* () {
 
 interface IntegrationFixture {
   readonly cwd: string;
-  readonly t3: TestProviderAdapterHarness;
+  readonly harness: TestProviderAdapterHarness;
   readonly layer: Layer.Layer<ProviderService, unknown, never>;
 }
 
 const makeIntegrationFixture = Effect.gen(function* () {
   const cwd = yield* makeWorkspaceDirectory;
-  const t3 = yield* makeTestProviderAdapterHarness();
+  const harness = yield* makeTestProviderAdapterHarness();
 
-  const registry: typeof ProviderAdapterRegistry.Service = {
-    getByProvider: (provider) =>
-      provider === "codex"
-        ? Effect.succeed(t3.adapter)
-        : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex"]),
-  };
+  const registry = makeAdapterRegistryMock({
+    [ProviderDriverKind.make("codex")]: harness.adapter,
+  });
 
   const directoryLayer = ProviderSessionDirectoryLive.pipe(
-    Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    Layer.provide(ProviderSessionRuntime.layer),
   );
 
   const shared = Layer.mergeAll(
@@ -64,13 +71,14 @@ const makeIntegrationFixture = Effect.gen(function* () {
     Layer.succeed(ProviderAdapterRegistry, registry),
     ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
     AnalyticsService.layerTest,
+    Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
   ).pipe(Layer.provide(SqlitePersistenceMemory));
 
   const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
 
   return {
     cwd,
-    t3,
+    harness,
     layer,
   } satisfies IntegrationFixture;
 });
@@ -98,13 +106,13 @@ const collectEventsDuring = <A, E, R>(
 
 const runTurn = (input: {
   readonly provider: ProviderServiceShape;
-  readonly t3: TestProviderAdapterHarness;
+  readonly harness: TestProviderAdapterHarness;
   readonly threadId: ThreadId;
   readonly userText: string;
   readonly response: TestTurnResponse;
 }) =>
   Effect.gen(function* () {
-    yield* input.t3.queueTurnResponse(input.threadId, input.response);
+    yield* input.harness.queueTurnResponse(input.threadId, input.response);
     return yield* collectEventsDuring(
       input.provider.streamEvents,
       input.response.events.length,
@@ -124,7 +132,8 @@ it.live("replays typed runtime fixture events", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-typed"), {
         threadId: ThreadId.make("thread-integration-typed"),
-        provider: "codex",
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -132,7 +141,7 @@ it.live("replays typed runtime fixture events", () =>
 
       const observedEvents = yield* runTurn({
         provider,
-        t3: fixture.t3,
+        harness: fixture.harness,
         threadId: session.threadId,
         userText: "hello",
         response: { events: codexTurnTextFixture },
@@ -141,6 +150,10 @@ it.live("replays typed runtime fixture events", () =>
       assert.deepEqual(
         observedEvents.map((event) => event.type),
         codexTurnTextFixture.map((event) => event.type),
+      );
+      assert.deepEqual(
+        observedEvents.map((event) => event.providerInstanceId),
+        codexTurnTextFixture.map(() => codexInstanceId),
       );
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -156,7 +169,8 @@ it.live("replays file-changing fixture turn events", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-tools"), {
         threadId: ThreadId.make("thread-integration-tools"),
-        provider: "codex",
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -164,7 +178,7 @@ it.live("replays file-changing fixture turn events", () =>
 
       const observedEvents = yield* runTurn({
         provider,
-        t3: fixture.t3,
+        harness: fixture.harness,
         threadId: session.threadId,
         userText: "make a small change",
         response: {
@@ -192,7 +206,8 @@ it.live("runs multi-turn tool/approval flow", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-multi"), {
         threadId: ThreadId.make("thread-integration-multi"),
-        provider: "codex",
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -200,7 +215,7 @@ it.live("runs multi-turn tool/approval flow", () =>
 
       const firstTurnEvents = yield* runTurn({
         provider,
-        t3: fixture.t3,
+        harness: fixture.harness,
         threadId: session.threadId,
         userText: "turn 1",
         response: {
@@ -216,7 +231,7 @@ it.live("runs multi-turn tool/approval flow", () =>
 
       const secondTurnEvents = yield* runTurn({
         provider,
-        t3: fixture.t3,
+        harness: fixture.harness,
         threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
@@ -243,7 +258,8 @@ it.live("rolls back provider conversation state only", () =>
       const provider = yield* ProviderService;
       const session = yield* provider.startSession(ThreadId.make("thread-integration-rollback"), {
         threadId: ThreadId.make("thread-integration-rollback"),
-        provider: "codex",
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
         cwd: fixture.cwd,
         runtimeMode: "full-access",
       });
@@ -251,7 +267,7 @@ it.live("rolls back provider conversation state only", () =>
 
       yield* runTurn({
         provider,
-        t3: fixture.t3,
+        harness: fixture.harness,
         threadId: session.threadId,
         userText: "turn 1",
         response: {
@@ -263,7 +279,7 @@ it.live("rolls back provider conversation state only", () =>
 
       yield* runTurn({
         provider,
-        t3: fixture.t3,
+        harness: fixture.harness,
         threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
@@ -278,7 +294,7 @@ it.live("rolls back provider conversation state only", () =>
         numTurns: 1,
       });
 
-      const rollbackCalls = fixture.t3.getRollbackCalls(session.threadId);
+      const rollbackCalls = fixture.harness.getRollbackCalls(session.threadId);
       assert.deepEqual(rollbackCalls, [1]);
 
       const readme = yield* readFileString(join(fixture.cwd, "README.md"));

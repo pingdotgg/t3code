@@ -1,5 +1,9 @@
 import { memo, useState, useId } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
@@ -8,11 +12,8 @@ import {
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
-import ChatMarkdown, {
-  type OpenChatMarkdownFileInApp,
-  type OpenChatMarkdownFilePreview,
-} from "../ChatMarkdown";
-import { IconEllipsis as EllipsisIcon } from "symbols-react";
+import ChatMarkdown from "../ChatMarkdown";
+import { EllipsisIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -28,29 +29,32 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { readEnvironmentApi } from "~/environmentApi";
+import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
   environmentId,
+  threadRef,
   cwd,
   workspaceRoot,
-  onOpenFileInApp,
-  onOpenFilePreview,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
+  threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
-  onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
-  onOpenFilePreview?: OpenChatMarkdownFilePreview | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
+  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
+    reportFailure: false,
+  });
   const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "plan",
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
@@ -96,9 +100,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   const handleSaveToWorkspace = () => {
-    const api = readEnvironmentApi(environmentId);
     const relativePath = savePath.trim();
-    if (!api || !workspaceRoot) {
+    if (!workspaceRoot) {
       return;
     }
     if (!relativePath) {
@@ -110,21 +113,27 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     }
 
     setIsSavingToWorkspace(true);
-    void api.projects
-      .writeFile({
-        cwd: workspaceRoot,
-        relativePath,
-        contents: saveContents,
-      })
-      .then((result) => {
+    void (async () => {
+      const result = await writeProjectFile({
+        environmentId,
+        input: {
+          cwd: workspaceRoot,
+          relativePath,
+          contents: saveContents,
+        },
+      });
+      setIsSavingToWorkspace(false);
+      if (result._tag === "Success") {
         setIsSaveDialogOpen(false);
         toastManager.add({
           type: "success",
           title: "Plan saved to workspace",
-          description: result.relativePath,
+          description: result.value.relativePath,
         });
-      })
-      .catch((error) => {
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -132,15 +141,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             description: error instanceof Error ? error.message : "An error occurred while saving.",
           }),
         );
-      })
-      .then(
-        () => {
-          setIsSavingToWorkspace(false);
-        },
-        () => {
-          setIsSavingToWorkspace(false);
-        },
-      );
+      }
+    })();
   };
 
   return (
@@ -173,17 +175,15 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
+              threadRef={threadRef}
               isStreaming={false}
-              onOpenFileInApp={onOpenFileInApp}
-              onOpenFilePreview={onOpenFilePreview}
             />
           ) : (
             <ChatMarkdown
               text={displayedPlanMarkdown}
               cwd={cwd}
+              threadRef={threadRef}
               isStreaming={false}
-              onOpenFileInApp={onOpenFileInApp}
-              onOpenFilePreview={onOpenFilePreview}
             />
           )}
           {canCollapse && !expanded ? (

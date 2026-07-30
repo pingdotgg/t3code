@@ -10,10 +10,12 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "astro": "^6.0.4"
+    "@t3tools/shared": "workspace:*",
+    "astro": "^7.0.3"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.7",
+    "@vercel/config": "^0.3.0",
     "typescript": "catalog:"
   }
 }

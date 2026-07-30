@@ -1,5 +1,6 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -7,10 +8,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as CodexClient from "../../src/client.ts";
 
 const program = Effect.gen(function* () {
-  const codexLayer = CodexClient.layerCommand({
-    command: process.env.CODEX_BIN ?? "codex",
-    args: ["app-server"],
-    cwd: process.cwd(),
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const handle = yield* spawner.spawn(
+    ChildProcess.make(process.env.CODEX_BIN ?? "codex", ["app-server"], {
+      cwd: process.cwd(),
+      shell: false,
+    }),
+  );
+  const codexLayer = CodexClient.layerChildProcess(handle, {
     logIncoming: true,
     logOutgoing: true,
   });
@@ -45,17 +50,17 @@ const program = Effect.gen(function* () {
         optOutNotificationMethods: null,
       },
     });
-    yield* Console.log("initialize", JSON.stringify(initialized, null, 2));
+    yield* Console.log("initialize", initialized);
 
     yield* client.notify("initialized", undefined);
 
     const account = yield* client.request("account/read", {});
-    yield* Console.log("account/read", JSON.stringify(account, null, 2));
+    yield* Console.log("account/read", account);
 
     const skills = yield* client.request("skills/list", {
       cwds: [process.cwd()],
     });
-    yield* Console.log("skills/list", JSON.stringify(skills, null, 2));
+    yield* Console.log("skills/list", skills);
   }).pipe(Effect.provide(codexLayer));
 });
 

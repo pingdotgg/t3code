@@ -3,11 +3,12 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { deriveOrchestrationBatchEffects } from "./orchestrationEventEffects";
 
@@ -49,7 +50,7 @@ describe("deriveOrchestrationBatchEffects", () => {
         threadId: createdThreadId,
         projectId: ProjectId.make("project-1"),
         title: "Created thread",
-        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
@@ -70,7 +71,7 @@ describe("deriveOrchestrationBatchEffects", () => {
 
     expect(effects.promoteDraftThreadIds).toEqual([createdThreadId]);
     expect(effects.clearDeletedThreadIds).toEqual([deletedThreadId]);
-    expect(effects.removeTerminalStateThreadIds).toEqual([deletedThreadId, archivedThreadId]);
+    expect(effects.removeTerminalUiStateThreadIds).toEqual([deletedThreadId, archivedThreadId]);
     expect(effects.needsProviderInvalidation).toBe(false);
   });
 
@@ -86,7 +87,7 @@ describe("deriveOrchestrationBatchEffects", () => {
         threadId,
         projectId: ProjectId.make("project-1"),
         title: "Recreated thread",
-        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
@@ -108,7 +109,7 @@ describe("deriveOrchestrationBatchEffects", () => {
 
     expect(effects.promoteDraftThreadIds).toEqual([threadId]);
     expect(effects.clearDeletedThreadIds).toEqual([]);
-    expect(effects.removeTerminalStateThreadIds).toEqual([]);
+    expect(effects.removeTerminalUiStateThreadIds).toEqual([]);
     expect(effects.needsProviderInvalidation).toBe(true);
   });
 
@@ -129,6 +130,6 @@ describe("deriveOrchestrationBatchEffects", () => {
 
     expect(effects.promoteDraftThreadIds).toEqual([]);
     expect(effects.clearDeletedThreadIds).toEqual([]);
-    expect(effects.removeTerminalStateThreadIds).toEqual([]);
+    expect(effects.removeTerminalUiStateThreadIds).toEqual([]);
   });
 });

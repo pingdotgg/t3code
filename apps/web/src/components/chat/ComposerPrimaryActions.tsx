@@ -1,12 +1,11 @@
-import { memo } from "react";
-import {
-  IconChevronDown as ChevronDownIcon,
-  IconChevronLeft as ChevronLeftIcon,
-} from "symbols-react";
-
+import { memo, type PointerEventHandler } from "react";
+import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Spinner } from "../ui/spinner";
 
 interface PendingActionState {
   questionIndex: number;
@@ -20,13 +19,15 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
-  turnQueueStatus: "idle" | "queued" | "paused";
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
+  sendDisabledReason: string | null;
   isConnecting: boolean;
+  isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -50,66 +51,36 @@ export const formatPendingPrimaryActionLabel = (input: {
   return input.questionIndex > 0 ? "Submit answers" : "Submit answer";
 };
 
-function ComposerSpinnerIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill="none"
-      className="animate-spin"
-      aria-hidden="true"
-    >
-      <circle
-        cx="7"
-        cy="7"
-        r="5.5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeDasharray="20 12"
-      />
-    </svg>
-  );
-}
-
-function ComposerSendIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-      <path
-        d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ComposerStopIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-      <rect x="2" y="2" width="8" height="8" rx="1.5" />
-    </svg>
-  );
-}
+const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
+  event.preventDefault();
+};
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
-  turnQueueStatus,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
+  sendDisabledReason,
   isConnecting,
+  isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
+  const pointerFocusProps = preserveComposerFocusOnPointerDown
+    ? { onPointerDown: preventPointerFocus }
+    : undefined;
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const isSendDisabled = sendDisabledReason !== null;
+  const stageBackdropVariant = useSidebarStageBackdropVariant(
+    environmentIdentificationMode === "artwork",
+  );
+
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
@@ -119,17 +90,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               size="icon-sm"
               variant="outline"
               className="rounded-full"
+              {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
               aria-label="Previous question"
             >
-              <ChevronLeftIcon className="size-2.5" />
+              <ChevronLeftIcon className="size-3.5" />
             </Button>
           ) : (
             <Button
               size="sm"
               variant="outline"
               className="rounded-full"
+              {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
             >
@@ -141,7 +114,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           size="sm"
           className={cn("rounded-full", compact ? "px-3" : "px-4")}
+          {...pointerFocusProps}
           disabled={
+            isEnvironmentUnavailable ||
             pendingAction.isResponding ||
             (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)
           }
@@ -157,6 +132,22 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
+  if (isRunning) {
+    return (
+      <button
+        type="button"
+        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none sm:h-8 sm:w-8"
+        {...pointerFocusProps}
+        onClick={onInterrupt}
+        aria-label="Stop generation"
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+          <rect x="2" y="2" width="8" height="8" rx="1.5" />
+        </svg>
+      </button>
+    );
+  }
+
   if (showPlanFollowUpPrompt) {
     if (promptHasText) {
       return (
@@ -164,7 +155,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           size="sm"
           className={cn("rounded-full", compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8")}
-          disabled={isSendBusy || isConnecting}
+          {...pointerFocusProps}
+          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
         </Button>
@@ -177,7 +169,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           size="sm"
           className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-          disabled={isSendBusy || isConnecting}
+          {...pointerFocusProps}
+          disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Implement"}
         </Button>
@@ -189,15 +182,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 variant="default"
                 className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                 aria-label="Implementation actions"
-                disabled={isSendBusy || isConnecting}
+                {...pointerFocusProps}
+                disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
               />
             }
           >
-            <ChevronDownIcon className="size-2.5" />
+            <ChevronDownIcon className="size-3.5" />
           </MenuTrigger>
           <MenuPopup align="end" side="top">
             <MenuItem
-              disabled={isSendBusy || isConnecting}
+              disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
               onClick={() => void onImplementPlanInNewThread()}
             >
               Implement in a new thread
@@ -208,39 +202,55 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  const busyLabel = isConnecting
-    ? "Connecting"
-    : isPreparingWorktree
-      ? "Preparing worktree"
-      : "Sending";
-  const isBusy = isConnecting || isPreparingWorktree || isSendBusy;
-  const canInterrupt = isRunning && !hasSendableContent && !isBusy;
-  const actionLabel = isBusy
-    ? busyLabel
-    : canInterrupt
-      ? "Interrupt turn"
-      : isRunning || turnQueueStatus !== "idle"
-        ? "Add to queue"
-        : "Send";
-
   return (
-    <Button
-      type={canInterrupt ? "button" : "submit"}
-      size={compact ? "icon" : "icon"}
-      variant={canInterrupt ? "destructive-outline" : "default"}
-      className={cn("rounded-full", canInterrupt ? undefined : "text-white hover:text-white")}
-      disabled={isBusy || (!canInterrupt && !hasSendableContent)}
-      aria-label={actionLabel}
-      title={actionLabel}
-      onClick={canInterrupt ? onInterrupt : undefined}
-    >
-      {isBusy ? (
-        <ComposerSpinnerIcon />
-      ) : canInterrupt ? (
-        <ComposerStopIcon />
-      ) : (
-        <ComposerSendIcon />
+    <button
+      type="submit"
+      className={cn(
+        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-primary-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
+        stageBackdropVariant
+          ? "bg-transparent enabled:shadow-black/24 enabled:hover:brightness-110"
+          : "bg-primary/90 enabled:shadow-primary/24 hover:bg-primary",
       )}
-    </Button>
+      {...pointerFocusProps}
+      disabled={
+        isSendBusy ||
+        isSendDisabled ||
+        isConnecting ||
+        isEnvironmentUnavailable ||
+        !hasSendableContent
+      }
+      aria-label={
+        isEnvironmentUnavailable
+          ? "Environment disconnected"
+          : sendDisabledReason
+            ? sendDisabledReason
+            : isConnecting
+              ? "Connecting"
+              : isPreparingWorktree
+                ? "Preparing worktree"
+                : isSendBusy
+                  ? "Sending"
+                  : "Send message"
+      }
+    >
+      {stageBackdropVariant ? (
+        <span className="absolute inset-0 -z-10" aria-hidden="true">
+          <StageBackdropButtonArt variant={stageBackdropVariant} />
+        </span>
+      ) : null}
+      {isConnecting || isSendBusy ? (
+        <Spinner className="size-3.5" aria-hidden="true" />
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path
+            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </button>
   );
 });

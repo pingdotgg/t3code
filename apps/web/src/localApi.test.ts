@@ -1,22 +1,9 @@
 import {
-  CommandId,
-  DEFAULT_SERVER_SETTINGS,
-  type ClientSettings,
+  DEFAULT_CLIENT_SETTINGS,
+  type ContextMenuItem,
   type DesktopBridge,
-  type DesktopThreadAttentionActivation,
-  type DesktopThreadAttentionNotification,
-  EnvironmentId,
-  type GitStatusResult,
-  ProjectId,
-  type OrchestrationShellStreamItem,
-  type ServerConfig,
-  type ServerProvider,
-  type TerminalEvent,
-  ThreadId,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { ContextMenuItem } from "@t3tools/contracts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const showContextMenuFallbackMock =
   vi.fn<
@@ -26,286 +13,43 @@ const showContextMenuFallbackMock =
     ) => Promise<T | null>
   >();
 
-function registerListener<T>(listeners: Set<(event: T) => void>, listener: (event: T) => void) {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
-const shellStreamListeners = new Set<(event: OrchestrationShellStreamItem) => void>();
-const gitStatusListeners = new Set<(event: GitStatusResult) => void>();
-const threadAttentionActivationListeners = new Set<
-  (event: DesktopThreadAttentionActivation) => void
->();
-
-const rpcClientMock = {
-  dispose: vi.fn(),
-  terminal: {
-    open: vi.fn(),
-    write: vi.fn(),
-    resize: vi.fn(),
-    clear: vi.fn(),
-    restart: vi.fn(),
-    close: vi.fn(),
-    onEvent: vi.fn((listener: (event: TerminalEvent) => void) =>
-      registerListener(terminalEventListeners, listener),
-    ),
-  },
-  projects: {
-    listEntries: vi.fn(),
-    createDirectory: vi.fn(),
-    renameEntry: vi.fn(),
-    deleteEntry: vi.fn(),
-    readFile: vi.fn(),
-    searchEntries: vi.fn(),
-    writeFile: vi.fn(),
-  },
-  preview: {
-    inspectProject: vi.fn(),
-    searchComponents: vi.fn(),
-    resolveTarget: vi.fn(),
-    prepareBootstrapThread: vi.fn(),
-    preparePreviewGenerationTurn: vi.fn(),
-    preparePreviewRepairTurn: vi.fn(),
-    ensureRuntime: vi.fn(),
-    issueAccessToken: vi.fn(),
-    stopRuntime: vi.fn(),
-    subscribeProject: vi.fn(),
-  },
-  filesystem: {
-    browse: vi.fn(),
-  },
-  shell: {
-    openInEditor: vi.fn(),
-  },
-  git: {
-    pull: vi.fn(),
-    refreshStatus: vi.fn(),
-    onStatus: vi.fn((input: { cwd: string }, listener: (event: GitStatusResult) => void) =>
-      registerListener(gitStatusListeners, listener),
-    ),
-    runStackedAction: vi.fn(),
-    listBranches: vi.fn(),
-    createWorktree: vi.fn(),
-    removeWorktree: vi.fn(),
-    createBranch: vi.fn(),
-    checkout: vi.fn(),
-    init: vi.fn(),
-    resolvePullRequest: vi.fn(),
-    preparePullRequestThread: vi.fn(),
-  },
-  server: {
-    getConfig: vi.fn(),
-    refreshProviders: vi.fn(),
-    upsertKeybinding: vi.fn(),
-    getSettings: vi.fn(),
-    updateSettings: vi.fn(),
-    subscribeConfig: vi.fn(),
-    subscribeLifecycle: vi.fn(),
-    subscribeAuthAccess: vi.fn(),
-  },
-  orchestration: {
-    dispatchCommand: vi.fn(),
-    getTurnDiff: vi.fn(),
-    getFullThreadDiff: vi.fn(),
-    subscribeShell: vi.fn((listener: (event: OrchestrationShellStreamItem) => void) =>
-      registerListener(shellStreamListeners, listener),
-    ),
-    subscribeThread: vi.fn(() => () => undefined),
-  },
-};
-
-vi.mock("./environments/runtime", () => ({
-  getPrimaryEnvironmentConnection: () => ({
-    kind: "primary" as const,
-    knownEnvironment: {
-      id: "environment-local",
-      label: "Primary",
-      source: "manual" as const,
-      target: {
-        httpBaseUrl: "http://localhost:3000",
-        wsBaseUrl: "ws://localhost:3000",
-      },
-      environmentId: EnvironmentId.make("environment-local"),
-    },
-    client: rpcClientMock,
-    environmentId: EnvironmentId.make("environment-local"),
-    ensureBootstrapped: async () => undefined,
-    reconnect: async () => undefined,
-    dispose: async () => undefined,
-  }),
-  resetEnvironmentServiceForTests: vi.fn(),
-  resetSavedEnvironmentRegistryStoreForTests: vi.fn(),
-  resetSavedEnvironmentRuntimeStoreForTests: vi.fn(),
-}));
-
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
 }));
 
-function emitEvent<T>(listeners: Set<(event: T) => void>, event: T) {
-  for (const listener of listeners) {
-    listener(event);
-  }
-}
-
-function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unknown } {
-  const testGlobal = globalThis as typeof globalThis & {
-    window?: Window & typeof globalThis & { desktopBridge?: unknown };
-  };
-  if (!testGlobal.window) {
-    testGlobal.window = {} as Window & typeof globalThis & { desktopBridge?: unknown };
-  }
-  return testGlobal.window;
-}
-
 function createLocalStorageStub(): Storage {
-  const store = new Map<string, string>();
+  const values = new Map<string, string>();
   return {
-    getItem: (key) => store.get(key) ?? null,
+    getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => {
-      store.set(key, value);
+      values.set(key, value);
     },
     removeItem: (key) => {
-      store.delete(key);
+      values.delete(key);
     },
-    clear: () => {
-      store.clear();
-    },
-    key: (index) => [...store.keys()][index] ?? null,
+    clear: () => values.clear(),
+    key: (index) => [...values.keys()][index] ?? null,
     get length() {
-      return store.size;
+      return values.size;
     },
   };
 }
 
-function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
-  return {
-    getAppBranding: () => null,
-    getLocalEnvironmentBootstrap: () => null,
-    getClientSettings: async () => null,
-    setClientSettings: async () => undefined,
-    getSavedEnvironmentRegistry: async () => [],
-    setSavedEnvironmentRegistry: async () => undefined,
-    getSavedEnvironmentSecret: async () => null,
-    setSavedEnvironmentSecret: async () => true,
-    removeSavedEnvironmentSecret: async () => undefined,
-    getServerExposureState: async () => ({
-      mode: "local-only",
-      endpointUrl: null,
-      advertisedHost: null,
-    }),
-    setServerExposureMode: async () => ({
-      mode: "local-only",
-      endpointUrl: null,
-      advertisedHost: null,
-    }),
-    pickFolder: async () => null,
-    confirm: async () => true,
-    setTheme: async () => undefined,
-    showContextMenu: async () => null,
-    openExternal: async () => true,
-    notifyThreadAttention: async () => false,
-    onThreadAttentionActivated: (listener) =>
-      registerListener(threadAttentionActivationListeners, listener),
-    onMenuAction: () => () => undefined,
-    getUpdateState: async () => {
-      throw new Error("getUpdateState not implemented in test");
-    },
-    setUpdateChannel: async () => {
-      throw new Error("setUpdateChannel not implemented in test");
-    },
-    checkForUpdate: async () => {
-      throw new Error("checkForUpdate not implemented in test");
-    },
-    downloadUpdate: async () => {
-      throw new Error("downloadUpdate not implemented in test");
-    },
-    installUpdate: async () => {
-      throw new Error("installUpdate not implemented in test");
-    },
-    onUpdateState: () => () => undefined,
-    ...overrides,
-  };
+function testWindow(): Window & typeof globalThis {
+  return globalThis.window ?? (globalThis as unknown as Window & typeof globalThis);
 }
-
-const defaultProviders: ReadonlyArray<ServerProvider> = [
-  {
-    provider: "codex",
-    enabled: true,
-    installed: true,
-    version: "0.116.0",
-    status: "ready",
-    auth: { status: "authenticated" },
-    checkedAt: "2026-01-01T00:00:00.000Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
-  },
-];
-
-const baseEnvironment = {
-  environmentId: EnvironmentId.make("environment-local"),
-  label: "Local environment",
-  platform: {
-    os: "darwin" as const,
-    arch: "arm64" as const,
-  },
-  serverVersion: "0.0.0-test",
-  capabilities: {
-    repositoryIdentity: true,
-  },
-};
-
-const baseServerConfig: ServerConfig = {
-  environment: baseEnvironment,
-  auth: {
-    policy: "loopback-browser",
-    bootstrapMethods: ["one-time-token"],
-    sessionMethods: ["browser-session-cookie", "bearer-session-token"],
-    sessionCookieName: "t3_session",
-  },
-  cwd: "/tmp/workspace",
-  keybindingsConfigPath: "/tmp/workspace/.config/keybindings.json",
-  keybindings: [],
-  issues: [],
-  providers: defaultProviders,
-  availableEditors: ["cursor"],
-  observability: {
-    logsDirectoryPath: "/tmp/workspace/.config/logs",
-    localTracingEnabled: true,
-    otlpTracesEnabled: false,
-    otlpMetricsEnabled: false,
-  },
-  settings: DEFAULT_SERVER_SETTINGS,
-};
-
-const baseGitStatus: GitStatusResult = {
-  isRepo: true,
-  hasOriginRemote: true,
-  isDefaultBranch: false,
-  branch: "feature/streamed",
-  hasWorkingTreeChanges: false,
-  workingTree: { files: [], insertions: 0, deletions: 0 },
-  hasUpstream: true,
-  aheadCount: 0,
-  behindCount: 0,
-  pr: null,
-};
 
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
-  showContextMenuFallbackMock.mockReset();
-  terminalEventListeners.clear();
-  shellStreamListeners.clear();
-  gitStatusListeners.clear();
-  threadAttentionActivationListeners.clear();
-  const testWindow = getWindowForTest();
-  Reflect.deleteProperty(testWindow, "desktopBridge");
-  Object.defineProperty(testWindow, "localStorage", {
+  if (globalThis.window === undefined) {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: globalThis,
+    });
+  }
+  Reflect.deleteProperty(testWindow(), "desktopBridge");
+  Object.defineProperty(testWindow(), "localStorage", {
     configurable: true,
     value: createLocalStorageStub(),
   });
@@ -315,546 +59,60 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("wsApi", () => {
-  it("forwards server config fetches directly to the RPC client", async () => {
-    rpcClientMock.server.getConfig.mockResolvedValue(baseServerConfig);
+describe("LocalApi", () => {
+  it("keeps backend operations out of the local host facade", async () => {
     const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
 
-    const api = createLocalApi(rpcClientMock as never);
-
-    await expect(api.server.getConfig()).resolves.toEqual(baseServerConfig);
-    expect(rpcClientMock.server.getConfig).toHaveBeenCalledWith();
-    expect(rpcClientMock.server.subscribeConfig).not.toHaveBeenCalled();
-    expect(rpcClientMock.server.subscribeLifecycle).not.toHaveBeenCalled();
+    expect(api).not.toHaveProperty("server");
+    expect(api.shell).not.toHaveProperty("openInEditor");
   });
 
-  it("forwards terminal and shell stream events", async () => {
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    const onTerminalEvent = vi.fn();
-    const onShellEvent = vi.fn();
-
-    api.terminal.onEvent(onTerminalEvent);
-    api.orchestration.subscribeShell(onShellEvent);
-
-    const terminalEvent = {
-      threadId: "thread-1",
-      terminalId: "terminal-1",
-      createdAt: "2026-02-24T00:00:00.000Z",
-      type: "output",
-      data: "hello",
-    } as const;
-    emitEvent(terminalEventListeners, terminalEvent);
-
-    const shellEvent = {
-      kind: "project-upserted" as const,
-      sequence: 1,
-      project: {
-        id: ProjectId.make("project-1"),
-        title: "Project",
-        workspaceRoot: "/tmp/workspace",
-        defaultModelSelection: {
-          provider: "codex",
-          model: "gpt-5-codex",
-        },
-        scripts: [],
-        previewWorkspaceRecords: [],
-        createdAt: "2026-02-24T00:00:00.000Z",
-        updatedAt: "2026-02-24T00:00:00.000Z",
-      },
-    } satisfies OrchestrationShellStreamItem;
-    emitEvent(shellStreamListeners, shellEvent);
-
-    expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
-    expect(onShellEvent).toHaveBeenCalledWith(shellEvent);
-  });
-
-  it("reuses the same environment API wrapper for the same RPC client", async () => {
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const firstApi = createEnvironmentApi(rpcClientMock as never);
-    const secondApi = createEnvironmentApi(rpcClientMock as never);
-
-    expect(secondApi).toBe(firstApi);
-  });
-
-  it("forwards git status stream events", async () => {
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    const onStatus = vi.fn();
-
-    api.git.onStatus({ cwd: "/repo" }, onStatus);
-
-    const gitStatus = baseGitStatus;
-    emitEvent(gitStatusListeners, gitStatus);
-
-    expect(rpcClientMock.git.onStatus).toHaveBeenCalledWith({ cwd: "/repo" }, onStatus, undefined);
-    expect(onStatus).toHaveBeenCalledWith(gitStatus);
-  });
-
-  it("forwards git status refreshes directly to the RPC client", async () => {
-    rpcClientMock.git.refreshStatus.mockResolvedValue(baseGitStatus);
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-
-    await api.git.refreshStatus({ cwd: "/repo" });
-
-    expect(rpcClientMock.git.refreshStatus).toHaveBeenCalledWith({ cwd: "/repo" });
-  });
-
-  it("forwards shell stream subscription options to the RPC client", async () => {
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    const onShellEvent = vi.fn();
-    const onResubscribe = vi.fn();
-
-    api.orchestration.subscribeShell(onShellEvent, { onResubscribe });
-
-    expect(rpcClientMock.orchestration.subscribeShell).toHaveBeenCalledWith(onShellEvent, {
-      onResubscribe,
-    });
-  });
-
-  it("sends orchestration dispatch commands as the direct RPC payload", async () => {
-    rpcClientMock.orchestration.dispatchCommand.mockResolvedValue({ sequence: 1 });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    const command = {
-      type: "project.create",
-      commandId: CommandId.make("cmd-1"),
-      projectId: ProjectId.make("project-1"),
-      title: "Project",
-      workspaceRoot: "/tmp/project",
-      defaultModelSelection: {
-        provider: "codex",
-        model: "gpt-5-codex",
-      },
-      createdAt: "2026-02-24T00:00:00.000Z",
-    } as const;
-    await api.orchestration.dispatchCommand(command);
-
-    expect(rpcClientMock.orchestration.dispatchCommand).toHaveBeenCalledWith(command);
-  });
-
-  it("forwards workspace file writes to the project RPC", async () => {
-    rpcClientMock.projects.writeFile.mockResolvedValue({
-      relativePath: "plan.md",
-      version: "a".repeat(64),
-    });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.projects.writeFile({
-      cwd: "/tmp/project",
-      relativePath: "plan.md",
-      contents: "# Plan\n",
-    });
-
-    expect(rpcClientMock.projects.writeFile).toHaveBeenCalledWith({
-      cwd: "/tmp/project",
-      relativePath: "plan.md",
-      contents: "# Plan\n",
-    });
-  });
-
-  it("forwards workspace file reads to the project RPC", async () => {
-    rpcClientMock.projects.readFile.mockResolvedValue({
-      relativePath: "plan.md",
-      contents: "# Plan\n",
-      version: "a".repeat(64),
-    });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.projects.readFile({
-      cwd: "/tmp/project",
-      relativePath: "plan.md",
-    });
-
-    expect(rpcClientMock.projects.readFile).toHaveBeenCalledWith({
-      cwd: "/tmp/project",
-      relativePath: "plan.md",
-    });
-  });
-
-  it("forwards workspace directory creation to the project RPC", async () => {
-    rpcClientMock.projects.createDirectory.mockResolvedValue({
-      relativePath: "src/components",
-    });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.projects.createDirectory({
-      cwd: "/tmp/project",
-      relativePath: "src/components",
-    });
-
-    expect(rpcClientMock.projects.createDirectory).toHaveBeenCalledWith({
-      cwd: "/tmp/project",
-      relativePath: "src/components",
-    });
-  });
-
-  it("forwards workspace entry renames to the project RPC", async () => {
-    rpcClientMock.projects.renameEntry.mockResolvedValue({
-      fromRelativePath: "src/a.ts",
-      toRelativePath: "src/b.ts",
-      kind: "file",
-    });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.projects.renameEntry({
-      cwd: "/tmp/project",
-      fromRelativePath: "src/a.ts",
-      toRelativePath: "src/b.ts",
-    });
-
-    expect(rpcClientMock.projects.renameEntry).toHaveBeenCalledWith({
-      cwd: "/tmp/project",
-      fromRelativePath: "src/a.ts",
-      toRelativePath: "src/b.ts",
-    });
-  });
-
-  it("forwards workspace entry deletes to the project RPC", async () => {
-    rpcClientMock.projects.deleteEntry.mockResolvedValue({
-      relativePath: "src/a.ts",
-      kind: "file",
-    });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.projects.deleteEntry({
-      cwd: "/tmp/project",
-      relativePath: "src/a.ts",
-      recursive: false,
-    });
-
-    expect(rpcClientMock.projects.deleteEntry).toHaveBeenCalledWith({
-      cwd: "/tmp/project",
-      relativePath: "src/a.ts",
-      recursive: false,
-    });
-  });
-
-  it("forwards workspace entry listing to the project RPC", async () => {
-    rpcClientMock.projects.listEntries.mockResolvedValue({
-      entries: [{ path: "src", kind: "directory", parentPath: undefined }],
-    });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.projects.listEntries({
-      cwd: "/tmp/project",
-      relativePath: "src",
-    });
-
-    expect(rpcClientMock.projects.listEntries).toHaveBeenCalledWith({
-      cwd: "/tmp/project",
-      relativePath: "src",
-    });
-  });
-
-  it("forwards filesystem browse requests to the RPC client", async () => {
-    rpcClientMock.filesystem.browse.mockResolvedValue({
-      parentPath: "/tmp/project/",
-      entries: [],
-    });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.filesystem.browse({
-      partialPath: "/tmp/project/",
-      cwd: "/tmp/project",
-    });
-
-    expect(rpcClientMock.filesystem.browse).toHaveBeenCalledWith({
-      partialPath: "/tmp/project/",
-      cwd: "/tmp/project",
-    });
-  });
-
-  it("forwards full-thread diff requests to the orchestration RPC", async () => {
-    rpcClientMock.orchestration.getFullThreadDiff.mockResolvedValue({ diff: "patch" });
-    const { createEnvironmentApi } = await import("./environmentApi");
-
-    const api = createEnvironmentApi(rpcClientMock as never);
-    await api.orchestration.getFullThreadDiff({
-      threadId: ThreadId.make("thread-1"),
-      toTurnCount: 1,
-    });
-
-    expect(rpcClientMock.orchestration.getFullThreadDiff).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      toTurnCount: 1,
-    });
-  });
-
-  it("forwards provider refreshes directly to the RPC client", async () => {
-    const nextProviders: ReadonlyArray<ServerProvider> = [
-      {
-        ...defaultProviders[0]!,
-        checkedAt: "2026-01-03T00:00:00.000Z",
-      },
-    ];
-    rpcClientMock.server.refreshProviders.mockResolvedValue({ providers: nextProviders });
-    const { createLocalApi } = await import("./localApi");
-
-    const api = createLocalApi(rpcClientMock as never);
-
-    await expect(api.server.refreshProviders()).resolves.toEqual({ providers: nextProviders });
-    expect(rpcClientMock.server.refreshProviders).toHaveBeenCalledWith();
-  });
-
-  it("forwards server settings updates directly to the RPC client", async () => {
-    const nextSettings = {
-      ...DEFAULT_SERVER_SETTINGS,
-      enableAssistantStreaming: true,
-    };
-    rpcClientMock.server.updateSettings.mockResolvedValue(nextSettings);
-    const { createLocalApi } = await import("./localApi");
-
-    const api = createLocalApi(rpcClientMock as never);
-
-    await expect(api.server.updateSettings({ enableAssistantStreaming: true })).resolves.toEqual(
-      nextSettings,
-    );
-    expect(rpcClientMock.server.updateSettings).toHaveBeenCalledWith({
-      enableAssistantStreaming: true,
-    });
-  });
-
-  it("forwards context menu metadata to the desktop bridge", async () => {
-    const showContextMenu = vi.fn().mockResolvedValue("delete");
-    getWindowForTest().desktopBridge = makeDesktopBridge({ showContextMenu });
-
-    const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi(rpcClientMock as never);
-    const items = [{ id: "delete", label: "Delete" }] as const;
-
-    await expect(api.contextMenu.show(items)).resolves.toBe("delete");
-    expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
-  });
-
-  it("forwards folder picker options to the desktop bridge", async () => {
-    const pickFolder = vi.fn().mockResolvedValue("/tmp/project");
-    getWindowForTest().desktopBridge = makeDesktopBridge({ pickFolder });
-
-    const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi(rpcClientMock as never);
-
-    await expect(api.dialogs.pickFolder({ initialPath: "/tmp/workspace" })).resolves.toBe(
-      "/tmp/project",
-    );
-    expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp/workspace" });
-  });
-
-  it("falls back to the browser context menu helper when the desktop bridge is missing", async () => {
+  it("uses the browser context-menu fallback without a desktop bridge", async () => {
     showContextMenuFallbackMock.mockResolvedValue("rename");
     const { createLocalApi } = await import("./localApi");
-
-    const api = createLocalApi(rpcClientMock as never);
     const items = [{ id: "rename", label: "Rename" }] as const;
 
-    await expect(api.contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe("rename");
+    await expect(createLocalApi().contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe("rename");
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
   });
 
-  it("reads and writes persistence through the desktop bridge when available", async () => {
-    const clientSettings: ClientSettings = {
-      appIcon: "forma-fluted",
-      autoOpenPlanSidebar: false,
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      desktopNotifyOnApprovalRequests: true,
-      desktopNotifyOnUserInputRequests: true,
-      uiFontScale: 17,
-      codeFontScale: 13,
-      macOsFontSmoothing: "grayscale" as const,
-      threadCleanupInactiveDays: 7 as const,
-      diffWordWrap: true,
-      favorites: [],
-      sidebarProjectGroupingMode: "repository_path" as const,
-      sidebarProjectGroupingOverrides: {
-        "environment-local:/tmp/project": "separate" as const,
-      },
-      sidebarProjectSortOrder: "manual" as const,
-      sidebarThreadSortOrder: "created_at" as const,
-      timestampFormat: "24-hour" as const,
-    };
-    const getClientSettings = vi.fn().mockResolvedValue({
-      ...clientSettings,
-    });
+  it("delegates host capabilities and persistence to the desktop bridge", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    const pickFolder = vi.fn().mockResolvedValue("/tmp/project");
+    const getClientSettings = vi.fn().mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
     const setClientSettings = vi.fn().mockResolvedValue(undefined);
-    const getSavedEnvironmentRegistry = vi.fn().mockResolvedValue([]);
-    const setSavedEnvironmentRegistry = vi.fn().mockResolvedValue(undefined);
-    const getSavedEnvironmentSecret = vi.fn().mockResolvedValue("bearer-token");
-    const setSavedEnvironmentSecret = vi.fn().mockResolvedValue(true);
-    const removeSavedEnvironmentSecret = vi.fn().mockResolvedValue(undefined);
-    getWindowForTest().desktopBridge = makeDesktopBridge({
+    testWindow().desktopBridge = {
+      showContextMenu,
+      pickFolder,
       getClientSettings,
       setClientSettings,
-      getSavedEnvironmentRegistry,
-      setSavedEnvironmentRegistry,
-      getSavedEnvironmentSecret,
-      setSavedEnvironmentSecret,
-      removeSavedEnvironmentSecret,
-    });
+    } as unknown as DesktopBridge;
 
     const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi(rpcClientMock as never);
+    const api = createLocalApi();
+    const items = [{ id: "delete", label: "Delete" }] as const;
 
-    await api.persistence.getClientSettings();
-    await api.persistence.setClientSettings(clientSettings);
-    await api.persistence.getSavedEnvironmentRegistry();
-    await api.persistence.setSavedEnvironmentRegistry([]);
-    await api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
-    await api.persistence.setSavedEnvironmentSecret(
-      EnvironmentId.make("environment-local"),
-      "bearer-token",
-    );
-    await api.persistence.removeSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
+    await expect(api.contextMenu.show(items)).resolves.toBe("delete");
+    await expect(api.dialogs.pickFolder({ initialPath: "/tmp" })).resolves.toBe("/tmp/project");
+    await expect(api.persistence.getClientSettings()).resolves.toEqual(DEFAULT_CLIENT_SETTINGS);
+    await api.persistence.setClientSettings(DEFAULT_CLIENT_SETTINGS);
 
-    expect(getClientSettings).toHaveBeenCalledWith();
-    expect(setClientSettings).toHaveBeenCalledWith(clientSettings);
-    expect(getSavedEnvironmentRegistry).toHaveBeenCalledWith();
-    expect(setSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
-    expect(getSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
-    expect(setSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local", "bearer-token");
-    expect(removeSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
+    expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
+    expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp" });
+    expect(getClientSettings).toHaveBeenCalledTimes(1);
+    expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);
   });
 
-  it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
+  it("persists client settings in browser storage", async () => {
     const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi(rpcClientMock as never);
-    const clientSettings: ClientSettings = {
-      appIcon: "forma-foil",
-      autoOpenPlanSidebar: false,
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      desktopNotifyOnApprovalRequests: true,
-      desktopNotifyOnUserInputRequests: true,
-      uiFontScale: 16,
-      codeFontScale: 14,
-      macOsFontSmoothing: "auto",
-      threadCleanupInactiveDays: 7 as const,
-      diffWordWrap: true,
-      favorites: [],
-      sidebarProjectGroupingMode: "repository_path" as const,
-      sidebarProjectGroupingOverrides: {
-        "environment-local:/tmp/project": "separate" as const,
-      },
-      sidebarProjectSortOrder: "manual" as const,
-      sidebarThreadSortOrder: "created_at" as const,
-      timestampFormat: "24-hour" as const,
+    const api = createLocalApi();
+    const settings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      timestampFormat: "12-hour" as const,
     };
 
-    await api.persistence.setClientSettings(clientSettings);
-    await api.persistence.setSavedEnvironmentRegistry([
-      {
-        environmentId: EnvironmentId.make("environment-local"),
-        label: "Primary",
-        httpBaseUrl: "http://localhost:3000",
-        wsBaseUrl: "ws://localhost:3000",
-        createdAt: "2026-04-09T00:00:00.000Z",
-        lastConnectedAt: null,
-      },
-    ]);
-    await api.persistence.setSavedEnvironmentSecret(
-      EnvironmentId.make("environment-local"),
-      "bearer-token",
-    );
-
-    await expect(api.persistence.getClientSettings()).resolves.toEqual(clientSettings);
-    await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([
-      {
-        environmentId: EnvironmentId.make("environment-local"),
-        label: "Primary",
-        httpBaseUrl: "http://localhost:3000",
-        wsBaseUrl: "ws://localhost:3000",
-        createdAt: "2026-04-09T00:00:00.000Z",
-        lastConnectedAt: null,
-      },
-    ]);
-    await expect(
-      api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local")),
-    ).resolves.toBe("bearer-token");
-
-    await api.persistence.removeSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
-
-    await expect(
-      api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local")),
-    ).resolves.toBeNull();
-  });
-
-  it("forwards thread-attention notifications through the desktop bridge", async () => {
-    const notifyThreadAttention = vi.fn().mockResolvedValue(true);
-    getWindowForTest().desktopBridge = makeDesktopBridge({ notifyThreadAttention });
-
-    const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi(rpcClientMock as never);
-    const notification: DesktopThreadAttentionNotification = {
-      environmentId: EnvironmentId.make("environment-local"),
-      threadId: ThreadId.make("thread-1"),
-      threadTitle: "Review config",
-      kind: "approval",
-    };
-
-    await expect(api.notifications.notifyThreadAttention(notification)).resolves.toBe(true);
-    expect(notifyThreadAttention).toHaveBeenCalledWith(notification);
-  });
-
-  it("wires and unsubscribes thread-attention activation listeners through the desktop bridge", async () => {
-    getWindowForTest().desktopBridge = makeDesktopBridge();
-
-    const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi(rpcClientMock as never);
-    const activationListener = vi.fn();
-    const activation: DesktopThreadAttentionActivation = {
-      environmentId: EnvironmentId.make("environment-local"),
-      threadId: ThreadId.make("thread-1"),
-      threadTitle: "Review config",
-      kind: "user-input",
-    };
-
-    const unsubscribe = api.notifications.onThreadAttentionActivated(activationListener);
-    emitEvent(threadAttentionActivationListeners, activation);
-    expect(activationListener).toHaveBeenCalledWith(activation);
-
-    unsubscribe();
-    emitEvent(threadAttentionActivationListeners, activation);
-    expect(activationListener).toHaveBeenCalledTimes(1);
-  });
-
-  it("falls back to no-op thread-attention notifications when the desktop bridge is missing", async () => {
-    const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi(rpcClientMock as never);
-    const activationListener = vi.fn();
-
-    await expect(
-      api.notifications.notifyThreadAttention({
-        environmentId: EnvironmentId.make("environment-local"),
-        threadId: ThreadId.make("thread-1"),
-        threadTitle: "Review config",
-        kind: "approval",
-      }),
-    ).resolves.toBe(false);
-
-    const unsubscribe = api.notifications.onThreadAttentionActivated(activationListener);
-    emitEvent(threadAttentionActivationListeners, {
-      environmentId: EnvironmentId.make("environment-local"),
-      threadId: ThreadId.make("thread-1"),
-      threadTitle: "Review config",
-      kind: "approval",
-    });
-    unsubscribe();
-
-    expect(activationListener).not.toHaveBeenCalled();
+    await api.persistence.setClientSettings(settings);
+    await expect(api.persistence.getClientSettings()).resolves.toEqual(settings);
   });
 });

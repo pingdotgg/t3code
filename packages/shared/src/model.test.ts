@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL_BY_PROVIDER, type ModelCapabilities } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
-  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
@@ -11,11 +10,8 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
-  isClaudeUltrathinkPrompt,
+  normalizeCustomModelSlug,
   normalizeModelSlug,
-  resolveModelSlugForProvider,
-  resolveSelectableModel,
-  trimOrNull,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -63,75 +59,6 @@ const claudeCaps: ModelCapabilities = createModelCapabilities({
       currentValue: "1m",
     },
   ],
-});
-
-describe("normalizeModelSlug", () => {
-  it("maps known aliases to canonical slugs", () => {
-    expect(normalizeModelSlug("gpt-5-codex")).toBe("gpt-5.5");
-    expect(normalizeModelSlug("5.5")).toBe("gpt-5.5");
-    expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
-    expect(normalizeModelSlug("fable", "claudeAgent")).toBe("claude-fable-5");
-    expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
-  });
-
-  it("returns null for empty or missing values", () => {
-    expect(normalizeModelSlug("")).toBeNull();
-    expect(normalizeModelSlug("   ")).toBeNull();
-    expect(normalizeModelSlug(null)).toBeNull();
-    expect(normalizeModelSlug(undefined)).toBeNull();
-  });
-});
-
-describe("resolveModelSlugForProvider", () => {
-  it("returns defaults when the model is missing", () => {
-    expect(resolveModelSlugForProvider("codex", undefined)).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-    expect(resolveModelSlugForProvider("claudeAgent", undefined)).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
-    );
-    expect(resolveModelSlugForProvider("grok", undefined)).toBe(DEFAULT_MODEL_BY_PROVIDER.grok);
-  });
-
-  it("preserves normalized unknown models", () => {
-    expect(resolveModelSlugForProvider("codex", "custom/internal-model")).toBe(
-      "custom/internal-model",
-    );
-  });
-});
-
-describe("resolveSelectableModel", () => {
-  it("resolves exact slugs, labels, and aliases", () => {
-    const options = [
-      { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-      { slug: "claude-fable-5", name: "Claude Fable 5" },
-      { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    ];
-    expect(resolveSelectableModel("codex", "gpt-5.3-codex", options)).toBe("gpt-5.3-codex");
-    expect(resolveSelectableModel("codex", "gpt-5.3 codex", options)).toBe("gpt-5.3-codex");
-    expect(resolveSelectableModel("claudeAgent", "fable", options)).toBe("claude-fable-5");
-    expect(resolveSelectableModel("claudeAgent", "sonnet", options)).toBe("claude-sonnet-4-6");
-  });
-});
-
-describe("misc helpers", () => {
-  it("detects ultrathink prompts", () => {
-    expect(isClaudeUltrathinkPrompt("Please ultrathink about this")).toBe(true);
-    expect(isClaudeUltrathinkPrompt("Ultrathink:\nInvestigate")).toBe(true);
-    expect(isClaudeUltrathinkPrompt("Investigate")).toBe(false);
-  });
-
-  it("prefixes ultrathink prompts once", () => {
-    expect(applyClaudePromptEffortPrefix("Investigate", "ultrathink")).toBe(
-      "Ultrathink:\nInvestigate",
-    );
-    expect(applyClaudePromptEffortPrefix("Ultrathink:\nInvestigate", "ultrathink")).toBe(
-      "Ultrathink:\nInvestigate",
-    );
-  });
-
-  it("trims strings to null", () => {
-    expect(trimOrNull("  hi  ")).toBe("hi");
-    expect(trimOrNull("   ")).toBeNull();
-  });
 });
 
 describe("descriptor helpers", () => {
@@ -187,12 +114,12 @@ describe("descriptor helpers", () => {
 
   it("stores option selection arrays in model selections", () => {
     expect(
-      createModelSelection("codex", "gpt-5.4", [
+      createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
         { id: "reasoningEffort", value: "high" },
         { id: "fastMode", value: true },
       ]),
     ).toEqual({
-      provider: "codex",
+      instanceId: "codex",
       model: "gpt-5.4",
       options: [
         { id: "reasoningEffort", value: "high" },
@@ -202,7 +129,7 @@ describe("descriptor helpers", () => {
   });
 
   it("reads typed option selection values", () => {
-    const selection = createModelSelection("codex", "gpt-5.4", [
+    const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },
       { id: "fastMode", value: true },
     ]);
@@ -217,5 +144,14 @@ describe("descriptor helpers", () => {
     ).toBeUndefined();
     expect(getModelSelectionStringOptionValue(selection, "reasoningEffort")).toBe("high");
     expect(getModelSelectionBooleanOptionValue(selection, "fastMode")).toBe(true);
+  });
+});
+
+describe("model slug normalization", () => {
+  it("preserves exact custom slugs instead of expanding provider aliases", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+
+    expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
+    expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
   });
 });

@@ -5,251 +5,169 @@ import {
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { RefObject } from "react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { memo } from "react";
+import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import {
-  IconCheckmark as CheckIcon,
-  IconChevronDown as ChevronDownIcon,
-  IconChevronRight as ChevronRightIcon,
-  IconCube as CubeIcon,
-} from "symbols-react";
-import type { SidebarThreadSummary } from "~/types";
-import { cn } from "~/lib/utils";
-import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { type NewProjectScriptInput } from "../ProjectScriptsControl";
-import { DesktopSidebarReopenButton } from "../sidebar/DesktopSidebarReopenButton";
-import {
-  ThreadBreadcrumbProjectChipContent,
-  THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
-  THREAD_BREADCRUMB_PROJECT_CHIP_INTERACTIVE_CLASS_NAME,
-  THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME,
-} from "../ThreadBreadcrumb";
-import { SidebarTrigger } from "../ui/sidebar";
-import { HeaderIconActionButton } from "../HeaderIconActionButton";
-import { SidebarPanelIcon } from "../icons/custom";
-import { ChatHeaderActionsMenu } from "./ChatHeaderActionsMenu";
-import { type GitActionsControlHandle } from "../GitActionsControl";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import ProjectScriptsControl, {
+  type NewProjectScriptInput,
+  type ProjectScriptActionResult,
+} from "../ProjectScriptsControl";
+import { OpenInPicker } from "./OpenInPicker";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
+import { ProjectFavicon } from "../ProjectFavicon";
+import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
-  routeKind: "server" | "draft";
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
-  projectThreads: readonly SidebarThreadSummary[];
-  isGitRepo: boolean;
+  activeProjectCwd: string | null;
   openInCwd: string | null;
-  activeProjectScripts: ProjectScript[] | undefined;
+  activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
-  gitActionsRef?: RefObject<GitActionsControlHandle | null> | undefined;
   availableEditors: ReadonlyArray<EditorId>;
+  rightPanelOpen: boolean;
   gitCwd: string | null;
-  workspaceRoot: string | null;
-  filesAvailable: boolean;
-  filesOpen: boolean;
+  onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
-  onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
-  onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
-  onDeleteProjectScript: (scriptId: string) => Promise<void>;
-  onOpenProjectSwitcher: () => void;
-  onSelectThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => void;
-  onToggleFiles: () => void;
-  onCopyThreadAsMarkdown: () => void;
-  onCopyWorkspacePath?: (() => void) | undefined;
-  onCopyThreadId?: (() => void) | undefined;
-  onForkThread?: (() => void) | undefined;
-  onArchiveThread?: (() => void) | undefined;
-  onDeleteThread?: (() => void) | undefined;
+  onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onUpdateProjectScript: (
+    scriptId: string,
+    input: NewProjectScriptInput,
+  ) => Promise<ProjectScriptActionResult>;
+  onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+}
+
+export function shouldShowOpenInPicker(input: {
+  readonly activeProjectName: string | undefined;
+  readonly activeThreadEnvironmentId: EnvironmentId;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+}): boolean {
+  return (
+    Boolean(input.activeProjectName) &&
+    input.primaryEnvironmentId !== null &&
+    input.activeThreadEnvironmentId === input.primaryEnvironmentId
+  );
 }
 
 export const ChatHeader = memo(function ChatHeader({
-  routeKind,
   activeThreadEnvironmentId,
   activeThreadId,
   draftId,
   activeThreadTitle,
   activeProjectName,
-  projectThreads,
-  isGitRepo,
+  activeProjectCwd,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
   keybindings,
-  gitActionsRef,
   availableEditors,
+  rightPanelOpen,
   gitCwd,
-  workspaceRoot,
-  filesAvailable,
-  filesOpen,
+  onNewThreadInProject,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
-  onOpenProjectSwitcher,
-  onSelectThread,
-  onToggleFiles,
-  onCopyThreadAsMarkdown,
-  onCopyWorkspacePath,
-  onCopyThreadId,
-  onForkThread,
-  onArchiveThread,
-  onDeleteThread,
 }: ChatHeaderProps) {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const fileScripts = useT3ProjectFileScripts(
+    activeThreadEnvironmentId,
+    activeProjectScripts ? activeProjectCwd : null,
+  );
+  const showOpenInPicker = shouldShowOpenInPicker({
+    activeProjectName,
+    activeThreadEnvironmentId,
+    primaryEnvironmentId,
+  });
   return (
-    <div className="@container/header-actions flex flex-1 items-center gap-2">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden md:overflow-visible sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <DesktopSidebarReopenButton className="md:ml-0" />
+    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+        {/* The project always leads the header: knowing which project a
+            thread lives in is priority zero, and the thread title alone
+            doesn't answer it. */}
         {activeProjectName ? (
-          <nav
-            aria-label="Thread breadcrumb"
-            className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
-          >
-            <button
-              type="button"
-              aria-label="Switch project"
-              aria-haspopup="dialog"
-              onClick={onOpenProjectSwitcher}
-              className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} ${THREAD_BREADCRUMB_PROJECT_CHIP_INTERACTIVE_CLASS_NAME} text-sm h-6`}
-              title={activeProjectName}
-            >
-              <ThreadBreadcrumbProjectChipContent
-                icon={<CubeIcon className="size-3 shrink-0 fill-current opacity-70" aria-hidden />}
-                label={activeProjectName}
-              />
-            </button>
-            <ChevronRightIcon className={THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME} aria-hidden />
-            <ThreadTitleMenu
-              activeThreadId={activeThreadId}
-              activeThreadTitle={activeThreadTitle}
-              projectThreads={projectThreads}
-              onSelectThread={onSelectThread}
-            />
-          </nav>
-        ) : (
-          <ThreadTitleMenu
-            activeThreadId={activeThreadId}
-            activeThreadTitle={activeThreadTitle}
-            projectThreads={projectThreads}
-            onSelectThread={onSelectThread}
+          <span className="inline-flex shrink-0 items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`New thread in ${activeProjectName}`}
+                    onClick={onNewThreadInProject}
+                    className="inline-flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                }
+              >
+                <ProjectFavicon
+                  environmentId={activeThreadEnvironmentId}
+                  cwd={activeProjectCwd ?? ""}
+                  className="size-3.5"
+                />
+                <span className="max-w-40 truncate text-sm font-medium">{activeProjectName}</span>
+              </TooltipTrigger>
+              <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
+            </Tooltip>
+            <span aria-hidden className="text-muted-foreground/40">
+              /
+            </span>
+          </span>
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <h2
+                aria-label={activeThreadTitle}
+                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+              >
+                {activeThreadTitle}
+              </h2>
+            }
+          />
+          <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+        </Tooltip>
+      </div>
+      <div
+        data-chat-header-actions
+        className={cn(
+          "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
+          rightPanelOpen ? "pr-0" : "pr-16",
+        )}
+      >
+        {activeProjectScripts && (
+          <ProjectScriptsControl
+            scripts={activeProjectScripts}
+            fileScripts={fileScripts}
+            keybindings={keybindings}
+            preferredScriptId={preferredScriptId}
+            onRunScript={onRunProjectScript}
+            onAddScript={onAddProjectScript}
+            onUpdateScript={onUpdateProjectScript}
+            onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {activeProjectName && !isGitRepo && (
-          <Badge variant="outline" className="text-ui-2xs shrink-0 text-amber-700">
-            No Git
-          </Badge>
+        {showOpenInPicker && (
+          <OpenInPicker
+            environmentId={activeThreadEnvironmentId}
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            openInCwd={openInCwd}
+          />
         )}
-      </div>
-      <div className="flex shrink-0 items-center justify-end gap-2">
-        <ChatHeaderActionsMenu
-          routeKind={routeKind}
-          activeThreadEnvironmentId={activeThreadEnvironmentId}
-          activeThreadId={activeThreadId}
-          {...(draftId ? { draftId } : {})}
-          openInCwd={openInCwd}
-          activeProjectScripts={activeProjectScripts}
-          preferredScriptId={preferredScriptId}
-          keybindings={keybindings}
-          gitActionsRef={gitActionsRef}
-          availableEditors={availableEditors}
-          gitCwd={gitCwd}
-          workspaceRoot={workspaceRoot}
-          onRunProjectScript={onRunProjectScript}
-          onAddProjectScript={onAddProjectScript}
-          onUpdateProjectScript={onUpdateProjectScript}
-          onDeleteProjectScript={onDeleteProjectScript}
-          onCopyThreadAsMarkdown={onCopyThreadAsMarkdown}
-          onCopyWorkspacePath={onCopyWorkspacePath}
-          onCopyThreadId={onCopyThreadId}
-          onForkThread={onForkThread}
-          onArchiveThread={onArchiveThread}
-          onDeleteThread={onDeleteThread}
-        />
-        {!filesOpen ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <HeaderIconActionButton
-                  onClick={onToggleFiles}
-                  aria-label="Toggle files panel"
-                  disabled={!filesAvailable}
-                >
-                  <SidebarPanelIcon className="size-4 rotate-180" />
-                </HeaderIconActionButton>
-              }
-            />
-            <TooltipPopup side="bottom">
-              {!filesAvailable
-                ? "Files panel is unavailable until this thread has an active project."
-                : "Toggle files panel"}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
+        {activeProjectName && (
+          <GitActionsControl
+            gitCwd={gitCwd}
+            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+            {...(draftId ? { draftId } : {})}
+          />
+        )}
       </div>
     </div>
   );
 });
-
-function ThreadTitleMenu({
-  activeThreadId,
-  activeThreadTitle,
-  projectThreads,
-  onSelectThread,
-}: {
-  activeThreadId: ThreadId;
-  activeThreadTitle: string;
-  projectThreads: readonly SidebarThreadSummary[] | undefined;
-  onSelectThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => void;
-}) {
-  const visibleThreads = (projectThreads ?? []).filter((thread) => thread.archivedAt === null);
-
-  return (
-    <Menu>
-      <MenuTrigger
-        render={
-          <button
-            type="button"
-            aria-label="Switch thread"
-            className="group flex min-w-0 shrink items-center gap-2 rounded-md px-2 py-0.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            title={activeThreadTitle}
-          />
-        }
-      >
-        <span className="min-w-0 truncate">{activeThreadTitle}</span>
-        <ChevronDownIcon className="size-2.5 shrink-0 fill-muted-foreground/60 transition-colors group-hover:fill-foreground/70" />
-      </MenuTrigger>
-      <MenuPopup align="start" className="w-80 max-w-[calc(100vw-1rem)]">
-        {visibleThreads.length > 0 ? (
-          visibleThreads.map((thread) => {
-            const isActive = thread.id === activeThreadId;
-            return (
-              <MenuItem
-                key={`${thread.environmentId}:${thread.id}`}
-                className={cn("grid grid-cols-[1rem_1fr] gap-2", isActive && "bg-accent/60")}
-                onClick={() => {
-                  if (!isActive) {
-                    onSelectThread(thread);
-                  }
-                }}
-              >
-                <span className="flex items-center justify-center">
-                  {isActive ? <CheckIcon className="size-3 fill-current" /> : null}
-                </span>
-                <span className="min-w-0 truncate">{thread.title}</span>
-              </MenuItem>
-            );
-          })
-        ) : (
-          <MenuItem disabled className="text-muted-foreground">
-            No active threads
-          </MenuItem>
-        )}
-      </MenuPopup>
-    </Menu>
-  );
-}

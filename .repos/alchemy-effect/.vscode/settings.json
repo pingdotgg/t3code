@@ -1,0 +1,76 @@
+{
+  "diffEditor.renderSideBySide": false,
+  // Point the editor at THIS workspace's pinned typescript@7 install. The
+  // Effect diagnostics (e.g. `anyUnknownInErrorContext`) come from
+  // `effect-tsgo patch` (run automatically on install via `prepare`), which
+  // patches the workspace `node_modules/typescript` binary in place — the
+  // editor must use the WORKSPACE version or no Effect diagnostics appear.
+  // Opt in once per machine via Command Palette -> "TypeScript: Select
+  // TypeScript Version" -> "Use Workspace Version".
+  // (`enablePromptUseWorkspaceTsdk` below makes the editor prompt for this.)
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.preferences.importModuleSpecifierEnding": "ts",
+  "oxc.enable": true,
+  "oxc.lint.run": "onSave",
+  "json.schemaDownload.enable": true,
+  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "editor.codeLens": false,
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+  "editor.inlayHints.enabled": "offUnlessPressed",
+  "editor.tabSize": 2,
+  "editor.indentSize": 2,
+  "editor.insertSpaces": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit"
+  },
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[markdown]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "[mdx]": {
+    "editor.defaultFormatter": null,
+    "editor.formatOnSave": false
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "packages/alchemy/bin/**/*.js*": true,
+    "packages/alchemy/bin/**/*.d*": true
+  },
+  "files.watcherExclude": {
+    "**/distilled/**": true
+  },
+  "search.exclude": {
+    "**/distilled/**": true
+  },
+  "[typescript]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[javascript]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[javascriptreact]": {
+    "editor.indentSize": 2,
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "oxc.enable.oxfmt": true
+}

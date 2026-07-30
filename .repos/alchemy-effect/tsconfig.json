@@ -1,0 +1,164 @@
+{
+  "files": [],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ],
+  "references": [
+    // distilled (dependencies first so `tsc -b` emits their `lib/` before the
+    // packages that consume them — otherwise a clean build races the not-yet-emitted
+    // declarations and fails to resolve `@distilled.cloud/*`).
+    {
+      "path": "./distilled/packages/core/tsconfig.json"
+    },
+    {
+      "path": "./distilled/packages/aws/tsconfig.json"
+    },
+    {
+      "path": "./distilled/packages/cloudflare/tsconfig.json"
+    },
+    {
+      "path": "./distilled/packages/planetscale/tsconfig.json"
+    },
+    {
+      "path": "./distilled/packages/neon/tsconfig.json"
+    },
+    {
+      "path": "./distilled/packages/axiom/tsconfig.json"
+    },
+    // cloudflare-tools (submodule) — reference the composite leaf configs
+    // directly; the per-package tsconfig.json files are non-composite
+    // solution configs that `tsc -b` cannot reference.
+    {
+      "path": "./cloudflare-tools/packages/cloudflare-rolldown-plugin/tsconfig.json"
+    },
+    {
+      "path": "./cloudflare-tools/packages/cloudflare-runtime/tsconfig.node.json"
+    },
+    {
+      "path": "./cloudflare-tools/packages/cloudflare-runtime/tsconfig.workers.json"
+    },
+    {
+      "path": "./cloudflare-tools/packages/cloudflare-vite-plugin/tsconfig.node.json"
+    },
+    {
+      "path": "./cloudflare-tools/packages/cloudflare-vite-plugin/tsconfig.workers.json"
+    },
+    {
+      "path": "./tsconfig.scripts.json"
+    },
+    {
+      "path": "./packages/alchemy-test/tsconfig.json"
+    },
+    {
+      "path": "./packages/alchemy/tsconfig.json"
+    },
+    {
+      "path": "./packages/alchemy/tsconfig.bin.json"
+    },
+    {
+      "path": "./packages/alchemy/tsconfig.test.json"
+    },
+    {
+      "path": "./packages/better-auth/tsconfig.json"
+    },
+    {
+      "path": "./packages/pr-package/tsconfig.json"
+    },
+    // TODO(sam): fix by upgrading starlight to ^0.39.2
+    // {
+    //   "path": "./website/tsconfig.json"
+    // },
+    {
+      "path": "./examples/aws-ec2/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-ecs/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-eks/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-lambda-httpapi/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-rest-api/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-lambda-rpc/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-lambda/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-rds/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-static-site/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-vite/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-agent/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-static-site/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-tanstack/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-worker/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-pr-package/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-email/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-d1-drizzle/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-effect-sql-d1/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-neon-drizzle/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-planetscale-mysql-drizzle/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-planetscale-postgres-drizzle/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-secrets-store/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-worker-async/tsconfig.json"
+    },
+    {
+      "path": "./examples/docker-postgres/tsconfig.json"
+    },
+    {
+      "path": "./examples/monorepo-single-stack/tsconfig.json"
+    },
+    {
+      "path": "./examples/monorepo-multi-stack/tsconfig.json"
+    },
+    {
+      "path": "./benchmark/container/tsconfig.json"
+    }
+  ],
+  "compilerOptions": {
+    // NOTE: this is a solution config (`files: []`) and governs NO source, so a
+    // plugin here is inert for the editor and `tsc -b`. The real Effect LS
+    // config (and its on/off toggle) lives in `packages/alchemy/tsconfig.json`.
+    "plugins": [
+      {
+        "name": "@effect/language-service"
+      }
+    ]
+  }
+}

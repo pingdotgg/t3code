@@ -1,10 +1,21 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Path, Schema, SchemaGetter } from "effect";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import { Command, CliError } from "effect/unstable/cli";
 import * as TestConsole from "effect/testing/TestConsole";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 import {
+  ReleaseGitHubOutputConfigurationError,
+  ReleaseGitHubOutputWriteError,
+  ReleasePackageManifestError,
   releasePackageFiles,
   updateReleasePackageVersions,
   updateReleasePackageVersionsCommand,
@@ -13,17 +24,9 @@ import {
 const ScriptTestLayer = Layer.mergeAll(NodeServices.layer, TestConsole.layer);
 const runCli = Command.runWith(updateReleasePackageVersionsCommand, { version: "0.0.0" });
 const PackageJsonSchema = Schema.Record(Schema.String, Schema.Unknown);
-const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
-  SchemaGetter.stringifyJson({ space: 2 }),
-);
-const PackageJsonPrettyJson = Schema.fromJsonString(PackageJsonSchema).pipe(
-  Schema.encode({
-    decode: PrettyJsonString,
-    encode: PrettyJsonString,
-  }),
-);
-const decodePackageJson = Schema.decodeUnknownEffect(PackageJsonPrettyJson);
-const encodePackageJson = Schema.encodeSync(PackageJsonPrettyJson);
+const PackageJsonPrettyJson = fromJsonStringPretty(PackageJsonSchema);
+const decodePackageJson = Schema.decodeEffect(PackageJsonPrettyJson);
+const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
 
 const writePackageJsonFixtures = Effect.fn("writePackageJsonFixtures")(function* (
   rootDir: string,
@@ -37,7 +40,7 @@ const writePackageJsonFixtures = Effect.fn("writePackageJsonFixtures")(function*
     yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
     yield* fs.writeFileString(
       filePath,
-      `${encodePackageJson({
+      `${yield* encodePackageJson({
         name: relativePath,
         version,
         private: true,
@@ -105,6 +108,73 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
     }),
   );
 
+  it.effect("preserves manifest read context and the filesystem cause", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-read-error-",
+      });
+      const filePath = path.join(baseDir, releasePackageFiles[0]);
+
+      const error = yield* updateReleasePackageVersions("1.2.3", {
+        rootDir: baseDir,
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, ReleasePackageManifestError);
+      assert.equal(error.operation, "read");
+      assert.equal(error.filePath, filePath);
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assert.equal(error.message, `Failed to read release package manifest '${filePath}'.`);
+    }),
+  );
+
+  it.effect("preserves manifest decode context and the schema cause", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-decode-error-",
+      });
+      const filePath = path.join(baseDir, releasePackageFiles[0]);
+
+      yield* writePackageJsonFixtures(baseDir, "0.0.1");
+      yield* fs.writeFileString(filePath, "not json");
+
+      const error = yield* updateReleasePackageVersions("1.2.3", {
+        rootDir: baseDir,
+      }).pipe(Effect.flip);
+
+      assert.equal(error.operation, "decode");
+      assert.equal(error.filePath, filePath);
+      assert.isTrue(Schema.isSchemaError(error.cause));
+      assert.equal(error.message, `Failed to decode release package manifest '${filePath}'.`);
+    }),
+  );
+
+  it.effect("preserves manifest write context and the filesystem cause", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-write-error-",
+      });
+      const filePath = path.join(baseDir, releasePackageFiles[0]);
+
+      yield* writePackageJsonFixtures(baseDir, "0.0.1");
+      yield* fs.chmod(filePath, 0o400);
+
+      const error = yield* updateReleasePackageVersions("1.2.3", {
+        rootDir: baseDir,
+      }).pipe(Effect.flip, Effect.ensuring(fs.chmod(filePath, 0o600).pipe(Effect.orDie)));
+
+      assert.equal(error.operation, "write");
+      assert.equal(error.filePath, filePath);
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assert.equal(error.message, `Failed to write release package manifest '${filePath}'.`);
+    }),
+  );
+
   it.effect("accepts flags before the version positional and appends changed output", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -166,9 +236,43 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
         Effect.flip,
       );
 
+      assert.instanceOf(error, ReleaseGitHubOutputConfigurationError);
+      assert.instanceOf(error.cause, Config.ConfigError);
       assert.equal(
         error.message,
-        'SchemaError(Expected string, got undefined\n  at ["GITHUB_OUTPUT"])',
+        "Failed to resolve GITHUB_OUTPUT for release package version output.",
+      );
+    }),
+  );
+
+  it.effect("preserves GITHUB_OUTPUT write context and the filesystem cause", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "update-release-package-versions-cli-output-error-",
+      });
+
+      yield* writePackageJsonFixtures(baseDir, "0.0.1");
+
+      const error = yield* runCli(["4.0.0", "--root", baseDir, "--github-output"]).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                GITHUB_OUTPUT: baseDir,
+              },
+            }),
+          ),
+        ),
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, ReleaseGitHubOutputWriteError);
+      assert.equal(error.filePath, baseDir);
+      assert.instanceOf(error.cause, PlatformError.PlatformError);
+      assert.equal(
+        error.message,
+        `Failed to append release package version output to '${baseDir}'.`,
       );
     }),
   );

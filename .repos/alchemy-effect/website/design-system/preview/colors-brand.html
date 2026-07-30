@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .row {
+        display: flex;
+        gap: 14px;
+        align-items: stretch;
+      }
+      .swatch {
+        flex: 1;
+        border-radius: 8px;
+        padding: 18px 16px;
+        min-height: 110px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 4px;
+        border: 1px solid var(--alc-hairline);
+      }
+      .swatch.lead {
+        flex: 1.6;
+      }
+      .name {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+      }
+      .hex {
+        font-family: var(--alc-font-mono);
+        font-size: 11px;
+        opacity: 0.8;
+      }
+      .big {
+        font-family: var(--alc-font-serif);
+        font-size: 28px;
+        line-height: 1;
+        font-weight: 500;
+        font-style: italic;
+        margin-bottom: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="row">
+        <div
+          class="swatch lead"
+          style="background: var(--alc-accent); color: var(--alc-fg-on-accent)"
+        >
+          <div class="big">Moss</div>
+          <div>
+            <div class="name">--alc-accent</div>
+            <div class="hex">#5C7A3E</div>
+          </div>
+        </div>
+        <div
+          class="swatch"
+          style="
+            background: var(--alc-accent-deep);
+            color: var(--alc-fg-on-accent);
+          "
+        >
+          <div class="name">accent-deep</div>
+          <div class="hex">#3F5A2A</div>
+        </div>
+        <div
+          class="swatch"
+          style="
+            background: var(--alc-accent-warm);
+            color: var(--alc-fg-on-accent);
+          "
+        >
+          <div class="name">accent-warm</div>
+          <div class="hex">#7A9A5E</div>
+        </div>
+        <div
+          class="swatch"
+          style="background: var(--alc-accent-soft); color: var(--alc-fg-1)"
+        >
+          <div class="name">accent-soft</div>
+          <div class="hex">#D8E3C4</div>
+        </div>
+      </div>
+      <div style="margin-top: 14px; display: flex; gap: 14px">
+        <div
+          class="swatch"
+          style="
+            background: var(--alc-terracotta);
+            color: var(--alc-fg-on-accent);
+            flex: 1;
+          "
+        >
+          <div class="name">terracotta</div>
+          <div class="hex">#C56E3C</div>
+        </div>
+        <div
+          class="swatch"
+          style="
+            background: var(--alc-terracotta-deep);
+            color: var(--alc-fg-on-accent);
+            flex: 1;
+          "
+        >
+          <div class="name">terracotta-deep</div>
+          <div class="hex">#9A4F27</div>
+        </div>
+        <div
+          class="swatch"
+          style="
+            background: var(--alc-terracotta-soft);
+            color: var(--alc-fg-1);
+            flex: 1;
+          "
+        >
+          <div class="name">terracotta-soft</div>
+          <div class="hex">#ECCFB8</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

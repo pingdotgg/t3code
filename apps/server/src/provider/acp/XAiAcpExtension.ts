@@ -1,8 +1,11 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
-import { Deferred, Effect, Ref, Schema } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import type { AcpSessionRuntimeShape } from "./AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const XAiPromptCompleteNotification = Schema.Struct({
   sessionId: Schema.String,
@@ -21,23 +24,6 @@ interface PendingXAiPromptCompletion {
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
-const xAiAgentResultDirectTextKeys = [
-  "text",
-  "markdown",
-  "output_text",
-  "response",
-  "answer",
-  "content",
-] as const;
-const xAiAgentResultNestedTextKeys = [
-  "message",
-  "messages",
-  "result",
-  "final",
-  "output",
-  "data",
-  "choices",
-] as const;
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -76,99 +62,6 @@ type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;
 function trimmed(value: string | undefined): string | undefined {
   const text = value?.trim();
   return text && text.length > 0 ? text : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseJsonIfStructuredText(value: string): unknown | undefined {
-  const trimmedValue = value.trim();
-  if (!trimmedValue.startsWith("{") && !trimmedValue.startsWith("[")) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(trimmedValue);
-  } catch {
-    return undefined;
-  }
-}
-
-function joinXAiAgentResultChunks(chunks: ReadonlyArray<string>): string | undefined {
-  const text = chunks.join("\n").trim();
-  return text.length > 0 ? text : undefined;
-}
-
-function collectXAiAgentResultText(
-  value: unknown,
-  seen: Set<object>,
-  depth: number,
-): ReadonlyArray<string> {
-  if (value === null || value === undefined || depth > 12) {
-    return [];
-  }
-
-  if (typeof value === "string") {
-    const text = trimmed(value);
-    if (!text) {
-      return [];
-    }
-    const parsed = parseJsonIfStructuredText(text);
-    if (parsed !== undefined) {
-      const parsedText = collectXAiAgentResultText(parsed, seen, depth + 1);
-      if (parsedText.length > 0) {
-        return parsedText;
-      }
-    }
-    return [text];
-  }
-
-  if (Array.isArray(value)) {
-    return value.flatMap((entry) => collectXAiAgentResultText(entry, seen, depth + 1));
-  }
-
-  if (!isRecord(value)) {
-    return [];
-  }
-
-  if (seen.has(value)) {
-    return [];
-  }
-  seen.add(value);
-
-  for (const key of xAiAgentResultDirectTextKeys) {
-    if (key in value) {
-      const chunks = collectXAiAgentResultText(value[key], seen, depth + 1);
-      if (chunks.length > 0) {
-        return chunks;
-      }
-    }
-  }
-
-  for (const key of xAiAgentResultNestedTextKeys) {
-    if (key in value) {
-      const chunks = collectXAiAgentResultText(value[key], seen, depth + 1);
-      if (chunks.length > 0) {
-        return chunks;
-      }
-    }
-  }
-
-  return [];
-}
-
-export function extractXAiAgentResultText(agentResult: unknown): string | undefined {
-  return joinXAiAgentResultChunks(collectXAiAgentResultText(agentResult, new Set<object>(), 0));
-}
-
-export function extractXAiPromptResponseText(
-  response: EffectAcpSchema.PromptResponse,
-): string | undefined {
-  const meta = response["_meta"];
-  if (!isRecord(meta) || !("agentResult" in meta)) {
-    return undefined;
-  }
-  return extractXAiAgentResultText(meta.agentResult);
 }
 
 function unwrapAskUserQuestionParams(
@@ -303,15 +196,19 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
   return { outcome: "cancelled" };
 }
 
+/**
+ * Adds Grok's private prompt-completion fallback around a standards-only ACP runtime.
+ * The underlying runtime remains unaware of xAI methods and metadata.
+ */
 export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletionRuntime")(
-  function* (runtime: AcpSessionRuntimeShape) {
+  function* (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
     const activeSessionIdRef = yield* Ref.make<string | undefined>(undefined);
     const pendingRef = yield* Ref.make<ReadonlyArray<PendingXAiPromptCompletion>>([]);
     const completedPromptIdsRef = yield* Ref.make<ReadonlyArray<string>>([]);
     let nextPromptFallbackId = 0;
     const allocatePromptFallbackId = Effect.sync(() => {
       nextPromptFallbackId += 1;
-      return `forma-xai-prompt-${nextPromptFallbackId}`;
+      return `t3-xai-prompt-${nextPromptFallbackId}`;
     });
 
     yield* runtime.handleExtNotification(
@@ -347,7 +244,7 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
           const requestPayload = {
             ...payload,
             _meta: {
-              ...payload["_meta"],
+              ...payload._meta,
               promptId: fallback.promptId,
               requestId: fallback.promptId,
             },
@@ -372,7 +269,7 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
               ),
         ),
       ),
-    } satisfies AcpSessionRuntimeShape;
+    } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
   },
 );
 
@@ -483,7 +380,7 @@ const rememberCompletedXAiPromptId = (
 };
 
 function promptIdFromResponse(response: EffectAcpSchema.PromptResponse): string | undefined {
-  const meta = response["_meta"];
+  const meta = response._meta;
   if (meta === null || typeof meta !== "object") {
     return undefined;
   }
@@ -494,7 +391,7 @@ function promptIdFromResponse(response: EffectAcpSchema.PromptResponse): string 
 export function promptResponseHasMissingXAiStopReason(
   response: EffectAcpSchema.PromptResponse,
 ): boolean {
-  const meta = response["_meta"];
+  const meta = response._meta;
   return meta !== null && typeof meta === "object" && meta[xAiStopReasonMissingMetaKey] === true;
 }
 

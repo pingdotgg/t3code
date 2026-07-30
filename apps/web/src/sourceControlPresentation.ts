@@ -1,44 +1,62 @@
-import type { SourceControlProviderKind } from "@t3tools/contracts";
+import { GitPullRequestIcon } from "lucide-react";
+import type { ElementType } from "react";
+import type { SourceControlProviderInfo } from "@t3tools/contracts";
+export {
+  DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
+  formatChangeRequestAction,
+  formatCreateChangeRequestPhrase,
+  getChangeRequestTerminology,
+  resolveChangeRequestPresentation,
+  type ChangeRequestPresentation,
+  type ChangeRequestTerminology,
+} from "@t3tools/shared/sourceControl";
+import {
+  getChangeRequestTerminology,
+  resolveChangeRequestPresentation,
+  type ChangeRequestTerminology,
+} from "@t3tools/shared/sourceControl";
+import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./components/Icons";
 
-export interface SourceControlProviderPresentation {
-  readonly label: string;
-  readonly repositoryPlaceholder: string;
-  readonly installHint: string;
+export interface SourceControlPresentation {
+  readonly providerName: string;
+  readonly terminology: ChangeRequestTerminology;
+  readonly Icon: ElementType<{ className?: string }>;
 }
 
-export function getSourceControlProviderPresentation(
-  kind: SourceControlProviderKind,
-): SourceControlProviderPresentation {
-  switch (kind) {
+export function getSourceControlPresentation(
+  provider: SourceControlProviderInfo | null | undefined,
+): SourceControlPresentation {
+  const presentation = resolveChangeRequestPresentation(provider);
+  switch (presentation.icon) {
     case "github":
       return {
-        label: "GitHub",
-        repositoryPlaceholder: "owner/repo",
-        installHint: "Install `gh` and run `gh auth login`.",
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: GitHubIcon,
       };
     case "gitlab":
       return {
-        label: "GitLab",
-        repositoryPlaceholder: "group/project",
-        installHint: "Install `glab` and run `glab auth login`.",
-      };
-    case "bitbucket":
-      return {
-        label: "Bitbucket",
-        repositoryPlaceholder: "workspace/repo",
-        installHint: "Bitbucket support is not enabled yet.",
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: GitLabIcon,
       };
     case "azure-devops":
       return {
-        label: "Azure DevOps",
-        repositoryPlaceholder: "organization/project/repository",
-        installHint: "Azure DevOps support is not enabled yet.",
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: AzureDevOpsIcon,
       };
-    case "unknown":
+    case "bitbucket":
       return {
-        label: "Git URL",
-        repositoryPlaceholder: "https://example.com/owner/repo.git",
-        installHint: "Use a raw Git remote URL.",
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: BitbucketIcon,
+      };
+    case "change-request":
+      return {
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: GitPullRequestIcon,
       };
   }
 }

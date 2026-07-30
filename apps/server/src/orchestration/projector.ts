@@ -5,7 +5,8 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
@@ -16,29 +17,20 @@ import {
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
-  ThreadForkedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
-  ThreadTurnEnqueuedPayload,
-  ThreadTurnQueueItemRemovedPayload,
-  ThreadTurnQueuePausedPayload,
-  ThreadTurnQueueResumedPayload,
-  ThreadTurnSettledPayload,
+  ThreadSettledPayload,
+  ThreadSnoozedPayload,
   ThreadUnarchivedPayload,
+  ThreadUnsettledPayload,
+  ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
-import {
-  appendQueuedTurn,
-  pauseQueuedTurns,
-  removeQueuedTurn,
-  resumeQueuedTurns,
-} from "./turnQueue.ts";
-import { cloneThreadForFork } from "./threadForking.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
@@ -50,6 +42,29 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
   return "completed" as const;
 }
 
+/**
+ * Turn state to settle a still-running latest turn with when its session
+ * leaves the "running" status, or null while the session is (re)starting or
+ * running and the turn must stay unsettled.
+ */
+function settledTurnStateForSessionStatus(
+  status: OrchestrationSession["status"],
+): "completed" | "interrupted" | "error" | null {
+  switch (status) {
+    case "idle":
+    case "ready":
+      return "completed";
+    case "error":
+      return "error";
+    case "interrupted":
+    case "stopped":
+      return "interrupted";
+    case "starting":
+    case "running":
+      return null;
+  }
+}
+
 function updateThread(
   threads: ReadonlyArray<OrchestrationThread>,
   threadId: ThreadId,
@@ -59,15 +74,14 @@ function updateThread(
 }
 
 function decodeForEvent<A>(
-  schema: Schema.Schema<A>,
+  schema: Schema.Decoder<A, never>,
   value: unknown,
   eventType: OrchestrationEvent["type"],
   field: string,
 ): Effect.Effect<A, OrchestrationProjectorDecodeError> {
-  return Effect.try({
-    try: () => Schema.decodeUnknownSync(schema as any)(value),
-    catch: (error) => toProjectorDecodeError(`${eventType}:${field}`)(error as Schema.SchemaError),
-  });
+  return Schema.decodeUnknownEffect(schema)(value).pipe(
+    Effect.mapError(toProjectorDecodeError(`${eventType}:${field}`)),
+  );
 }
 
 function retainThreadMessagesAfterRevert(
@@ -198,7 +212,6 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
-            previewWorkspaceRecords: payload.previewWorkspaceRecords ?? [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -231,9 +244,6 @@ export function projectEvent(
                     ? { defaultModelSelection: payload.defaultModelSelection }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
-                  ...(payload.previewWorkspaceRecords !== undefined
-                    ? { previewWorkspaceRecords: payload.previewWorkspaceRecords }
-                    : {}),
                   updatedAt: payload.updatedAt,
                 }
               : project,
@@ -280,46 +290,19 @@ export function projectEvent(
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
             deletedAt: null,
             messages: [],
             activities: [],
             checkpoints: [],
-            turnQueue: {
-              items: [],
-              status: "idle",
-              pauseReason: null,
-            },
             session: null,
           },
           event.type,
           "thread",
         );
-        const existing = nextBase.threads.find((entry) => entry.id === thread.id);
-        return {
-          ...nextBase,
-          threads: existing
-            ? nextBase.threads.map((entry) => (entry.id === thread.id ? thread : entry))
-            : [...nextBase.threads, thread],
-        };
-      });
-
-    case "thread.forked":
-      return Effect.gen(function* () {
-        const payload = yield* decodeForEvent(
-          ThreadForkedPayload,
-          event.payload,
-          event.type,
-          "payload",
-        );
-        const sourceThread = nextBase.threads.find((entry) => entry.id === payload.sourceThreadId);
-        if (!sourceThread) {
-          return nextBase;
-        }
-        const thread = cloneThreadForFork({
-          sourceThread,
-          targetThreadId: payload.threadId,
-          createdAt: payload.createdAt,
-        });
         const existing = nextBase.threads.find((entry) => entry.id === thread.id);
         return {
           ...nextBase,
@@ -357,6 +340,54 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             archivedAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.settled":
+      return decodeForEvent(ThreadSettledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            settledOverride: "settled",
+            settledAt: payload.settledAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.unsettled":
+      return decodeForEvent(ThreadUnsettledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            settledOverride: payload.reason === "user" ? "active" : null,
+            settledAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.snoozed":
+      return decodeForEvent(ThreadSnoozedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            snoozedUntil: payload.snoozedUntil,
+            snoozedAt: payload.snoozedAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.unsnoozed":
+      return decodeForEvent(ThreadUnsnoozedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            snoozedUntil: null,
+            snoozedAt: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -466,89 +497,6 @@ export function projectEvent(
         };
       });
 
-    case "thread.turn-enqueued":
-      return decodeForEvent(ThreadTurnEnqueuedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => {
-          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
-          if (!thread) {
-            return nextBase;
-          }
-          return {
-            ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
-              turnQueue: appendQueuedTurn(thread.turnQueue, payload.queuedTurn),
-              updatedAt: event.occurredAt,
-            }),
-          };
-        }),
-      );
-
-    case "thread.turn-queue-item-removed":
-      return decodeForEvent(
-        ThreadTurnQueueItemRemovedPayload,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
-        Effect.map((payload) => {
-          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
-          if (!thread) {
-            return nextBase;
-          }
-          return {
-            ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
-              turnQueue: removeQueuedTurn(thread.turnQueue, payload.messageId),
-              updatedAt: event.occurredAt,
-            }),
-          };
-        }),
-      );
-
-    case "thread.turn-queue-paused":
-      return decodeForEvent(
-        ThreadTurnQueuePausedPayload,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
-        Effect.map((payload) => {
-          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
-          if (!thread) {
-            return nextBase;
-          }
-          return {
-            ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
-              turnQueue: pauseQueuedTurns(thread.turnQueue, payload.reason),
-              updatedAt: event.occurredAt,
-            }),
-          };
-        }),
-      );
-
-    case "thread.turn-queue-resumed":
-      return decodeForEvent(
-        ThreadTurnQueueResumedPayload,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
-        Effect.map((payload) => {
-          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
-          if (!thread) {
-            return nextBase;
-          }
-          return {
-            ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
-              turnQueue: resumeQueuedTurns(thread.turnQueue),
-              updatedAt: event.occurredAt,
-            }),
-          };
-        }),
-      );
-
     case "thread.session-set":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -569,6 +517,9 @@ export function projectEvent(
           "session",
         );
 
+        // Leaving the "running" session status is the turn-end signal: settle
+        // a still-running latest turn so its duration reflects the whole turn.
+        const settledTurnState = settledTurnStateForSessionStatus(session.status);
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
@@ -592,49 +543,22 @@ export function projectEvent(
                         ? thread.latestTurn.assistantMessageId
                         : null,
                   }
-                : thread.latestTurn,
+                : thread.latestTurn !== null &&
+                    thread.latestTurn.state === "running" &&
+                    settledTurnState !== null
+                  ? {
+                      ...thread.latestTurn,
+                      state: settledTurnState,
+                      // A running turn's completedAt can only hold a mid-turn
+                      // placeholder checkpoint timestamp — the session leaving
+                      // "running" is the authoritative turn end.
+                      completedAt: session.updatedAt,
+                    }
+                  : thread.latestTurn,
             updatedAt: event.occurredAt,
           }),
         };
       });
-
-    case "thread.turn-settled":
-      return decodeForEvent(ThreadTurnSettledPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => {
-          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
-          if (!thread) {
-            return nextBase;
-          }
-
-          const nextState =
-            payload.outcome === "error"
-              ? "error"
-              : payload.outcome === "interrupted"
-                ? "interrupted"
-                : "completed";
-
-          return {
-            ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
-              latestTurn:
-                thread.latestTurn === null || thread.latestTurn.turnId === payload.turnId
-                  ? {
-                      turnId: payload.turnId,
-                      state: nextState,
-                      requestedAt: thread.latestTurn?.requestedAt ?? payload.settledAt,
-                      startedAt: thread.latestTurn?.startedAt ?? payload.settledAt,
-                      completedAt: payload.settledAt,
-                      assistantMessageId: thread.latestTurn?.assistantMessageId ?? null,
-                      ...(thread.latestTurn?.sourceProposedPlan
-                        ? { sourceProposedPlan: thread.latestTurn.sourceProposedPlan }
-                        : {}),
-                    }
-                  : thread.latestTurn,
-              updatedAt: event.occurredAt,
-            }),
-          };
-        }),
-      );
 
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {
@@ -713,24 +637,31 @@ export function projectEvent(
           .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
           .slice(-MAX_THREAD_CHECKPOINTS);
 
+        // Mid-turn diff updates produce placeholder checkpoints; record the
+        // checkpoint, but don't settle a turn its session is still running.
+        const turnStillRunning =
+          thread.session?.status === "running" && thread.session.activeTurnId === payload.turnId;
+
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             checkpoints,
-            latestTurn: {
-              turnId: payload.turnId,
-              state: checkpointStatusToLatestTurnState(payload.status),
-              requestedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? thread.latestTurn.requestedAt
-                  : payload.completedAt,
-              startedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? (thread.latestTurn.startedAt ?? payload.completedAt)
-                  : payload.completedAt,
-              completedAt: payload.completedAt,
-              assistantMessageId: payload.assistantMessageId,
-            },
+            latestTurn: turnStillRunning
+              ? thread.latestTurn
+              : {
+                  turnId: payload.turnId,
+                  state: checkpointStatusToLatestTurnState(payload.status),
+                  requestedAt:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? thread.latestTurn.requestedAt
+                      : payload.completedAt,
+                  startedAt:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? (thread.latestTurn.startedAt ?? payload.completedAt)
+                      : payload.completedAt,
+                  completedAt: payload.completedAt,
+                  assistantMessageId: payload.assistantMessageId,
+                },
             updatedAt: event.occurredAt,
           }),
         };

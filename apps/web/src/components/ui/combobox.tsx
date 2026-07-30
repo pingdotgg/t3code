@@ -1,14 +1,10 @@
 "use client";
 
 import { Combobox as ComboboxPrimitive } from "@base-ui/react/combobox";
-import { IconChevronUpChevronDown as ChevronsUpDownIcon, IconXmark as XIcon } from "symbols-react";
+import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "~/lib/utils";
-import {
-  FLOATING_SURFACE_POPUP_MOTION_CLASS_NAME,
-  FLOATING_SURFACE_POSITIONER_MOTION_CLASS_NAME,
-} from "~/lib/motion";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
@@ -26,9 +22,9 @@ function Combobox<Value, Multiple extends boolean | undefined = false>(
   const chipsRef = React.useRef<Element | null>(null);
   const value = React.useMemo(() => ({ chipsRef, multiple: !!props.multiple }), [props.multiple]);
   return (
-    <ComboboxContext.Provider value={value}>
+    <ComboboxContext value={value}>
       <ComboboxPrimitive.Root {...props} />
-    </ComboboxContext.Provider>
+    </ComboboxContext>
   );
 }
 
@@ -64,6 +60,7 @@ function ComboboxInput({
   showClear = false,
   startAddon,
   size,
+  unstyled = false,
   ...props
 }: Omit<ComboboxPrimitive.Input.Props, "size"> & {
   inputClassName?: string;
@@ -71,6 +68,7 @@ function ComboboxInput({
   showClear?: boolean;
   startAddon?: React.ReactNode;
   size?: "sm" | "default" | "lg" | number;
+  unstyled?: boolean;
   ref?: React.Ref<HTMLInputElement>;
 }) {
   const sizeValue = (size ?? "default") as "sm" | "default" | "lg" | number;
@@ -101,6 +99,7 @@ function ComboboxInput({
             className={cn("has-disabled:opacity-100", inputClassName)}
             nativeInput
             size={sizeValue}
+            unstyled={unstyled}
           />
         }
         {...props}
@@ -108,7 +107,7 @@ function ComboboxInput({
       {showTrigger && (
         <ComboboxTrigger
           className={cn(
-            "-translate-y-1/2 absolute top-1/2 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent opacity-80 outline-none transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:opacity-100 has-[+[data-slot=combobox-clear]]:hidden sm:size-7 [&_svg:not([class*='size-'])]:size-2.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+            "-translate-y-1/2 absolute top-1/2 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent opacity-80 outline-none transition-opacity pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:opacity-100 has-[+[data-slot=combobox-clear]]:hidden sm:size-7 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
             sizeValue === "sm" ? "end-0" : "end-0.5",
           )}
         >
@@ -120,7 +119,7 @@ function ComboboxInput({
       {showClear && (
         <ComboboxClear
           className={cn(
-            "-translate-y-1/2 absolute top-1/2 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent opacity-80 outline-none transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:opacity-100 has-[+[data-slot=combobox-clear]]:hidden sm:size-7 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+            "-translate-y-1/2 absolute top-1/2 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-transparent opacity-80 outline-none transition-opacity pointer-coarse:after:absolute pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:opacity-100 has-[+[data-slot=combobox-clear]]:hidden sm:size-7 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
             sizeValue === "sm" ? "end-0" : "end-0.5",
           )}
         >
@@ -155,7 +154,7 @@ function ComboboxPopup({
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
 }) {
-  const { chipsRef } = React.useContext(ComboboxContext);
+  const { chipsRef } = React.use(ComboboxContext);
   const anchor = anchorProp ?? chipsRef;
 
   return (
@@ -164,24 +163,25 @@ function ComboboxPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className={cn("z-50 select-none", FLOATING_SURFACE_POSITIONER_MOTION_CLASS_NAME)}
+        className="z-50 select-none"
         data-slot="combobox-positioner"
         side={side}
         sideOffset={sideOffset}
       >
-        <ComboboxPrimitive.Popup
+        <span
           className={cn(
-            "relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg border bg-popover not-dark:bg-clip-padding shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
-            FLOATING_SURFACE_POPUP_MOTION_CLASS_NAME,
+            "dropdown-glass relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg transition-[scale,opacity]",
             className,
           )}
-          data-slot="combobox-popup"
-          {...props}
         >
-          <div className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground">
+          <ComboboxPrimitive.Popup
+            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
+            data-slot="combobox-popup"
+            {...props}
+          >
             {children}
-          </div>
-        </ComboboxPrimitive.Popup>
+          </ComboboxPrimitive.Popup>
+        </span>
       </ComboboxPrimitive.Positioner>
     </ComboboxPrimitive.Portal>
   );
@@ -191,7 +191,7 @@ function ComboboxItem({
   className,
   contentClassName,
   children,
-  hideIndicator = false,
+  hideIndicator: _hideIndicator = false,
   ...props
 }: ComboboxPrimitive.Item.Props & {
   contentClassName?: string;
@@ -200,33 +200,21 @@ function ComboboxItem({
   return (
     <ComboboxPrimitive.Item
       className={cn(
-        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-default items-center gap-2 rounded-sm py-1 ps-3 pe-2 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-accent/50 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-default items-center rounded-sm px-2 py-1 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-foreground/[0.08] data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className,
       )}
       data-slot="combobox-item"
       {...props}
     >
-      <ComboboxPrimitive.ItemIndicator
+      <div
         className={cn(
-          "ml-auto inline-flex shrink-0 items-center justify-center text-current",
-          hideIndicator && "hidden",
+          "min-w-0 flex-1 [&_svg:not([class*='text-'])]:text-muted-foreground",
+          contentClassName,
         )}
+        data-slot="combobox-item-content"
       >
-        <svg
-          fill="none"
-          height="24"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="2"
-          viewBox="0 0 24 24"
-          width="24"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path d="M5.252 12.7 10.2 18.63 18.748 5.37" />
-        </svg>
-      </ComboboxPrimitive.ItemIndicator>
-      <div className={cn("min-w-0 flex-1", contentClassName)}>{children}</div>
+        {children}
+      </div>
     </ComboboxPrimitive.Item>
   );
 }
@@ -337,7 +325,7 @@ function ComboboxChips({
 }: ComboboxPrimitive.Chips.Props & {
   startAddon?: React.ReactNode;
 }) {
-  const { chipsRef } = React.useContext(ComboboxContext);
+  const { chipsRef } = React.use(ComboboxContext);
 
   return (
     <ComboboxPrimitive.Chips

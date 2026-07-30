@@ -1,0 +1,13 @@
+[submodule "vendor/alchemy"]
+	path = .vendor/alchemy
+	url = https://github.com/alchemy-run/alchemy.git
+	# ~900MB reference-only checkout of the v1 repo — skipped by
+	# `git submodule update --init` (CI included). Fetch explicitly with
+	# `git submodule update --init --checkout .vendor/alchemy`.
+	update = none
+[submodule "distilled"]
+	path = distilled
+	url = https://github.com/alchemy-run/distilled.git
+[submodule "cloudflare-tools"]
+	path = cloudflare-tools
+	url = https://github.com/alchemy-run/cloudflare-tools.git

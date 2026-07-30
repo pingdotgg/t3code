@@ -2,13 +2,39 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#161616" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script type="module" src="/src/themeBootstrap.ts"></script>
+    <script>
+      (() => {
+        const LIGHT_BACKGROUND = "#ffffff";
+        const DARK_BACKGROUND = "#161616";
+        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        try {
+          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const theme =
+            storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
+              ? storedTheme
+              : "system";
+          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const isDark = theme === "dark" || (theme === "system" && prefersDark);
+          document.documentElement.classList.toggle("dark", isDark);
+          const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+          document.documentElement.style.backgroundColor = chromeColor;
+          themeColorMeta?.setAttribute("content", chromeColor);
+        } catch {
+          document.documentElement.classList.add("dark");
+          document.documentElement.style.backgroundColor = DARK_BACKGROUND;
+          themeColorMeta?.setAttribute("content", DARK_BACKGROUND);
+        }
+      })();
+    </script>
     <style>
       html,
       body,
@@ -22,6 +48,7 @@
         background: #ffffff;
         color: #262626;
         font-family:
+          "DM Sans Variable",
           "DM Sans",
           -apple-system,
           BlinkMacSystemFont,
@@ -30,39 +57,9 @@
           sans-serif;
       }
 
-      html[data-theme="noir"] body {
+      html.dark body {
         background: #161616;
         color: #f5f5f5;
-      }
-
-      html[data-theme="dawn"] body {
-        background: #f6ebe2;
-        color: #42352e;
-      }
-
-      html[data-theme="dusk"] body {
-        background: #f5e8e3;
-        color: #47312d;
-      }
-
-      html[data-theme="midnight"] body {
-        background: #171b22;
-        color: #edf2fb;
-      }
-
-      html[data-theme="stone"] body {
-        background: #171413;
-        color: #ece7e2;
-      }
-
-      html[data-theme="blueberry"] body {
-        background: #eaf3ff;
-        color: #24364b;
-      }
-
-      html[data-theme="cosmic"] body {
-        background: #121018;
-        color: #efeaf7;
       }
 
       #boot-shell {
@@ -83,69 +80,17 @@
 
       #boot-shell-logo {
         width: 64px;
-        height: auto;
-        color: inherit;
-      }
-
-      #boot-shell-logo path {
-        stroke: currentColor;
-        stroke-width: 5;
-        stroke-dasharray: 1;
-        stroke-dashoffset: 1;
-        animation: forma-mark-draw 1.05s ease forwards;
-      }
-
-      #boot-shell-logo .boot-shell-logo-path-2 {
-        animation-delay: 220ms;
-      }
-
-      #boot-shell-logo .boot-shell-logo-path-3 {
-        animation-delay: 440ms;
-      }
-
-      @keyframes forma-mark-draw {
-        to {
-          stroke-dashoffset: 0;
-        }
+        height: 64px;
+        object-fit: contain;
       }
     </style>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..800;1,9..40,300..800&display=swap"
-      rel="stylesheet"
-    />
-    <title>Forma (Alpha)</title>
+    <title>T3 Code (Alpha)</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="Forma splash screen">
-          <svg
-            id="boot-shell-logo"
-            aria-label="Forma"
-            fill="none"
-            role="img"
-            viewBox="0 0 432 489"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <title>Forma</title>
-            <path
-              class="boot-shell-logo-path-1"
-              d="M212.06 3.50488C214.381 2.16517 217.24 2.16525 219.56 3.50488L425.372 122.329C427.692 123.669 429.122 126.145 429.122 128.824L429.121 366.475C429.121 369.154 427.691 371.63 425.371 372.97L239.56 480.247C234.948 482.91 230 484.737 224.927 485.728C221.415 486.414 218.023 483.461 218.023 479.165V253.589C218.023 249.123 215.641 244.997 211.773 242.764L16.4187 129.976C12.6981 127.827 11.8369 123.414 14.1873 120.715C17.5818 116.817 21.6372 113.445 26.2498 110.782L212.06 3.50488Z"
-              pathLength="1"
-            />
-            <path
-              class="boot-shell-logo-path-2"
-              d="M2.50061 172.121C2.50078 166.347 8.75073 162.739 13.7506 165.625L182.065 262.802C184.385 264.142 185.815 266.618 185.815 269.297V463.649C185.815 469.422 179.565 473.032 174.565 470.145V470.144L121.427 439.465C119.107 438.126 117.676 435.65 117.676 432.97V312.055C117.676 307.589 115.294 303.463 111.426 301.23L6.25061 240.505C3.93016 239.166 2.50059 236.69 2.50061 234.01V172.121Z"
-              pathLength="1"
-            />
-            <path
-              class="boot-shell-logo-path-3"
-              d="M2.50098 288.522C2.50118 282.749 8.75107 279.141 13.751 282.027L81.7178 321.27C84.038 322.609 85.4678 325.085 85.4678 327.765L85.4668 405.715C85.4668 411.488 79.2168 415.097 74.2168 412.21L6.25 372.97C3.92956 371.63 2.5001 369.154 2.5 366.475L2.50098 288.522Z"
-              pathLength="1"
-            />
-          </svg>
+        <div id="boot-shell-card" aria-label="T3 Code splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
         </div>
       </div>
     </div>

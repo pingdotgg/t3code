@@ -1,6 +1,6 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { applyCursorAcpModelSelection, buildCursorAcpSpawnInput } from "./CursorAcpSupport.ts";
 
@@ -53,7 +53,7 @@ const parameterizedGpt54ConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConf
 describe("buildCursorAcpSpawnInput", () => {
   it("builds the default Cursor ACP command", () => {
     expect(buildCursorAcpSpawnInput(undefined, "/tmp/project")).toEqual({
-      command: "agent",
+      command: "cursor-agent",
       args: ["acp"],
       cwd: "/tmp/project",
     });
@@ -105,11 +105,9 @@ describe("applyCursorAcpModelSelection", () => {
           { id: "fastMode", value: true },
         ],
         mapError: ({ step, configId, cause }) =>
-          new Error(
-            step === "set-config-option"
-              ? `failed to set config option ${configId}: ${cause.message}`
-              : `failed to set model: ${cause.message}`,
-          ),
+          step === "set-config-option"
+            ? `failed to set config option ${configId}: ${cause.message}`
+            : `failed to set model: ${cause.message}`,
       }),
     );
 

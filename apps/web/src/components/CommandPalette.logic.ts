@@ -1,5 +1,11 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
+import {
+  type FilesystemBrowseEntry,
+  type KeybindingCommand,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -17,6 +23,7 @@ export interface CommandPaletteItem {
   readonly description?: string;
   readonly timestamp?: string;
   readonly icon: ReactNode;
+  readonly disabled?: boolean;
   /** Optional content rendered inline before the title text. */
   readonly titleLeadingContent?: ReactNode;
   /** Optional content rendered inline after the title text (before the timestamp). */
@@ -49,39 +56,19 @@ export interface CommandPaletteView {
   readonly initialQuery?: string;
 }
 
-export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
+export function enumerateCommandPaletteItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+): CommandPaletteActionItem[] {
+  return items.map((item, index) => {
+    const shortcutCommand = THREAD_JUMP_KEYBINDING_COMMANDS[index];
+    if (shortcutCommand) return { ...item, shortcutCommand };
 
-export function filterBrowseEntries(input: {
-  browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
-  browseFilterQuery: string;
-  highlightedItemValue: string | null;
-}): {
-  filteredEntries: FilesystemBrowseEntry[];
-  highlightedEntry: FilesystemBrowseEntry | null;
-  exactEntry: FilesystemBrowseEntry | null;
-} {
-  const lowerFilter = input.browseFilterQuery.toLowerCase();
-  const showHidden = input.browseFilterQuery.startsWith(".");
-
-  const filteredEntries = input.browseEntries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerFilter) &&
-      (showHidden || !entry.name.startsWith(".")),
-  );
-
-  let highlightedEntry: FilesystemBrowseEntry | null = null;
-  if (input.highlightedItemValue?.startsWith("browse:")) {
-    const highlightedPath = input.highlightedItemValue.slice("browse:".length);
-    highlightedEntry = filteredEntries.find((entry) => entry.fullPath === highlightedPath) ?? null;
-  }
-
-  const exactEntry =
-    input.browseFilterQuery.length > 0
-      ? (filteredEntries.find((entry) => entry.name === input.browseFilterQuery) ?? null)
-      : null;
-
-  return { filteredEntries, highlightedEntry, exactEntry };
+    const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
+    return itemWithoutShortcut;
+  });
 }
+
+export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
 export function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -92,14 +79,17 @@ export function buildProjectActionItems(input: {
   valuePrefix: string;
   icon: (project: Project) => ReactNode;
   runProject: (project: Project) => Promise<void>;
+  searchTerms?: (project: Project) => ReadonlyArray<string>;
+  shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.name, project.cwd],
-    title: project.name,
-    description: project.cwd,
+    searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
+    title: project.title,
+    description: project.workspaceRoot,
     icon: input.icon(project),
+    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
     run: async () => {
       await input.runProject(project);
     },
@@ -110,7 +100,7 @@ export type BuildThreadActionItemsThread = Pick<
   SidebarThreadSummary,
   "archivedAt" | "branch" | "createdAt" | "environmentId" | "id" | "projectId" | "title"
 > & {
-  updatedAt?: string | undefined;
+  updatedAt: string;
   latestUserMessageAt?: string | null;
 };
 
@@ -251,23 +241,18 @@ export function filterCommandPaletteGroups(input: {
   }
 
   return searchableGroups.flatMap((group) => {
-    const items = group.items
-      .map((item, index) => {
-        const haystack = normalizeSearchText(item.searchTerms.join(" "));
-        if (!haystack.includes(normalizedQuery)) {
-          return null;
-        }
+    const items = Arr.filterMap(group.items, (item, index) => {
+      const haystack = normalizeSearchText(item.searchTerms.join(" "));
+      if (!haystack.includes(normalizedQuery)) {
+        return Result.failVoid;
+      }
 
-        return {
-          item,
-          index,
-          rank: rankCommandPaletteItemMatch(item, normalizedQuery),
-        };
-      })
-      .filter(
-        (entry): entry is { item: (typeof group.items)[number]; index: number; rank: number } =>
-          entry !== null,
-      )
+      return Result.succeed({
+        item,
+        index,
+        rank: rankCommandPaletteItemMatch(item, normalizedQuery),
+      });
+    })
       .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
       .map((entry) => entry.item);
 
@@ -285,8 +270,8 @@ export function buildBrowseGroups(input: {
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
-  browseUp: () => void;
-  browseTo: (name: string) => void;
+  browseUp: () => void | Promise<void>;
+  browseTo: (name: string) => void | Promise<void>;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -299,7 +284,7 @@ export function buildBrowseGroups(input: {
       icon: input.upIcon,
       keepOpen: true,
       run: async () => {
-        input.browseUp();
+        await input.browseUp();
       },
     });
   }
@@ -313,7 +298,7 @@ export function buildBrowseGroups(input: {
       icon: input.directoryIcon,
       keepOpen: true,
       run: async () => {
-        input.browseTo(entry.name);
+        await input.browseTo(entry.name);
       },
     });
   }

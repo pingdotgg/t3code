@@ -1,12 +1,10 @@
 import {
   type ProjectEntry,
-  type ProviderKind,
-  type ServerLocalAgentCommand,
-  type ServerLocalAgentSkill,
+  type ProviderDriverKind,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { IconMessage as BotIcon } from "symbols-react";
+import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -20,11 +18,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "../ui/command";
-import { VscodeEntryIcon } from "./VscodeEntryIcon";
-import {
-  composerPopoverLabelClassName,
-  composerPopoverSurfaceClassName,
-} from "./composerPopoverStyles";
+import { PierreEntryIcon } from "./PierreEntryIcon";
 
 export type ComposerCommandItem =
   | {
@@ -44,15 +38,8 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
-      type: "local-slash-command";
-      command: ServerLocalAgentCommand;
-      label: string;
-      description: string;
-    }
-  | {
-      id: string;
       type: "provider-slash-command";
-      provider: ProviderKind;
+      provider: ProviderDriverKind;
       command: ServerProviderSlashCommand;
       label: string;
       description: string;
@@ -60,15 +47,8 @@ export type ComposerCommandItem =
   | {
       id: string;
       type: "skill";
-      provider: ProviderKind;
+      provider: ProviderDriverKind;
       skill: ServerProviderSkill;
-      label: string;
-      description: string;
-    }
-  | {
-      id: string;
-      type: "local-skill";
-      skill: ServerLocalAgentSkill;
       label: string;
       description: string;
     };
@@ -104,31 +84,18 @@ function groupCommandItems(
   groupSlashCommandSections: boolean,
 ): ComposerCommandGroup[] {
   if (triggerKind === "skill") {
-    const localItems = items.filter((item) => item.type === "local-skill");
-    const providerItems = items.filter((item) => item.type === "skill");
-    const groups: ComposerCommandGroup[] = [];
-    if (localItems.length > 0) {
-      groups.push({ id: "project-skills", label: "Project", items: localItems });
-    }
-    if (providerItems.length > 0) {
-      groups.push({ id: "provider-skills", label: "Provider", items: providerItems });
-    }
-    return groups;
+    return items.length > 0 ? [{ id: "skills", label: "Skills", items }] : [];
   }
   if (triggerKind !== "slash-command" || !groupSlashCommandSections) {
     return [{ id: "default", label: null, items }];
   }
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
-  const localItems = items.filter((item) => item.type === "local-slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
 
   const groups: ComposerCommandGroup[] = [];
   if (builtInItems.length > 0) {
     groups.push({ id: "built-in", label: "Built-in", items: builtInItems });
-  }
-  if (localItems.length > 0) {
-    groups.push({ id: "project", label: "Project", items: localItems });
   }
   if (providerItems.length > 0) {
     groups.push({ id: "provider", label: "Provider", items: providerItems });
@@ -172,36 +139,40 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         );
       }}
     >
-      <div ref={listRef} className={composerPopoverSurfaceClassName}>
-        <CommandList className="max-h-72">
-          {groups.map((group, groupIndex) => (
-            <div key={group.id}>
-              {groupIndex > 0 ? <CommandSeparator className="my-0.5" /> : null}
-              <CommandGroup>
-                {group.label ? (
-                  <CommandGroupLabel className={composerPopoverLabelClassName}>
-                    {group.label}
-                  </CommandGroupLabel>
-                ) : null}
-                {group.items.map((item) => (
-                  <ComposerCommandMenuItem
-                    key={item.id}
-                    item={item}
-                    resolvedTheme={props.resolvedTheme}
-                    isActive={props.activeItemId === item.id}
-                    onHighlight={props.onHighlightedItemChange}
-                    onSelect={props.onSelect}
-                  />
-                ))}
-              </CommandGroup>
-            </div>
-          ))}
-        </CommandList>
-        {props.items.length === 0 ? (
-          <div className="px-3 py-2">
+      <div
+        ref={listRef}
+        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
+      >
+        {props.items.length > 0 ? (
+          <CommandList className="max-h-72">
+            {groups.map((group, groupIndex) => (
+              <div key={group.id}>
+                {groupIndex > 0 ? <CommandSeparator className="my-0.5" /> : null}
+                <CommandGroup>
+                  {group.label ? (
+                    <CommandGroupLabel className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                      {group.label}
+                    </CommandGroupLabel>
+                  ) : null}
+                  {group.items.map((item) => (
+                    <ComposerCommandMenuItem
+                      key={item.id}
+                      item={item}
+                      resolvedTheme={props.resolvedTheme}
+                      isActive={props.activeItemId === item.id}
+                      onHighlight={props.onHighlightedItemChange}
+                      onSelect={props.onSelect}
+                    />
+                  ))}
+                </CommandGroup>
+              </div>
+            ))}
+          </CommandList>
+        ) : (
+          <div className="px-5 py-3.5">
             {props.triggerKind === "skill" ? (
               <CommandGroup>
-                <CommandGroupLabel className={cn(composerPopoverLabelClassName, "px-0 pt-0")}>
+                <CommandGroupLabel className="px-0 pt-0 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
                   Skills
                 </CommandGroupLabel>
                 <p className="text-muted-foreground/70 text-xs">
@@ -222,7 +193,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               </p>
             )}
           </div>
-        ) : null}
+        )}
       </div>
     </Command>
   );
@@ -236,11 +207,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const skillSourceLabel =
-    props.item.type === "skill" || props.item.type === "local-skill"
-      ? formatProviderSkillInstallSource(props.item.skill)
-      : props.item.type === "local-slash-command"
-        ? "Project"
-        : null;
+    props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
 
   return (
     <CommandItem
@@ -261,21 +228,21 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       }}
     >
       {props.item.type === "path" ? (
-        <VscodeEntryIcon
+        <PierreEntryIcon
           pathValue={props.item.path}
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 shrink-0 fill-muted-foreground/80" />
+        <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
-      {props.item.type === "local-slash-command" || props.item.type === "provider-slash-command" ? (
+      {props.item.type === "provider-slash-command" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
-      {props.item.type === "skill" || props.item.type === "local-skill" ? (
+      {props.item.type === "skill" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>

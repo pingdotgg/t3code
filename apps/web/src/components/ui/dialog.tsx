@@ -1,10 +1,14 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { IconXmark as XIcon } from "symbols-react";
+import { XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
-import { MODAL_BACKDROP_MOTION_CLASS_NAME, MODAL_POPUP_MOTION_CLASS_NAME } from "~/lib/motion";
 import { Button } from "~/components/ui/button";
+import {
+  DIALOG_BACKDROP_CLASS,
+  DIALOG_MOBILE_SHEET_CLASS,
+  DIALOG_POPUP_CLASS,
+} from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
 const DialogCreateHandle = DialogPrimitive.createHandle;
@@ -24,11 +28,8 @@ function DialogClose(props: DialogPrimitive.Close.Props) {
 function DialogBackdrop({ className, ...props }: DialogPrimitive.Backdrop.Props) {
   return (
     <DialogPrimitive.Backdrop
-      className={cn(
-        "fixed inset-0 z-50 bg-black/32 backdrop-blur-sm",
-        MODAL_BACKDROP_MOTION_CLASS_NAME,
-        className,
-      )}
+      forceRender
+      className={cn(DIALOG_BACKDROP_CLASS, className)}
       data-slot="dialog-backdrop"
       {...props}
     />
@@ -39,7 +40,7 @@ function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props)
   return (
     <DialogPrimitive.Viewport
       className={cn(
-        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_3fr] justify-items-center p-4",
+        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4",
         className,
       )}
       data-slot="dialog-viewport"
@@ -66,10 +67,9 @@ function DialogPopup({
       >
         <DialogPrimitive.Popup
           className={cn(
-            "-translate-y-[calc(1.25rem*var(--nested-dialogs))] relative row-start-2 flex max-h-full min-h-0 w-full min-w-0 max-w-lg scale-[calc(1-0.1*var(--nested-dialogs))] flex-col rounded-2xl border bg-popover not-dark:bg-clip-padding text-popover-foreground opacity-[calc(1-0.1*var(--nested-dialogs))] shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] data-nested:data-ending-style:translate-y-8 data-nested:data-starting-style:translate-y-8 data-nested-dialog-open:origin-top dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
-            MODAL_POPUP_MOTION_CLASS_NAME,
-            bottomStickOnMobile &&
-              "max-sm:max-w-none max-sm:rounded-none max-sm:border-x-0 max-sm:border-t max-sm:border-b-0 max-sm:opacity-[calc(1-min(var(--nested-dialogs),1))] max-sm:data-ending-style:translate-y-4 max-sm:data-starting-style:translate-y-4 max-sm:before:hidden max-sm:before:rounded-none",
+            DIALOG_POPUP_CLASS,
+            "row-start-2 max-h-full max-w-lg text-popover-foreground",
+            bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
             className,
           )}
           data-slot="dialog-popup"
@@ -116,8 +116,7 @@ function DialogFooter({
       className={cn(
         "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-2xl)-1px)]",
         variant === "default" && "border-t bg-muted/72 py-4",
-        variant === "bare" &&
-          "in-[[data-slot=dialog-popup]:has([data-slot=dialog-panel])]:pt-3 pt-4 pb-6",
+        variant === "bare" && "py-4",
         className,
       )}
       data-slot="dialog-footer"

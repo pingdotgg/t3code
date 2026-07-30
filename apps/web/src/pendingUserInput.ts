@@ -33,10 +33,14 @@ function normalizeSelectedOptionLabels(value: string[] | undefined): string[] {
     return [];
   }
 
-  const normalized = value
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+  const normalized: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (trimmed.length > 0) {
+      normalized.push(trimmed);
+    }
+  }
 
   return Array.from(new Set(normalized));
 }

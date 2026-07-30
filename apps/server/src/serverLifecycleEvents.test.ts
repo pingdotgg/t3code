@@ -1,15 +1,16 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
-import { Effect, Option } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
-import { ServerLifecycleEvents, ServerLifecycleEventsLive } from "./serverLifecycleEvents.ts";
+import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 
 it.effect(
   "publishes lifecycle events without subscribers and snapshots the latest welcome/ready",
   () =>
     Effect.gen(function* () {
-      const lifecycleEvents = yield* ServerLifecycleEvents;
+      const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const environment = {
         environmentId: EnvironmentId.make("environment-test"),
         label: "Test environment",
@@ -37,7 +38,7 @@ it.effect(
           version: 1,
           type: "ready",
           payload: {
-            at: new Date().toISOString(),
+            at: "2026-01-01T00:00:00.000Z",
             environment,
           },
         })
@@ -48,5 +49,5 @@ it.effect(
       const snapshot = yield* lifecycleEvents.snapshot;
       assert.equal(snapshot.sequence, 2);
       assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), ["ready", "welcome"]);
-    }).pipe(Effect.provide(ServerLifecycleEventsLive)),
+    }).pipe(Effect.provide(ServerLifecycleEvents.layer)),
 );

@@ -1,19 +1,45 @@
-import { Schema, SchemaIssue } from "effect";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+
+function summarizeSchemaIssue(issue: SchemaIssue.Issue): string {
+  switch (issue._tag) {
+    case "Filter":
+    case "Encoding":
+    case "Pointer":
+      return `${issue._tag}(${summarizeSchemaIssue(issue.issue)})`;
+    case "Composite":
+    case "AnyOf":
+      return `${issue._tag}(${issue.issues.map(summarizeSchemaIssue).join(",")})`;
+    default:
+      return issue._tag;
+  }
+}
 
 // ===============================
 // Core Persistence Errors
 // ===============================
 
+export const PersistenceErrorCorrelation = Schema.Union([
+  Schema.Struct({ sessionId: Schema.String }),
+  Schema.Struct({ currentSessionId: Schema.String }),
+  Schema.Struct({ pairingLinkId: Schema.String }),
+  Schema.Struct({ threadId: Schema.String }),
+]);
+export type PersistenceErrorCorrelation = typeof PersistenceErrorCorrelation.Type;
+
 export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlError>()(
   "PersistenceSqlError",
   {
     operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    detail: Schema.optional(Schema.String),
+    correlation: Schema.optional(PersistenceErrorCorrelation),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `SQL error in ${this.operation}: ${this.detail}`;
+    return this.detail === undefined
+      ? `SQL error in ${this.operation}`
+      : `SQL error in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -22,14 +48,31 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
   {
     operation: Schema.String,
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    correlation: Schema.optional(PersistenceErrorCorrelation),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  static fromSchemaError(
+    operation: string,
+    cause: Schema.SchemaError,
+    correlation?: PersistenceErrorCorrelation,
+  ): PersistenceDecodeError {
+    return new PersistenceDecodeError({
+      operation,
+      issue: summarizeSchemaIssue(cause.issue),
+      ...(correlation === undefined ? {} : { correlation }),
+      cause,
+    });
+  }
+
   override get message(): string {
     return `Decode error in ${this.operation}: ${this.issue}`;
   }
 }
+const isPersistenceSqlError = Schema.is(PersistenceSqlError);
+const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
+// Kept for orchestration/projection call sites, which are being revamped separately.
 export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError =>
     new PersistenceSqlError({
@@ -39,26 +82,14 @@ export function toPersistenceSqlError(operation: string) {
     });
 }
 
+// Kept for orchestration/projection call sites, which are being revamped separately.
 export function toPersistenceDecodeError(operation: string) {
-  return (error: Schema.SchemaError): PersistenceDecodeError =>
-    new PersistenceDecodeError({
-      operation,
-      issue: SchemaIssue.makeFormatterDefault()(error.issue),
-      cause: error,
-    });
-}
-
-export function toPersistenceDecodeCauseError(operation: string) {
-  return (cause: unknown): PersistenceDecodeError =>
-    new PersistenceDecodeError({
-      operation,
-      issue: `Failed to execute ${operation}`,
-      cause,
-    });
+  return (cause: Schema.SchemaError): PersistenceDecodeError =>
+    PersistenceDecodeError.fromSchemaError(operation, cause);
 }
 
 export const isPersistenceError = (u: unknown) =>
-  Schema.is(PersistenceSqlError)(u) || Schema.is(PersistenceDecodeError)(u);
+  isPersistenceSqlError(u) || isPersistenceDecodeError(u);
 
 // ===============================
 // Provider Session Repository Errors
@@ -69,7 +100,7 @@ export class ProviderSessionRepositoryValidationError extends Schema.TaggedError
   {
     operation: Schema.String,
     issue: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -82,7 +113,7 @@ export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedErro
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

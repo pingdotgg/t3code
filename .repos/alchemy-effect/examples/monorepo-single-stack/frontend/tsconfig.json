@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "include": ["src"],
+  "references": [{ "path": "../backend" }],
+  "compilerOptions": {
+    "types": ["bun", "vite/client"],
+    "composite": true,
+    "noEmit": true
+  }
+}

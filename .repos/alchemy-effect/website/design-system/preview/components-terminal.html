@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Terminal</title>
+    <link rel="stylesheet" href="_card.css" />
+    <style>
+      .term {
+        background: var(--alc-bg-code);
+        border: 1px solid var(--alc-hairline);
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: var(--alc-shadow);
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(232, 220, 192, 0.1);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .pre {
+        font-family: var(--alc-font-mono);
+        font-size: 13px;
+        line-height: 1.75;
+        color: var(--alc-code-var);
+        padding: 16px 18px;
+        margin: 0;
+      }
+      .g {
+        color: #d4f26a;
+        font-weight: 500;
+      } /* electric spring green */
+      .tick {
+        color: #d4f26a;
+        font-weight: 700;
+      }
+      .y {
+        color: #ffe38a;
+      } /* bright honey */
+      .d {
+        color: #d6c79a;
+      } /* bright warm tan */
+      .b {
+        color: #ffffff;
+        font-weight: 600;
+      } /* pure white */
+      .u {
+        text-decoration: underline;
+        color: #ffffff;
+        font-weight: 600;
+      }
+      .c {
+        color: #c5efa8;
+      } /* bright mint */
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="term">
+        <div class="bar">
+          <span class="dot" style="background: var(--alc-danger)"></span>
+          <span class="dot" style="background: var(--alc-warn)"></span>
+          <span class="dot" style="background: var(--alc-accent-bright)"></span>
+          <span
+            style="
+              font-family: var(--alc-font-mono);
+              font-size: 11px;
+              color: var(--alc-code-comment);
+              margin-left: 10px;
+            "
+            >~/my-app</span
+          >
+        </div>
+        <pre class="pre"><span class="d">$</span> alchemy deploy --stage prod
+
+<span class="u">Plan</span>: <span class="y">2 to create</span>
+
+<span class="g">+</span> <span class="b">Bucket</span> <span class="d">(Cloudflare.R2Bucket)</span>
+<span class="g">+</span> <span class="b">Worker</span> <span class="d">(Cloudflare.Worker)</span> <span class="c">(1 bindings)</span>
+  <span class="g">+</span> <span class="c">Bucket</span>
+
+<span class="tick">✓</span> <span class="b">Bucket</span> <span class="d">(Cloudflare.R2Bucket)</span> <span class="g">created</span>
+<span class="tick">✓</span> <span class="b">Worker</span> <span class="d">(Cloudflare.Worker)</span> <span class="g">created</span></pre>
+      </div>
+    </div>
+  </body>
+</html>

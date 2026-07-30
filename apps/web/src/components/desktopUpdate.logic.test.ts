@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 import {
@@ -24,6 +24,7 @@ const baseState: DesktopUpdateState = {
   runningUnderArm64Translation: false,
   availableVersion: null,
   downloadedVersion: null,
+  releaseNotes: [],
   downloadPercent: null,
   checkedAt: null,
   message: null,
@@ -223,6 +224,32 @@ describe("desktop update UI helpers", () => {
         downloadedVersion: null,
       }),
     ).toContain("Install update and restart Forma?");
+  });
+
+  it("warns Windows users that a silent installation can take several minutes", () => {
+    const message = getDesktopUpdateInstallConfirmationMessage(
+      {
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.0",
+      },
+      "Win32",
+    );
+
+    expect(message).toContain("may remain closed for several minutes");
+    expect(message).toContain("no installer window may appear");
+    expect(message).toContain("will reopen automatically");
+  });
+
+  it("keeps the additional silent installation warning Windows-specific", () => {
+    const message = getDesktopUpdateInstallConfirmationMessage(
+      {
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.0",
+      },
+      "MacIntel",
+    );
+
+    expect(message).not.toContain("may remain closed for several minutes");
   });
 });
 

@@ -1,0 +1,435 @@
+---
+/**
+ * `<DAG />` — server-rendered SVG of a small directed acyclic graph.
+ *
+ * Used in concept docs to illustrate resource dependency graphs and
+ * lifecycle flows. Auto-layouts nodes left-to-right using longest-path
+ * layering, then positions each node within its layer to minimize
+ * crossings (centered, tie-broken by input order).
+ *
+ * Styled to match the brand (parchment panel, moss accents, walnut
+ * text, JetBrains Mono labels).
+ *
+ * Usage in MDX:
+ *   import DAG from "../../../components/DAG.astro";
+ *   <DAG
+ *     nodes={[
+ *       { id: "Bucket",   label: "Bucket",   type: "Cloudflare.R2Bucket" },
+ *       { id: "Sessions", label: "Sessions", type: "Cloudflare.KVNamespace" },
+ *       { id: "Queue",    label: "Queue",    type: "AWS.SQS.Queue" },
+ *       { id: "Worker",   label: "Worker",   type: "Cloudflare.Worker" },
+ *     ]}
+ *     edges={[
+ *       { from: "Bucket",   to: "Queue" },
+ *       { from: "Bucket",   to: "Worker" },
+ *       { from: "Sessions", to: "Worker" },
+ *       { from: "Queue",    to: "Worker" },
+ *     ]}
+ *   />
+ */
+
+export interface NodeIn {
+  id: string;
+  /** Visible label inside the node (defaults to `id`). */
+  label?: string;
+  /** Smaller subtitle below the label (e.g. resource type). */
+  type?: string;
+  /** Optional layer override (0-indexed left-to-right). Otherwise computed. */
+  layer?: number;
+  /** Visual tone for the node. Defaults to "default". */
+  tone?: "default" | "accent" | "warn" | "danger";
+}
+
+export interface EdgeIn {
+  from: string;
+  to: string;
+  /** Optional small label drawn near the edge midpoint. */
+  label?: string;
+  /** Render as a dashed line (e.g. for "later" / "deferred" edges). */
+  dashed?: boolean;
+}
+
+interface Props {
+  nodes: NodeIn[];
+  edges: EdgeIn[];
+  /** Layout direction. Defaults to "LR" (left-to-right). */
+  direction?: "LR" | "TB";
+  /** Optional caption rendered below the graph. */
+  caption?: string;
+}
+
+const { nodes, edges, direction = "LR", caption } = Astro.props as Props;
+
+// ---------- Layout ----------
+
+const NODE_W = 140;
+const NODE_H = 56;
+const NODE_H_TYPED = 64; // slightly taller when subtitle present
+const COL_GAP = 80;
+const ROW_GAP = 28;
+const PAD = 24;
+
+const idIndex = new Map(nodes.map((n, i) => [n.id, i]));
+
+// Longest-path layering: layer(v) = 1 + max(layer(u)) over predecessors.
+const incoming = new Map<string, string[]>();
+const outgoing = new Map<string, string[]>();
+for (const n of nodes) {
+  incoming.set(n.id, []);
+  outgoing.set(n.id, []);
+}
+for (const e of edges) {
+  outgoing.get(e.from)?.push(e.to);
+  incoming.get(e.to)?.push(e.from);
+}
+
+// Longest-path layering, cycle-safe: any predecessor edge that would
+// re-enter a node currently on the recursion stack is treated as a
+// back-edge and ignored for the purposes of layer assignment. This
+// keeps cyclic graphs (A binds B, B binds A) layoutable side-by-side.
+const layerOf = new Map<string, number>();
+const visiting = new Set<string>();
+const visit = (id: string): number => {
+  const cached = layerOf.get(id);
+  if (cached !== undefined) return cached;
+  const override = nodes[idIndex.get(id)!]?.layer;
+  if (override !== undefined) {
+    layerOf.set(id, override);
+    return override;
+  }
+  if (visiting.has(id)) {
+    // Back-edge: caller will Math.max with our placeholder; returning
+    // -1 means "don't push my dependent down a layer for this edge".
+    return -1;
+  }
+  visiting.add(id);
+  const preds = incoming.get(id) ?? [];
+  const predLayers = preds.map(visit).filter((l) => l >= 0);
+  const l = predLayers.length === 0 ? 0 : Math.max(...predLayers) + 1;
+  visiting.delete(id);
+  layerOf.set(id, l);
+  return l;
+};
+nodes.forEach((n) => visit(n.id));
+
+const layers: string[][] = [];
+for (const n of nodes) {
+  const l = layerOf.get(n.id)!;
+  if (!layers[l]) layers[l] = [];
+  layers[l].push(n.id);
+}
+
+// Heights — bump rows that have a subtitle.
+const heightOf = (id: string): number =>
+  nodes[idIndex.get(id)!]?.type ? NODE_H_TYPED : NODE_H;
+
+// Position nodes within each layer; center on the tallest layer.
+const colMaxHeight = layers.map((col) =>
+  col.reduce((acc, id) => acc + heightOf(id) + ROW_GAP, -ROW_GAP),
+);
+const tallest = Math.max(...colMaxHeight);
+
+const positions = new Map<string, { x: number; y: number; h: number }>();
+
+if (direction === "LR") {
+  layers.forEach((col, ci) => {
+    const colH = colMaxHeight[ci]!;
+    let y = PAD + (tallest - colH) / 2;
+    for (const id of col) {
+      const h = heightOf(id);
+      positions.set(id, {
+        x: PAD + ci * (NODE_W + COL_GAP),
+        y,
+        h,
+      });
+      y += h + ROW_GAP;
+    }
+  });
+} else {
+  // TB — swap roles: each "layer" becomes a row.
+  layers.forEach((row, ri) => {
+    const rowW = row.length * (NODE_W + COL_GAP) - COL_GAP;
+    const totalW = Math.max(
+      ...layers.map((r) => r.length * (NODE_W + COL_GAP) - COL_GAP),
+    );
+    let x = PAD + (totalW - rowW) / 2;
+    for (const id of row) {
+      const h = heightOf(id);
+      positions.set(id, {
+        x,
+        y: PAD + ri * (NODE_H_TYPED + 60),
+        h,
+      });
+      x += NODE_W + COL_GAP;
+    }
+  });
+}
+
+const hasBackEdge = edges.some(
+  (e) => (layerOf.get(e.to) ?? 0) <= (layerOf.get(e.from) ?? 0),
+);
+const BACK_EDGE_GUTTER = 56;
+
+const W =
+  direction === "LR"
+    ? PAD * 2 +
+      layers.length * NODE_W +
+      (layers.length - 1) * COL_GAP +
+      (hasBackEdge ? BACK_EDGE_GUTTER : 0)
+    : PAD * 2 +
+      Math.max(...layers.map((r) => r.length * (NODE_W + COL_GAP) - COL_GAP));
+const H =
+  direction === "LR"
+    ? PAD * 2 + tallest + (hasBackEdge ? BACK_EDGE_GUTTER : 0)
+    : PAD * 2 +
+      layers.length * (NODE_H_TYPED + 60) -
+      60 +
+      (hasBackEdge ? BACK_EDGE_GUTTER : 0);
+
+// ---------- Edge geometry ----------
+
+interface Edge {
+  d: string;
+  midX: number;
+  midY: number;
+  label?: string;
+  dashed?: boolean;
+}
+
+const TIP = 6;
+
+const buildEdges = (): Edge[] =>
+  edges.map((e) => {
+    const a = positions.get(e.from)!;
+    const b = positions.get(e.to)!;
+    const aLayer = layerOf.get(e.from)!;
+    const bLayer = layerOf.get(e.to)!;
+    const isBack =
+      direction === "LR" ? bLayer <= aLayer : bLayer <= aLayer;
+
+    if (direction === "LR") {
+      if (!isBack) {
+        // Forward edge — straight cubic from source.right to target.left.
+        const x1 = a.x + NODE_W;
+        const y1 = a.y + a.h / 2;
+        const x2 = b.x - TIP;
+        const y2 = b.y + b.h / 2;
+        const cx = x1 + (x2 - x1) * 0.5;
+        const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+        return {
+          d,
+          midX: (x1 + x2) / 2,
+          midY: (y1 + y2) / 2,
+          label: e.label,
+          dashed: e.dashed,
+        };
+      }
+      // Back-edge — arc beneath both nodes from source.bottom to target.bottom
+      // so arrow remains visibly between/under the nodes (not behind them).
+      const x1 = a.x + NODE_W * 0.5;
+      const y1 = a.y + a.h;
+      const x2 = b.x + NODE_W * 0.5;
+      const y2 = b.y + b.h + TIP;
+      const dropMax = 36;
+      const cy = Math.max(y1, y2) + dropMax;
+      const d = `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`;
+      return {
+        d,
+        midX: (x1 + x2) / 2,
+        midY: cy,
+        label: e.label,
+        dashed: e.dashed,
+      };
+    }
+
+    // TB direction.
+    if (!isBack) {
+      const x1 = a.x + NODE_W / 2;
+      const y1 = a.y + a.h;
+      const x2 = b.x + NODE_W / 2;
+      const y2 = b.y - TIP;
+      const cy = y1 + (y2 - y1) * 0.5;
+      const d = `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`;
+      return {
+        d,
+        midX: (x1 + x2) / 2,
+        midY: (y1 + y2) / 2,
+        label: e.label,
+        dashed: e.dashed,
+      };
+    }
+    // TB back-edge — arc to the right.
+    const x1 = a.x + NODE_W;
+    const y1 = a.y + a.h / 2;
+    const x2 = b.x + NODE_W + TIP;
+    const y2 = b.y + b.h / 2;
+    const dx = 36;
+    const cx = Math.max(x1, x2) + dx;
+    const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+    return {
+      d,
+      midX: cx,
+      midY: (y1 + y2) / 2,
+      label: e.label,
+      dashed: e.dashed,
+    };
+  });
+
+const edgeShapes = buildEdges();
+---
+
+<figure class="alc-dag not-content">
+  <svg
+    class="alc-dag__svg"
+    viewBox={`0 0 ${W} ${H}`}
+    role="img"
+    aria-label={caption ?? "Dependency graph"}
+  >
+    <defs>
+      <marker
+        id="alc-dag-arrow"
+        viewBox="0 0 10 10"
+        refX="8"
+        refY="5"
+        markerWidth="6"
+        markerHeight="6"
+        orient="auto-start-reverse"
+      >
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--alc-accent)" />
+      </marker>
+    </defs>
+
+    {/* Edges first so they sit beneath nodes. */}
+    {edgeShapes.map((e) => (
+      <g class="alc-dag__edge">
+        <path
+          d={e.d}
+          fill="none"
+          stroke="var(--alc-accent-60)"
+          stroke-width="1.5"
+          stroke-dasharray={e.dashed ? "4 4" : undefined}
+          marker-end="url(#alc-dag-arrow)"
+        />
+        {e.label && (
+          <text
+            x={e.midX}
+            y={e.midY - 6}
+            class="alc-dag__edge-label"
+            text-anchor="middle"
+          >
+            {e.label}
+          </text>
+        )}
+      </g>
+    ))}
+
+    {/* Nodes. */}
+    {nodes.map((n) => {
+      const p = positions.get(n.id)!;
+      const tone = n.tone ?? "default";
+      return (
+        <g
+          class={`alc-dag__node alc-dag__node--${tone}`}
+          transform={`translate(${p.x}, ${p.y})`}
+        >
+          <rect
+            width={NODE_W}
+            height={p.h}
+            rx="8"
+            ry="8"
+            class="alc-dag__node-bg"
+          />
+          <text
+            x={NODE_W / 2}
+            y={n.type ? p.h / 2 - 4 : p.h / 2 + 1}
+            class="alc-dag__node-label"
+            text-anchor="middle"
+            dominant-baseline="middle"
+          >
+            {n.label ?? n.id}
+          </text>
+          {n.type && (
+            <text
+              x={NODE_W / 2}
+              y={p.h / 2 + 14}
+              class="alc-dag__node-type"
+              text-anchor="middle"
+              dominant-baseline="middle"
+            >
+              {n.type}
+            </text>
+          )}
+        </g>
+      );
+    })}
+  </svg>
+
+  {caption && <figcaption class="alc-dag__caption">{caption}</figcaption>}
+</figure>
+
+<style>
+  .alc-dag {
+    margin: 1.5rem 0;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: var(--alc-radius);
+    padding: 0.75rem;
+    overflow-x: auto;
+  }
+
+  .alc-dag__svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+  }
+
+  .alc-dag__node-bg {
+    fill: var(--alc-bg-elev-2);
+    stroke: var(--alc-accent-40);
+    stroke-width: 1.5;
+    transition: stroke 200ms ease, fill 200ms ease;
+  }
+
+  .alc-dag__node--accent .alc-dag__node-bg {
+    stroke: var(--alc-accent);
+    fill: color-mix(in srgb, var(--alc-accent-soft) 60%, var(--alc-bg-elev-2));
+  }
+
+  .alc-dag__node--warn .alc-dag__node-bg {
+    stroke: var(--alc-warn);
+    fill: color-mix(in srgb, var(--alc-warn) 12%, var(--alc-bg-elev-2));
+  }
+
+  .alc-dag__node--danger .alc-dag__node-bg {
+    stroke: var(--alc-danger);
+    fill: color-mix(in srgb, var(--alc-danger) 10%, var(--alc-bg-elev-2));
+  }
+
+  .alc-dag__node-label {
+    font-family: var(--alc-font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    fill: var(--alc-fg-1);
+  }
+
+  .alc-dag__node-type {
+    font-family: var(--alc-font-mono);
+    font-size: 10.5px;
+    fill: var(--alc-fg-3);
+  }
+
+  .alc-dag__edge-label {
+    font-family: var(--alc-font-mono);
+    font-size: 10.5px;
+    fill: var(--alc-fg-3);
+  }
+
+  .alc-dag__caption {
+    margin-top: 0.5rem;
+    font-family: var(--alc-font-sans);
+    font-size: 13px;
+    color: var(--alc-fg-3);
+    text-align: center;
+  }
+</style>

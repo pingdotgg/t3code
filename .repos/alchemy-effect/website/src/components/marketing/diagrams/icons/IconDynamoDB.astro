@@ -1,0 +1,11 @@
+---
+import { AWS_COLOR, tint } from "../_colors";
+interface Props { size?: number; color?: string }
+const { size = 26, color = AWS_COLOR } = Astro.props;
+const fill = tint(color);
+---
+<svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  <ellipse cx="16" cy="8" rx="10" ry="3" fill={fill} stroke={color} stroke-width="1.4" />
+  <ellipse cx="16" cy="16" rx="10" ry="3" fill={fill} stroke={color} stroke-width="1.4" />
+  <ellipse cx="16" cy="24" rx="10" ry="3" fill={fill} stroke={color} stroke-width="1.4" />
+</svg>

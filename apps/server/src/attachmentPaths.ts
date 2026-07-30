@@ -1,9 +1,8 @@
-import path from "node:path";
-
-export const ATTACHMENTS_ROUTE_PREFIX = "/attachments";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
 
 export function normalizeAttachmentRelativePath(rawRelativePath: string): string | null {
-  const normalized = path.normalize(rawRelativePath).replace(/^[/\\]+/, "");
+  const normalized = NodePath.normalize(rawRelativePath).replace(/^[/\\]+/, "");
   if (normalized.length === 0 || normalized.startsWith("..") || normalized.includes("\0")) {
     return null;
   }
@@ -19,9 +18,9 @@ export function resolveAttachmentRelativePath(input: {
     return null;
   }
 
-  const attachmentsRoot = path.resolve(input.attachmentsDir);
-  const filePath = path.resolve(path.join(attachmentsRoot, normalizedRelativePath));
-  if (!filePath.startsWith(`${attachmentsRoot}${path.sep}`)) {
+  const attachmentsRoot = NodePath.resolve(input.attachmentsDir);
+  const filePath = NodePath.resolve(NodePath.join(attachmentsRoot, normalizedRelativePath));
+  if (!filePath.startsWith(`${attachmentsRoot}${NodePath.sep}`)) {
     return null;
   }
   return filePath;

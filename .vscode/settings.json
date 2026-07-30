@@ -4,12 +4,15 @@
   "editor.codeActionsOnSave": {
     "source.fixAll.oxc": "always"
   },
-  "files.associations": {
-    "*.tsx": "typescriptreact",
-    "*.ts": "typescript"
-  },
   "oxc.unusedDisableDirectives": "warn",
   "js/ts.tsdk.path": "node_modules/typescript/lib",
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "typescript.enablePromptUseWorkspaceTsdk": true
+  "typescript.native-preview.tsdk": "node_modules/@typescript/native-preview",
+  "typescript.preferences.autoImportFileExcludePatterns": [".repos/**"],
+  "javascript.preferences.autoImportFileExcludePatterns": [".repos/**"],
+  "files.watcherExclude": {
+    ".repos/**": true
+  },
+  "search.exclude": {
+    ".repos/**": true
+  }
 }

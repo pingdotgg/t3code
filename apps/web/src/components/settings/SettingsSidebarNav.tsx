@@ -1,5 +1,16 @@
-import { IconArrowTurnUpLeft as ArrowTurnUpLeftIcon } from "symbols-react";
-import { useNavigate } from "@tanstack/react-router";
+import { useCallback, type ComponentType } from "react";
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  BotIcon,
+  FlaskConicalIcon,
+  GitBranchIcon,
+  KeyboardIcon,
+  Link2Icon,
+  PaletteIcon,
+  Settings2Icon,
+} from "lucide-react";
+import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
 import {
   SidebarContent,
@@ -8,42 +19,74 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
+  useSidebar,
 } from "../ui/sidebar";
-import { SETTINGS_NAV_ITEMS, resolveSettingsPathname } from "./settingsNavigation";
+import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+
+export type SettingsSectionPath =
+  | "/settings/general"
+  | "/settings/appearance"
+  | "/settings/keybindings"
+  | "/settings/providers"
+  | "/settings/source-control"
+  | "/settings/connections"
+  | "/settings/beta"
+  | "/settings/archived";
+
+export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
+  label: string;
+  to: SettingsSectionPath;
+  icon: ComponentType<{ className?: string }>;
+}> = [
+  { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
+  { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
+  { label: "Providers", to: "/settings/providers", icon: BotIcon },
+  { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
+  { label: "Connections", to: "/settings/connections", icon: Link2Icon },
+  { label: "Beta", to: "/settings/beta", icon: FlaskConicalIcon },
+  { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
+];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
-  const currentPath = resolveSettingsPathname(pathname);
+  const canGoBack = useCanGoBack();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const handleSectionClick = useCallback(
+    (to: SettingsSectionPath) => {
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void navigate({ to, replace: true });
+    },
+    [isMobile, navigate, setOpenMobile],
+  );
+  const handleBackClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    if (canGoBack) {
+      window.history.back();
+      return;
+    }
+    void navigate({ to: "/" });
+  }, [canGoBack, isMobile, navigate, setOpenMobile]);
 
   return (
     <>
       <SidebarContent className="overflow-x-hidden">
-        <SidebarGroup className="px-2 py-3">
+        <SidebarGroup className="p-2">
           <SidebarMenu>
             {SETTINGS_NAV_ITEMS.map((item) => {
               const Icon = item.icon;
-              const isActive = currentPath === item.to;
-              const iconColorClassName = item.iconUsesFill
-                ? isActive
-                  ? "size-4 shrink-0 fill-current text-foreground"
-                  : "size-4 shrink-0 fill-current text-muted-foreground/60"
-                : isActive
-                  ? "size-4 shrink-0 text-foreground"
-                  : "size-4 shrink-0 text-muted-foreground/60";
+              const isActive = pathname === item.to;
               return (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
-                    size="sm"
                     isActive={isActive}
-                    className={
-                      isActive
-                        ? "text-ui-sm gap-2.5 px-2.5 py-2 text-left font-medium text-foreground"
-                        : "text-ui-sm gap-2.5 px-2.5 py-2 text-left text-muted-foreground/70 hover:text-foreground/80"
-                    }
-                    onClick={() => void navigate({ to: item.to, replace: true })}
+                    onClick={() => handleSectionClick(item.to)}
                   >
-                    <Icon className={iconColorClassName} />
+                    <Icon />
                     <span className="truncate">{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -52,21 +95,19 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-
-      <SidebarSeparator />
       <SidebarFooter className="p-2">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              className="gap-2 px-2 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => window.history.back()}
-            >
-              <ArrowTurnUpLeftIcon className="size-2.5 fill-current" />
-              <span>Back</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <T3ConnectSidebarSignIn />
+        <div className="flex items-center gap-1">
+          <SidebarMenu className="min-w-0 flex-1">
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={handleBackClick}>
+                <ArrowLeftIcon />
+                <span>Back</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <T3ConnectSidebarAvatar />
+        </div>
       </SidebarFooter>
     </>
   );

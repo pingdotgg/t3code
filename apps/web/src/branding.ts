@@ -1,4 +1,5 @@
 import type { DesktopAppBranding } from "@t3tools/contracts";
+import { formatAppDisplayName } from "./branding.logic";
 
 function readInjectedDesktopAppBranding(): DesktopAppBranding | null {
   if (typeof window === "undefined") {
@@ -9,26 +10,18 @@ function readInjectedDesktopAppBranding(): DesktopAppBranding | null {
 }
 
 const injectedDesktopAppBranding = readInjectedDesktopAppBranding();
+const hostedAppChannel = import.meta.env.VITE_HOSTED_APP_CHANNEL?.trim().toLowerCase();
 
-export type BuildDefaultAppIconId = "forma-prod" | "forma-nightly" | "forma-dev";
-
-export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "Forma";
+export const HOSTED_APP_CHANNEL =
+  hostedAppChannel === "latest" || hostedAppChannel === "nightly" ? hostedAppChannel : null;
+export const HOSTED_APP_CHANNEL_LABEL =
+  HOSTED_APP_CHANNEL === "nightly" ? "Nightly" : HOSTED_APP_CHANNEL === "latest" ? "Latest" : null;
+export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "T3 Code";
 export const APP_STAGE_LABEL =
-  injectedDesktopAppBranding?.stageLabel ?? (import.meta.env.DEV ? "Dev" : "Alpha");
+  injectedDesktopAppBranding?.stageLabel ??
+  HOSTED_APP_CHANNEL_LABEL ??
+  (import.meta.env.DEV ? "Dev" : "Alpha");
 export const APP_DISPLAY_NAME =
-  injectedDesktopAppBranding?.displayName ?? `${APP_BASE_NAME} (${APP_STAGE_LABEL})`;
+  injectedDesktopAppBranding?.displayName ??
+  formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
-
-export function resolveDefaultBuildAppIconId(
-  stageLabel: string = APP_STAGE_LABEL,
-): BuildDefaultAppIconId {
-  if (stageLabel === "Dev") {
-    return "forma-dev";
-  }
-  if (stageLabel === "Nightly") {
-    return "forma-nightly";
-  }
-  return "forma-prod";
-}
-
-export const APP_DEFAULT_ICON_ID = resolveDefaultBuildAppIconId();

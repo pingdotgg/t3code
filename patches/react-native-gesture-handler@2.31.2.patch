@@ -1,0 +1,124 @@
+diff --git a/lib/commonjs/components/ReanimatedSwipeable/ReanimatedSwipeable.js b/lib/commonjs/components/ReanimatedSwipeable/ReanimatedSwipeable.js
+index 551ab92bf58db0b79d428dcd2f2df898ef686493..f1c355b8e40cd4f583ef3a501b044fb6770f4a24 100644
+--- a/lib/commonjs/components/ReanimatedSwipeable/ReanimatedSwipeable.js
++++ b/lib/commonjs/components/ReanimatedSwipeable/ReanimatedSwipeable.js
+@@ -34,6 +34,7 @@ const Swipeable = props => {
+     enableTrackpadTwoFingerGesture = DEFAULT_ENABLE_TRACKING_TWO_FINGER_GESTURE,
+     dragOffsetFromLeftEdge = DEFAULT_DRAG_OFFSET,
+     dragOffsetFromRightEdge = DEFAULT_DRAG_OFFSET,
++    failOffsetY,
+     friction = DEFAULT_FRICTION,
+     overshootFriction = DEFAULT_OVERSHOOT_FRICTION,
+     onSwipeableOpenStartDrag,
+@@ -285,11 +286,14 @@ const Swipeable = props => {
+     }).onFinalize(() => {
+       dragStarted.value = false;
+     });
++    if (failOffsetY !== undefined) {
++      pan.failOffsetY(failOffsetY);
++    }
+     Object.entries(relationProps).forEach(([relationName, relation]) => {
+       (0, _utils.applyRelationProp)(pan, relationName, relation);
+     });
+     return pan;
+-  }, [enabled, hitSlop, enableTrackpadTwoFingerGesture, dragOffsetFromRightEdge, dragOffsetFromLeftEdge, updateElementWidths, relationProps, userDrag, rowState, dragStarted, updateAnimatedEvent, onSwipeableOpenStartDrag, onSwipeableCloseStartDrag, handleRelease]);
++  }, [enabled, hitSlop, enableTrackpadTwoFingerGesture, dragOffsetFromRightEdge, dragOffsetFromLeftEdge, failOffsetY, updateElementWidths, relationProps, userDrag, rowState, dragStarted, updateAnimatedEvent, onSwipeableOpenStartDrag, onSwipeableCloseStartDrag, handleRelease]);
+   (0, _react.useImperativeHandle)(ref, () => swipeableMethods, [swipeableMethods]);
+   const animatedStyle = (0, _reactNativeReanimated.useAnimatedStyle)(() => ({
+     transform: [{
+diff --git a/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js b/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
+index a2835d5416ffd5cf9a04e98774516b9e6569691e..b73c177227bf3a232737b0eb1c0e2bb830493c22 100644
+--- a/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
++++ b/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
+@@ -29,6 +29,7 @@ const Swipeable = props => {
+     enableTrackpadTwoFingerGesture = DEFAULT_ENABLE_TRACKING_TWO_FINGER_GESTURE,
+     dragOffsetFromLeftEdge = DEFAULT_DRAG_OFFSET,
+     dragOffsetFromRightEdge = DEFAULT_DRAG_OFFSET,
++    failOffsetY,
+     friction = DEFAULT_FRICTION,
+     overshootFriction = DEFAULT_OVERSHOOT_FRICTION,
+     onSwipeableOpenStartDrag,
+@@ -280,11 +281,14 @@ const Swipeable = props => {
+     }).onFinalize(() => {
+       dragStarted.value = false;
+     });
++    if (failOffsetY !== undefined) {
++      pan.failOffsetY(failOffsetY);
++    }
+     Object.entries(relationProps).forEach(([relationName, relation]) => {
+       applyRelationProp(pan, relationName, relation);
+     });
+     return pan;
+-  }, [enabled, hitSlop, enableTrackpadTwoFingerGesture, dragOffsetFromRightEdge, dragOffsetFromLeftEdge, updateElementWidths, relationProps, userDrag, rowState, dragStarted, updateAnimatedEvent, onSwipeableOpenStartDrag, onSwipeableCloseStartDrag, handleRelease]);
++  }, [enabled, hitSlop, enableTrackpadTwoFingerGesture, dragOffsetFromRightEdge, dragOffsetFromLeftEdge, failOffsetY, updateElementWidths, relationProps, userDrag, rowState, dragStarted, updateAnimatedEvent, onSwipeableOpenStartDrag, onSwipeableCloseStartDrag, handleRelease]);
+   useImperativeHandle(ref, () => swipeableMethods, [swipeableMethods]);
+   const animatedStyle = useAnimatedStyle(() => ({
+     transform: [{
+diff --git a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
+index ac8b76830d468edfbc29052b452a36221323c3de..589e329d2aa706ddfff0d1037df0d85a050edbb0 100644
+--- a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
++++ b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
+@@ -64,6 +64,13 @@ export interface SwipeableProps {
+      * a swipe. The default value is 10.
+      */
+     dragOffsetFromRightEdge?: number;
++    /**
++     * Range along the Y axis (in points) that, once exceeded before the swipe
++     * activates, makes the pan fail. Lets vertically-dominant pans (list
++     * scrolling, especially trackpad two-finger pans) skip the swipe entirely.
++     * Passed straight to the underlying Pan gesture's `failOffsetY`.
++     */
++    failOffsetY?: number | [start: number, end: number];
+     /**
+      * Value indicating if the swipeable panel can be pulled further than the left
+      * actions panel's width. It is set to true by default as long as the left
+diff --git a/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx b/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
+index b6134c908624adc590ebd264e90e558b88e235d5..41535348e937ad7762bd531d5b63ba6e092ea997 100644
+--- a/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
++++ b/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
+@@ -58,6 +58,7 @@ const Swipeable = (props: SwipeableProps) => {
+     enableTrackpadTwoFingerGesture = DEFAULT_ENABLE_TRACKING_TWO_FINGER_GESTURE,
+     dragOffsetFromLeftEdge = DEFAULT_DRAG_OFFSET,
+     dragOffsetFromRightEdge = DEFAULT_DRAG_OFFSET,
++    failOffsetY,
+     friction = DEFAULT_FRICTION,
+     overshootFriction = DEFAULT_OVERSHOOT_FRICTION,
+     onSwipeableOpenStartDrag,
+@@ -537,6 +538,10 @@ const Swipeable = (props: SwipeableProps) => {
+         dragStarted.value = false;
+       });
+ 
++    if (failOffsetY !== undefined) {
++      pan.failOffsetY(failOffsetY);
++    }
++
+     Object.entries(relationProps).forEach(([relationName, relation]) => {
+       applyRelationProp(
+         pan,
+@@ -552,6 +557,7 @@ const Swipeable = (props: SwipeableProps) => {
+     enableTrackpadTwoFingerGesture,
+     dragOffsetFromRightEdge,
+     dragOffsetFromLeftEdge,
++    failOffsetY,
+     updateElementWidths,
+     relationProps,
+     userDrag,
+diff --git a/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts b/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
+index 0c0e517e0d340faf50ff78c3d48e7a2bbcf808ec..d4b6ff508077728c8be83762923d866dc95b144c 100644
+--- a/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
++++ b/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
+@@ -77,6 +77,14 @@ export interface SwipeableProps {
+    */
+   dragOffsetFromRightEdge?: number;
+ 
++  /**
++   * Range along the Y axis (in points) that, once exceeded before the swipe
++   * activates, makes the pan fail. Lets vertically-dominant pans (list
++   * scrolling, especially trackpad two-finger pans) skip the swipe entirely.
++   * Passed straight to the underlying Pan gesture's `failOffsetY`.
++   */
++  failOffsetY?: number | [start: number, end: number];
++
+   /**
+    * Value indicating if the swipeable panel can be pulled further than the left
+    * actions panel's width. It is set to true by default as long as the left

@@ -1,0 +1,33 @@
+name: Setup
+description: Perform standard setup and install dependencies using pnpm.
+inputs:
+  deno-version:
+    description: The version of Deno to install
+    required: false
+  bun-version:
+    description: The version of Bun to install
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+    - name: Install node
+      uses: actions/setup-node@v6
+      with:
+        cache: pnpm
+        node-version: 26.4.0
+    - name: Install deno
+      uses: denoland/setup-deno@v2
+      if: ${{ inputs.deno-version != '' }}
+      with:
+        deno-version: ${{ inputs.deno-version }}
+    - name: Install bun
+      uses: oven-sh/setup-bun@v2
+      if: ${{ inputs.bun-version != '' }}
+      with:
+        bun-version: ${{ inputs.bun-version }}
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install

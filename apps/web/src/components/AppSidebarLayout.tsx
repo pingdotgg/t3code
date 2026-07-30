@@ -1,63 +1,166 @@
-import { useEffect, type ReactNode } from "react";
-import { useNavigate, useParams } from "@tanstack/react-router";
-
-import ThreadSidebar from "./Sidebar";
-import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "~/components/ui/sidebar";
-import { useCommandPaletteStore } from "../commandPaletteStore";
-import { resolveShortcutCommand } from "../keybindings";
-import { useServerKeybindings } from "../rpc/serverState";
+import { useAtomValue } from "@effect/atom-react";
+import * as Schema from "effect/Schema";
 import {
-  clearShortcutModifierState,
-  syncShortcutModifierStateFromKeyboardEvent,
-} from "../shortcutModifierState";
-import { isTerminalFocused } from "../lib/terminalFocus";
-import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
-import { resolveThreadRouteTarget } from "../threadRoutes";
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
-const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
-const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
-const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
+import { isElectron } from "../env";
+import { getLocalStorageItem } from "../hooks/useLocalStorage";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { cn, isMacPlatform } from "../lib/utils";
+import { primaryServerKeybindingsAtom } from "../state/server";
+import { useEnvironmentIdentificationMode, useSidebarV2Enabled } from "../hooks/useSettings";
+import ThreadSidebar from "./Sidebar";
+import ThreadSidebarV2 from "./SidebarV2";
+import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
+import {
+  resolveInitialThreadSidebarWidth,
+  resolveThreadSidebarMaximumWidth,
+  THREAD_MAIN_CONTENT_MIN_WIDTH,
+  THREAD_SIDEBAR_MIN_WIDTH,
+  THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+} from "./threadSidebarWidth";
+import {
+  Sidebar,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+  useSidebarVisibility,
+} from "./ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-function AppSidebarGlobalShortcuts() {
-  const navigate = useNavigate();
+const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
+
+function subscribeToViewportWidth(onChange: () => void): () => void {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+function readViewportWidth(): number {
+  return window.innerWidth;
+}
+
+function readInitialThreadSidebarWidth(): number {
+  try {
+    return resolveInitialThreadSidebarWidth(
+      getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite),
+      window.innerWidth,
+    );
+  } catch (error) {
+    console.error("Could not read persisted thread sidebar width.", error);
+    return resolveInitialThreadSidebarWidth(null, window.innerWidth);
+  }
+}
+
+function SidebarControl() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
-  const keybindings = useServerKeybindings();
-  const routeTarget = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteTarget(params),
-  });
-  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
-  const terminalOpen = useTerminalStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef).terminalOpen
-      : false,
+  const isSidebarVisible = useSidebarVisibility();
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const stageBackdropVariant = useSidebarStageBackdropVariant(
+    environmentIdentificationMode === "artwork",
   );
+  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
 
   useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
+    const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          terminalOpen,
-        },
-      });
-
-      if (useCommandPaletteStore.getState().open || command !== "sidebar.toggle") {
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
         return;
       }
+      if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
 
       event.preventDefault();
       event.stopPropagation();
       toggleSidebar();
     };
 
-    window.addEventListener("keydown", onWindowKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", onWindowKeyDown, true);
-    };
-  }, [keybindings, terminalOpen, toggleSidebar]);
+    // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [keybindings, toggleSidebar]);
+
+  return (
+    <div
+      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 flex h-[var(--workspace-topbar-height)] items-center"
+      data-sidebar-control=""
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarTrigger
+              className={cn(
+                "pointer-events-auto",
+                isSidebarVisible &&
+                  stageBackdropVariant &&
+                  "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
+              )}
+              aria-label="Toggle main sidebar"
+            />
+          }
+        />
+        <TooltipPopup side="bottom">
+          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+        </TooltipPopup>
+      </Tooltip>
+    </div>
+  );
+}
+
+export function AppSidebarLayout({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  const sidebarV2Enabled = useSidebarV2Enabled();
+  // Settings routes render the settings nav, which lives in the v1 component
+  // and is identical for both sidebars — so v1 stays mounted there.
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
+  const useSidebarV2 = sidebarV2Enabled && !isOnSettings;
+  const useSidebarV2Theme = useSidebarV2 || isOnSettings;
+  const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
+  const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
+  // Subscribed rather than read once: the clamp must track live window size,
+  // and a clamped drag ends with an unchanged width, which skips the re-render
+  // that would otherwise refresh a render-time snapshot.
+  const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
+  const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
+  const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
+    const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;
+    return isMacosDesktop && typeof getWindowFullscreenState === "function"
+      ? getWindowFullscreenState()
+      : false;
+  });
+  const sidebarProviderStyle = {
+    "--sidebar-width": `${sidebarWidth}px`,
+    ...(isMacosDesktop && !isWindowFullscreen
+      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
+      : {}),
+  } as CSSProperties;
+
+  useEffect(() => {
+    if (!isMacosDesktop) return;
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    const { getWindowFullscreenState, onWindowFullscreenStateChange } = bridge;
+    if (
+      typeof getWindowFullscreenState !== "function" ||
+      typeof onWindowFullscreenStateChange !== "function"
+    ) {
+      return;
+    }
+
+    const unsubscribe = onWindowFullscreenStateChange(setIsWindowFullscreen);
+    setIsWindowFullscreen(getWindowFullscreenState());
+    return unsubscribe;
+  }, [isMacosDesktop]);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -66,65 +169,42 @@ function AppSidebarGlobalShortcuts() {
     }
 
     const unsubscribe = onMenuAction((action) => {
-      if (action === "toggle-sidebar") {
-        toggleSidebar();
-        return;
-      }
-
       if (action === "open-settings") {
-        void navigate({ to: "/settings" });
+        const isSettingsRoute = /^\/settings(\/|$)/.test(pathname);
+        if (!isSettingsRoute) {
+          void navigate({ to: "/settings" });
+        }
       }
     });
 
     return () => {
       unsubscribe?.();
     };
-  }, [navigate, toggleSidebar]);
-
-  return null;
-}
-
-export function AppSidebarLayout({ children }: { children: ReactNode }) {
-  useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      syncShortcutModifierStateFromKeyboardEvent(event);
-    };
-    const onWindowKeyUp = (event: KeyboardEvent) => {
-      syncShortcutModifierStateFromKeyboardEvent(event);
-    };
-    const onWindowBlur = () => {
-      clearShortcutModifierState();
-    };
-
-    window.addEventListener("keydown", onWindowKeyDown, true);
-    window.addEventListener("keyup", onWindowKeyUp, true);
-    window.addEventListener("blur", onWindowBlur);
-
-    return () => {
-      window.removeEventListener("keydown", onWindowKeyDown, true);
-      window.removeEventListener("keyup", onWindowKeyUp, true);
-      window.removeEventListener("blur", onWindowBlur);
-    };
-  }, []);
+  }, [navigate, pathname]);
 
   return (
-    <SidebarProvider defaultOpen>
-      <AppSidebarGlobalShortcuts />
+    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
       <Sidebar
         side="left"
         collapsible="offcanvas"
-        className="border-r border-border bg-card text-foreground"
+        data-app-sidebar=""
+        data-sidebar-version={useSidebarV2Theme ? "v2" : "v1"}
+        className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         resizable={{
+          maxWidth: sidebarMaximumWidth,
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
-          shouldAcceptWidth: ({ nextWidth, wrapper }) =>
+          shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+            nextWidth <= currentWidth ||
             wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+          onResize: setSidebarWidth,
         }}
       >
-        <ThreadSidebar />
+        {useSidebarV2 ? <ThreadSidebarV2 /> : <ThreadSidebar />}
         <SidebarRail />
       </Sidebar>
       {children}
+      <SidebarControl />
     </SidebarProvider>
   );
 }

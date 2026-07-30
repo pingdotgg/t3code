@@ -149,14 +149,38 @@ function parseRemoteHost(remoteUrl: string): string | null {
   }
 
   try {
-    return new URL(trimmed).hostname.toLowerCase();
+    return new URL(trimmed).host.toLowerCase();
   } catch {
     return null;
   }
 }
 
+function parseHostName(host: string): string {
+  try {
+    return new URL(`https://${host}`).hostname.toLowerCase();
+  } catch {
+    return host.replace(/:\d+$/u, "").toLowerCase();
+  }
+}
+
 function toBaseUrl(host: string): string {
   return `https://${host}`;
+}
+
+function isGitHubHost(host: string): boolean {
+  return host === "github.com" || host.includes("github");
+}
+
+function isGitLabHost(host: string): boolean {
+  return host === "gitlab.com" || host.includes("gitlab");
+}
+
+function isAzureDevOpsHost(host: string): boolean {
+  return host === "dev.azure.com" || host.endsWith(".visualstudio.com");
+}
+
+function isBitbucketHost(host: string): boolean {
+  return host === "bitbucket.org" || host.includes("bitbucket");
 }
 
 export function detectSourceControlProviderFromRemoteUrl(
@@ -166,24 +190,25 @@ export function detectSourceControlProviderFromRemoteUrl(
   if (!host) {
     return null;
   }
+  const hostname = parseHostName(host);
 
-  if (host === "github.com" || host.includes("github")) {
+  if (isGitHubHost(hostname)) {
     return {
       kind: "github",
-      name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
+      name: hostname === "github.com" ? "GitHub" : "GitHub Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
   }
 
-  if (host === "gitlab.com" || host.includes("gitlab")) {
+  if (isGitLabHost(hostname)) {
     return {
       kind: "gitlab",
-      name: host === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
+      name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
   }
 
-  if (host === "dev.azure.com" || host.endsWith(".visualstudio.com")) {
+  if (isAzureDevOpsHost(hostname)) {
     return {
       kind: "azure-devops",
       name: "Azure DevOps",
@@ -191,10 +216,10 @@ export function detectSourceControlProviderFromRemoteUrl(
     };
   }
 
-  if (host === "bitbucket.org" || host.includes("bitbucket")) {
+  if (isBitbucketHost(hostname)) {
     return {
       kind: "bitbucket",
-      name: host === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
+      name: hostname === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
       baseUrl: toBaseUrl(host),
     };
   }

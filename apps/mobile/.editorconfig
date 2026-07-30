@@ -1,0 +1,12 @@
+root = false
+
+[*.{kt,kts}]
+indent_size = 2
+ktlint_code_style = android_studio
+ktlint_standard_blank-line-between-when-conditions = disabled
+ktlint_standard_class-signature = disabled
+ktlint_standard_function-signature = disabled
+ktlint_standard_import-ordering = disabled
+ktlint_standard_multiline-expression-wrapping = disabled
+ktlint_standard_trailing-comma-on-call-site = disabled
+ktlint_standard_when-entry-bracing = disabled

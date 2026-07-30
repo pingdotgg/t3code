@@ -1,0 +1,33 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'com.t3tools.terminal'
+version = '0.0.0'
+
+android {
+  namespace 'expo.modules.t3terminal'
+  ndkVersion rootProject.ext.ndkVersion
+  compileSdk rootProject.ext.compileSdkVersion
+
+  defaultConfig {
+    minSdkVersion rootProject.ext.minSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+
+    externalNativeBuild {
+      cmake {
+        cppFlags '-std=c++17 -Wall -Wextra -Werror'
+      }
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path 'src/main/cpp/CMakeLists.txt'
+      version '3.22.1'
+    }
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+}

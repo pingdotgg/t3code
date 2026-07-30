@@ -1,8 +1,8 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { TrimmedString } from "./baseSchemas.ts";
 
 export const MAX_KEYBINDING_VALUE_LENGTH = 64;
-const MAX_KEYBINDING_WHEN_LENGTH = 256;
+export const MAX_KEYBINDING_WHEN_LENGTH = 256;
 export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
 export const MAX_KEYBINDINGS_COUNT = 256;
@@ -60,10 +60,19 @@ const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
   "terminal.toggle",
   "terminal.split",
+  "terminal.splitVertical",
   "terminal.new",
   "terminal.close",
+  "rightPanel.toggle",
   "diff.toggle",
+  "preview.toggle",
+  "preview.refresh",
+  "preview.focusUrl",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
   "commandPalette.toggle",
+  "composer.stash",
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
@@ -87,12 +96,12 @@ export const KeybindingCommand = Schema.Union([
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
-const KeybindingValue = TrimmedString.check(
+export const KeybindingValue = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_VALUE_LENGTH),
 );
 
-const KeybindingWhen = TrimmedString.check(
+export const KeybindingWhen = TrimmedString.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_KEYBINDING_WHEN_LENGTH),
 );
@@ -164,7 +173,7 @@ export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsC
   {
     configPath: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

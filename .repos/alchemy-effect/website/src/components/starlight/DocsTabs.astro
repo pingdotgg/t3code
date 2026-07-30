@@ -1,0 +1,263 @@
+---
+import { TAB_ICONS } from "../../docs-icons";
+import { DOCS_TABS, activeTab } from "../../docs-tabs";
+
+const primary = DOCS_TABS.filter((tab) => tab.slot === "primary");
+const more = DOCS_TABS.filter((tab) => tab.slot === "more");
+const end = DOCS_TABS.filter((tab) => tab.slot === "end");
+
+const current = activeTab(Astro.url.pathname);
+const currentInMore = more.some((tab) => tab.label === current.label);
+
+const categories = [...new Set(more.map((tab) => tab.category))];
+---
+
+<nav class="alc-tabs" aria-label="Documentation sections">
+  <div class="alc-tabs__group">
+    {
+      primary.map((tab) => (
+        <a
+          href={tab.href}
+          class:list={["alc-tabs__tab", { "alc-tabs__tab--active": tab.label === current.label }]}
+          aria-current={tab.label === current.label ? "true" : undefined}
+        >
+          {TAB_ICONS[tab.label] && (
+            <svg
+              class="alc-tabs__icon"
+              aria-hidden="true"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              set:html={TAB_ICONS[tab.label]}
+            />
+          )}
+          {tab.label}
+        </a>
+      ))
+    }
+
+    {/* Desktop: "More ▾" dropdown. When the active tab lives inside it, the
+        trigger renders as that tab (contextual), keeping your place visible. */}
+    <div class="alc-tabs__more">
+      <button
+        type="button"
+        class:list={["alc-tabs__tab", "alc-tabs__more-trigger", { "alc-tabs__tab--active": currentInMore }]}
+        aria-haspopup="true"
+      >
+        {
+          currentInMore && TAB_ICONS[current.label] && (
+            <svg
+              class="alc-tabs__icon"
+              aria-hidden="true"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              set:html={TAB_ICONS[current.label]}
+            />
+          )
+        }
+        {currentInMore ? current.label : "More"}
+        <svg
+          class="alc-tabs__chevron"
+          aria-hidden="true"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      <div class="alc-tabs__menu">
+        {
+          categories.map((category) => (
+            <div class="alc-tabs__menu-section">
+              <div class="alc-tabs__menu-heading">{category}</div>
+              {more
+                .filter((tab) => tab.category === category)
+                .map((tab) => (
+                  <a
+                    href={tab.href}
+                    class:list={["alc-tabs__menu-item", { "alc-tabs__menu-item--active": tab.label === current.label }]}
+                    aria-current={tab.label === current.label ? "true" : undefined}
+                  >
+                    {TAB_ICONS[tab.label] && (
+                      <svg
+                        class="alc-tabs__icon"
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        set:html={TAB_ICONS[tab.label]}
+                      />
+                    )}
+                    <span class="alc-tabs__menu-text">
+                      <span>{tab.label}</span>
+                      {tab.hint && <span class="alc-tabs__menu-hint">{tab.hint}</span>}
+                    </span>
+                  </a>
+                ))}
+            </div>
+          ))
+        }
+      </div>
+    </div>
+
+  </div>
+
+  <div class="alc-tabs__group">
+    {
+      end.map((tab) => (
+        <a
+          href={tab.href}
+          class:list={["alc-tabs__tab", { "alc-tabs__tab--active": tab.label === current.label }]}
+          aria-current={tab.label === current.label ? "true" : undefined}
+        >
+          {TAB_ICONS[tab.label] && (
+            <svg
+              class="alc-tabs__icon"
+              aria-hidden="true"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              set:html={TAB_ICONS[tab.label]}
+            />
+          )}
+          {tab.label}
+        </a>
+      ))
+    }
+  </div>
+</nav>
+
+<style>
+  .alc-tabs {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 16px;
+    height: var(--alc-tabs-height, 2.5rem);
+    margin: 0 calc(-1 * var(--sl-nav-pad-x));
+    padding: 0 calc(var(--sl-nav-pad-x) - 12px);
+  }
+  .alc-tabs__group {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .alc-tabs__tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 12px;
+    font-size: 13.5px;
+    color: var(--alc-fg-2);
+    text-decoration: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color var(--alc-dur) var(--alc-ease);
+  }
+  .alc-tabs__tab:hover {
+    color: var(--alc-accent-deep);
+  }
+  .alc-tabs__tab--active {
+    color: var(--alc-accent-deep);
+    font-weight: 500;
+    border-bottom-color: var(--alc-accent-deep);
+  }
+  .alc-tabs__icon {
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+  .alc-tabs__chevron {
+    margin-inline-start: -2px;
+    transition: transform var(--alc-dur) var(--alc-ease);
+  }
+  .alc-tabs__more {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+  }
+  .alc-tabs__more:hover .alc-tabs__chevron,
+  .alc-tabs__more:focus-within .alc-tabs__chevron {
+    transform: rotateZ(180deg);
+  }
+  .alc-tabs__menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    inset-inline-start: 0;
+    min-width: 280px;
+    z-index: 30;
+    background: var(--alc-bg);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 10px;
+    padding: 6px 0;
+    box-shadow: var(--alc-shadow-md, 0 8px 24px rgb(0 0 0 / 0.12));
+  }
+  .alc-tabs__more:hover .alc-tabs__menu,
+  .alc-tabs__more:focus-within .alc-tabs__menu {
+    display: block;
+  }
+  .alc-tabs__menu-section + .alc-tabs__menu-section {
+    border-top: 1px solid var(--alc-hairline);
+    margin-top: 6px;
+    padding-top: 6px;
+  }
+  .alc-tabs__menu-heading {
+    padding: 4px 14px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--alc-fg-4);
+  }
+  .alc-tabs__menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: var(--alc-fg-2);
+    text-decoration: none;
+  }
+  .alc-tabs__menu-item:hover {
+    color: var(--alc-accent-deep);
+    background: var(--alc-bg-elev-1);
+  }
+  .alc-tabs__menu-item--active {
+    color: var(--alc-accent-deep);
+    font-weight: 500;
+  }
+  /* Stacked label + hint: every row renders the same height regardless
+     of hint length; a too-long hint ellipsizes instead of wrapping. */
+  .alc-tabs__menu-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .alc-tabs__menu-hint {
+    font-size: 11px;
+    color: var(--alc-fg-4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The tab bar is desktop-only: on mobile, product navigation lives in
+     the hamburger drawer's MobileTabSwitcher instead of a horizontally
+     scrollable strip nothing signals you can scroll. */
+  @media (max-width: 50rem) {
+    .alc-tabs {
+      display: none;
+    }
+  }
+</style>

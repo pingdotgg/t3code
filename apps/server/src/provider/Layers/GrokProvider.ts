@@ -1,32 +1,41 @@
-import type {
-  GrokSettings,
-  ModelCapabilities,
-  ServerProvider,
-  ServerProviderModel,
-  ServerSettingsError,
+import {
+  type GrokSettings,
+  type ModelCapabilities,
+  type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { Cause, Effect, Equal, Exit, Layer, Option, Result, Stream } from "effect";
+import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
+  type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  type ProviderMaintenanceCapabilities,
+} from "../providerMaintenance.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
-import { GrokProvider } from "../Services/GrokProvider.ts";
 
-const PROVIDER = "grok" as const;
 const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
+  requiresNewThreadForModelChange: true,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -44,53 +53,50 @@ const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+export function buildInitialGrokProviderSnapshot(
+  grokSettings: GrokSettings,
+): Effect.Effect<ServerProviderDraft> {
+  return Effect.gen(function* () {
+    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+    const models = grokModelsFromSettings(grokSettings.customModels);
+
+    if (!grokSettings.enabled) {
+      return buildServerProvider({
+        presentation: GROK_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Grok is disabled in T3 Code settings.",
+        },
+      });
+    }
+
+    return buildServerProvider({
+      presentation: GROK_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version: null,
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Checking Grok CLI availability...",
+      },
+    });
+  });
+}
+
 function grokModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(
-    builtInModels,
-    PROVIDER,
-    customModels ?? [],
-    EMPTY_CAPABILITIES,
-  );
-}
-
-export function buildInitialGrokProviderSnapshot(grokSettings: GrokSettings): ServerProvider {
-  const checkedAt = new Date().toISOString();
-  const models = grokModelsFromSettings(grokSettings.customModels);
-
-  if (!grokSettings.enabled) {
-    return buildServerProvider({
-      provider: PROVIDER,
-      presentation: GROK_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Grok is disabled in Forma settings.",
-      },
-    });
-  }
-
-  return buildServerProvider({
-    provider: PROVIDER,
-    presentation: GROK_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    probe: {
-      installed: true,
-      version: null,
-      status: "warning",
-      auth: { status: "unknown" },
-      message: "Checking Grok CLI availability...",
-    },
-  });
+  return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
 function buildGrokDiscoveredModelsFromSessionModelState(
@@ -128,7 +134,7 @@ const discoverGrokModelsViaAcp = (
       environment,
       childProcessSpawner,
       cwd: process.cwd(),
-      clientInfo: { name: "forma-provider-probe", version: "0.0.0" },
+      clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
     return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
@@ -140,35 +146,31 @@ const runGrokVersionCommand = (
 ) =>
   Effect.gen(function* () {
     const command = grokSettings.binaryPath || "grok";
+    const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
+      env: environment,
+    });
     return yield* spawnAndCollect(
       command,
-      ChildProcess.make(command, ["--version"], {
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: environment,
-        shell: process.platform === "win32",
+        shell: spawnCommand.shell,
       }),
     );
   });
 
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
-  grokSettings?: GrokSettings,
+  grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<
-  ServerProvider,
-  ServerSettingsError,
-  ChildProcessSpawner.ChildProcessSpawner | ServerSettingsService
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > {
-  const settings =
-    grokSettings ??
-    (yield* Effect.service(ServerSettingsService).pipe(
-      Effect.flatMap((service) => service.getSettings),
-      Effect.map((serverSettings) => serverSettings.providers.grok),
-    ));
-  const checkedAt = new Date().toISOString();
-  const fallbackModels = grokModelsFromSettings(settings.customModels);
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
 
-  if (!settings.enabled) {
+  if (!grokSettings.enabled) {
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: GROK_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -178,12 +180,12 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Grok is disabled in Forma settings.",
+        message: "Grok is disabled in T3 Code settings.",
       },
     });
   }
 
-  const versionResult = yield* runGrokVersionCommand(settings, environment).pipe(
+  const versionResult = yield* runGrokVersionCommand(grokSettings, environment).pipe(
     Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
@@ -191,32 +193,29 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   if (Result.isFailure(versionResult)) {
     const error = versionResult.failure;
     yield* Effect.logWarning("Grok CLI health check failed.", {
-      cause: error instanceof Error ? error.message : String(error),
+      errorTag: error._tag,
     });
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: GROK_PRESENTATION,
-      enabled: settings.enabled,
+      enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
-        installed: error instanceof Error ? !isCommandMissingCause(error) : true,
+        installed: !isCommandMissingCause(error),
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message:
-          error instanceof Error && isCommandMissingCause(error)
-            ? "Grok CLI (`grok`) is not installed or not on PATH."
-            : "Failed to execute Grok CLI health check.",
+        message: isCommandMissingCause(error)
+          ? "Grok CLI (`grok`) is not installed or not on PATH."
+          : "Failed to execute Grok CLI health check.",
       },
     });
   }
 
   if (Option.isNone(versionResult.success)) {
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: GROK_PRESENTATION,
-      enabled: settings.enabled,
+      enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
@@ -238,9 +237,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       stderrLength: versionOutput.stderr.length,
     });
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: GROK_PRESENTATION,
-      enabled: settings.enabled,
+      enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
@@ -253,18 +251,17 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  const discoveryExit = yield* discoverGrokModelsViaAcp(settings, environment).pipe(
+  const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
     Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
     Effect.exit,
   );
   if (Exit.isFailure(discoveryExit)) {
     yield* Effect.logWarning("Grok ACP model discovery failed", {
-      cause: Cause.pretty(discoveryExit.cause),
+      errorTag: causeErrorTag(discoveryExit.cause),
     });
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: GROK_PRESENTATION,
-      enabled: settings.enabled,
+      enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
@@ -281,9 +278,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       `Grok ACP model discovery timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
     );
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: GROK_PRESENTATION,
-      enabled: settings.enabled,
+      enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
@@ -295,17 +291,15 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       },
     });
   }
-
   const discoveredModels = discoveryExit.value.value;
   const models =
     discoveredModels.length > 0
-      ? grokModelsFromSettings(settings.customModels, discoveredModels)
+      ? grokModelsFromSettings(grokSettings.customModels, discoveredModels)
       : fallbackModels;
 
   return buildServerProvider({
-    provider: PROVIDER,
     presentation: GROK_PRESENTATION,
-    enabled: settings.enabled,
+    enabled: grokSettings.enabled,
     checkedAt,
     models,
     probe: {
@@ -317,29 +311,25 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   });
 });
 
-export const GrokProviderLive = Layer.effect(
-  GrokProvider,
-  Effect.gen(function* () {
-    const serverSettings = yield* ServerSettingsService;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+export const enrichGrokSnapshot = (input: {
+  readonly snapshot: ServerProvider;
+  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly enableProviderUpdateChecks?: boolean;
+  readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+  readonly httpClient: HttpClient.HttpClient;
+}): Effect.Effect<void> => {
+  const { snapshot, publishSnapshot } = input;
 
-    const checkProvider = checkGrokProviderStatus().pipe(
-      Effect.provideService(ServerSettingsService, serverSettings),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-
-    return yield* makeManagedServerProvider<GrokSettings>({
-      getSettings: serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.providers.grok),
-        Effect.orDie,
-      ),
-      streamSettings: serverSettings.streamChanges.pipe(
-        Stream.map((settings) => settings.providers.grok),
-      ),
-      haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      initialSnapshot: buildInitialGrokProviderSnapshot,
-      checkProvider,
-      refreshInterval: "1 hour",
-    });
-  }),
-);
+  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
+    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, input.httpClient),
+    Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Grok version advisory enrichment failed", {
+        errorTag: causeErrorTag(cause),
+      }),
+    ),
+    Effect.asVoid,
+  );
+};

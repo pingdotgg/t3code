@@ -1,11 +1,28 @@
 import { describe, it, assert } from "@effect/vitest";
-import type { ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
+const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 const fastModeCapabilities = createModelCapabilities({
   optionDescriptors: [
     {
@@ -20,8 +37,23 @@ interface TestSettings {
   readonly enabled: boolean;
 }
 
+const maintenanceCapabilities = {
+  provider: ProviderDriverKind.make("codex"),
+  packageName: "@openai/codex",
+  update: {
+    command: "npm install -g @openai/codex@latest",
+
+    executable: "npm",
+
+    args: ["install", "-g", "@openai/codex@latest"],
+
+    lockKey: "npm-global",
+  },
+} as const;
+
 const initialSnapshot: ServerProvider = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
   enabled: true,
   installed: true,
   version: null,
@@ -35,7 +67,8 @@ const initialSnapshot: ServerProvider = {
 };
 
 const refreshedSnapshot: ServerProvider = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
   enabled: true,
   installed: true,
   version: "1.0.0",
@@ -66,6 +99,43 @@ const refreshedSnapshotSecond: ServerProvider = {
   message: "Refreshed provider availability again.",
 };
 
+function makeBackgroundPolicyLayer(shouldRunScopeWork: boolean) {
+  return Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+    reportClientActivity: () => Effect.void,
+    removeRpcClient: () => Effect.void,
+    reportHostPowerState: () => Effect.void,
+    snapshot: Effect.succeed({
+      hostPower: {
+        source: "unknown",
+        idle: "unknown",
+        idleSeconds: null,
+        locked: "unknown",
+        suspended: false,
+        onBattery: "unknown",
+        lowPowerMode: "unknown",
+        thermalState: "unknown",
+        stale: true,
+        updatedAt: TEST_EPOCH,
+      },
+      leases: [],
+      activeForegroundLeaseCount: 0,
+      activeScopeKeys: [],
+      shouldRunOpportunisticWork: true,
+      updatedAt: TEST_EPOCH,
+    }),
+    streamChanges: Stream.empty,
+    hasDemand: () => Effect.succeed(shouldRunScopeWork),
+    shouldRunScopeWork: () => Effect.succeed(shouldRunScopeWork),
+    shouldRunOpportunisticWork: Effect.succeed(shouldRunScopeWork),
+  });
+}
+
+const BackgroundPolicyAlwaysRunLayer = makeBackgroundPolicyLayer(true);
+const BackgroundPolicyNeverRunLayer = makeBackgroundPolicyLayer(false);
+const ServerSettingsTestLayer = ServerSettingsService.layerTest();
+const AlwaysRunTestLayer = Layer.merge(BackgroundPolicyAlwaysRunLayer, ServerSettingsTestLayer);
+const NeverRunTestLayer = Layer.merge(BackgroundPolicyNeverRunLayer, ServerSettingsTestLayer);
+
 const enrichedSnapshotSecond: ServerProvider = {
   ...refreshedSnapshotSecond,
   checkedAt: "2026-04-10T00:00:04.000Z",
@@ -88,10 +158,11 @@ describe("makeManagedServerProvider", () => {
           const checkCalls = yield* Ref.make(0);
           const releaseCheck = yield* Deferred.make<void>();
           const provider = yield* makeManagedServerProvider<TestSettings>({
+            maintenanceCapabilities,
             getSettings: Effect.succeed({ enabled: true }),
             streamSettings: Stream.empty,
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-            initialSnapshot: () => initialSnapshot,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
             checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
               Effect.flatMap(() => Deferred.await(releaseCheck)),
               Effect.as(refreshedSnapshot),
@@ -107,6 +178,7 @@ describe("makeManagedServerProvider", () => {
             Effect.forkChild,
           );
           yield* Effect.yieldNow;
+          assert.strictEqual(yield* Ref.get(checkCalls), 1);
 
           yield* Deferred.succeed(releaseCheck, undefined);
 
@@ -117,7 +189,125 @@ describe("makeManagedServerProvider", () => {
           assert.deepStrictEqual(latest, refreshedSnapshot);
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
         }),
-      ),
+      ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Effect.void,
+            ),
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: "1 second",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NeverRunTestLayer, TestClock.layer()))),
+  );
+
+  it.effect("disables periodic provider refreshes when the explicit interval is zero", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap(() => Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)),
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: 0,
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* TestClock.adjust("5 minutes");
+        yield* Effect.yieldNow;
+
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(AlwaysRunTestLayer, TestClock.layer()))),
+  );
+
+  it.effect("wakes a sleeping provider refresh loop when its interval changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const initialServerSettings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerHealthRefreshInterval: Duration.hours(1),
+        };
+        const serverSettingsRef = yield* Ref.make(initialServerSettings);
+        const serverSettingsChanges = yield* PubSub.unbounded<typeof initialServerSettings>();
+        const serverSettingsLayer = Layer.succeed(
+          ServerSettingsService,
+          ServerSettingsService.of({
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Ref.get(serverSettingsRef),
+            updateSettings: () => Effect.die(new Error("unused in this test")),
+            streamChanges: Stream.empty,
+            subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(
+              Effect.map((subscription) => Stream.fromSubscription(subscription)),
+            ),
+          }),
+        );
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const periodicCheckDone = yield* Deferred.make<void>();
+
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Deferred.succeed(periodicCheckDone, undefined).pipe(Effect.ignore),
+            ),
+            Effect.as(refreshedSnapshot),
+          ),
+        }).pipe(Effect.provide(Layer.merge(BackgroundPolicyAlwaysRunLayer, serverSettingsLayer)));
+
+        yield* Deferred.await(initialCheckDone);
+        const nextServerSettings = {
+          ...initialServerSettings,
+          providerHealthRefreshInterval: Duration.seconds(1),
+        };
+        yield* Ref.set(serverSettingsRef, nextServerSettings);
+        yield* PubSub.publish(serverSettingsChanges, nextServerSettings);
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust("999 millis");
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(periodicCheckDone);
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("reruns the provider check when streamed settings change", () =>
@@ -129,10 +319,11 @@ describe("makeManagedServerProvider", () => {
         const releaseInitialCheck = yield* Deferred.make<void>();
         const releaseSettingsCheck = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
           getSettings: Ref.get(settingsRef),
           streamSettings: Stream.fromPubSub(settingsChanges),
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
             Effect.flatMap((count) =>
               count === 1
@@ -161,7 +352,7 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(latest, refreshedSnapshotSecond);
         assert.strictEqual(yield* Ref.get(checkCalls), 2);
       }),
-    ),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
   it.effect("streams supplemental snapshot updates after the base provider check completes", () =>
@@ -170,10 +361,11 @@ describe("makeManagedServerProvider", () => {
         const releaseEnrichment = yield* Deferred.make<void>();
         const releaseCheck = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Deferred.await(releaseCheck).pipe(Effect.as(refreshedSnapshot)),
           enrichSnapshot: ({ publishSnapshot }) =>
             Deferred.await(releaseEnrichment).pipe(
@@ -198,7 +390,7 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(updates, [refreshedSnapshot, enrichedSnapshot]);
         assert.deepStrictEqual(latest, enrichedSnapshot);
       }),
-    ),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
   it.effect("ignores stale enrichment callbacks after a newer refresh advances generation", () =>
@@ -210,10 +402,11 @@ describe("makeManagedServerProvider", () => {
         const secondCallbackReady = yield* Deferred.make<void>();
         const allowFirstRefresh = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
             Effect.flatMap((count) =>
               count === 1
@@ -258,6 +451,6 @@ describe("makeManagedServerProvider", () => {
         ]);
         assert.deepStrictEqual(latest, enrichedSnapshotSecond);
       }),
-    ),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 });

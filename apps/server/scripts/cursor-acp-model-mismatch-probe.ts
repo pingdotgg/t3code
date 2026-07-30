@@ -1,6 +1,10 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import process from "node:process";
-import readline from "node:readline";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeProcess from "node:process";
+import * as NodeReadline from "node:readline";
+import * as NodeTimers from "node:timers";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Effect from "effect/Effect";
 
 type JsonPrimitive = null | boolean | number | string;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -52,19 +56,19 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
-const targetCwd = process.argv[2] ?? process.cwd();
-const targetModel = process.argv[3] ?? "gpt-5.4";
-const promptText = process.argv[4] ?? "helo";
-const targetReasoning = process.env.CURSOR_REASONING ?? "";
-const targetContext = process.env.CURSOR_CONTEXT ?? "";
-const targetFast = process.env.CURSOR_FAST ?? "";
-const agentBin = process.env.CURSOR_AGENT_BIN ?? "agent";
-const promptWaitMs = Number(process.env.CURSOR_PROMPT_WAIT_MS ?? "4000");
-const requestTimeoutMs = Number(process.env.CURSOR_REQUEST_TIMEOUT_MS ?? "20000");
+const targetCwd = NodeProcess.argv[2] ?? NodeProcess.cwd();
+const targetModel = NodeProcess.argv[3] ?? "gpt-5.4";
+const promptText = NodeProcess.argv[4] ?? "helo";
+const targetReasoning = NodeProcess.env.CURSOR_REASONING ?? "";
+const targetContext = NodeProcess.env.CURSOR_CONTEXT ?? "";
+const targetFast = NodeProcess.env.CURSOR_FAST ?? "";
+const agentBin = NodeProcess.env.CURSOR_AGENT_BIN ?? "cursor-agent";
+const promptWaitMs = Number(NodeProcess.env.CURSOR_PROMPT_WAIT_MS ?? "4000");
+const requestTimeoutMs = Number(NodeProcess.env.CURSOR_REQUEST_TIMEOUT_MS ?? "20000");
 
 function logSection(title: string, value: unknown) {
-  process.stdout.write(`\n=== ${title} ===\n`);
-  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+  NodeProcess.stdout.write(`\n=== ${title} ===\n`);
+  NodeProcess.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
 function fail(message: string): never {
@@ -114,22 +118,24 @@ function matchesKeyword(option: SessionConfigOption, keyword: string): boolean {
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
+    // @effect-diagnostics-next-line globalTimers:off - Standalone Node probe script, not an Effect runtime test.
+    NodeTimers.setTimeout(resolve, ms);
   });
 }
 
 class JsonRpcChild {
-  readonly child: ChildProcessWithoutNullStreams;
+  readonly child: NodeChildProcess.ChildProcessWithoutNullStreams;
   readonly pending = new Map<JsonRpcId, PendingRequest>();
   nextId = 1;
   closed = false;
 
   constructor(bin: string, args: string[], cwd: string) {
-    this.child = spawn(bin, args, {
+    const spawnCommand = Effect.runSync(resolveSpawnCommand(bin, args));
+    this.child = NodeChildProcess.spawn(spawnCommand.command, spawnCommand.args, {
       cwd,
-      shell: process.platform === "win32",
+      shell: spawnCommand.shell,
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: NodeProcess.env,
     });
 
     this.child.on("exit", (code, signal) => {
@@ -149,14 +155,14 @@ class JsonRpcChild {
       this.pending.clear();
     });
 
-    const stdout = readline.createInterface({ input: this.child.stdout });
+    const stdout = NodeReadline.createInterface({ input: this.child.stdout });
     stdout.on("line", (line) => {
       void this.handleStdoutLine(line);
     });
 
-    const stderr = readline.createInterface({ input: this.child.stderr });
+    const stderr = NodeReadline.createInterface({ input: this.child.stderr });
     stderr.on("line", (line) => {
-      process.stdout.write(`[stderr] ${line}\n`);
+      NodeProcess.stdout.write(`[stderr] ${line}\n`);
     });
   }
 
@@ -169,7 +175,7 @@ class JsonRpcChild {
       headers: [],
       ...message,
     });
-    process.stdout.write(`>>> ${payload}\n`);
+    NodeProcess.stdout.write(`>>> ${payload}\n`);
     this.child.stdin.write(`${payload}\n`);
   }
 
@@ -177,7 +183,8 @@ class JsonRpcChild {
     const id = this.nextId++;
 
     const responsePromise = new Promise<JsonValue | undefined>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      // @effect-diagnostics-next-line globalTimers:off - Standalone Node probe script request timeout.
+      const timeout = NodeTimers.setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Timed out waiting for ${method} response after ${timeoutMs}ms.`));
       }, timeoutMs);
@@ -185,11 +192,11 @@ class JsonRpcChild {
       this.pending.set(id, {
         method,
         resolve: (value) => {
-          clearTimeout(timeout);
+          NodeTimers.clearTimeout(timeout);
           resolve(value);
         },
         reject: (error) => {
-          clearTimeout(timeout);
+          NodeTimers.clearTimeout(timeout);
           reject(error);
         },
       });
@@ -233,13 +240,13 @@ class JsonRpcChild {
       return;
     }
 
-    process.stdout.write(`<<< ${line}\n`);
+    NodeProcess.stdout.write(`<<< ${line}\n`);
 
     let message: JsonRpcMessage;
     try {
       message = JSON.parse(line) as JsonRpcMessage;
     } catch (error) {
-      process.stdout.write(`[parse-error] ${(error as Error).message}\n`);
+      NodeProcess.stdout.write(`[parse-error] ${(error as Error).message}\n`);
       return;
     }
 
@@ -428,7 +435,7 @@ async function main() {
 }
 
 void main().catch((error: unknown) => {
-  process.stderr.write(
+  NodeProcess.stderr.write(
     `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
   );
   process.exitCode = 1;

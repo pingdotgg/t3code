@@ -1,0 +1,51 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Release spec. Empty = next beta. `patch|minor|major` or `x.y.z`
+          for a stable release. `beta` / `beta.N` / `alpha` / `alpha.N`
+          for a prerelease. Anything else = tag release on
+          `0.0.0-<name>`.
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+# Reusable workflows can't widen permissions — the caller must grant
+# `contents: write` (commit + tag) and `id-token: write` (npm OIDC).
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    uses: alchemy-run/actions/.github/workflows/release.yml@a18b368e044cb380a8c4904d5cfbccbc2798e768 # main
+    with:
+      # The bun workspace includes `distilled/packages/*` from the
+      # distilled submodule, so consumer checkouts must fetch it.
+      submodules: "true"
+      version: ${{ inputs.version }}
+      repo: alchemy-run/alchemy
+      current-version: "2.0.0"
+      # Each package builds in its own publish job: the tsc build pulls
+      # in the alchemy -> distilled project-reference chain (distilled/aws
+      # is huge), which doesn't fit the bump job's ubuntu-latest box.
+      build-mode: per-package
+      # The alchemy package ships the repo-root README.md; copy it in
+      # before the build so `bun pm pack` picks it up. Same trick the
+      # legacy `publish:npm` script used (`|| true` keeps it harmless
+      # elsewhere).
+      build-command: "cp ../../README.md . 2>/dev/null || true; bun run build"
+      packages: |
+        [
+          { "dir": "packages/alchemy",     "name": "alchemy",                   "runner": "ubuntu-22-large" },
+          { "dir": "packages/better-auth", "name": "@alchemy.run/better-auth",  "runner": "ubuntu-22-large" },
+          { "dir": "packages/pr-package",  "name": "@alchemy.run/pr-package",   "runner": "ubuntu-22-large" }
+        ]
+    secrets: inherit

@@ -4,8 +4,133 @@
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 
+/* On mobile, morph the expanded hero composer into the compact docked
+   composer while it moves; the rest of the app remains visually stationary. */
+html[data-mobile-composer-route-transition="true"]::view-transition-old(root),
+html[data-mobile-composer-route-transition="true"]::view-transition-new(root) {
+  animation: none;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-composer) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-image-pair(t3-mobile-composer) {
+  isolation: isolate;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-composer) {
+  animation: t3-mobile-composer-old 180ms linear both;
+  mix-blend-mode: normal;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobile-composer) {
+  animation: t3-mobile-composer-new 180ms linear both;
+  mix-blend-mode: normal;
+}
+
+/* The expanded and compact composers have different internal layouts. Use a
+   brief crossfade while their shared wrapper moves so the layout change does
+   not read as a single-frame cut. */
+@keyframes t3-mobile-composer-old {
+  0%,
+  35% {
+    opacity: 1;
+  }
+  65%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes t3-mobile-composer-new {
+  0%,
+  35% {
+    opacity: 0;
+  }
+  65%,
+  100% {
+    opacity: 1;
+  }
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
+  animation-duration: 130ms;
+}
+
+html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-draft-headline) {
+  animation: t3-mobile-draft-headline-exit 130ms cubic-bezier(0.4, 0, 1, 1) both;
+  mix-blend-mode: normal;
+}
+
+@keyframes t3-mobile-draft-headline-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+:root {
+  --app-scrollbar-width: 6px;
+  --app-scrollbar-thumb: rgb(217 217 217);
+  --app-scrollbar-thumb-hover: rgb(191 191 191);
+  --glass-blur: 12px;
+  --glass-opacity: 80%;
+  --glass-saturation: 1.14;
+  --desktop-window-right-resize-inset: 0px;
+  --workspace-topbar-height: 52px;
+  --workspace-controls-top: 0px;
+  --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
+  --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
+  --workspace-native-controls-inset: 0px;
+  --workspace-titlebar-control-size: 1.75rem;
+  --workspace-titlebar-control-gap: 0.75rem;
+}
+
+.dark {
+  --app-scrollbar-thumb: rgb(255 255 255 / 8%);
+  --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+  --glass-blur: 16px;
+  --glass-saturation: 1.08;
+}
+
+[data-slot="sidebar-wrapper"] {
+  --workspace-titlebar-content-left: calc(
+    var(--workspace-controls-left) + var(--workspace-titlebar-control-size) +
+      var(--workspace-titlebar-control-gap)
+  );
+}
+
+.wco {
+  --workspace-topbar-height: env(titlebar-area-height, 52px);
+  --workspace-controls-top: env(titlebar-area-y, 0px);
+  --workspace-controls-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
+  --workspace-controls-right: calc(
+    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+  );
+  --workspace-native-controls-inset: calc(
+    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem
+  );
+}
+
 @theme inline {
+  --color-zinc-25: oklch(99.2% 0 0);
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  /* Duty-cycled indicator animations: long holds with stepped ramps, so the
+     compositor updates discrete frames instead of every vsync. */
+  --animate-status-pulse: status-pulse 2s infinite;
+  --animate-status-ping: status-ping 2s infinite;
+  --animate-sidebar-working-text: sidebar-working-text 3.4s infinite;
+  --font-sans:
+    "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --font-mono:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -31,6 +156,15 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-surface-raised: var(--surface-raised);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-control-surface: var(--sidebar-control-surface);
+  --color-sidebar-row-hover: var(--sidebar-row-hover);
+  --color-sidebar-row-active: var(--sidebar-row-active);
+  --color-sidebar-row-selected: var(--sidebar-row-selected);
+  --color-sidebar-border: var(--sidebar-border);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -43,20 +177,634 @@
       background-position: -200% 0;
     }
   }
+  @keyframes status-pulse {
+    0%,
+    40% {
+      opacity: 1;
+      animation-timing-function: steps(6);
+    }
+    50%,
+    90% {
+      opacity: 0.5;
+      animation-timing-function: steps(6);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes status-ping {
+    /* Burst first (immediate feedback for click ripples), then hold
+       invisible for the rest of the cycle. Mirrors animate-ping's
+       75%-scale start. */
+    0% {
+      opacity: 0.9;
+      scale: 0.75;
+      animation-timing-function: steps(8);
+    }
+    40%,
+    100% {
+      opacity: 0;
+      scale: 2;
+    }
+  }
+  @keyframes sidebar-working-text {
+    0%,
+    36% {
+      opacity: 1;
+      animation-timing-function: steps(10);
+    }
+    50%,
+    86% {
+      opacity: 0.75;
+      animation-timing-function: steps(10);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  :where([data-slot="menu-popup"], [data-slot="select-popup"], [data-slot="popover-popup"]):focus,
+  :where(
+    [data-slot="menu-popup"],
+    [data-slot="select-popup"],
+    [data-slot="popover-popup"]
+  ):focus-visible {
+    @apply outline-none ring-0;
+  }
   html {
     background-color: var(--app-chrome-background);
-    font-size: var(--app-ui-root-font-size);
   }
   body {
     @apply text-foreground relative;
     background-color: var(--app-chrome-background);
   }
+}
+
+@layer components {
+  .sidebar-brand {
+    display: none;
+  }
+
+  .sidebar-brand-stage {
+    display: none;
+  }
+
+  @media (min-width: 48rem) {
+    @container sidebar-header (min-width: 13.5rem) {
+      .sidebar-brand {
+        display: flex;
+      }
+    }
+
+    @container sidebar-header (min-width: 15.75rem) {
+      .sidebar-brand-stage {
+        display: inline-flex;
+      }
+    }
+  }
+
+  /* Stage-channel sidebar art; ::after ramps to the sidebar bg color and the
+     mask lets the surface grain show through at the boundary. Panels whose
+     background differs from the app chrome (e.g. sidebar v2) override
+     --sidebar-stage-fade so the art fades into their own surface color. */
+  .sidebar-stage-backdrop {
+    --stage-fade: var(--sidebar-stage-fade, var(--app-chrome-background));
+    mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 55%, transparent 92%);
+  }
+
+  .sidebar-stage-backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      transparent 28%,
+      color-mix(in srgb, var(--stage-fade) 10%, transparent) 40%,
+      color-mix(in srgb, var(--stage-fade) 30%, transparent) 52%,
+      color-mix(in srgb, var(--stage-fade) 58%, transparent) 64%,
+      color-mix(in srgb, var(--stage-fade) 82%, transparent) 75%,
+      color-mix(in srgb, var(--stage-fade) 96%, transparent) 85%,
+      var(--stage-fade) 93%
+    );
+  }
+
+  .stage-blueprint {
+    --stage-bp-top: #67c2ff;
+    --stage-bp-mid: #347ff8;
+    --stage-bp-bottom: #1538d0;
+  }
+
+  .dark .stage-blueprint {
+    --stage-bp-top: #3a7ad1;
+    --stage-bp-mid: #2050ae;
+    --stage-bp-bottom: #101f6e;
+  }
+
+  .workspace-topbar {
+    display: flex;
+    height: var(--workspace-topbar-height);
+    min-height: var(--workspace-topbar-height);
+    flex-shrink: 0;
+    align-items: center;
+  }
+
+  /* Fade rows themselves as they pass beneath the top chrome. A mask remains
+     visible even when the header and timeline share the same background. */
+  .chat-timeline-scroll-fade,
+  .settings-page-scroll-fade {
+    --topbar-scroll-fade-height: 2.5rem;
+    -webkit-mask-image:
+      linear-gradient(
+        to bottom,
+        transparent 0%,
+        rgb(0 0 0 / 10%) 10%,
+        rgb(0 0 0 / 30%) 24%,
+        rgb(0 0 0 / 58%) 42%,
+        rgb(0 0 0 / 82%) 62%,
+        rgb(0 0 0 / 96%) 82%,
+        black 100%
+      ),
+      linear-gradient(black, black), linear-gradient(black, black);
+    -webkit-mask-position: top, bottom, right;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-size:
+      100% var(--topbar-scroll-fade-height),
+      100% calc(100% - var(--topbar-scroll-fade-height)),
+      var(--app-scrollbar-width) 100%;
+    mask-image:
+      linear-gradient(
+        to bottom,
+        transparent 0%,
+        rgb(0 0 0 / 10%) 10%,
+        rgb(0 0 0 / 30%) 24%,
+        rgb(0 0 0 / 58%) 42%,
+        rgb(0 0 0 / 82%) 62%,
+        rgb(0 0 0 / 96%) 82%,
+        black 100%
+      ),
+      linear-gradient(black, black), linear-gradient(black, black);
+    mask-position: top, bottom, right;
+    mask-repeat: no-repeat;
+    mask-size:
+      100% var(--topbar-scroll-fade-height),
+      100% calc(100% - var(--topbar-scroll-fade-height)),
+      var(--app-scrollbar-width) 100%;
+  }
+
+  .workspace-titlebar-controls {
+    position: absolute;
+    top: var(--workspace-controls-top);
+    right: var(--workspace-controls-right);
+    display: flex;
+    height: var(--workspace-topbar-height);
+    align-items: center;
+    -webkit-app-region: no-drag;
+  }
+
+  .surface-subheader {
+    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
+  }
+
+  .chat-composer-horizontal-inset {
+    padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
+    padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  .chat-composer-glass {
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .chat-composer-glass-shell {
+    --chat-composer-glass-surface: var(--card);
+    --chat-composer-outline: rgb(0 0 0 / 8%);
+
+    position: relative;
+    isolation: isolate;
+  }
+
+  .chat-composer-glass-shell::before {
+    pointer-events: none;
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    border-radius: 22px;
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    content: "";
+  }
+
+  .chat-composer-glass-shell-with-context {
+    --chat-composer-context-extension: 2.25rem;
+  }
+
+  .chat-composer-glass-shell-with-context::before {
+    border-radius: 0;
+    /*
+     * One continuous glass layer: a 22px composer joined to a 16px strip,
+     * whose visible sides align with the composer's bottom tangents.
+     */
+    clip-path: shape(
+      from 0 22px,
+      curve to 22px 0 with 0 9.85px / 9.85px 0,
+      line to calc(100% - 22px) 0,
+      curve to 100% 22px with calc(100% - 9.85px) 0 / 100% 9.85px,
+      line to 100% calc(100% - var(--chat-composer-context-extension) - 22px),
+      curve to calc(100% - 22px) calc(100% - var(--chat-composer-context-extension)) with 100%
+        calc(100% - var(--chat-composer-context-extension) - 9.85px) / calc(100% - 9.85px)
+        calc(100% - var(--chat-composer-context-extension)),
+      line to calc(100% - 22px) calc(100% - 16px),
+      curve to calc(100% - 38px) 100% with calc(100% - 22px) calc(100% - 7.16px) /
+        calc(100% - 29.16px) 100%,
+      line to 38px 100%,
+      curve to 22px calc(100% - 16px) with 29.16px 100% / 22px calc(100% - 7.16px),
+      line to 22px calc(100% - var(--chat-composer-context-extension)),
+      curve to 0 calc(100% - var(--chat-composer-context-extension) - 22px) with 9.85px
+        calc(100% - var(--chat-composer-context-extension)) / 0
+        calc(100% - var(--chat-composer-context-extension) - 9.85px),
+      line to 0 22px,
+      close
+    );
+  }
+
+  @media (min-width: 40rem) {
+    .chat-composer-glass-shell-with-context {
+      /* The xs toolbar controls shrink by 4px at Tailwind's sm breakpoint. */
+      --chat-composer-context-extension: 2rem;
+    }
+  }
+
+  .chat-composer-glass-host {
+    position: relative;
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  }
+
+  .chat-composer-glass-host::after {
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: inherit;
+    content: "";
+  }
+
+  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after {
+    /* Keep the attachment seam open; the strip continues the outer outline below. */
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 22px) 100%,
+      calc(100% - 22px) calc(100% - 2px),
+      22px calc(100% - 2px),
+      22px 100%,
+      0 100%
+    );
+  }
+
+  .chat-composer-context-strip {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .chat-composer-context-strip::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: 0 0 16px 16px;
+    /* Start the strip outline exactly where the composer's 22px curve reaches its tangent. */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    content: "";
+  }
+
+  .dark .chat-composer-glass-shell {
+    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+    --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
+    --chat-composer-highlight: rgb(255 255 255 / 3%);
+  }
+
+  .dark .chat-composer-glass-host {
+    box-shadow: none;
+  }
+
+  .dark .chat-composer-glass-host::after {
+    box-shadow: inset 0 1px var(--chat-composer-highlight);
+  }
+
+  .dark .chat-composer-context-strip::before {
+    border-color: rgb(255 255 255 / 7%);
+    background:
+      linear-gradient(
+        to bottom,
+        transparent 0 1rem,
+        rgb(0 0 0 / 18%) 1rem,
+        transparent calc(1rem + 10px)
+      ),
+      rgb(255 255 255 / 2%);
+    box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  }
+
+  @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
+    .chat-composer-glass-shell-with-context::before {
+      inset-block-end: var(--chat-composer-context-extension);
+      border-radius: 22px;
+      clip-path: none;
+    }
+
+    .chat-composer-context-strip::before {
+      background: color-mix(
+        in srgb,
+        var(--chat-composer-glass-surface) var(--glass-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    }
+
+    .dark .chat-composer-context-strip::before {
+      background:
+        linear-gradient(
+          to bottom,
+          transparent 0 1rem,
+          rgb(0 0 0 / 18%) 1rem,
+          transparent calc(1rem + 10px)
+        ),
+        linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+        color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+    }
+  }
+
+  .alert-glass {
+    --alert-glass-tint: transparent;
+
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent),
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent)
+      ),
+      color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .alert-glass[data-variant="error"] {
+    --alert-glass-tint: var(--destructive);
+  }
+
+  .alert-glass[data-variant="info"] {
+    --alert-glass-tint: var(--info);
+  }
+
+  .alert-glass[data-variant="success"] {
+    --alert-glass-tint: var(--success);
+  }
+
+  .alert-glass[data-variant="warning"] {
+    --alert-glass-tint: var(--warning);
+  }
+
+  .dialog-glass {
+    background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .dialog-backdrop {
+    background: color-mix(in srgb, var(--background) 60%, transparent);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+
+  .dropdown-glass {
+    /*
+     * Elevated glass needs a denser tint than broad ambient surfaces. Nesting
+     * the user-controlled mix inside an 18% popover tint preserves the full
+     * opacity setting range (40% -> 51%, 80% -> 84%, 100% -> 100%) while
+     * keeping high-contrast page content from blooming through menus.
+     */
+    background: color-mix(
+      in srgb,
+      var(--popover) 18%,
+      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+    box-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
+  }
+
+  .dialog-glass {
+    border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+    box-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
+  }
+
+  .dark .dropdown-glass {
+    box-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%);
+  }
+
+  .dark .model-picker-surface.model-picker-surface {
+    background: color-mix(
+      in srgb,
+      var(--popover) 18%,
+      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+    );
+  }
+
+  .dark .dialog-glass {
+    border-color: color-mix(in srgb, var(--color-white) 8%, transparent);
+    box-shadow:
+      inset 0 1px rgb(255 255 255 / 4%),
+      0 24px 72px -20px rgb(0 0 0 / 90%);
+  }
+
+  .dark .dialog-backdrop {
+    background: color-mix(in srgb, var(--background) 64%, transparent);
+  }
+
+  .glass-opacity-slider {
+    --glass-slider-progress: 0%;
+    --glass-slider-fill-offset: 0.5rem;
+    --glass-slider-fill-position: calc(
+      var(--glass-slider-progress) + var(--glass-slider-fill-offset)
+    );
+    appearance: none;
+    height: 1.5rem;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .glass-opacity-slider::-webkit-slider-runnable-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--primary) 0 var(--glass-slider-fill-position),
+      color-mix(in srgb, var(--muted-foreground) 22%, transparent) var(--glass-slider-fill-position)
+        100%
+    );
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .glass-opacity-slider::-moz-range-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .glass-opacity-slider::-moz-range-progress {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--primary);
+  }
+
+  .glass-opacity-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.3125rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .glass-opacity-slider::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .glass-opacity-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .glass-opacity-slider:hover::-moz-range-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .glass-opacity-slider:active::-webkit-slider-thumb {
+    transform: scale(0.94);
+  }
+
+  .glass-opacity-slider:active::-moz-range-thumb {
+    transform: scale(0.94);
+  }
+
+  .glass-opacity-slider:focus-visible {
+    outline: none;
+  }
+
+  .glass-opacity-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  .glass-opacity-slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  @media (forced-colors: active) {
+    .glass-opacity-slider {
+      appearance: auto;
+      accent-color: Highlight;
+    }
+
+    .glass-opacity-slider::-webkit-slider-runnable-track,
+    .glass-opacity-slider::-webkit-slider-thumb {
+      all: revert;
+    }
+
+    .glass-opacity-slider::-moz-range-track,
+    .glass-opacity-slider::-moz-range-progress,
+    .glass-opacity-slider::-moz-range-thumb {
+      all: revert;
+    }
+  }
+
+  @media (min-width: 40rem) {
+    .chat-timeline-scroll-fade,
+    .settings-page-scroll-fade {
+      --topbar-scroll-fade-height: 3rem;
+    }
+
+    .chat-composer-horizontal-inset {
+      padding-inline-start: calc(env(safe-area-inset-left) + 1.25rem);
+      padding-inline-end: calc(env(safe-area-inset-right) + 1.25rem);
+    }
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .chat-composer-glass,
+    .alert-glass {
+      background: var(--background) !important;
+    }
+
+    .chat-composer-glass-shell::before {
+      background: var(--chat-composer-glass-surface);
+    }
+
+    .dialog-glass,
+    .dropdown-glass {
+      background: var(--popover) !important;
+    }
+  }
+}
+
+/* Safe-area inset utilities for surfaces that opt into edge-to-edge rendering.
+   Insets resolve to 0 when the browser already constrains the layout viewport
+   to the safe area. */
+@utility pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+@utility pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+@utility pl-safe {
+  padding-left: max(env(safe-area-inset-left), 0px);
+}
+@utility pr-safe {
+  padding-right: max(env(safe-area-inset-right), 0px);
+}
+
+/* Grain texture for chrome surfaces that float above the body (see the
+   --surface-grain note). Layered over the element's background-color, so it
+   composes with bg-* utilities. */
+@utility surface-grain {
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }
 
 /* Suppress all transitions during theme changes */
@@ -69,63 +817,27 @@
 }
 
 :root {
-  --radius: 0.625rem;
-  --app-ui-root-font-size: 16px;
-  --app-ui-text-2xs: 10.5px;
-  --app-ui-text-xs: 11.5px;
-  --app-ui-text-sm: 13.5px;
-  --app-code-font-size: 12px;
-  --app-code-font-size-compact: 11px;
-  --motion-duration-micro: 120ms;
-  --motion-duration-ui: 200ms;
-  --motion-duration-modal: 260ms;
-  --motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
-  --motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
-  --composer-surface-overlay-shadow: inset 0 0 0 0 transparent;
-}
-
-.text-ui-2xs {
-  font-size: var(--app-ui-text-2xs);
-}
-
-.text-ui-xs {
-  font-size: var(--app-ui-text-xs);
-}
-
-.text-ui-sm {
-  font-size: var(--app-ui-text-sm);
-}
-
-.text-code-body {
-  font-size: var(--app-code-font-size);
-}
-
-.text-code-compact {
-  font-size: var(--app-code-font-size-compact);
-}
-
-:root,
-:root[data-theme="light"],
-.theme-preview[data-theme-preview="light"] {
   color-scheme: light;
-  --background: var(--color-white);
+  --radius: 0.625rem;
+  --background: var(--color-zinc-25);
   --app-chrome-background: var(--background);
-  --foreground: var(--color-neutral-800);
+  --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
+  --foreground: var(--color-zinc-800);
   --card: var(--color-white);
-  --card-foreground: var(--color-neutral-800);
+  --card-foreground: var(--color-zinc-800);
   --popover: var(--color-white);
-  --popover-foreground: var(--color-neutral-800);
+  --popover-foreground: var(--color-zinc-800);
   --primary: oklch(0.488 0.217 264);
   --primary-foreground: var(--color-white);
-  --secondary: --alpha(var(--color-black) / 4%);
-  --secondary-foreground: var(--color-neutral-800);
-  --muted: --alpha(var(--color-black) / 4%);
-  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
-  --accent: --alpha(var(--color-black) / 4%);
-  --accent-foreground: var(--color-neutral-800);
+  --secondary: var(--color-zinc-50);
+  --secondary-foreground: var(--color-zinc-800);
+  --muted: var(--color-zinc-50);
+  --muted-foreground: var(--color-zinc-500);
+  --accent: var(--color-zinc-100);
+  --accent-foreground: var(--color-zinc-900);
   --destructive: var(--color-red-500);
-  --border: --alpha(var(--color-black) / 8%);
-  --input: --alpha(var(--color-black) / 10%);
+  --border: var(--color-zinc-200);
+  --input: var(--color-zinc-300);
   --ring: oklch(0.488 0.217 264);
   --destructive-foreground: var(--color-red-700);
   --info: var(--color-blue-500);
@@ -134,443 +846,118 @@
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
-  --composer-surface-fill: --alpha(var(--color-white) / 95%);
-  --composer-surface-border: --alpha(var(--color-black) / 12%);
-  --composer-surface-shadow: 0 3px 8px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
-  --composer-surface-focus-shadow: 0 3px 12px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.88) 0%,
-    rgba(246, 247, 250, 0.78) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-black) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.02);
-  --composer-footer-separator-background-color: var(--color-white);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--composer-surface-border);
-  --composer-footer-separator-border-opacity: 100%;
-}
+  /* Keep every sidebar primitive on the same light surface hierarchy, including
+     portaled mobile sheets and settings navigation outside the app sidebar. */
+  --sidebar: var(--color-zinc-50);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--color-zinc-100);
+  --sidebar-row-hover: var(--color-zinc-25);
+  --sidebar-row-active: var(--color-white);
+  --sidebar-row-selected: var(--color-white);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--sidebar);
 
-:root[data-theme="noir"],
-.theme-preview[data-theme-preview="noir"] {
-  color-scheme: dark;
-  --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
-  --app-chrome-background: var(--background);
-  --foreground: var(--color-neutral-100);
-  --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
-  --card-foreground: var(--color-neutral-100);
-  --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
-  --popover-foreground: var(--color-neutral-100);
-  --primary: oklch(0.588 0.217 264);
-  --primary-foreground: var(--color-white);
-  --secondary: --alpha(var(--color-white) / 4%);
-  --secondary-foreground: var(--color-neutral-100);
-  --muted: --alpha(var(--color-white) / 4%);
-  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-  --accent: --alpha(var(--color-white) / 4%);
-  --accent-foreground: var(--color-neutral-100);
-  --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-  --border: --alpha(var(--color-white) / 6%);
-  --input: --alpha(var(--color-white) / 8%);
-  --ring: oklch(0.588 0.217 264);
-  --destructive-foreground: var(--color-red-400);
-  --info: var(--color-blue-500);
-  --info-foreground: var(--color-blue-400);
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-400);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-400);
-  --composer-surface-fill: --alpha(var(--color-zinc-900) / 80%);
-  --composer-surface-border: --alpha(var(--color-white) / 10%);
-  --composer-surface-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.2), inset 0 -4px 30px rgba(47, 44, 48, 0.9),
-    0 4px 16px rgba(0, 0, 0, 0.4);
-  --composer-surface-focus-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.22), inset 0 -4px 30px rgba(47, 44, 48, 0.9),
-    0 4px 20px rgba(0, 0, 0, 0.5);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(28, 31, 39, 0.78) 0%,
-    rgba(20, 22, 29, 0.68) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-white) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -1px 0 rgba(0, 0, 0, 0.24);
-  --composer-footer-separator-background-color: var(--composer-surface-border);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--color-black);
-  --composer-footer-separator-border-opacity: 90%;
-}
-
-:root[data-theme="dawn"],
-.theme-preview[data-theme-preview="dawn"] {
-  color-scheme: light;
-  --background: #f6ebe2;
-  --app-chrome-background: var(--background);
-  --foreground: #42352e;
-  --card: color-mix(in srgb, #ffffff 86%, var(--background));
-  --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, #ffffff 90%, var(--background));
-  --popover-foreground: var(--foreground);
-  --primary: #d28b26;
-  --primary-foreground: var(--color-white);
-  --secondary: rgba(112, 78, 58, 0.055);
-  --secondary-foreground: var(--foreground);
-  --muted: rgba(112, 78, 58, 0.06);
-  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, white);
-  --accent: rgba(210, 139, 38, 0.14);
-  --accent-foreground: var(--foreground);
-  --destructive: var(--color-red-500);
-  --border: rgba(72, 42, 28, 0.1);
-  --input: rgba(72, 42, 28, 0.12);
-  --ring: #e39e3d;
-  --destructive-foreground: var(--color-red-700);
-  --info: var(--color-blue-500);
-  --info-foreground: var(--color-blue-700);
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-700);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-700);
-  --composer-surface-fill: linear-gradient(
-    180deg,
-    rgba(255, 253, 250, 0.95) 0%,
-    rgba(248, 236, 224, 0.9) 100%
-  );
-  --composer-surface-border: --alpha(var(--color-black) / 12%);
-  --composer-surface-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 8px 20px rgba(131, 87, 52, 0.08),
-    0 2px 5px rgba(80, 52, 32, 0.06);
-  --composer-surface-focus-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 10px 24px rgba(131, 87, 52, 0.1),
-    0 3px 8px rgba(80, 52, 32, 0.08);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(255, 249, 243, 0.9) 0%,
-    rgba(243, 227, 212, 0.88) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-black) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.86), inset 0 -1px 0 rgba(126, 83, 52, 0.04);
-  --composer-footer-separator-background-color: var(--color-white);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--composer-surface-border);
-  --composer-footer-separator-border-opacity: 100%;
-}
-
-:root[data-theme="dusk"],
-.theme-preview[data-theme-preview="dusk"] {
-  color-scheme: light;
-  --background: #f5e8e3;
-  --app-chrome-background: var(--background);
-  --foreground: #47312d;
-  --card: color-mix(in srgb, #ffffff 84%, var(--background));
-  --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, #ffffff 88%, var(--background));
-  --popover-foreground: var(--foreground);
-  --primary: #d16c4e;
-  --primary-foreground: var(--color-white);
-  --secondary: rgba(103, 63, 56, 0.055);
-  --secondary-foreground: var(--foreground);
-  --muted: rgba(103, 63, 56, 0.06);
-  --muted-foreground: color-mix(in srgb, var(--foreground) 74%, white);
-  --accent: rgba(209, 108, 78, 0.14);
-  --accent-foreground: var(--foreground);
-  --destructive: var(--color-red-500);
-  --border: rgba(73, 36, 34, 0.1);
-  --input: rgba(73, 36, 34, 0.12);
-  --ring: #e08163;
-  --destructive-foreground: var(--color-red-700);
-  --info: var(--color-blue-500);
-  --info-foreground: var(--color-blue-700);
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-700);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-700);
-  --composer-surface-fill: linear-gradient(
-    180deg,
-    rgba(255, 251, 248, 0.94) 0%,
-    rgba(245, 231, 225, 0.92) 100%
-  );
-  --composer-surface-border: --alpha(var(--color-black) / 12%);
-  --composer-surface-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.75), 0 8px 18px rgba(119, 69, 58, 0.08),
-    0 2px 5px rgba(84, 46, 42, 0.06);
-  --composer-surface-focus-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 10px 22px rgba(119, 69, 58, 0.1),
-    0 3px 8px rgba(84, 46, 42, 0.08);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(255, 246, 241, 0.88) 0%,
-    rgba(242, 223, 216, 0.86) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-black) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.84), inset 0 -1px 0 rgba(116, 67, 57, 0.05);
-  --composer-footer-separator-background-color: var(--color-white);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--composer-surface-border);
-  --composer-footer-separator-border-opacity: 100%;
-}
-
-:root[data-theme="midnight"],
-.theme-preview[data-theme-preview="midnight"] {
-  color-scheme: dark;
-  --background: #171b22;
-  --app-chrome-background: var(--background);
-  --foreground: #edf2fb;
-  --card: color-mix(in srgb, var(--background) 97%, white);
-  --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, var(--background) 96%, white);
-  --popover-foreground: var(--foreground);
-  --primary: #79a7ee;
-  --primary-foreground: #10151c;
-  --secondary: rgba(255, 255, 255, 0.045);
-  --secondary-foreground: var(--foreground);
-  --muted: rgba(255, 255, 255, 0.05);
-  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
-  --accent: rgba(121, 167, 238, 0.16);
-  --accent-foreground: var(--foreground);
-  --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
-  --border: rgba(255, 255, 255, 0.075);
-  --input: rgba(255, 255, 255, 0.09);
-  --ring: #96bcfa;
-  --destructive-foreground: var(--color-red-300);
-  --info: var(--color-blue-400);
-  --info-foreground: var(--color-blue-300);
-  --success: var(--color-emerald-400);
-  --success-foreground: var(--color-emerald-300);
-  --warning: var(--color-amber-400);
-  --warning-foreground: var(--color-amber-300);
-  --composer-surface-fill: linear-gradient(
-    180deg,
-    rgba(24, 29, 38, 0.92) 0%,
-    rgba(18, 22, 30, 0.88) 100%
-  );
-  --composer-surface-border: --alpha(var(--color-white) / 10%);
-  --composer-surface-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -12px 28px rgba(7, 12, 21, 0.52),
-    0 8px 22px rgba(3, 6, 12, 0.4);
-  --composer-surface-focus-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -12px 28px rgba(7, 12, 21, 0.56),
-    0 10px 26px rgba(3, 6, 12, 0.46);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(32, 38, 48, 0.78) 0%,
-    rgba(22, 27, 36, 0.72) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-white) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(0, 0, 0, 0.24);
-  --composer-footer-separator-background-color: var(--composer-surface-border);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--color-black);
-  --composer-footer-separator-border-opacity: 90%;
-}
-
-:root[data-theme="stone"],
-.theme-preview[data-theme-preview="stone"] {
-  color-scheme: dark;
-  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(122, 101, 95, 0.1);
-  --background: #171413;
-  --app-chrome-background: var(--background);
-  --foreground: #ece7e2;
-  --card: color-mix(in srgb, var(--background) 97%, #f4eee8);
-  --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, var(--background) 96%, #f4eee8);
-  --popover-foreground: var(--foreground);
-  --primary: #df5e5a;
-  --primary-foreground: #120f0e;
-  --secondary: rgba(255, 255, 255, 0.045);
-  --secondary-foreground: var(--foreground);
-  --muted: rgba(255, 255, 255, 0.05);
-  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
-  --accent: rgba(223, 94, 90, 0.18);
-  --accent-foreground: var(--foreground);
-  --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
-  --border: rgba(255, 255, 255, 0.075);
-  --input: rgba(255, 255, 255, 0.09);
-  --ring: #f07c77;
-  --destructive-foreground: var(--color-red-300);
-  --info: var(--color-blue-400);
-  --info-foreground: var(--color-blue-300);
-  --success: var(--color-emerald-400);
-  --success-foreground: var(--color-emerald-300);
-  --warning: var(--color-amber-400);
-  --warning-foreground: var(--color-amber-300);
-  --composer-surface-fill: linear-gradient(
-    180deg,
-    rgba(28, 24, 23, 0.92) 0%,
-    rgba(19, 16, 15, 0.9) 100%
-  );
-  --composer-surface-border: --alpha(var(--color-white) / 10%);
-  --composer-surface-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -16px 34px rgba(70, 32, 27, 0.38),
-    inset 0 -4px 12px rgba(130, 66, 53, 0.14), 0 8px 22px rgba(6, 5, 5, 0.44),
-    0 3px 10px rgba(86, 40, 33, 0.14);
-  --composer-surface-focus-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -18px 38px rgba(79, 36, 30, 0.42),
-    inset 0 -4px 14px rgba(145, 74, 59, 0.17), 0 10px 26px rgba(7, 6, 5, 0.5),
-    0 4px 12px rgba(98, 45, 37, 0.16);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(40, 33, 31, 0.82) 0%,
-    rgba(22, 18, 17, 0.74) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-white) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(117, 60, 50, 0.18);
-  --composer-footer-separator-background-color: var(--composer-surface-border);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--color-black);
-  --composer-footer-separator-border-opacity: 90%;
-}
-
-:root[data-theme="blueberry"],
-.theme-preview[data-theme-preview="blueberry"] {
-  color-scheme: light;
-  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(108, 140, 204, 0.08);
-  --background: #eaf3ff;
-  --app-chrome-background: var(--background);
-  --foreground: #24364b;
-  --card: color-mix(in srgb, #ffffff 88%, var(--background));
-  --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, #ffffff 91%, var(--background));
-  --popover-foreground: var(--foreground);
-  --primary: #4c78ea;
-  --primary-foreground: var(--color-white);
-  --secondary: rgba(76, 108, 164, 0.055);
-  --secondary-foreground: var(--foreground);
-  --muted: rgba(76, 108, 164, 0.06);
-  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, white);
-  --accent: rgba(76, 120, 234, 0.15);
-  --accent-foreground: var(--foreground);
-  --destructive: var(--color-red-500);
-  --border: rgba(51, 81, 126, 0.1);
-  --input: rgba(51, 81, 126, 0.12);
-  --ring: #6a92f4;
-  --destructive-foreground: var(--color-red-700);
-  --info: #4a79d1;
-  --info-foreground: #2d57a5;
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-700);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-700);
-  --composer-surface-fill: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(234, 243, 255, 0.92) 100%
-  );
-  --composer-surface-border: --alpha(var(--color-black) / 10%);
-  --composer-surface-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 8px 20px rgba(69, 100, 152, 0.09),
-    0 3px 8px rgba(46, 69, 108, 0.07);
-  --composer-surface-focus-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 10px 24px rgba(69, 100, 152, 0.11),
-    0 4px 10px rgba(46, 69, 108, 0.08);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(252, 253, 255, 0.9) 0%,
-    rgba(226, 236, 252, 0.88) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-black) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.88), inset 0 -1px 0 rgba(94, 126, 182, 0.05);
-  --composer-footer-separator-background-color: var(--color-white);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--composer-surface-border);
-  --composer-footer-separator-border-opacity: 100%;
-}
-
-:root[data-theme="cosmic"],
-.theme-preview[data-theme-preview="cosmic"] {
-  color-scheme: dark;
-  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(120, 100, 168, 0.1);
-  --background: #121018;
-  --app-chrome-background: var(--background);
-  --foreground: #efeaf7;
-  --card: color-mix(in srgb, var(--background) 97%, #fbf7ff);
-  --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, var(--background) 96%, #fbf7ff);
-  --popover-foreground: var(--foreground);
-  --primary: #a55dff;
-  --primary-foreground: #110f18;
-  --secondary: rgba(255, 255, 255, 0.045);
-  --secondary-foreground: var(--foreground);
-  --muted: rgba(255, 255, 255, 0.05);
-  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
-  --accent: rgba(165, 93, 255, 0.18);
-  --accent-foreground: var(--foreground);
-  --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
-  --border: rgba(255, 255, 255, 0.078);
-  --input: rgba(255, 255, 255, 0.094);
-  --ring: #bc7bff;
-  --destructive-foreground: var(--color-red-300);
-  --info: var(--color-blue-400);
-  --info-foreground: var(--color-blue-300);
-  --success: var(--color-emerald-400);
-  --success-foreground: var(--color-emerald-300);
-  --warning: var(--color-amber-400);
-  --warning-foreground: var(--color-amber-300);
-  --composer-surface-fill: linear-gradient(
-    180deg,
-    rgba(24, 20, 33, 0.92) 0%,
-    rgba(16, 13, 23, 0.9) 100%
-  );
-  --composer-surface-border: --alpha(var(--color-white) / 10%);
-  --composer-surface-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -18px 38px rgba(22, 16, 37, 0.42),
-    inset 0 -4px 14px rgba(92, 74, 134, 0.14), 0 8px 22px rgba(7, 5, 12, 0.48),
-    0 3px 10px rgba(47, 34, 74, 0.14);
-  --composer-surface-focus-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -20px 40px rgba(26, 19, 43, 0.46),
-    inset 0 -4px 16px rgba(104, 84, 150, 0.17), 0 10px 26px rgba(8, 6, 14, 0.52),
-    0 4px 12px rgba(54, 39, 87, 0.16);
-  --composer-banner-background: linear-gradient(
-    180deg,
-    rgba(35, 29, 52, 0.82) 0%,
-    rgba(19, 16, 29, 0.74) 100%
-  );
-  --composer-banner-border: --alpha(var(--color-white) / 10%);
-  --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(96, 76, 142, 0.18);
-  --composer-footer-separator-background-color: var(--composer-surface-border);
-  --composer-footer-separator-background-opacity: 100%;
-  --composer-footer-separator-border-color: var(--color-black);
-  --composer-footer-separator-border-opacity: 90%;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .motion-floating-positioner {
-    transition: none !important;
-    scale: 1 !important;
-    translate: 0 0 !important;
-    transform: none !important;
+  @variant dark {
+    color-scheme: dark;
+    /* Keep the workspace in the same neutral-black family as sidebar v2.
+       Surfaces lift from this base instead of starting from a milky gray. */
+    --background: var(--color-neutral-950);
+    --app-chrome-background: var(--background);
+    --surface-raised: var(--secondary);
+    --foreground: var(--color-neutral-100);
+    --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
+    --card-foreground: var(--color-neutral-100);
+    --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
+    --popover-foreground: var(--color-neutral-100);
+    --primary: oklch(0.588 0.217 264);
+    --primary-foreground: var(--color-white);
+    --secondary: --alpha(var(--color-white) / 4%);
+    --secondary-foreground: var(--color-neutral-100);
+    --muted: --alpha(var(--color-white) / 4%);
+    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --accent: --alpha(var(--color-white) / 4%);
+    --accent-foreground: var(--color-neutral-100);
+    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --border: --alpha(var(--color-white) / 6%);
+    --input: --alpha(var(--color-white) / 8%);
+    --ring: oklch(0.588 0.217 264);
+    --destructive-foreground: var(--color-red-400);
+    --info: var(--color-blue-500);
+    --info-foreground: var(--color-blue-400);
+    --success: var(--color-emerald-500);
+    --success-foreground: var(--color-emerald-400);
+    --warning: var(--color-amber-500);
+    --warning-foreground: var(--color-amber-400);
+    --sidebar: var(--card);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-muted-foreground: var(--muted-foreground);
+    --sidebar-control-surface: var(--muted);
+    --sidebar-row-hover: var(--accent);
+    --sidebar-row-active: var(--accent);
+    --sidebar-row-selected: var(--muted);
+    --sidebar-border: var(--border);
+    --sidebar-stage-fade: var(--card);
   }
+}
 
-  .motion-modal-popup,
-  .motion-floating-popup,
-  .motion-sheet-popup {
-    transition-property: opacity !important;
-    scale: 1 !important;
-    translate: 0 0 !important;
-    transform: none !important;
-  }
+/* Keep both navigation implementations on the same quiet zinc hierarchy:
+   zinc-50 navigation, zinc-25 hover, and white selected/raised surfaces.
+   The version attribute remains useful for layout-specific styling without
+   changing the color system when the beta is toggled. */
+[data-sidebar-version="v1"],
+[data-sidebar-version="v2"] {
+  --background: var(--color-zinc-25);
+  --foreground: var(--color-zinc-800);
+  --card: var(--color-white);
+  --card-foreground: var(--color-zinc-800);
+  --accent: var(--color-zinc-100);
+  --accent-foreground: var(--color-zinc-900);
+  --muted: var(--color-zinc-50);
+  --muted-foreground: var(--color-zinc-500);
+  --border: var(--color-zinc-200);
+  --input: var(--color-zinc-300);
+  --sidebar: var(--color-zinc-50);
+  --sidebar-foreground: var(--color-zinc-800);
+  --sidebar-muted-foreground: var(--color-zinc-500);
+  --sidebar-control-surface: var(--color-zinc-100);
+  --sidebar-row-hover: var(--color-zinc-25);
+  --sidebar-row-active: var(--color-white);
+  --sidebar-row-selected: var(--color-white);
+  --sidebar-border: var(--color-zinc-200);
+  --sidebar-stage-fade: var(--sidebar);
+  background-color: var(--sidebar);
+}
 
-  .motion-modal-popup[data-ending-style],
-  .motion-modal-popup[data-starting-style],
-  .motion-floating-popup[data-ending-style],
-  .motion-floating-popup[data-starting-style],
-  .motion-sheet-popup[data-ending-style],
-  .motion-sheet-popup[data-starting-style] {
-    scale: 1 !important;
-    translate: 0 0 !important;
-    transform: none !important;
-  }
+.dark [data-sidebar-version="v1"],
+.dark [data-sidebar-version="v2"] {
+  --background: #000;
+  --foreground: #f1f3f7;
+  --card: #000;
+  --card-foreground: var(--foreground);
+  --accent: #191a1d;
+  --accent-foreground: #f7f9ff;
+  --muted: #0a0a0a;
+  --muted-foreground: #a3a3a3;
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 18%);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--muted);
+  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-border: var(--border);
+  /* The stage-channel header art must ramp to THIS panel's surface, not the
+     global chrome background, or the fade shows a seam (same rule as the
+     light palette above). */
+  --sidebar-stage-fade: var(--card);
 }
 
 body {
   font-family:
+    "DM Sans Variable",
     "DM Sans",
     -apple-system,
     BlinkMacSystemFont,
@@ -579,35 +966,56 @@ body {
     sans-serif;
   margin: 0;
   padding: 0;
-  min-height: 100vh;
 }
 
 html,
-body,
+body {
+  min-height: calc(100svh + env(safe-area-inset-top));
+  overscroll-behavior: none;
+}
+
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 #root {
   height: 100%;
   width: 100%;
   max-width: 100%;
-  overflow-y: hidden;
   overflow-x: hidden;
   overflow-x: clip;
+  overflow-y: hidden;
   overscroll-behavior-y: none;
+  padding-top: max(env(safe-area-inset-top), 0px);
+  padding-right: var(--desktop-window-right-resize-inset);
 }
 
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+.electron-windows {
+  --desktop-window-right-resize-inset: 6px;
+}
+
+/* App-chrome grain. Baked into each surface's own background (behind
+   content) rather than a fixed overlay on top: a full-viewport overlay
+   forces the compositor to re-blend every frame any animation produces,
+   which multiplied idle GPU cost. The overlay's 0.035 opacity lives in the
+   SVG rect instead. Surfaces that float over the body (e.g. the inset main
+   card) must opt in via the surface-grain utility, or they lose the
+   grain's subtle brightening and stand out against the body. */
+:root {
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+body {
+  background-image: var(--surface-grain);
   background-repeat: repeat;
   background-size: 256px 256px;
 }
 
 pre,
 code {
-  font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family:
+    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 /* Window drag region (frameless titlebar) */
@@ -625,7 +1033,7 @@ code {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: var(--app-scrollbar-width);
 }
 
 ::-webkit-scrollbar-track {
@@ -633,20 +1041,54 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--app-scrollbar-thumb-hover);
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+.model-picker-list::-webkit-scrollbar-track {
+  margin-block: 0.5rem;
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
+.model-picker-list-scroll-fade-top,
+.model-picker-list-scroll-fade-bottom {
+  -webkit-mask-image: var(--model-picker-list-scroll-mask), linear-gradient(black, black);
+  -webkit-mask-position: left, right;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size:
+    calc(100% - var(--app-scrollbar-width)) 100%,
+    var(--app-scrollbar-width) 100%;
+  mask-image: var(--model-picker-list-scroll-mask), linear-gradient(black, black);
+  mask-position: left, right;
+  mask-repeat: no-repeat;
+  mask-size:
+    calc(100% - var(--app-scrollbar-width)) 100%,
+    var(--app-scrollbar-width) 100%;
+}
+
+.model-picker-list-scroll-fade-top {
+  --model-picker-list-scroll-mask: linear-gradient(to bottom, transparent, black var(--fade-size));
+}
+
+.model-picker-list-scroll-fade-bottom {
+  --model-picker-list-scroll-mask: linear-gradient(
+    to bottom,
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
+}
+
+.model-picker-list-scroll-fade-top.model-picker-list-scroll-fade-bottom {
+  --model-picker-list-scroll-mask: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--fade-size),
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
 }
 
 .turn-chip-strip {
@@ -657,214 +1099,6 @@ code {
 
 .turn-chip-strip::-webkit-scrollbar {
   display: none;
-}
-
-.pixel-grid,
-.pixel-grid-loader {
-  display: inline-grid;
-  grid-template-columns: repeat(3, var(--pixel-grid-cell-size, 3px));
-  grid-template-rows: repeat(3, var(--pixel-grid-cell-size, 3px));
-  gap: var(--pixel-grid-gap, 1px);
-}
-
-.pixel-grid__cell,
-.pixel-grid-loader__cell {
-  border-radius: 1px;
-  background-color: var(--pixel-off);
-  box-shadow: none;
-  transition:
-    background-color 300ms ease-out,
-    box-shadow 300ms ease-out;
-}
-
-.pixel-grid__cell.is-on,
-.pixel-grid-loader__cell.is-on {
-  background-color: var(--pixel-on);
-  box-shadow:
-    0 0 3px var(--pixel-glow),
-    0 0 6px var(--pixel-glow);
-}
-
-:root {
-  --pixel-grid-chat-off: color-mix(in oklch, var(--primary) 18%, var(--background));
-  --pixel-grid-chat-on: color-mix(in oklch, var(--primary) 76%, var(--color-white));
-  --pixel-grid-chat-glow: color-mix(in oklch, var(--primary) 56%, transparent);
-  --pixel-grid-sidebar-off: color-mix(in oklch, currentColor 18%, var(--background));
-  --pixel-grid-sidebar-on: color-mix(in oklch, currentColor 76%, var(--color-white));
-  --pixel-grid-sidebar-glow: color-mix(in oklch, currentColor 58%, transparent);
-  --pixel-off: var(--pixel-grid-chat-off);
-  --pixel-on: var(--pixel-grid-chat-on);
-  --pixel-glow: var(--pixel-grid-chat-glow);
-}
-
-.pixel-grid-loader[data-pixel-grid-variant="chat"] {
-  --pixel-off: var(--pixel-grid-chat-off);
-  --pixel-on: var(--pixel-grid-chat-on);
-  --pixel-glow: var(--pixel-grid-chat-glow);
-}
-
-.pixel-grid-loader[data-pixel-grid-variant="sidebar"] {
-  --pixel-off: var(--pixel-grid-sidebar-off);
-  --pixel-on: var(--pixel-grid-sidebar-on);
-  --pixel-glow: var(--pixel-grid-sidebar-glow);
-}
-
-.pixel-grid--cyan {
-  --pixel-off: oklch(40% 0.08 195 / 0.4);
-  --pixel-on: oklch(90% 0.2 195);
-  --pixel-glow: oklch(80% 0.25 195 / 0.9);
-}
-
-.pixel-grid--magenta {
-  --pixel-off: oklch(40% 0.08 330 / 0.4);
-  --pixel-on: oklch(85% 0.25 330);
-  --pixel-glow: oklch(75% 0.3 330 / 0.9);
-}
-
-.pixel-grid--yellow {
-  --pixel-off: oklch(50% 0.08 90 / 0.4);
-  --pixel-on: oklch(95% 0.2 90);
-  --pixel-glow: oklch(90% 0.25 90 / 0.9);
-}
-
-.pixel-grid--green {
-  --pixel-off: oklch(40% 0.08 145 / 0.4);
-  --pixel-on: oklch(90% 0.25 145);
-  --pixel-glow: oklch(80% 0.3 145 / 0.9);
-}
-
-.pixel-grid--orange {
-  --pixel-off: oklch(45% 0.08 50 / 0.4);
-  --pixel-on: oklch(85% 0.22 50);
-  --pixel-glow: oklch(75% 0.28 50 / 0.9);
-}
-
-.pixel-grid--blue {
-  --pixel-off: oklch(40% 0.08 260 / 0.4);
-  --pixel-on: oklch(80% 0.22 260);
-  --pixel-glow: oklch(70% 0.28 260 / 0.9);
-}
-
-.pixel-grid--red {
-  --pixel-off: oklch(40% 0.08 25 / 0.4);
-  --pixel-on: oklch(70% 0.25 25);
-  --pixel-glow: oklch(60% 0.3 25 / 0.9);
-}
-
-.pixel-grid--purple {
-  --pixel-off: oklch(40% 0.08 300 / 0.4);
-  --pixel-on: oklch(75% 0.22 300);
-  --pixel-glow: oklch(65% 0.28 300 / 0.9);
-}
-
-.pixel-grid--white {
-  --pixel-off: oklch(50% 0 0 / 0.3);
-  --pixel-on: oklch(98% 0 0);
-  --pixel-glow: oklch(95% 0 0 / 0.8);
-}
-
-.pixel-grid--teal {
-  --pixel-off: oklch(40% 0.08 175 / 0.4);
-  --pixel-on: oklch(82% 0.18 175);
-  --pixel-glow: oklch(72% 0.24 175 / 0.9);
-}
-
-.pixel-grid--pink {
-  --pixel-off: oklch(45% 0.08 350 / 0.4);
-  --pixel-on: oklch(80% 0.2 350);
-  --pixel-glow: oklch(70% 0.26 350 / 0.9);
-}
-
-.pixel-grid--lime {
-  --pixel-off: oklch(45% 0.08 120 / 0.4);
-  --pixel-on: oklch(88% 0.22 120);
-  --pixel-glow: oklch(80% 0.28 120 / 0.9);
-}
-
-.pixel-grid__cell--cyan {
-  --pixel-off: oklch(40% 0.08 195 / 0.4);
-  --pixel-on: oklch(90% 0.2 195);
-  --pixel-glow: oklch(80% 0.25 195 / 0.9);
-}
-
-.pixel-grid__cell--magenta {
-  --pixel-off: oklch(40% 0.08 330 / 0.4);
-  --pixel-on: oklch(85% 0.25 330);
-  --pixel-glow: oklch(75% 0.3 330 / 0.9);
-}
-
-.pixel-grid__cell--yellow {
-  --pixel-off: oklch(50% 0.08 90 / 0.4);
-  --pixel-on: oklch(95% 0.2 90);
-  --pixel-glow: oklch(90% 0.25 90 / 0.9);
-}
-
-.pixel-grid__cell--green {
-  --pixel-off: oklch(40% 0.08 145 / 0.4);
-  --pixel-on: oklch(90% 0.25 145);
-  --pixel-glow: oklch(80% 0.3 145 / 0.9);
-}
-
-.pixel-grid__cell--orange {
-  --pixel-off: oklch(45% 0.08 50 / 0.4);
-  --pixel-on: oklch(85% 0.22 50);
-  --pixel-glow: oklch(75% 0.28 50 / 0.9);
-}
-
-.pixel-grid__cell--blue {
-  --pixel-off: oklch(40% 0.08 260 / 0.4);
-  --pixel-on: oklch(80% 0.22 260);
-  --pixel-glow: oklch(70% 0.28 260 / 0.9);
-}
-
-.pixel-grid__cell--red {
-  --pixel-off: oklch(40% 0.08 25 / 0.4);
-  --pixel-on: oklch(70% 0.25 25);
-  --pixel-glow: oklch(60% 0.3 25 / 0.9);
-}
-
-.pixel-grid__cell--purple {
-  --pixel-off: oklch(40% 0.08 300 / 0.4);
-  --pixel-on: oklch(75% 0.22 300);
-  --pixel-glow: oklch(65% 0.28 300 / 0.9);
-}
-
-.pixel-grid__cell--white {
-  --pixel-off: oklch(50% 0 0 / 0.3);
-  --pixel-on: oklch(98% 0 0);
-  --pixel-glow: oklch(95% 0 0 / 0.8);
-}
-
-.pixel-grid__cell--teal {
-  --pixel-off: oklch(40% 0.08 175 / 0.4);
-  --pixel-on: oklch(82% 0.18 175);
-  --pixel-glow: oklch(72% 0.24 175 / 0.9);
-}
-
-.pixel-grid__cell--pink {
-  --pixel-off: oklch(45% 0.08 350 / 0.4);
-  --pixel-on: oklch(80% 0.2 350);
-  --pixel-glow: oklch(70% 0.26 350 / 0.9);
-}
-
-.pixel-grid__cell--lime {
-  --pixel-off: oklch(45% 0.08 120 / 0.4);
-  --pixel-on: oklch(88% 0.22 120);
-  --pixel-glow: oklch(80% 0.28 120 / 0.9);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pixel-grid__cell,
-  .pixel-grid-loader__cell {
-    transition: none;
-  }
-
-  .ultrathink-frame,
-  .ultrathink-chroma,
-  .ultrathink-pill,
-  .ultrathink-word {
-    animation: none !important;
-  }
 }
 
 /* Terminal drawer scrollbar parity with chat */
@@ -879,31 +1113,6 @@ code {
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
   width: 6px !important;
   left: 0 !important;
-}
-
-.chat-composer-surface {
-  background: var(--composer-surface-fill);
-  border-color: var(--composer-surface-border);
-  box-shadow: var(--composer-surface-overlay-shadow), var(--composer-surface-shadow);
-}
-
-.chat-composer-surface:focus-within {
-  border-color: color-mix(in srgb, var(--ring) 45%, transparent);
-  box-shadow: var(--composer-surface-overlay-shadow), var(--composer-surface-focus-shadow);
-}
-
-.chat-composer-banner {
-  background: var(--composer-banner-background);
-  border-color: var(--composer-banner-border);
-  box-shadow: var(--composer-banner-shadow);
-}
-
-.ultrathink-composer-surface {
-  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-}
-
-:root:not(.dark) .ultrathink-composer-surface {
-  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
 /* Reasoning select -- clickable label surface */
@@ -939,8 +1148,42 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown ol,
 .chat-markdown blockquote,
 .chat-markdown pre,
-.chat-markdown table {
+.chat-markdown .chat-markdown-table-container {
   margin: 0.65rem 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: 1.25rem 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--foreground);
+}
+
+.chat-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.chat-markdown h2 {
+  font-size: 1.125rem;
+}
+
+.chat-markdown h3 {
+  font-size: 1rem;
+}
+
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  font-size: 0.875rem;
+}
+
+.chat-markdown h6 {
+  color: var(--muted-foreground);
 }
 
 .chat-markdown ul {
@@ -973,14 +1216,39 @@ label:has(> select#reasoning-effort) select {
   margin-top: 0.25rem;
 }
 
-.chat-markdown a {
-  color: var(--info-foreground);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--info-foreground) 40%, transparent);
+/* GitHub-style task lists: the checkbox replaces the list marker. */
+.chat-markdown li.task-list-item {
+  list-style-type: none;
 }
 
-.chat-markdown a:hover {
-  opacity: 0.8;
+.chat-markdown li.task-list-item input[type="checkbox"] {
+  margin: 0 0.35em 0.15em -1.25rem;
+  vertical-align: middle;
+}
+
+.chat-markdown a {
+  color: var(--info-foreground);
+  text-decoration: none;
+}
+
+.chat-markdown a:not(.chat-markdown-file-link):hover,
+.chat-markdown a:not(.chat-markdown-file-link):focus-visible {
+  background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 4px 2px;
+}
+
+.chat-markdown .chat-markdown-link-favicon {
+  @apply inline-flex;
+  width: 14px;
+  height: 14px;
+  margin-inline: 0.25em 0.2em;
+  vertical-align: -0.125em;
+}
+
+.chat-markdown .chat-markdown-link-leading {
+  white-space: nowrap;
 }
 
 .chat-markdown blockquote {
@@ -989,54 +1257,57 @@ label:has(> select#reasoning-effort) select {
   color: var(--muted-foreground);
 }
 
+.chat-markdown section[data-footnotes] {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.chat-markdown section[data-footnotes] ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.chat-markdown section[data-footnotes] li + li {
+  margin-top: 0.35rem;
+}
+
+.chat-markdown a[data-footnote-ref],
+.chat-markdown a[data-footnote-backref] {
+  display: inline-flex;
+  min-width: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
 .chat-markdown :not(pre) > code {
   border: 1px solid var(--border);
   border-radius: 0.375rem;
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: var(--app-code-font-size);
+  font-size: 0.75rem;
 }
 
-.chat-markdown-file-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.28rem;
-  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
-  border-radius: 0.375rem;
-  background: color-mix(in srgb, var(--muted) 88%, var(--background));
-  padding: 0.08rem 0.34rem;
+.chat-markdown a.chat-markdown-file-link {
   color: var(--foreground);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--app-code-font-size);
-  line-height: 1.15;
-  vertical-align: text-bottom;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease,
-    opacity 120ms ease;
+  text-decoration: none;
 }
 
-.chat-markdown-file-link:hover {
-  opacity: 1;
+.chat-markdown a.chat-markdown-file-link:hover {
   color: var(--foreground);
-  border-color: color-mix(in srgb, var(--border) 65%, var(--foreground));
-  background: color-mix(in srgb, var(--muted) 72%, var(--background));
+  text-decoration: none;
 }
 
-.chat-markdown-file-link:focus-visible {
+.chat-markdown a.chat-markdown-file-link:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ring) 70%, transparent);
-}
-
-.chat-markdown-file-link-icon {
-  opacity: 0.72;
-}
-
-.chat-markdown-file-link-label {
-  color: color-mix(in srgb, var(--foreground) 88%, transparent);
-  line-height: 1.1;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent);
 }
 
 .chat-markdown pre {
@@ -1052,7 +1323,25 @@ label:has(> select#reasoning-effort) select {
   border: none;
   background: transparent;
   padding: 0;
-  font-size: var(--app-code-font-size);
+  font-size: 0.75rem;
+}
+
+.chat-markdown pre {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+}
+
+.chat-markdown pre::-webkit-scrollbar {
+  height: 7px;
+}
+
+.chat-markdown pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-markdown pre::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .markdown-file-link-tooltip-scroll {
@@ -1074,46 +1363,150 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-codeblock {
-  --chat-markdown-codeblock-copy-button-space: 1.5rem;
-  position: relative;
   margin: 0.65rem 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--muted) 78%, var(--background));
+}
+
+.chat-markdown .chat-markdown-codeblock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  padding: 0.25rem 0.375rem 0.25rem 0.7rem;
+  color: var(--muted-foreground);
+}
+
+.chat-markdown .chat-markdown-codeblock-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.6875rem;
+}
+
+.chat-markdown .chat-markdown-chrome-action {
+  color: var(--muted-foreground);
+}
+
+.chat-markdown .chat-markdown-chrome-action:hover {
+  color: var(--foreground);
+}
+
+.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock pre {
   margin: 0;
-  padding-right: calc(0.9rem + var(--chat-markdown-codeblock-copy-button-space));
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
-.chat-markdown .chat-markdown-copy-button {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  z-index: 1;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-
-.chat-markdown .chat-markdown-codeblock:hover .chat-markdown-copy-button,
-.chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
-  opacity: 1;
-  pointer-events: auto;
+.chat-markdown .chat-markdown-codeblock[data-wrap="true"] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chat-markdown .chat-markdown-shiki .shiki {
-  background: color-mix(in srgb, var(--muted) 78%, var(--background)) !important;
+  background: transparent !important;
 }
 
+/* Diagnostics-style tables: row separators only, uppercase headers, and a
+   scroll-fade container for horizontal overflow. The root chat-markdown
+   wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
+   characters and defeat the overflow — restore word-boundary wrapping so the
+   min column width is the longest word. */
 .chat-markdown table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-size: 0.75rem;
 }
 
 .chat-markdown th,
 .chat-markdown td {
-  border: 1px solid var(--border);
-  padding: 0.35rem 0.45rem;
+  padding: 0.45rem 0.75rem;
   text-align: left;
+}
+
+.chat-markdown thead th {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding-block: 0.55rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-markdown tbody td {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+/* Collapsed (default): single-line cells truncate so arbitrary chat content
+   cannot blow the column out; the footer toggle expands cells to wrap. */
+.chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
+.chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
+  overflow: hidden;
+  max-width: 24rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
+  max-width: 24rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown .chat-markdown-table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.125rem;
+}
+
+/* Prompt-stash save acknowledgement: the new count fades up from just below
+   its resting position, once, then stops. One-shot and event-driven (React
+   remounts the element by key on each stash) — no continuous animation. */
+@keyframes prompt-stash-count-enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.prompt-stash-count-enter {
+  animation: prompt-stash-count-enter 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-stash-count-enter {
+    animation: none;
+  }
+}
+
+@keyframes provider-update-pill-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.provider-update-pill-progress {
+  animation: provider-update-pill-countdown var(--provider-update-pill-dismiss-ms) linear forwards;
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
@@ -1121,7 +1514,8 @@ label:has(> select#reasoning-effort) select {
   background: color-mix(in srgb, var(--background) 94%, var(--card));
 }
 
-.diff-render-file {
+.diff-render-file,
+.diff-render-surface > diffs-container {
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   overflow: clip;
@@ -1157,9 +1551,33 @@ label:has(> select#reasoning-effort) select {
     #ec4899 90%,
     #ff6b6b 100%
   );
+  position: relative;
+  background: transparent;
+}
+
+.ultrathink-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
   background-image: var(--ultrathink-spectrum);
   background-size: 220% 220%;
+  pointer-events: none;
+  filter: saturate(0.82) brightness(0.92);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
   animation: ultrathink-rainbow 10s linear infinite;
+}
+
+.ultrathink-frame > * {
+  position: relative;
 }
 
 .ultrathink-chroma {
@@ -1191,24 +1609,14 @@ label:has(> select#reasoning-effort) select {
   animation: ultrathink-rainbow 10s linear infinite;
 }
 
-/* Thin scrollbar for model picker */
-.model-picker-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-.model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 2px;
-}
-
-.model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.dark .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.dark .model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+/* Composer chips are non-editable decorators, so the browser skips them when
+   painting text selection; this overlay stands in for the native highlight. */
+.composer-inline-chip[data-composer-chip-selected]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background-color: Highlight;
+  opacity: 0.3;
+  pointer-events: none;
 }

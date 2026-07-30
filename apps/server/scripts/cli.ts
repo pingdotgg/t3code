@@ -1,18 +1,33 @@
 #!/usr/bin/env node
-
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Data, Effect, FileSystem, Logger, Option, Path } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   DEVELOPMENT_ICON_OVERRIDES,
-  PUBLISH_ICON_OVERRIDES,
+  resolveWebAssetBrandForPackageVersion,
+  resolveWebIconOverrides,
 } from "../../../scripts/lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
-import rootPackageJson from "../../../package.json" with { type: "json" };
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import serverPackageJson from "../package.json" with { type: "json" };
+import {
+  ServerCliBuildAssetMissingError,
+  ServerCliCommandExitError,
+  ServerCliDevelopmentIconSourceMissingError,
+  ServerCliDevelopmentIconTargetMissingError,
+  ServerCliPublishIconSourceMissingError,
+  ServerCliPublishIconTargetMissingError,
+} from "./cliErrors.ts";
 
 interface PackageJson {
   name: string;
@@ -30,75 +45,71 @@ interface PackageJson {
   overrides: Record<string, string>;
 }
 
-class CliError extends Data.TaggedError("CliError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+const PackageJsonPrettyJson = fromJsonStringPretty(Schema.Unknown);
+const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
+
+const WorkspaceConfig = Schema.Struct({
+  catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+type WorkspaceConfig = typeof WorkspaceConfig.Type;
+const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
 );
 
-const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Command) {
+const readWorkspaceConfig = Effect.fn("readWorkspaceConfig")(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const repoRoot = yield* RepoRoot;
+  const workspaceYaml = yield* fs.readFileString(path.join(repoRoot, "pnpm-workspace.yaml"));
+  return yield* decodeWorkspaceConfig(workspaceYaml);
+});
+
+const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.StandardCommand) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* spawner.spawn(command);
   const exitCode = yield* child.exitCode;
 
   if (exitCode !== 0) {
-    return yield* new CliError({
-      message: `Command exited with non-zero exit code (${exitCode})`,
+    return yield* new ServerCliCommandExitError({
+      command: command.command,
+      args: command.args,
+      cwd: command.options.cwd,
+      exitCode,
     });
   }
 });
 
-interface PublishIconBackup {
-  readonly targetPath: string;
-  readonly backupPath: string;
-}
-
-const applyPublishIconOverrides = Effect.fn("applyPublishIconOverrides")(function* (
+const preparePublishIcons = Effect.fn("preparePublishIcons")(function* (
   repoRoot: string,
   serverDir: string,
+  version: string,
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  const backups: PublishIconBackup[] = [];
+  const brand = resolveWebAssetBrandForPackageVersion(version);
+  const icons = resolveWebIconOverrides(brand, "dist/client").map((override) => ({
+    sourcePath: path.join(repoRoot, override.sourceRelativePath),
+    targetPath: path.join(serverDir, override.targetRelativePath),
+  }));
 
-  for (const override of PUBLISH_ICON_OVERRIDES) {
-    const sourcePath = path.join(repoRoot, override.sourceRelativePath);
-    const targetPath = path.join(serverDir, override.targetRelativePath);
-    const backupPath = `${targetPath}.publish-bak`;
-
-    if (!(yield* fs.exists(sourcePath))) {
-      return yield* new CliError({
-        message: `Missing publish icon source: ${sourcePath}`,
-      });
+  for (const icon of icons) {
+    if (!(yield* fs.exists(icon.sourcePath))) {
+      return yield* new ServerCliPublishIconSourceMissingError({ sourcePath: icon.sourcePath });
     }
-    if (!(yield* fs.exists(targetPath))) {
-      return yield* new CliError({
-        message: `Missing publish icon target: ${targetPath}. Run the build subcommand first.`,
-      });
+    if (!(yield* fs.exists(icon.targetPath))) {
+      return yield* new ServerCliPublishIconTargetMissingError({ targetPath: icon.targetPath });
     }
-
-    yield* fs.copyFile(targetPath, backupPath);
-    yield* fs.copyFile(sourcePath, targetPath);
-    backups.push({ targetPath, backupPath });
   }
 
-  yield* Effect.log("[cli] Applied publish icon overrides to dist/client");
-  return backups as ReadonlyArray<PublishIconBackup>;
-});
-
-const restorePublishIconOverrides = Effect.fn("restorePublishIconOverrides")(function* (
-  backups: ReadonlyArray<PublishIconBackup>,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  for (const backup of backups) {
-    if (!(yield* fs.exists(backup.backupPath))) {
-      continue;
-    }
-    yield* fs.rename(backup.backupPath, backup.targetPath);
-  }
+  return yield* Effect.forEach(icons, (icon) =>
+    Effect.all({
+      original: fs.readFile(icon.targetPath),
+      publish: fs.readFile(icon.sourcePath),
+    }).pipe(Effect.map((contents) => ({ ...icon, ...contents }))),
+  );
 });
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
@@ -113,14 +124,10 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
     const targetPath = path.join(serverDir, override.targetRelativePath);
 
     if (!(yield* fs.exists(sourcePath))) {
-      return yield* new CliError({
-        message: `Missing development icon source: ${sourcePath}`,
-      });
+      return yield* new ServerCliDevelopmentIconSourceMissingError({ sourcePath });
     }
     if (!(yield* fs.exists(targetPath))) {
-      return yield* new CliError({
-        message: `Missing development icon target: ${targetPath}. Build web first.`,
-      });
+      return yield* new ServerCliDevelopmentIconTargetMissingError({ targetPath });
     }
 
     yield* fs.copyFile(sourcePath, targetPath);
@@ -151,8 +158,7 @@ const buildCmd = Command.make(
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-          // Windows needs shell mode to resolve `.cmd` shims on PATH.
-          shell: process.platform === "win32",
+          shell: false,
         }),
       );
 
@@ -187,6 +193,31 @@ const buildCmd = Command.make(
 // publish subcommand
 // ---------------------------------------------------------------------------
 
+interface PublishCommandConfig {
+  readonly access: string;
+  readonly tag: string;
+  readonly provenance: boolean;
+  readonly dryRun: boolean;
+}
+
+const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<string> => {
+  const args = [
+    "publish",
+    "--filter",
+    "t3",
+    "--access",
+    config.access,
+    "--tag",
+    config.tag,
+    "--no-git-checks",
+  ];
+
+  if (config.provenance) args.push("--provenance");
+  if (config.dryRun) args.push("--dry-run");
+
+  return args;
+};
+
 const publishCmd = Command.make(
   "publish",
   {
@@ -204,22 +235,22 @@ const publishCmd = Command.make(
       const repoRoot = yield* RepoRoot;
       const serverDir = path.join(repoRoot, "apps/server");
       const packageJsonPath = path.join(serverDir, "package.json");
-      const backupPath = `${packageJsonPath}.bak`;
 
       // Assert build assets exist
       for (const relPath of ["dist/bin.mjs", "dist/client/index.html"]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {
-          return yield* new CliError({
-            message: `Missing build asset: ${abs}. Run the build subcommand first.`,
-          });
+          return yield* new ServerCliBuildAssetMissingError({ assetPath: abs });
         }
       }
 
       yield* Effect.acquireUseRelease(
-        // Acquire: backup package.json, resolve catalog dependencies, and strip devDependencies/scripts
+        // Acquire: resolve publish metadata and read every original before mutation.
         Effect.gen(function* () {
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
+          const workspaceConfig = yield* readWorkspaceConfig();
+          const workspaceCatalog = workspaceConfig.catalog ?? {};
+          const workspaceOverrides = workspaceConfig.overrides ?? {};
           const pkg: PackageJson = {
             name: serverPackageJson.name,
             repository: serverPackageJson.repository,
@@ -230,52 +261,53 @@ const publishCmd = Command.make(
             files: serverPackageJson.files,
             dependencies: resolveCatalogDependencies(
               serverPackageJson.dependencies,
-              rootPackageJson.workspaces.catalog,
+              workspaceCatalog,
               "apps/server",
             ),
             overrides: resolveCatalogDependencies(
-              rootPackageJson.overrides,
-              rootPackageJson.workspaces.catalog,
+              workspaceOverrides,
+              workspaceCatalog,
               "apps/server",
             ),
           };
 
-          const original = yield* fs.readFileString(packageJsonPath);
-          yield* fs.writeFileString(backupPath, original);
-          yield* fs.writeFileString(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
-          yield* Effect.log("[cli] Prepared package.json for publish");
-
-          const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);
-          return { iconBackups };
+          return {
+            packageJsonString: yield* encodePackageJson(pkg),
+            originalPackageJson: yield* fs.readFile(packageJsonPath),
+            icons: yield* preparePublishIcons(repoRoot, serverDir, version),
+          };
         }),
-        // Use: npm publish
-        () =>
+        // Use: pnpm publish from the workspace root so pnpm-only workspace
+        // config, including override selectors, is interpreted correctly.
+        (resource) =>
           Effect.gen(function* () {
-            const args = ["publish", "--access", config.access, "--tag", config.tag];
-            if (config.provenance) args.push("--provenance");
-            if (config.dryRun) args.push("--dry-run");
+            yield* fs.writeFileString(packageJsonPath, `${resource.packageJsonString}\n`);
+            for (const icon of resource.icons) {
+              yield* fs.writeFile(icon.targetPath, icon.publish);
+            }
+            yield* Effect.log("[cli] Applied package metadata and publish icon overrides");
 
-            yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
+            const args = createVpPmPublishArgs(config);
+            const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
+
+            yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
             yield* runCommand(
-              ChildProcess.make("npm", [...args], {
-                cwd: serverDir,
+              ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+                cwd: repoRoot,
                 stdout: config.verbose ? "inherit" : "ignore",
                 stderr: "inherit",
-                // Windows needs shell mode to resolve .cmd shims.
-                shell: process.platform === "win32",
+                shell: spawnCommand.shell,
               }),
             );
           }),
-        // Release: restore
-        (resource: { readonly iconBackups: ReadonlyArray<PublishIconBackup> }) =>
+        // Release: restore every file even if applying overrides or publishing fails.
+        (resource) =>
           Effect.gen(function* () {
-            yield* restorePublishIconOverrides(resource.iconBackups).pipe(
-              Effect.catch((error) =>
-                Effect.logError(`[cli] Failed to restore publish icon overrides: ${String(error)}`),
-              ),
-            );
-            yield* fs.rename(backupPath, packageJsonPath);
-            if (config.verbose) yield* Effect.log("[cli] Restored original package.json");
+            yield* fs.writeFile(packageJsonPath, resource.originalPackageJson);
+            for (const icon of resource.icons) {
+              yield* fs.writeFile(icon.targetPath, icon.original);
+            }
+            if (config.verbose) yield* Effect.log("[cli] Restored original publish assets");
           }),
       );
     }),

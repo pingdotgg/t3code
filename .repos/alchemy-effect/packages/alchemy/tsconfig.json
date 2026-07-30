@@ -1,0 +1,70 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.json",
+    "src/Cloudflare/DnsFirewall/Firewall"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    // Solid is the default JSX runtime in this package; React files opt in per-file.
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/solid",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // enable this to get effect diangostics in tsc
+        "diagnostics": false,
+        "ignoreEffectErrorsInTscExitCode": true,
+        "ignoreEffectWarningsInTscExitCode": true,
+        "ignoreEffectSuggestionsInTscExitCode": true,
+        "diagnosticSeverity": {
+          "floatingEffect": "off"
+        }
+      }
+    ]
+  },
+  "references": [
+    {
+      "path": "../alchemy-test/tsconfig.json"
+    },
+    {
+      "path": "../../distilled/packages/aws/tsconfig.json"
+    },
+    {
+      "path": "../../distilled/packages/cloudflare/tsconfig.json"
+    },
+    {
+      "path": "../../distilled/packages/planetscale/tsconfig.json"
+    },
+    {
+      "path": "../../distilled/packages/core/tsconfig.json"
+    },
+    {
+      "path": "../../distilled/packages/neon/tsconfig.json"
+    },
+    {
+      "path": "../../distilled/packages/axiom/tsconfig.json"
+    },
+    {
+      "path": "../../cloudflare-tools/packages/cloudflare-rolldown-plugin/tsconfig.json"
+    },
+    {
+      "path": "../../cloudflare-tools/packages/cloudflare-runtime/tsconfig.node.json"
+    },
+    {
+      "path": "../../cloudflare-tools/packages/cloudflare-vite-plugin/tsconfig.node.json"
+    }
+  ]
+}

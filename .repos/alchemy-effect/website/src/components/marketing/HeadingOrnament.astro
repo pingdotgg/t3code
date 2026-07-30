@@ -1,0 +1,92 @@
+---
+/**
+ * Tiny inline alchemical glyph used as a heading prefix/suffix flourish.
+ *
+ * Glyph vocabulary is drawn from Nicolas Lemery's Cours de chymie
+ * (1675/1757) and the broader 17th–18th c. alchemical alphabet — the
+ * same glyphs the Principia-era natural philosophers used. Sized to
+ * ~0.85em so it sits as a printer's mark next to the heading rather
+ * than competing with it.
+ */
+type Variant =
+  | "sol" // ☉ Gold / Sun — mastery, production, completion
+  | "sulphur" // 🜍 Sulphur — fixation, transformation, deploy
+  | "fleuron"; // printer's leaf flourish
+
+interface Props {
+  variant?: Variant;
+  position?: "prefix" | "suffix";
+  size?: string;
+  class?: string;
+}
+
+const {
+  variant = "sol",
+  position = "prefix",
+  size = "0.85em",
+  class: className,
+} = Astro.props;
+---
+
+<span
+  class:list={["alc-orn", `alc-orn--${position}`, className]}
+  style={`--alc-orn-size:${size};`}
+  aria-hidden="true"
+>
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.1"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    {variant === "sol" && (
+      <>
+        <circle cx="12" cy="12" r="6" />
+        <circle cx="12" cy="12" r="1.2" fill="var(--alc-accent-deep)" stroke="none" />
+      </>
+    )}
+    {variant === "sulphur" && (
+      <>
+        {/* upward triangle */}
+        <path d="M12 3 L19 15 L5 15 Z" />
+        {/* cross beneath */}
+        <path d="M12 15 V21 M9 18 H15" />
+      </>
+    )}
+    {variant === "fleuron" && (
+      <>
+        <path d="M12 7 L15 12 L12 17 L9 12 Z" />
+        <path d="M9 12 C 5 12, 3 10, 2.5 7.5" />
+        <path d="M15 12 C 19 12, 21 14, 21.5 16.5" />
+        <circle cx="12" cy="12" r="0.9" fill="var(--alc-accent-deep)" stroke="none" />
+      </>
+    )}
+  </svg>
+</span>
+
+<style>
+  .alc-orn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--alc-orn-size, 0.85em);
+    height: var(--alc-orn-size, 0.85em);
+    vertical-align: -0.08em;
+    color: var(--alc-fg-3);
+    opacity: 0.55;
+    flex: none;
+  }
+  .alc-orn--prefix {
+    margin-right: 0.5em;
+  }
+  .alc-orn--suffix {
+    margin-left: 0.5em;
+  }
+  .alc-orn svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+</style>
