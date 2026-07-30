@@ -205,6 +205,25 @@ describe("buildAddProjectRemoteTargets", () => {
     expect(targets[2]!.source).toBe("github-enterprise");
   });
 
+  it("leaves the host off non-enterprise targets", () => {
+    const targets = buildAddProjectRemoteTargets(
+      discoveryResult([
+        providerItem({ kind: "github", id: "github", host: "github.com" }),
+        providerItem({ kind: "gitlab", id: "gitlab", host: "gitlab.com" }),
+        providerItem({ kind: "bitbucket", id: "bitbucket", host: "bitbucket.org" }),
+        providerItem({ kind: "azure-devops", id: "azure-devops", host: "dev.azure.com" }),
+      ]),
+    );
+
+    expect(targets.map((target) => ({ id: target.id, host: target.host }))).toEqual([
+      { id: "url", host: null },
+      { id: "github", host: null },
+      { id: "gitlab", host: null },
+      { id: "bitbucket", host: null },
+      { id: "azure-devops", host: null },
+    ]);
+  });
+
   it("labels an enterprise target with its host", () => {
     expect(
       addProjectRemoteTargetLabel({

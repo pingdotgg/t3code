@@ -122,7 +122,15 @@ export function buildAddProjectRemoteTargets(
     ...discovery.sourceControlProviders.flatMap((provider) =>
       provider.kind === "unknown"
         ? []
-        : [{ id: provider.id, source: provider.kind, host: Option.getOrNull(provider.host) }],
+        : [
+            {
+              id: provider.id,
+              source: provider.kind,
+              // Only an enterprise target needs to pin a host; the rest keep
+              // their requests host-free the way they always were.
+              host: provider.kind === "github-enterprise" ? Option.getOrNull(provider.host) : null,
+            },
+          ],
     ),
   ];
 }
