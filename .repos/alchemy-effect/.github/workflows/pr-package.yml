@@ -1,0 +1,42 @@
+name: pr-package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # `labeled` so adding the `force-ci` label re-triggers the run. We
+    # intentionally do NOT listen to `closed` — pr-package tags persist
+    # past PR close so existing install URLs keep resolving.
+    types: [opened, synchronize, reopened, labeled]
+
+# Reusable workflows can't widen permissions — the caller must grant
+# `pull-requests: write` for the sticky install-instructions comment.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-package:
+    uses: alchemy-run/actions/.github/workflows/pr-package.yml@a18b368e044cb380a8c4904d5cfbccbc2798e768 # main
+    with:
+      # The bun workspace includes `distilled/packages/*` from the
+      # distilled submodule, so the publish jobs must check it out.
+      submodules: "true"
+      # A submodule-pointer bump doesn't fall under any package dir, but
+      # it changes what gets bundled — republish everything.
+      rebuild-all-paths: |
+        distilled
+        cloudflare-tools
+      # `|| true` keeps the cp harmless in packages whose pkg dir is
+      # nested differently or that don't need the root README.
+      build-command: "cp ../../README.md . 2>/dev/null || true; bun run build"
+      # Every package's tsc build pulls in the alchemy -> distilled
+      # project-reference chain (distilled/aws is huge), so all three
+      # need the larger runner — same as distilled's own CI.
+      packages: |
+        [
+          { "dir": "packages/alchemy",     "name": "alchemy",                   "runner": "ubuntu-22-large" },
+          { "dir": "packages/better-auth", "name": "@alchemy.run/better-auth",  "runner": "ubuntu-22-large" },
+          { "dir": "packages/pr-package",  "name": "@alchemy.run/pr-package",   "runner": "ubuntu-22-large" }
+        ]
+    secrets: inherit

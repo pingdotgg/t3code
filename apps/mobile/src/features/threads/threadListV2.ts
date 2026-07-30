@@ -1,6 +1,8 @@
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 /**
  * Thread List v2 model, ported from the web sidebar v2
@@ -11,6 +13,32 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
  * unlabeled resting state.
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
+
+// Settled-tail paging: recent history is the common lookup; the deep tail
+// stays behind an explicit Show more. Shared by the compact Home list and
+// the iPad sidebar so both page identically.
+export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
+export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
+
+/**
+ * Thread List v2 is on by default on every app variant; the Settings → Beta
+ * toggle is an opt-out. Preferences persist as sparse patches, so `undefined`
+ * genuinely means "never chosen".
+ *
+ * `preferencesLoaded` guards the startup window: preferences load
+ * asynchronously, and rendering one list before the stored choice arrives would
+ * remount the whole thing a tick later. While loading, hold the default — that
+ * is where every device without an explicit opt-out lands anyway.
+ */
+export function resolveThreadListV2Enabled(input: {
+  readonly preference: boolean | undefined;
+  readonly preferencesLoaded: boolean;
+}): boolean {
+  if (!input.preferencesLoaded) {
+    return true;
+  }
+  return input.preference ?? true;
+}
 
 export function resolveThreadListV2Status(
   thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
@@ -78,6 +106,67 @@ export interface ThreadListV2Layout {
   readonly items: ThreadListV2Item[];
   /** Settled threads beyond the render limit (behind "Show more"). */
   readonly hiddenSettledCount: number;
+  /** Snoozed threads hidden from the list (visibility parity with web's
+      collapsed Snoozed shelf; mobile has no shelf UI yet). */
+  readonly snoozedCount: number;
+  /** Soonest wake time among hidden snoozed threads, or null. Callers arm
+      a timeout at this boundary so the list re-partitions the moment a
+      snooze expires instead of on the next minute tick. */
+  readonly nextSnoozeWakeAt: string | null;
+}
+
+export interface ThreadListV2ThreadListItem {
+  readonly type: "v2-thread";
+  readonly key: string;
+  readonly item: ThreadListV2Item;
+}
+
+export interface ThreadListV2PendingListItem {
+  readonly type: "v2-pending";
+  readonly key: string;
+  readonly pendingTask: PendingNewTask;
+  /** First queued row after the active block draws the PENDING divider. */
+  readonly showPendingDivider: boolean;
+}
+
+export type ThreadListV2ListItem = ThreadListV2ThreadListItem | ThreadListV2PendingListItem;
+
+/**
+ * Splices queued tasks between the active block and the settled tail, so the
+ * list reads active → pending → settled. Queued work sits below the live
+ * threads because nothing can happen to it until its environment returns:
+ * it is waiting, not asking. Shared by the compact Home list and the iPad
+ * sidebar so both order and label the sections identically.
+ */
+export function buildThreadListV2ListItems(input: {
+  readonly items: ReadonlyArray<ThreadListV2Item>;
+  readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+}): ThreadListV2ListItem[] {
+  const threadItems = input.items.map(
+    (item): ThreadListV2ListItem => ({
+      type: "v2-thread",
+      key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
+      item,
+    }),
+  );
+  if (input.pendingTasks.length === 0) return threadItems;
+
+  const pendingItems = input.pendingTasks.map(
+    (pendingTask, index): ThreadListV2ListItem => ({
+      type: "v2-pending",
+      key: `v2-pending:${pendingTask.message.messageId}`,
+      pendingTask,
+      showPendingDivider: index === 0,
+    }),
+  );
+  // The settled tail begins at the row that draws the SETTLED divider; with
+  // no settled rows the queued block simply ends the list.
+  const settledStart = threadItems.findIndex(
+    (entry) => entry.type === "v2-thread" && entry.item.showSettledDivider,
+  );
+  return settledStart === -1
+    ? [...threadItems, ...pendingItems]
+    : [...threadItems.slice(0, settledStart), ...pendingItems, ...threadItems.slice(settledStart)];
 }
 
 /**
@@ -89,10 +178,10 @@ export interface ThreadListV2Layout {
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly environmentId: EnvironmentId | null;
-  readonly projectRef?: {
+  readonly projectRefs?: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
-  } | null;
+  }> | null;
   readonly searchQuery: string;
   /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
   readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
@@ -100,33 +189,58 @@ export function buildThreadListV2Items(input: {
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  /** Environments whose server supports thread.snooze/unsnooze. Same
+      contract as settlementEnvironmentIds. */
+  readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly autoSettleAfterDays?: number;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
   readonly now?: string;
+  /** Second-precise clock for snooze classification. Callers pass a
+      minute-quantized `now` for memoization; snooze wake times are
+      second-precise, so classifying with the floored minute would hold a
+      woken thread hidden for up to a minute. Defaults to `now`. */
+  readonly snoozeNow?: string;
 }): ThreadListV2Layout {
   const now = input.now ?? new Date().toISOString();
+  const snoozeNow = input.snoozeNow ?? now;
   const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
   const query = input.searchQuery.trim().toLocaleLowerCase();
+  const projectKeys = input.projectRefs
+    ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
+    : null;
 
   const active: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
+  let snoozedCount = 0;
+  let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
     // Callers pass live (unarchived) shells; settled threads are among them
     // and partition into the tail via effectiveSettled.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
-    if (
-      input.projectRef != null &&
-      (thread.environmentId !== input.projectRef.environmentId ||
-        thread.projectId !== input.projectRef.projectId)
-    ) {
+    if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
     }
     if (query.length > 0 && !thread.title.toLocaleLowerCase().includes(query)) continue;
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
+    const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     const changeRequestState =
       input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
+    // Visibility parity with web: a snoozed thread leaves the list until it
+    // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
+    // work). Snooze outranks settled classification, same as web.
+    if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
+      snoozedCount += 1;
+      if (
+        thread.snoozedUntil != null &&
+        (nextSnoozeWakeAt === null ||
+          parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
+      ) {
+        nextSnoozeWakeAt = thread.snoozedUntil;
+      }
+      continue;
+    }
     if (
       supportsSettlement &&
       effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
@@ -163,5 +277,10 @@ export function buildThreadListV2Items(input: {
   if (last) {
     items[items.length - 1] = { ...last, isLast: true };
   }
-  return { items, hiddenSettledCount: orderedSettled.length - visibleSettled.length };
+  return {
+    items,
+    hiddenSettledCount: orderedSettled.length - visibleSettled.length,
+    snoozedCount,
+    nextSnoozeWakeAt,
+  };
 }

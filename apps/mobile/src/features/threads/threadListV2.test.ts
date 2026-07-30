@@ -1,9 +1,20 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
+  buildThreadListV2ListItems,
+  resolveThreadListV2Enabled,
   resolveThreadListV2Status,
   sortThreadsForListV2,
 } from "./threadListV2";
@@ -37,6 +48,25 @@ function makeThread(
 }
 
 const NOW = "2026-06-02T00:00:00.000Z";
+
+describe("resolveThreadListV2Enabled", () => {
+  it("defaults on when the device has never chosen", () => {
+    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: true })).toBe(
+      true,
+    );
+  });
+
+  it("honors an explicit device opt-out", () => {
+    expect(resolveThreadListV2Enabled({ preference: false, preferencesLoaded: true })).toBe(false);
+    expect(resolveThreadListV2Enabled({ preference: true, preferencesLoaded: true })).toBe(true);
+  });
+
+  it("holds the default while preferences are still loading so the list does not remount", () => {
+    expect(resolveThreadListV2Enabled({ preference: undefined, preferencesLoaded: false })).toBe(
+      true,
+    );
+  });
+});
 
 describe("resolveThreadListV2Status", () => {
   it("prioritizes approval over a running session", () => {
@@ -77,6 +107,85 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("hides snoozed threads and counts them — visibility parity with web", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({
+          id: ThreadId.make("snoozed"),
+          title: "Snoozed",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("woken"),
+          title: "Woken",
+          // Wake time already passed: back in the active list.
+          snoozedUntil: "2026-06-01T18:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    // Same createdAt → static sort tiebreaks by id; the point is the woken
+    // thread is BACK in the card block and the snoozed one is gone.
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
+    expect(layout.snoozedCount).toBe(1);
+  });
+
+  it("classifies snooze with the second-precise clock and reports the next wake", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("just-woke"),
+          title: "Just woke",
+          // Woke 30s ago: hidden under the minute-floored clock, visible
+          // under the precise one.
+          snoozedUntil: "2026-06-02T00:00:30.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("still-snoozed"),
+          title: "Still snoozed",
+          snoozedUntil: "2026-06-02T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      // Minute-floored partition clock vs precise snooze clock.
+      now: "2026-06-02T00:01:00.000Z",
+      snoozeNow: "2026-06-02T00:01:07.500Z",
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["just-woke"]);
+    expect(layout.snoozedCount).toBe(1);
+    expect(layout.nextSnoozeWakeAt).toBe("2026-06-02T09:00:00.000Z");
+  });
+
+  it("keeps snoozed threads visible on environments without the snooze capability", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("snoozed"),
+          title: "Snoozed",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      snoozeEnvironmentIds: new Set(),
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["snoozed"]);
+    expect(layout.snoozedCount).toBe(0);
+  });
+
   it("partitions settled threads into a slim tail with one divider", () => {
     const { items } = buildThreadListV2Items({
       threads: [
@@ -166,12 +275,35 @@ describe("buildThreadListV2Items", () => {
         }),
       ],
       environmentId: null,
-      projectRef: { environmentId, projectId: ProjectId.make("project-1") },
+      projectRefs: [{ environmentId, projectId: ProjectId.make("project-1") }],
       searchQuery: "",
       now: NOW,
     });
 
     expect(items.map((item) => item.thread.id)).toEqual(["included"]);
+  });
+
+  it("scopes the flat list to every environment member of a logical project", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("local"), title: "Local" }),
+        makeThread({
+          environmentId: remoteEnvironmentId,
+          id: ThreadId.make("remote"),
+          title: "Remote",
+        }),
+      ],
+      environmentId: null,
+      projectRefs: [
+        { environmentId, projectId: ProjectId.make("project-1") },
+        { environmentId: remoteEnvironmentId, projectId: ProjectId.make("project-1") },
+      ],
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["local", "remote"]);
   });
 });
 
@@ -215,6 +347,91 @@ describe("buildThreadListV2Items settled paging", () => {
       "active",
       "settled-3",
       "settled-2",
+    ]);
+  });
+});
+
+function makePendingTask(id: string): PendingNewTask {
+  return {
+    message: {
+      environmentId,
+      threadId: ThreadId.make(`thread-${id}`),
+      messageId: MessageId.make(id),
+      commandId: CommandId.make(`command-${id}`),
+      text: id,
+      attachments: [],
+      createdAt: NOW,
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "worktree",
+        branch: null,
+        worktreePath: null,
+      },
+    },
+    creation: {
+      projectId: ProjectId.make("project-1"),
+      workspaceMode: "worktree",
+      branch: null,
+      worktreePath: null,
+    },
+    title: id,
+  };
+}
+
+describe("buildThreadListV2ListItems", () => {
+  const layout = buildThreadListV2Items({
+    threads: [
+      makeThread({ id: ThreadId.make("active"), title: "active" }),
+      makeThread({
+        id: ThreadId.make("settled"),
+        title: "settled",
+        settledOverride: "settled",
+        settledAt: NOW,
+      }),
+    ],
+    environmentId: null,
+    searchQuery: "",
+    now: NOW,
+  });
+
+  it("splices queued tasks between the active block and the settled tail", () => {
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [makePendingTask("queued-1"), makePendingTask("queued-2")],
+    });
+
+    expect(
+      items.map((item) =>
+        item.type === "v2-pending" ? item.pendingTask.title : item.item.thread.id,
+      ),
+    ).toEqual(["active", "queued-1", "queued-2", "settled"]);
+    // Only the leading queued row labels the section, exactly like Settled.
+    expect(
+      items.filter((item) => item.type === "v2-pending" && item.showPendingDivider),
+    ).toHaveLength(1);
+  });
+
+  it("ends the list with queued tasks when nothing has settled yet", () => {
+    const activeOnly = buildThreadListV2Items({
+      threads: [makeThread({ id: ThreadId.make("active"), title: "active" })],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const items = buildThreadListV2ListItems({
+      items: activeOnly.items,
+      pendingTasks: [makePendingTask("queued-1")],
+    });
+
+    expect(items.map((item) => item.type)).toEqual(["v2-thread", "v2-pending"]);
+  });
+
+  it("leaves the thread order untouched when nothing is queued", () => {
+    const items = buildThreadListV2ListItems({ items: layout.items, pendingTasks: [] });
+
+    expect(items.map((item) => item.key)).toEqual([
+      `v2-thread:${environmentId}:active`,
+      `v2-thread:${environmentId}:settled`,
     ]);
   });
 });

@@ -1,14 +1,20 @@
 import {
   deriveLogicalProjectKey,
+  derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { getThreadSortTimestamp, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  getThreadSortTimestamp,
+  sortThreads,
+  toSortableTimestamp,
+} from "@t3tools/client-runtime/state/thread-sort";
 import type {
   EnvironmentId,
+  ScopedProjectRef,
   SidebarProjectGroupingMode,
   SidebarProjectSortOrder,
   SidebarThreadSortOrder,
@@ -21,6 +27,161 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
+
+export interface HomeProjectScope {
+  readonly key: string;
+  readonly title: string;
+  readonly representative: EnvironmentProject;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly projectRefs: ReadonlyArray<ScopedProjectRef>;
+}
+
+function getProjectFreshnessTimestamp(project: EnvironmentProject): number {
+  return toSortableTimestamp(project.updatedAt) ?? toSortableTimestamp(project.createdAt) ?? 0;
+}
+
+function getProjectSortTimestamp(
+  project: EnvironmentProject,
+  sortOrder: HomeProjectSortOrder,
+): number {
+  return sortOrder === "created_at"
+    ? (toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY)
+    : (toSortableTimestamp(project.updatedAt) ??
+        toSortableTimestamp(project.createdAt) ??
+        Number.NEGATIVE_INFINITY);
+}
+
+export function buildHomeProjectScopes(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly environmentId: EnvironmentId | null;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
+}): ReadonlyArray<HomeProjectScope> {
+  const projects = input.projects.filter(
+    (project) => input.environmentId === null || project.environmentId === input.environmentId,
+  );
+  const projectsByPhysicalKey = new Map<string, EnvironmentProject[]>();
+  for (const project of projects) {
+    const physicalKey = derivePhysicalProjectKey(project);
+    const existing = projectsByPhysicalKey.get(physicalKey);
+    if (existing) existing.push(project);
+    else projectsByPhysicalKey.set(physicalKey, [project]);
+  }
+
+  const winnersByPhysicalKey = new Map<
+    string,
+    { readonly key: string; readonly project: EnvironmentProject }
+  >();
+  for (const [physicalKey, members] of projectsByPhysicalKey) {
+    const project = members.reduce((winner, candidate) => {
+      const freshnessDelta =
+        getProjectFreshnessTimestamp(candidate) - getProjectFreshnessTimestamp(winner);
+      return freshnessDelta > 0 || (freshnessDelta === 0 && candidate.id > winner.id)
+        ? candidate
+        : winner;
+    });
+    const identitySource = members.find((member) => member.repositoryIdentity !== null) ?? project;
+    winnersByPhysicalKey.set(physicalKey, {
+      key: deriveLogicalProjectKey(identitySource, { groupingMode: input.projectGroupingMode }),
+      project,
+    });
+  }
+
+  const groups = new Map<string, EnvironmentProject[]>();
+  for (const { key, project } of winnersByPhysicalKey.values()) {
+    const existing = groups.get(key);
+    if (existing) existing.push(project);
+    else groups.set(key, [project]);
+  }
+
+  const projectRefsByGroup = new Map<string, ScopedProjectRef[]>();
+  const seenProjectRefs = new Set<string>();
+  for (const project of projects) {
+    const refKey = scopedProjectKey(project.environmentId, project.id);
+    if (seenProjectRefs.has(refKey)) continue;
+    seenProjectRefs.add(refKey);
+
+    const key =
+      winnersByPhysicalKey.get(derivePhysicalProjectKey(project))?.key ??
+      deriveLogicalProjectKey(project, { groupingMode: input.projectGroupingMode });
+    const refs = projectRefsByGroup.get(key);
+    const projectRef = { environmentId: project.environmentId, projectId: project.id };
+    if (refs) refs.push(projectRef);
+    else projectRefsByGroup.set(key, [projectRef]);
+  }
+
+  return Array.from(groups, ([key, projects]) => {
+    const representative = projects[0]!;
+    return {
+      key,
+      title: deriveProjectGroupLabel({ representative, members: projects }),
+      representative,
+      projects,
+      projectRefs: projectRefsByGroup.get(key) ?? [],
+    };
+  });
+}
+
+export function sortHomeProjectScopes(input: {
+  readonly scopes: ReadonlyArray<HomeProjectScope>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+  readonly projectSortOrder: HomeProjectSortOrder;
+}): ReadonlyArray<HomeProjectScope> {
+  const scopeKeyByProjectRef = new Map(
+    input.scopes.flatMap((scope) =>
+      scope.projectRefs.map(
+        (projectRef) =>
+          [scopedProjectKey(projectRef.environmentId, projectRef.projectId), scope.key] as const,
+      ),
+    ),
+  );
+  const latestActivityByScope = new Map<string, number>();
+  const recordActivity = (scopeKey: string | undefined, timestamp: number) => {
+    if (!scopeKey || !Number.isFinite(timestamp)) return;
+    latestActivityByScope.set(
+      scopeKey,
+      Math.max(latestActivityByScope.get(scopeKey) ?? Number.NEGATIVE_INFINITY, timestamp),
+    );
+  };
+
+  for (const thread of input.threads) {
+    if (thread.archivedAt !== null) continue;
+    recordActivity(
+      scopeKeyByProjectRef.get(scopedProjectKey(thread.environmentId, thread.projectId)),
+      getThreadSortTimestamp(thread, input.projectSortOrder),
+    );
+  }
+  for (const pendingTask of input.pendingTasks) {
+    recordActivity(
+      scopeKeyByProjectRef.get(
+        scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+      ),
+      Date.parse(pendingTask.message.createdAt),
+    );
+  }
+
+  return Arr.sort(
+    input.scopes,
+    Order.mapInput(
+      Order.Struct({
+        timestamp: Order.flip(Order.Number),
+        title: Order.String,
+        key: Order.String,
+      }),
+      (scope: HomeProjectScope) => ({
+        timestamp:
+          latestActivityByScope.get(scope.key) ??
+          Math.max(
+            ...scope.projects.map((project) =>
+              getProjectSortTimestamp(project, input.projectSortOrder),
+            ),
+          ),
+        title: scope.title,
+        key: scope.key,
+      }),
+    ),
+  );
+}
 
 /**
  * Default home view only surfaces threads active within this window, to keep the
@@ -103,22 +264,18 @@ export function buildHomeThreadGroups(input: {
   const groups = new Map<string, MutableHomeThreadGroup>();
   const groupKeyByProjectKey = new Map<string, string>();
 
-  for (const project of input.projects) {
-    if (input.environmentId !== null && project.environmentId !== input.environmentId) {
-      continue;
-    }
-
-    const groupKey = deriveLogicalProjectKey(project, {
-      groupingMode: input.projectGroupingMode,
+  for (const scope of buildHomeProjectScopes(input)) {
+    groups.set(scope.key, {
+      key: scope.key,
+      projects: [...scope.projects],
+      pendingTasks: [],
+      threads: [],
     });
-    const physicalKey = scopedProjectKey(project.environmentId, project.id);
-    groupKeyByProjectKey.set(physicalKey, groupKey);
-
-    const existing = groups.get(groupKey);
-    if (existing) {
-      existing.projects.push(project);
-    } else {
-      groups.set(groupKey, { key: groupKey, projects: [project], pendingTasks: [], threads: [] });
+    for (const projectRef of scope.projectRefs) {
+      groupKeyByProjectKey.set(
+        scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+        scope.key,
+      );
     }
   }
 
@@ -186,10 +343,7 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    const title =
-      group.projects.length > 1
-        ? deriveProjectGroupLabel({ representative, members: group.projects })
-        : representative.title;
+    const title = deriveProjectGroupLabel({ representative, members: group.projects });
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||
@@ -215,19 +369,21 @@ export function buildHomeThreadGroups(input: {
         ? selectRecentThreads(sortedThreads, input.threadSortOrder, now)
         : sortedThreads;
 
-    // Sorted newest-first, so the first thread whose project is a group member
-    // marks the machine the user last worked on.
-    const lastActiveProject = Arr.findFirst(sortedThreads, (thread) =>
-      group.projects.some(
-        (project) =>
-          project.environmentId === thread.environmentId && project.id === thread.projectId,
-      ),
-    ).pipe(
+    // A stale project id still resolves to the canonical member with the same
+    // environment/path, so quick creation follows the machine with the newest activity.
+    const lastActiveProject = Arr.head(sortedThreads).pipe(
       Option.flatMap((thread) =>
+        Arr.findFirst(
+          input.projects,
+          (project) =>
+            project.environmentId === thread.environmentId && project.id === thread.projectId,
+        ),
+      ),
+      Option.flatMap((threadProject) =>
         Arr.findFirst(
           group.projects,
           (project) =>
-            project.environmentId === thread.environmentId && project.id === thread.projectId,
+            derivePhysicalProjectKey(project) === derivePhysicalProjectKey(threadProject),
         ),
       ),
       Option.getOrNull,

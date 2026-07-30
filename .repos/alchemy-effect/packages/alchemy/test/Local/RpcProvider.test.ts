@@ -1,11 +1,12 @@
 import { AlchemyContext } from "@/AlchemyContext.ts";
+import * as Artifacts from "@/Artifacts.ts";
 import { InstanceId } from "@/InstanceId.ts";
 import * as RpcProvider from "@/Local/RpcProvider.ts";
 import type { ProviderService } from "@/Provider.ts";
 import { Resource } from "@/Resource.ts";
 import { Stack, type StackSpec } from "@/Stack.ts";
 import { Stage } from "@/Stage.ts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -13,7 +14,7 @@ import * as Stream from "effect/Stream";
 interface TestResource extends Resource<
   "Local.RpcProvider.Test",
   {},
-  { ok: boolean }
+  { ok: boolean; artifact: string }
 > {}
 const TestResource = Resource<TestResource>("Local.RpcProvider.Test");
 
@@ -23,6 +24,7 @@ interface Capture {
   stack?: StackShape;
   stage?: string;
   instanceId?: string;
+  artifact?: string;
 }
 
 const defaultStack: StackShape = {
@@ -41,6 +43,7 @@ describe("Local.RpcProvider.effect", () => {
         const [capture, result] = yield* useProvider((provider) =>
           provider.reconcile({
             id: "r",
+            fqn: "r",
             instanceId: "inst-from-arg",
             news: {},
             olds: undefined,
@@ -49,7 +52,7 @@ describe("Local.RpcProvider.effect", () => {
             bindings: [],
           }),
         );
-        expect(result).toEqual({ ok: true });
+        expect(result).toMatchObject({ ok: true });
         expect(capture.stack).toBe(defaultStack);
         expect(capture.stage).toBe(defaultStack.stage);
         expect(capture.instanceId).toBe("inst-from-arg");
@@ -71,6 +74,7 @@ describe("Local.RpcProvider.effect", () => {
           provider
             .reconcile({
               id: "r",
+              fqn: "r",
               instanceId: "inst-from-arg",
               news: {},
               olds: undefined,
@@ -95,9 +99,10 @@ describe("Local.RpcProvider.effect", () => {
       const [capture, items] = yield* useProvider((provider) =>
         provider.tail!({
           id: "r",
+          fqn: "r",
           instanceId: "inst-from-arg",
           props: {},
-          output: { ok: true },
+          output: { ok: true, artifact: "artifact" },
         }).pipe(Stream.runCollect),
       );
       expect(items.length).toBe(1);
@@ -113,6 +118,7 @@ describe("Local.RpcProvider.effect", () => {
         provider
           .reconcile({
             id: "r",
+            fqn: "r",
             news: {},
             olds: undefined,
             output: undefined,
@@ -128,18 +134,72 @@ describe("Local.RpcProvider.effect", () => {
       expect(capture.instanceId).toBeUndefined();
     }),
   );
+
+  it.effect("caches artifacts", () =>
+    Effect.gen(function* () {
+      const [capture, result] = yield* useProvider((provider) =>
+        provider.diff!({
+          id: "r",
+          fqn: "r",
+          news: {},
+          olds: undefined,
+          output: undefined,
+          oldBindings: [],
+          newBindings: [],
+          instanceId: "inst-from-arg",
+        }).pipe(
+          Effect.andThen(
+            Effect.all({
+              sameInstanceId: provider.reconcile({
+                id: "r",
+                fqn: "r",
+                instanceId: "inst-from-arg",
+                news: {},
+                olds: undefined,
+                output: undefined,
+                session: undefined as any,
+                bindings: [],
+              }),
+              differentInstanceId: provider.reconcile({
+                id: "r",
+                fqn: "r",
+                instanceId: "inst-from-arg-2",
+                news: {},
+                olds: undefined,
+                output: undefined,
+                session: undefined as any,
+                bindings: [],
+              }),
+            }),
+          ),
+        ),
+      );
+      expect(capture.artifact).toBeDefined();
+      expect(result.sameInstanceId.artifact).toBeDefined();
+      expect(result.differentInstanceId.artifact).toBeDefined();
+      expect(capture.artifact).toBe(result.sameInstanceId.artifact);
+      expect(capture.artifact).not.toBe(result.differentInstanceId.artifact);
+    }),
+  );
 });
+
+const artifact = Effect.sync(() => crypto.randomUUID()).pipe(
+  Artifacts.cached("artifact"),
+);
 
 const TestResourceProvider = (capture: Capture) =>
   RpcProvider.effect(
     TestResource,
     "ignored://entry",
     Effect.succeed({
+      diff: Effect.fn(function* () {
+        capture.artifact = yield* artifact;
+      }),
       reconcile: Effect.fn(function* (_input: any) {
         capture.stack = yield* Stack;
         capture.stage = yield* Stage;
         capture.instanceId = yield* InstanceId;
-        return { ok: true };
+        return { ok: true, artifact: yield* artifact };
       }),
       tail: (_input: any) =>
         Stream.fromEffect(
@@ -167,6 +227,7 @@ const useProvider = <A, E, R>(
         Layer.mergeAll(
           Layer.succeed(Stack, defaultStack),
           Layer.succeed(Stage, defaultStack.stage),
+          Layer.sync(Artifacts.ArtifactStore, Artifacts.createArtifactStore),
           Layer.succeed(AlchemyContext, {
             dotAlchemy: "/tmp/.alchemy",
             dev: false,

@@ -1,3 +1,5 @@
+/** @effect-diagnostics anyUnknownInErrorContext:off */
+
 import { ConfigProvider } from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -144,15 +146,18 @@ export const withProviders = <A, E, R, ROut>(
   stackName: string,
 ): Effect.Effect<A, E, Exclude<R, ROut | Stack | Stage>> =>
   effect.pipe(
-    Effect.provide(options.providers as Layer.Layer<any, never, any>),
     Effect.provide(
-      Layer.succeed(Stack, {
-        name: stackName,
-        stage: options.stage ?? "test",
-        resources: {},
-        bindings: {},
-        actions: {},
-      }),
+      (options.providers as Layer.Layer<any, never, any>).pipe(
+        Layer.provideMerge(
+          Layer.succeed(Stack, {
+            name: stackName,
+            stage: options.stage ?? "test",
+            resources: {},
+            bindings: {},
+            actions: {},
+          }),
+        ),
+      ),
     ),
     Effect.provide(Layer.succeed(Stage, options.stage ?? "test")),
   ) as Effect.Effect<A, E, Exclude<R, ROut | Stack | Stage>>;
@@ -207,6 +212,17 @@ export interface ScratchStack<ROut = any> {
   deploy<A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<Input.Resolve<A>, any, Exclude<R, ROut | StackServices>>;
+  /**
+   * Build a plan against the scratch's shared state WITHOUT applying it.
+   *
+   * Use this to assert on the planned action for a resource (e.g. that a
+   * downstream dependency stays `noop` when only an upstream resource
+   * changes) without mutating the cloud. Plans run against whatever state
+   * prior `deploy(...)` calls persisted.
+   */
+  plan<A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<Plan.Plan<A>, any, Exclude<R, ROut | StackServices>>;
   destroy(): Effect.Effect<void, any, never>;
 }
 
@@ -250,11 +266,27 @@ export const scratchStack = <ROut>(
       provideFreshArtifactStore,
     );
 
+  const buildPlan = (effect: Effect.Effect<any, any, any>) =>
+    (effect as Effect.Effect<any, any, never>).pipe(
+      makeStack({
+        name: stackName,
+        providers: options.providers,
+        state: stateLayer,
+      } as any) as any,
+      Effect.flatMap((compiled: any) =>
+        Plan.make(compiled).pipe(Effect.provide(compiled.services)),
+      ),
+      Effect.provide(Layer.succeed(Stage, stage)),
+      provideFreshArtifactStore,
+    );
+
   return {
     name: stackName,
     state: stateLayer,
     deploy: ((effect: Effect.Effect<any, any, any>) =>
       buildAndApply(effect)) as ScratchStack<ROut>["deploy"],
+    plan: ((effect: Effect.Effect<any, any, any>) =>
+      buildPlan(effect)) as ScratchStack<ROut>["plan"],
     destroy: () =>
       Plan.make({
         name: stackName,

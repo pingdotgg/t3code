@@ -163,6 +163,33 @@ describe("effectiveSettled", () => {
     ).toBe(true);
   });
 
+  it("settles immediately when a change request merges or closes", () => {
+    const recentlyActive = makeShell({ activityAt: "2026-04-09T23:59:59.999Z" });
+    for (const changeRequestState of ["merged", "closed"] as const) {
+      expect(
+        effectiveSettled(recentlyActive, {
+          now: NOW,
+          autoSettleAfterDays: null,
+          changeRequestState,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("keeps an explicitly un-settled merged-PR thread active", () => {
+    const shell = makeShell({
+      settledOverride: "active",
+      activityAt: "2026-04-09T23:59:59.999Z",
+    });
+    expect(
+      effectiveSettled(shell, {
+        now: NOW,
+        autoSettleAfterDays: null,
+        changeRequestState: "merged",
+      }),
+    ).toBe(false);
+  });
+
   it("never settles a starting session, even with a settled override", () => {
     const shell = makeShell({
       settledOverride: "settled",
@@ -176,6 +203,51 @@ describe("effectiveSettled", () => {
         changeRequestState: "merged",
       }),
     ).toBe(false);
+  });
+
+  it("keeps a new turn active from queued through starting and running", () => {
+    const requestedAt = "2026-04-09T12:00:00.000Z";
+    const transitionNow = "2026-04-09T12:00:30.000Z";
+    const base = makeShell({
+      settledOverride: null,
+      activityAt: STALE,
+    });
+    const queued: OrchestrationThreadShell = {
+      ...base,
+      latestUserMessageAt: requestedAt,
+      latestTurn: null,
+      session: null,
+    };
+    const starting: OrchestrationThreadShell = {
+      ...queued,
+      session: {
+        threadId: queued.id,
+        status: "starting",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: requestedAt,
+      },
+    };
+    const running: OrchestrationThreadShell = {
+      ...starting,
+      session: {
+        ...starting.session!,
+        status: "running",
+        activeTurnId: TurnId.make("turn-new"),
+      },
+    };
+
+    for (const shell of [queued, starting, running]) {
+      expect(
+        effectiveSettled(shell, {
+          now: transitionNow,
+          autoSettleAfterDays: 3,
+          changeRequestState: "merged",
+        }),
+      ).toBe(false);
+    }
   });
 
   it("uses a strict inactivity boundary and honors a null threshold", () => {

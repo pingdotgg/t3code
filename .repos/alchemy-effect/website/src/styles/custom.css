@@ -8,12 +8,113 @@
   --sl-font: var(--alc-font-sans);
   --sl-font-mono: var(--alc-font-mono);
   --sl-font-headings: var(--alc-font-serif);
-  /* Match the marketing header (64px tall, 32px horizontal padding, no
-     vertical padding) so docs and landing pages line up pixel-for-pixel. */
-  --sl-nav-height: 4rem;
+  /* Widen the docs sidebar (Starlight default is 18rem) so long generated
+     provider entries (e.g. GitHubRepositoryEventSourcePolicy) don't wrap. */
+  --sl-sidebar-width: 20rem;
+  /* The docs header is two rows: the marketing nav (64px, matching landing
+     pages pixel-for-pixel) plus the horizontal docs tab bar below it (see
+     components/starlight/Header.astro). Starlight offsets the sidebar and
+     content by --sl-nav-height, so it covers both rows. */
+  --alc-nav-row-height: 4rem;
+  --alc-tabs-height: 2.5rem;
+  --sl-nav-height: calc(var(--alc-nav-row-height) + var(--alc-tabs-height));
   --sl-nav-pad-x: 2rem;
   --sl-nav-pad-y: 0;
+  /* Cap the whole docs shell (sidebar + content + TOC) and center it,
+     bun.com/nextjs-style, instead of pinning the sidebar and TOC to the
+     viewport edges on wide screens. */
+  --alc-shell-max: 96rem;
+  --alc-shell-gutter: max(0rem, calc((100vw - var(--alc-shell-max)) / 2));
   color-scheme: light;
+}
+
+/* The tab row is desktop-only (mobile navigation lives in the hamburger
+   drawer's product switcher), so collapse its reserved height on mobile —
+   otherwise the header keeps a dead 2.5rem band where the row used to be.
+   Everything offset by --sl-nav-height (sidebar pane, content top,
+   scroll-padding, menu-button centering) follows automatically. */
+@media (max-width: 50rem) {
+  :root {
+    --alc-tabs-height: 0rem;
+  }
+}
+
+/* Starlight shows the sticky "On this page" bar everywhere below 72rem —
+   including the 50–72rem range where the tab bar and left sidebar are
+   already up, which reads as stray mobile chrome on a desktop layout.
+   Align it with the rest of the chrome: mobile-only (< 50rem). The
+   right-rail TOC still appears from 72rem, as before. */
+@media (min-width: 50rem) {
+  :root {
+    --sl-mobile-toc-height: 0rem;
+  }
+  mobile-starlight-toc {
+    display: none;
+  }
+}
+
+/* Faint accent wash across the top of the whole docs page — sidebar,
+   content, and TOC alike (bun.com-style), fading into the page background.
+   The fixed sidebar goes transparent on desktop so the wash shows through
+   it; on mobile it stays an opaque overlay. */
+.page {
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--alc-accent) 5%, transparent),
+    transparent 24rem
+  );
+}
+
+@media (min-width: 50rem) {
+  /* Shift Starlight's fixed sidebar off the viewport edge by the gutter;
+     division comes from the hairline, not a contrasting panel color. */
+  .sidebar-pane {
+    inset-inline-start: var(--alc-shell-gutter);
+    background: transparent;
+  }
+  /* …offset the main column to match (Starlight derives the content inset
+     from this var)… */
+  [data-has-sidebar] .page {
+    --sl-content-inline-start: calc(
+      var(--sl-sidebar-width) + var(--alc-shell-gutter)
+    );
+  }
+  /* …and mirror the gutter on the right so the TOC pulls in too. */
+  .main-frame {
+    padding-inline-end: var(--alc-shell-gutter);
+  }
+  /* The fixed header keeps its full-width background; its content (nav row +
+     tab bar) is capped to the same shell. */
+  .alc-docs-header {
+    max-width: var(--alc-shell-max);
+    margin-inline: auto;
+  }
+}
+
+/* Pin Starlight's floating mobile hamburger to the first header row — it
+   centers itself against the full --sl-nav-height, which is now two rows. */
+starlight-menu-button button {
+  top: calc(
+    (var(--alc-nav-row-height) - var(--sl-menu-button-size)) / 2
+  ) !important;
+}
+
+/* The tab bar already links Docs and Blog on docs pages; the nav row's own
+   Docs/Blog text links are redundant there (they stay on marketing pages). */
+.alc-nav--docs .alc-nav__link:not(.alc-nav__link--icon) {
+  display: none;
+}
+
+/* On phones the 2rem desktop gutter is too generous: the docs header has to
+   fit the brand, the Docs/Blog links, the theme toggle AND the room Starlight
+   reserves on the right for its floating hamburger. Trim it to 1rem below the
+   `md` (50rem) breakpoint. `--sl-nav-pad-x` drives the header padding, the
+   hamburger inset and Starlight's reservation together, so they stay aligned
+   and the toggle clears the hamburger. */
+@media (max-width: 50rem) {
+  :root {
+    --sl-nav-pad-x: 1rem;
+  }
 }
 
 [data-theme="dark"] {
@@ -26,7 +127,9 @@
   /* Page surfaces */
   --sl-color-bg: var(--alc-bg);
   --sl-color-bg-nav: var(--alc-bg-nav);
-  --sl-color-bg-sidebar: var(--alc-bg-nav);
+  /* Sidebar shares the page background (bun.com-style: division comes from
+     the hairline + a faint gradient wash, not a contrasting panel). */
+  --sl-color-bg-sidebar: var(--alc-bg);
   --sl-color-bg-inline-code: var(--alc-bg-sunk);
   --sl-color-bg-accent: var(--alc-accent);
 
@@ -433,8 +536,7 @@ h1.hero-title,
 
 /* Larger gap between visual rows via empty tracks 4 and 8. */
 .features {
-  grid-template-rows:
-    auto auto auto /* row 1: h, p, code */
+  grid-template-rows: auto auto auto /* row 1: h, p, code */
     3rem /* gap */
     auto auto auto /* row 2 */
     3rem /* gap */
@@ -850,7 +952,86 @@ starlight-tabs [role="tablist"] > li:nth-child(4) [role="tab"] > svg {
    !important repaints that titlebar in cream parchment instead of the
    intended dark walnut, leaving an ugly cream strip above shell snippets. */
 header.header {
-  background: color-mix(in srgb, var(--alc-bg-nav) 92%, transparent) !important;
+  /* Same surface as the page + sidebar (bun.com-style — hairlines divide,
+     not contrasting panels), translucent for the blur under scroll. */
+  background: color-mix(in srgb, var(--alc-bg) 92%, transparent) !important;
   backdrop-filter: saturate(140%) blur(8px);
   border-bottom: 1px solid var(--alc-hairline) !important;
+}
+
+/* ── Docs sidebar: elide long entries with an ellipsis instead of wrapping
+   onto a second line (the generated provider pages have long names like
+   GitHubRepositoryEventSourcePolicy). ── */
+.sidebar-content a {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Docs sidebar restyle (redesign mockups): small-caps group headings,
+   flat sections instead of accordion rows, active page = accent bar +
+   tinted background instead of a filled pill. ── */
+
+/* Group labels read as small-caps section headings. */
+#starlight__sidebar .top-level > li > details > summary .group-label .large {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--alc-fg-4);
+}
+#starlight__sidebar .top-level > li > details {
+  margin-top: 0.9rem;
+}
+
+/* Hub-tab groups contain only links — render them as flat, always-open
+   sections: no caret, no collapse affordance. Reference's provider groups
+   nest further groups (categories → services) and keep the caret. */
+#starlight__sidebar .top-level > li > details:not(:has(details)) > summary {
+  pointer-events: none;
+}
+#starlight__sidebar
+  .top-level
+  > li
+  > details:not(:has(details))
+  > summary
+  .caret {
+  display: none;
+}
+
+/* Entries: tighter and smaller, with a reserved rail for the accent bar. */
+#starlight__sidebar .sidebar-content a {
+  font-size: 13px;
+  padding-block: 0.22rem;
+  border-inline-start: 3px solid transparent;
+  border-radius: 0;
+}
+#starlight__sidebar .sidebar-content a.large {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--sl-color-gray-2);
+}
+#starlight__sidebar .sidebar-content a:hover {
+  color: var(--alc-accent-deep);
+}
+
+/* Nested group labels (Resources categories/services, the Reference tree)
+   read like regular entries, not headings — only top-level group summaries
+   get the small-caps heading treatment above. */
+#starlight__sidebar .sidebar-content ul ul .group-label .large {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--sl-color-gray-2);
+}
+#starlight__sidebar .sidebar-content ul ul summary:hover .group-label .large {
+  color: var(--alc-accent-deep);
+}
+
+/* Active page: left accent bar + tint, mockup-style. */
+#starlight__sidebar .sidebar-content a[aria-current="page"] {
+  background: var(--alc-accent-12);
+  color: var(--alc-accent-deep);
+  border-inline-start-color: var(--alc-accent-deep);
+  font-weight: 500;
 }
