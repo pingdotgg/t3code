@@ -8,6 +8,7 @@ import {
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
+  resolveSelectedEnterpriseHost,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
@@ -1151,5 +1152,39 @@ describe("resolveAutoFeatureBranchName", () => {
   it("falls back to feature/update when no preferred name is provided", () => {
     const ref = resolveAutoFeatureBranchName(["main"]);
     assert.equal(ref, "feature/update");
+  });
+});
+
+describe("resolveSelectedEnterpriseHost", () => {
+  it("keeps the selected host when it is still available", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
+  it("defaults to the first available host when nothing is selected yet", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: null,
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+    });
+    assert.equal(host, "acme.ghe.com");
+  });
+
+  it("falls back to the first available host when the selected host disappears", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: ["acme.ghe.com"],
+    });
+    assert.equal(host, "acme.ghe.com");
+  });
+
+  it("returns null when no hosts are available", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: [],
+    });
+    assert.equal(host, null);
   });
 });

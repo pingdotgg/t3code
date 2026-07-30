@@ -45,6 +45,7 @@ import {
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
+  resolveSelectedEnterpriseHost,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
   resolveThreadBranchUpdate,
@@ -403,26 +404,35 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     [props.environmentId, props.gitCwd],
   );
   const publishRepositoryAction = useSourceControlPublishRepositoryAction(sourceControlScope);
-  const enterprisePublishProviderOptions = useMemo<ReadonlyArray<PublishProviderOption>>(() => {
+  const [selectedEnterpriseHost, setSelectedEnterpriseHost] = useState<string | null>(null);
+  const enterpriseHosts = useMemo(() => {
     const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
     return sourceControlProviders
       .filter((item) => item.kind === "github-enterprise" && item.status === "available")
       .flatMap((item) => {
         const host = Option.getOrNull(item.host);
-        if (!host) return [];
-        return [
-          {
-            id: item.id,
-            value: "github-enterprise" as const,
-            label: "GitHub Enterprise",
-            description: host,
-            host,
-            pathPlaceholder: "owner/repo",
-            Icon: GitHubIcon,
-          },
-        ];
-      });
+        return host ? [host] : [];
+      })
+      .toSorted((left, right) => left.localeCompare(right));
   }, [sourceControlDiscovery.data]);
+  const activeEnterpriseHost = resolveSelectedEnterpriseHost({
+    selectedHost: selectedEnterpriseHost,
+    availableHosts: enterpriseHosts,
+  });
+  const enterprisePublishProviderOptions = useMemo<ReadonlyArray<PublishProviderOption>>(() => {
+    if (enterpriseHosts.length === 0 || activeEnterpriseHost === null) return [];
+    return [
+      {
+        id: "github-enterprise",
+        value: "github-enterprise" as const,
+        label: "GitHub Enterprise",
+        description: activeEnterpriseHost,
+        host: activeEnterpriseHost,
+        pathPlaceholder: "owner/repo",
+        Icon: GitHubIcon,
+      },
+    ];
+  }, [enterpriseHosts, activeEnterpriseHost]);
   const publishProviderOptions = useMemo<ReadonlyArray<PublishProviderOption>>(
     () =>
       PUBLISH_PROVIDER_OPTIONS.flatMap((option) =>
@@ -716,13 +726,66 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                         )}
                       >
                         <option.Icon className="size-5 shrink-0" aria-hidden />
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                          {option.label}
-                        </span>
+                        {option.value === "github-enterprise" ? (
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-foreground">
+                              {option.label}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {option.description}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                            {option.label}
+                          </span>
+                        )}
                       </RadioPrimitive.Root>
                     );
                   })}
                 </RadioGroup>
+
+                {publishProvider === "github-enterprise" && enterpriseHosts.length > 0 ? (
+                  <div className="space-y-2 pt-1">
+                    <span
+                      id="publish-enterprise-host-label"
+                      className="text-xs font-medium text-foreground"
+                    >
+                      Host
+                    </span>
+                    <RadioGroup
+                      value={activeEnterpriseHost ?? undefined}
+                      onValueChange={(value) => {
+                        setSelectedEnterpriseHost(value as string);
+                        setPublishRepositoryOverride(null);
+                      }}
+                      aria-labelledby="publish-enterprise-host-label"
+                      className="grid grid-cols-2 gap-2"
+                    >
+                      {enterpriseHosts.map((host) => {
+                        const isSelected = activeEnterpriseHost === host;
+                        return (
+                          <RadioPrimitive.Root
+                            key={host}
+                            value={host}
+                            className={cn(
+                              "relative flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                              isSelected
+                                ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                                : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                            )}
+                          >
+                            <GitHubIcon className="size-4 shrink-0" aria-hidden />
+                            <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">
+                              {host}
+                            </span>
+                          </RadioPrimitive.Root>
+                        );
+                      })}
+                    </RadioGroup>
+                  </div>
+                ) : null}
               </div>
 
               <div className={cn("space-y-5", publishWizardStep !== 1 && "hidden")}>

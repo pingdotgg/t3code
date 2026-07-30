@@ -413,5 +413,15 @@ export function resolveLiveThreadBranchUpdate(input: {
   };
 }
 
+export function resolveSelectedEnterpriseHost(input: {
+  selectedHost: string | null;
+  availableHosts: ReadonlyArray<string>;
+}): string | null {
+  if (input.selectedHost !== null && input.availableHosts.includes(input.selectedHost)) {
+    return input.selectedHost;
+  }
+  return input.availableHosts[0] ?? null;
+}
+
 // Re-export from shared for backwards compatibility in this module's exports
 export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
