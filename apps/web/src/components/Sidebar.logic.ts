@@ -197,37 +197,45 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-export type SidebarV2ThreadContextMenuItemId =
-  | "settle"
-  | "unsettle"
-  | "archive"
-  | "rename"
-  | "mark-unread"
-  | "delete";
+export interface SidebarV2ThreadContextMenuSlots {
+  lifecycleItems: readonly ContextMenuItem<"settle" | "unsettle" | "archive">[];
+  renameItem: ContextMenuItem<"rename">;
+  markUnreadItem: ContextMenuItem<"mark-unread">;
+  destructiveItems: readonly ContextMenuItem<"delete">[];
+}
 
-export function buildSidebarV2ThreadContextMenuItems(input: {
+export function buildSidebarV2ThreadContextMenuSlots(input: {
   canUseLifecycleActions: boolean;
   supportsSettlement: boolean;
   isSettled: boolean;
   isRunning: boolean;
-}): readonly ContextMenuItem<SidebarV2ThreadContextMenuItemId>[] {
-  return [
-    ...(input.supportsSettlement
+}): SidebarV2ThreadContextMenuSlots {
+  return {
+    lifecycleItems: [
+      ...(input.supportsSettlement
+        ? [
+            input.isSettled
+              ? ({ id: "unsettle", label: "Un-settle thread" } as const)
+              : ({ id: "settle", label: "Settle thread" } as const),
+          ]
+        : []),
+      ...(input.canUseLifecycleActions
+        ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isRunning }]
+        : []),
+    ],
+    renameItem: { id: "rename", label: "Rename thread" },
+    markUnreadItem: { id: "mark-unread", label: "Mark unread" },
+    destructiveItems: input.canUseLifecycleActions
       ? [
-          input.isSettled
-            ? ({ id: "unsettle", label: "Un-settle thread" } as const)
-            : ({ id: "settle", label: "Settle thread" } as const),
+          {
+            id: "delete" as const,
+            label: "Delete",
+            destructive: true,
+            icon: "trash" as const,
+          },
         ]
-      : []),
-    ...(input.canUseLifecycleActions
-      ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isRunning }]
-      : []),
-    { id: "rename", label: "Rename thread" },
-    { id: "mark-unread", label: "Mark unread" },
-    ...(input.canUseLifecycleActions
-      ? [{ id: "delete" as const, label: "Delete", destructive: true, icon: "trash" as const }]
-      : []),
-  ];
+      : [],
+  };
 }
 
 export function isThreadSessionRunning(

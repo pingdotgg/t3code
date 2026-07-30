@@ -109,7 +109,7 @@ import { cn } from "~/lib/utils";
 import {
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
-  buildSidebarV2ThreadContextMenuItems,
+  buildSidebarV2ThreadContextMenuSlots,
   canArchiveSettledSidebarThread,
   filterArchivableSidebarThreads,
   formatArchiveSkippedDescription,
@@ -2465,15 +2465,12 @@ export default function SidebarV2() {
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date());
-        const archiveMenuItems = buildSidebarV2ThreadContextMenuItems({
+        const threadContextMenuSlots = buildSidebarV2ThreadContextMenuSlots({
           canUseLifecycleActions: true,
           supportsSettlement,
           isSettled,
           isRunning: isThreadSessionRunning(thread.session),
         });
-        const renameItemIndex = archiveMenuItems.findIndex((item) => item.id === "rename");
-        const markUnreadItemIndex = archiveMenuItems.findIndex((item) => item.id === "mark-unread");
-        const deleteItemIndex = archiveMenuItems.findIndex((item) => item.id === "delete");
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             [
@@ -2485,7 +2482,7 @@ export default function SidebarV2() {
                     },
                   ]
                 : []),
-              ...archiveMenuItems.slice(0, renameItemIndex),
+              ...threadContextMenuSlots.lifecycleItems,
               ...(supportsSnooze
                 ? [
                     isSnoozed
@@ -2501,7 +2498,7 @@ export default function SidebarV2() {
                         },
                   ]
                 : []),
-              ...archiveMenuItems.slice(renameItemIndex, markUnreadItemIndex),
+              threadContextMenuSlots.renameItem,
               ...(supportsTitleRegeneration
                 ? [
                     {
@@ -2511,10 +2508,10 @@ export default function SidebarV2() {
                     },
                   ]
                 : []),
-              ...archiveMenuItems.slice(markUnreadItemIndex, deleteItemIndex),
+              threadContextMenuSlots.markUnreadItem,
               { id: "copy-path", label: "Copy path", icon: "copy" },
               ...(thread.branch ? [{ id: "copy-branch", label: "Copy branch", icon: "copy" }] : []),
-              ...archiveMenuItems.slice(deleteItemIndex),
+              ...threadContextMenuSlots.destructiveItems,
             ],
             position,
           ),

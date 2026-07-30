@@ -3,7 +3,7 @@ import {
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
-  buildSidebarV2ThreadContextMenuItems,
+  buildSidebarV2ThreadContextMenuSlots,
   canArchiveSettledSidebarThread,
   createThreadJumpHintVisibilityController,
   filterArchivableSidebarThreads,
@@ -506,46 +506,55 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
   });
 });
 
-describe("buildSidebarV2ThreadContextMenuItems", () => {
+describe("buildSidebarV2ThreadContextMenuSlots", () => {
   it("offers archive for active and settled threads", () => {
-    const activeItems = buildSidebarV2ThreadContextMenuItems({
+    const activeSlots = buildSidebarV2ThreadContextMenuSlots({
       canUseLifecycleActions: true,
       supportsSettlement: true,
       isSettled: false,
       isRunning: false,
     });
-    const settledItems = buildSidebarV2ThreadContextMenuItems({
+    const settledSlots = buildSidebarV2ThreadContextMenuSlots({
       canUseLifecycleActions: true,
       supportsSettlement: true,
       isSettled: true,
       isRunning: false,
     });
 
-    expect(activeItems.map((item) => item.id)).toEqual([
-      "settle",
-      "archive",
-      "rename",
-      "mark-unread",
-      "delete",
-    ]);
-    expect(settledItems.map((item) => item.id)).toEqual([
-      "unsettle",
-      "archive",
-      "rename",
-      "mark-unread",
-      "delete",
+    expect(activeSlots.lifecycleItems.map((item) => item.id)).toEqual(["settle", "archive"]);
+    expect(settledSlots.lifecycleItems.map((item) => item.id)).toEqual(["unsettle", "archive"]);
+    expect(activeSlots.renameItem.id).toBe("rename");
+    expect(activeSlots.markUnreadItem.id).toBe("mark-unread");
+    expect(activeSlots.destructiveItems).toEqual([
+      { id: "delete", label: "Delete", destructive: true, icon: "trash" },
     ]);
   });
 
   it("keeps archive visible but disabled while a thread is running", () => {
-    const items = buildSidebarV2ThreadContextMenuItems({
+    const slots = buildSidebarV2ThreadContextMenuSlots({
       canUseLifecycleActions: true,
       supportsSettlement: true,
       isSettled: false,
       isRunning: true,
     });
 
-    expect(items.find((item) => item.id === "archive")).toMatchObject({ disabled: true });
+    expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
+      disabled: true,
+    });
+  });
+
+  it("leaves capability-gated slots empty", () => {
+    const slots = buildSidebarV2ThreadContextMenuSlots({
+      canUseLifecycleActions: false,
+      supportsSettlement: false,
+      isSettled: false,
+      isRunning: false,
+    });
+
+    expect(slots.lifecycleItems).toEqual([]);
+    expect(slots.renameItem).toEqual({ id: "rename", label: "Rename thread" });
+    expect(slots.markUnreadItem).toEqual({ id: "mark-unread", label: "Mark unread" });
+    expect(slots.destructiveItems).toEqual([]);
   });
 });
 
