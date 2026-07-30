@@ -11,6 +11,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import { checkForAppUpdateOnLaunch } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
@@ -25,28 +26,35 @@ export function HomeRouteScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
-  const { state: catalogState } = useWorkspaceState();
+  const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    void checkForAppUpdateOnLaunch();
+  }, []);
+
   const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
     useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
-  const environments = useMemo(
-    () =>
-      Arr.sort(
-        Object.values(savedConnectionsById).map((connection) => ({
-          environmentId: connection.environmentId,
-          label: connection.environmentLabel,
-        })),
-        Order.mapInput(
-          Order.String,
-          (environment: { readonly label: string }) => environment.label,
-        ),
+  const environments = useMemo(() => {
+    const connectionStateByEnvironmentId = new Map(
+      workspaceEnvironments.map(
+        (environment) => [environment.environmentId, environment.connectionState] as const,
       ),
-    [savedConnectionsById],
-  );
+    );
+    return Arr.sort(
+      Object.values(savedConnectionsById).map((connection) => ({
+        environmentId: connection.environmentId,
+        label: connection.environmentLabel,
+        connectionState:
+          connectionStateByEnvironmentId.get(connection.environmentId) ?? "available",
+      })),
+      Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
+    );
+  }, [savedConnectionsById, workspaceEnvironments]);
   const availableEnvironmentIds = useMemo(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
