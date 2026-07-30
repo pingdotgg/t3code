@@ -62,15 +62,24 @@ The supervisor is the only retry owner.
 Wakeup handling differs by phase, in [supervisor.ts][supervisor]:
 
 - During establishment, `waitForEstablishmentInterrupt` consumes and **ignores**
-  application activation. Restarting an in-flight attempt because the app came
-  to the foreground would only delay it.
+  plain application activation. Restarting an in-flight attempt because the app
+  came to the foreground would only delay it. The exception is
+  `application-active-reconnect`, which mobile emits after a meaningful
+  background suspension; it interrupts establishment and resets the retry
+  ladder, because the OS may have silently killed the socket underneath the
+  attempt.
 - Credential changes interrupt establishment only for relay targets, where a new
   credential changes what is being established.
 - Explicit disconnect, explicit retry, and going offline interrupt establishment
   in every case.
-- Once connected, `monitorConnectedLease` handles application activation by
-  probing the existing session (`lease.session.probe`, bounded by a 15-second
-  timeout) rather than reconnecting. A healthy session survives foregrounding.
+- While waiting out backoff, application activation resets the retry ladder so a
+  foregrounded app reconnects immediately instead of serving the remaining
+  delay.
+- Once connected, `monitorConnectedLease` handles plain activation by probing
+  the existing session (`lease.session.probe`, with a shorter timeout for
+  mobile's `application-active-probe`) rather than reconnecting; a healthy
+  session survives foregrounding. `application-active-reconnect` skips the probe
+  and replaces the lease outright.
 
 The UI derives `available`, `offline`, `connecting`, `reconnecting`,
 `connected`, and `error` from supervisor state plus explicit data-sync state.

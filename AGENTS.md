@@ -28,7 +28,7 @@ T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
 
 **Desktop** is the main surface most users install first. It's a full Electron app that bundles the server runner as well. The desktop app can also be used as the host server, allowing remote connections from app.t3.codes or the mobile app.
 
-**Mobile** is a React native app for both iOS and Android. The mobile app allows for connecting to any T3 Code server to control work remotely. It is still in early access (Testflight), but it is pretty close to shipping globally.
+**Mobile** is a React Native app for both iOS and Android, available on the App Store and Google Play. The mobile app allows for connecting to any T3 Code server to control work remotely.
 
 ## A note from Theo
 

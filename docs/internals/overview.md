@@ -132,6 +132,7 @@ already dispatch.
 
 - [Workspace layout](./workspace-layout.md), [Glossary](./glossary.md)
 - [Remote environments](./remote.md), [Server updates](./server-updates.md)
+- [Resource telemetry](./resource-telemetry.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
 
 [rpc]: ../../packages/contracts/src/rpc.ts
