@@ -773,7 +773,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdBy: queuedMessage.createdBy,
           creationSource: queuedMessage.creationSource,
         }),
-        inputIntent: "turn_start",
+        inputIntent: "queued_turn",
         startedAt: now,
         completedAt: now,
         updatedAt: now,
