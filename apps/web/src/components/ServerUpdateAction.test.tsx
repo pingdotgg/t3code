@@ -101,11 +101,10 @@ describe("ServerUpdateAction", () => {
 });
 
 describe("ServerUpdateProgress", () => {
-  it("renders the chosen horizontal step rail without an animated spinner", () => {
+  it("renders the monochrome step rail with only the active step highlighted", () => {
     const markup = renderToStaticMarkup(
       <ServerUpdateProgress
         fromVersion="0.0.30"
-        serverLabel="bb-1"
         state={{
           status: "running",
           stage: "resuming",
@@ -119,8 +118,12 @@ describe("ServerUpdateProgress", () => {
     expect(markup).toContain("0.0.31");
     expect(markup).toContain("Download");
     expect(markup).toContain("Install");
-    expect(markup).toContain("Resume");
-    expect(markup).toContain("Waiting for bb-1 to accept commands.");
+    expect(markup).toContain("Resuming");
+    // The wait state is monochrome and calm: no success/warning colors, no
+    // status sentence, one duty-cycled pulse on the active step.
+    expect(markup).not.toContain("text-success");
+    expect(markup).not.toContain("text-primary");
+    expect(markup).toContain("animate-status-pulse");
     expect(markup).not.toContain("animate-spin");
   });
 
@@ -128,7 +131,6 @@ describe("ServerUpdateProgress", () => {
     const markup = renderToStaticMarkup(
       <ServerUpdateProgress
         fromVersion="0.0.30"
-        serverLabel="bb-1"
         state={{
           status: "failed",
           stage: "installing",
@@ -141,5 +143,6 @@ describe("ServerUpdateProgress", () => {
 
     expect(markup).toContain('role="alert"');
     expect(markup).toContain("The package could not be verified.");
+    expect(markup).not.toContain("animate-status-pulse");
   });
 });
