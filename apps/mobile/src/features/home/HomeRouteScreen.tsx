@@ -2,6 +2,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -106,7 +107,14 @@ export function HomeRouteScreen() {
     return (
       <>
         <NativeStackScreenOptions
-          options={{ title: "", headerTitle: "", unstable_headerLeftItems: () => [] }}
+          options={{
+            title: "",
+            headerTitle: "",
+            unstable_headerLeftItems: () => [],
+            // Screen options are merged, so unmounting the compact header does
+            // not remove the bottom toolbar it installed on this route.
+            unstable_headerToolbarItems: Platform.OS === "ios" ? () => [] : undefined,
+          }}
         />
         <WorkspaceSidebarToolbar
           afterSidebarButton={

@@ -226,7 +226,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
  
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -637,10 +675,450 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -637,10 +675,454 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
