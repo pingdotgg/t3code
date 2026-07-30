@@ -398,6 +398,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   },
   {
     order: ["binaryPath", "serverUrl", "serverPassword"],
