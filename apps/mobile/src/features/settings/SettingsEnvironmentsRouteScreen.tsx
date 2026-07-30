@@ -7,7 +7,7 @@ import {
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -136,8 +136,20 @@ function ConfiguredCloudEnvironmentRows(props: {
   const iconColor = useThemeColor("--color-icon");
   const availableCloudEnvironments = controller.availableRelayEnvironments;
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
+  const hasRequestedDiscovery = useRef(false);
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
+
+  useEffect(() => {
+    if (!isSignedIn) {
+      hasRequestedDiscovery.current = false;
+      return;
+    }
+    if (!hasRequestedDiscovery.current) {
+      hasRequestedDiscovery.current = true;
+      void controller.refreshRelayEnvironments();
+    }
+  }, [controller, isSignedIn]);
 
   const handleConnectCloudEnvironment = useCallback(
     (entry: RelayEnvironmentView) => controller.connectRelayEnvironment(entry.environment),

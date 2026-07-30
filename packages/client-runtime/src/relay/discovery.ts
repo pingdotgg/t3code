@@ -114,6 +114,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
   const refreshGeneration = yield* Ref.make(0);
   const offlineReportFingerprints = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+  const wakeRefreshState = yield* Ref.make<"idle" | "running" | "pending">("idle");
 
   const clearOfflineReport = Effect.fn("RelayEnvironmentDiscovery.clearOfflineReport")(function* (
     environmentId: string,
@@ -289,6 +290,27 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     ),
   );
 
+  const runWakeRefresh = Effect.gen(function* () {
+    while (true) {
+      yield* refresh;
+      const shouldContinue = yield* Ref.modify(wakeRefreshState, (current) =>
+        current === "pending" ? ([true, "running"] as const) : ([false, "idle"] as const),
+      );
+      if (!shouldContinue) {
+        return;
+      }
+    }
+  });
+
+  const requestWakeRefresh = Effect.gen(function* () {
+    const shouldStart = yield* Ref.modify(wakeRefreshState, (current) =>
+      current === "idle" ? ([true, "running"] as const) : ([false, "pending"] as const),
+    );
+    if (shouldStart) {
+      yield* runWakeRefresh.pipe(Effect.forkScoped);
+    }
+  });
+
   yield* connectivity.changes.pipe(
     Stream.changes,
     Stream.runForEach((networkStatus) =>
@@ -299,7 +321,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             offline: true,
           }))
         : Ref.get(hasRefreshed).pipe(
-            Effect.flatMap((shouldRefresh) => (shouldRefresh ? refresh : Effect.void)),
+            Effect.flatMap((shouldRefresh) => (shouldRefresh ? requestWakeRefresh : Effect.void)),
           ),
     ),
     Effect.forkScoped,
@@ -314,10 +336,12 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             const shouldRefresh = yield* Ref.get(hasRefreshed);
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
             if (shouldRefresh) {
-              yield* refresh.pipe(Effect.forkScoped);
+              yield* requestWakeRefresh;
             }
           })
-        : Effect.void,
+        : Ref.get(hasRefreshed).pipe(
+            Effect.flatMap((shouldRefresh) => (shouldRefresh ? requestWakeRefresh : Effect.void)),
+          ),
     ),
     Effect.forkScoped,
   );

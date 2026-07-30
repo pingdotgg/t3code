@@ -575,6 +575,12 @@ export class RelayDpopClientAuth extends HttpApiMiddleware.Service<
   security: { relayDpop: RelayDpopAuthorization },
 }) {}
 
+/**
+ * The relay catalog contract consumed by browser and mobile connection
+ * registries. The endpoint is advisory and may be replaced after a tunnel
+ * restart; clients persist only the environment identity and obtain a fresh
+ * connect credential before using an updated endpoint.
+ */
 export const RelayClientEnvironmentRecord = Schema.Struct({
   environmentId: EnvironmentId,
   label: TrimmedNonEmptyString,
@@ -689,6 +695,11 @@ export const RelayEnvironmentUnlinkParams = Schema.Struct({
 });
 export type RelayEnvironmentUnlinkParams = typeof RelayEnvironmentUnlinkParams.Type;
 
+/**
+ * A short-lived, DPoP-bound bootstrap for one relay catalog environment.
+ * Clients must verify `environmentId`, exchange `credential` at `endpoint`,
+ * and must not place the credential in URLs, UI state, or profile storage.
+ */
 export const RelayEnvironmentConnectResponse = Schema.Struct({
   environmentId: EnvironmentId,
   endpoint: RelayManagedEndpoint,

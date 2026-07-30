@@ -60,6 +60,8 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const listCalls = yield* Ref.make(0);
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
+  const thirdListCall = yield* Deferred.make<void>();
+  const nextListCallGate = yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none());
   const clerkToken = yield* Ref.make<string | null>("clerk-token");
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
@@ -93,6 +95,13 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
         const count = yield* Ref.updateAndGet(listCalls, (current) => current + 1);
         if (count >= 2) {
           yield* Deferred.succeed(secondListCall, undefined);
+        }
+        if (count >= 3) {
+          yield* Deferred.succeed(thirdListCall, undefined);
+        }
+        const gate = yield* Ref.modify(nextListCallGate, (current) => [current, Option.none()]);
+        if (Option.isSome(gate)) {
+          yield* Deferred.await(gate.value);
         }
         const failure = yield* Ref.get(listFailure);
         if (failure) {
@@ -160,7 +169,13 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     clerkToken,
     networkStatus,
     secondListCall,
+    thirdListCall,
     statusRequests,
+    pauseNextListCall: Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      yield* Ref.set(nextListCallGate, Option.some(gate));
+      return gate;
+    }),
     wake: (reason: "application-active" | "credentials-changed") =>
       SubscriptionRef.update(wakeups, (event) => ({
         sequence: event.sequence + 1,
@@ -249,6 +264,61 @@ describe("RelayEnvironmentDiscovery", () => {
           expect(yield* Ref.get(harness.listCalls)).toBe(2);
         }).pipe(Effect.provide(harness.layer));
       }),
+  );
+
+  it.effect("refreshes the catalog after the application returns to the foreground", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* discovery.refresh;
+
+        yield* harness.wake("application-active");
+        yield* Deferred.await(harness.secondListCall);
+        expect(yield* Ref.get(harness.listCalls)).toBe(2);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("coalesces foreground refreshes to one pending catalog request", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* discovery.refresh;
+
+        const releaseSecondListCall = yield* harness.pauseNextListCall;
+        yield* harness.wake("application-active");
+        yield* Deferred.await(harness.secondListCall);
+
+        yield* harness.wake("application-active");
+        yield* Effect.yieldNow;
+        yield* harness.wake("application-active");
+        yield* Effect.yieldNow;
+        yield* harness.wake("application-active");
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(harness.listCalls)).toBe(2);
+
+        yield* Deferred.succeed(releaseSecondListCall, undefined);
+        yield* Deferred.await(harness.thirdListCall);
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(harness.listCalls)).toBe(3);
+      }).pipe(Effect.provide(harness.layer));
+    }),
   );
 
   it.effect("publishes listing failures without rejecting the refresh command", () =>
