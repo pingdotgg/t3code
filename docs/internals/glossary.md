@@ -1,4 +1,6 @@
-# Encyclopedia
+# Glossary
+
+> For maintainers. Using T3 Code? See [docs/user](../user/).
 
 This is a living glossary for T3 Code. It explains what common terms mean in this codebase.
 
@@ -16,7 +18,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 
 #### Project
 
-The top-level workspace record in the app. In [the orchestration contracts][1], a project has a `workspaceRoot`, a title, and one or more threads. See [workspace-layout.md][2].
+The top-level workspace record in the app. In [the orchestration contracts][1], a project has a `workspaceRoot` and a title. It does not contain threads: `OrchestrationProject` and `OrchestrationThread` are separate arrays on the read model, and a project can have zero threads. See [workspace-layout.md][2].
 
 #### Workspace root
 
@@ -24,7 +26,7 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 
 #### Worktree
 
-A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live in [GitCore.ts][3].
+A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
 
 ### Thread timeline
 
@@ -34,7 +36,7 @@ The main durable unit of conversation and workspace history. In [the orchestrati
 
 #### Turn
 
-A single user-to-assistant work cycle inside a thread. It starts with user input and ends when follow-up work like checkpointing settles. See [the contracts][1], [ProviderRuntimeIngestion.ts][5], and [CheckpointReactor.ts][6].
+A single user-to-assistant work cycle inside a thread. It starts with user input and ends when the session leaves `running` status, which [projector.ts][4] treats as the authoritative completion signal (`settledTurnStateForSessionStatus`). Checkpoint and diff work may settle afterward without changing when the turn ended. See [the contracts][1] and [ProviderRuntimeIngestion.ts][5].
 
 #### Activity
 
@@ -80,20 +82,19 @@ A side-effecting service that handles follow-up work after events or runtime sig
 
 #### Receipt
 
-A lightweight typed runtime signal emitted when an async milestone completes. See [RuntimeReceiptBus.ts][13].
-Examples include `checkpoint.baseline.captured`, `checkpoint.diff.finalized`, and `turn.processing.quiesced`, which are emitted by flows such as [CheckpointReactor.ts][6].
+A typed signal emitted when an async milestone completes, such as `checkpoint.baseline.captured`, `checkpoint.diff.finalized`, or `turn.processing.quiesced`. Receipts are a test-only mechanism: the production `RuntimeReceiptBusLive` publish is a no-op and only the test layer is PubSub-backed. Do not build production behavior on them. See [RuntimeReceiptBus.ts][13] and [CheckpointReactor.ts][6].
 
 #### Quiesced
 
-"Quiesced" means a turn has gone quiet and stable. In [the receipt schema][13], it means the follow-up work has settled, including work in [CheckpointReactor.ts][6].
+"Quiesced" means a turn has gone quiet and stable: follow-up work such as [CheckpointReactor.ts][6] has settled. It appears in [the receipt schema][13], so in practice it is something tests wait on rather than a production signal.
 
 ### Provider runtime
 
-The live backend agent implementation and its event stream. The main service is [ProviderService.ts][14], the adapter contract is [ProviderAdapter.ts][15], and the overview is in [provider-architecture.md][16].
+The live backend agent implementation and its event stream. The main service is [ProviderService.ts][14], the adapter contract is [ProviderAdapter.ts][15], and the overview is in [providers.md][16].
 
 #### Provider
 
-The backend agent runtime that actually performs work. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17].
+The backend agent runtime that actually performs work. Five drivers ship built in: Codex, Claude, Cursor, Grok, and OpenCode. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
 
 #### Session
 
@@ -101,15 +102,15 @@ The live provider-backed runtime attached to a thread. Session shape is in [the 
 
 #### Runtime mode
 
-The safety/access mode for a thread or session. In [the contracts][1], the main values are `approval-required` and `full-access`. See [runtime-modes.md][18].
+The safety/access mode for a thread or session. [The contracts][1] define four values: `approval-required`, `auto-accept-edits`, `auto`, and `full-access`. See [permission modes][18].
 
 #### Interaction mode
 
-The agent interaction style for a thread. In [the contracts][1], the main values are `default` and `plan`. See [runtime-modes.md][18].
+The agent interaction style for a thread. In [the contracts][1], the values are `default` and `plan`.
 
 #### Assistant delivery mode
 
-Controls how assistant text reaches the thread timeline. In [the contracts][1], `streaming` updates incrementally and `buffered` delivers a completed result. See [ProviderService.ts][14].
+Controls how assistant text reaches the thread timeline. In [the contracts][1], `streaming` updates incrementally and `buffered` accumulates text. Buffered delivery is not held until the turn completes: it spills once accumulated text would exceed 24,000 characters, and flushes at approval and user-input boundaries. See [ProviderRuntimeIngestion.ts][5].
 
 #### Snapshot
 
@@ -143,38 +144,38 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 - If you see `requested`, think "intent recorded".
 - If you see `completed`, think "result applied".
-- If you see `receipt`, think "async milestone signal".
+- If you see `receipt`, think "async milestone signal, for tests".
 - If you see `checkpoint`, think "workspace snapshot for diff/restore".
 - If you see `quiesced`, think "all relevant follow-up work has gone idle".
 
 ## Related Docs
 
-- [architecture.md][24]
-- [provider-architecture.md][16]
-- [runtime-modes.md][18]
-- [workspace-layout.md][2]
+- [Architecture overview][24]
+- [Provider architecture][16]
+- [Permission modes][18]
+- [Workspace layout][2]
 
-[1]: ../packages/contracts/src/orchestration.ts
+[1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
-[3]: ../apps/server/src/git/Layers/GitCore.ts
-[4]: ../apps/server/src/orchestration/projector.ts
-[5]: ../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
-[6]: ../apps/server/src/orchestration/Layers/CheckpointReactor.ts
-[7]: ../apps/server/src/orchestration/Layers/OrchestrationEngine.ts
-[8]: ../apps/server/src/orchestration/decider.ts
-[9]: ../apps/server/src/orchestration/commandInvariants.ts
-[10]: ../apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts
-[11]: ../apps/server/src/orchestration/Layers/ProjectionPipeline.ts
-[12]: ../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
-[13]: ../apps/server/src/orchestration/Services/RuntimeReceiptBus.ts
-[14]: ../apps/server/src/provider/Layers/ProviderService.ts
-[15]: ../apps/server/src/provider/Services/ProviderAdapter.ts
-[16]: ./provider-architecture.md
-[17]: ../apps/server/src/provider/Layers/CodexAdapter.ts
-[18]: ./runtime-modes.md
-[19]: ../apps/server/src/checkpointing/CheckpointStore.ts
-[20]: ../apps/server/src/checkpointing/CheckpointDiffQuery.ts
-[21]: ../apps/server/src/persistence/Services/ProjectionCheckpoints.ts
-[22]: ../apps/server/src/checkpointing/Utils.ts
-[23]: ../apps/server/src/checkpointing/Diffs.ts
-[24]: ./architecture.md
+[3]: ../../apps/server/src/vcs/GitVcsDriverCore.ts
+[4]: ../../apps/server/src/orchestration/projector.ts
+[5]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
+[6]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[7]: ../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts
+[8]: ../../apps/server/src/orchestration/decider.ts
+[9]: ../../apps/server/src/orchestration/commandInvariants.ts
+[10]: ../../apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts
+[11]: ../../apps/server/src/orchestration/Layers/ProjectionPipeline.ts
+[12]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
+[13]: ../../apps/server/src/orchestration/Services/RuntimeReceiptBus.ts
+[14]: ../../apps/server/src/provider/Layers/ProviderService.ts
+[15]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
+[16]: ./providers.md
+[17]: ../../apps/server/src/provider/Layers/CodexAdapter.ts
+[18]: ../user/permission-modes.md
+[19]: ../../apps/server/src/checkpointing/CheckpointStore.ts
+[20]: ../../apps/server/src/checkpointing/CheckpointDiffQuery.ts
+[21]: ../../apps/server/src/persistence/Services/ProjectionCheckpoints.ts
+[22]: ../../apps/server/src/checkpointing/Utils.ts
+[23]: ../../apps/server/src/checkpointing/Diffs.ts
+[24]: ./overview.md

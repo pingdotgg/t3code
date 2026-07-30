@@ -1,5 +1,7 @@
 # Environment Authentication Profile
 
+> For maintainers. Using T3 Code? See [docs/user](../user/).
+
 The environment server and the relay use separate credentials, issuers, and trust
 boundaries. They intentionally use a similar OAuth-shaped model so that permission
 checks and token exchange behavior can be audited against established concepts.
@@ -61,26 +63,52 @@ The response has the token-exchange shape:
   "access_token": "<opaque session token>",
   "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
   "token_type": "Bearer",
-  "expires_in": 3600,
+  "expires_in": 2592000,
   "scope": "orchestration:read orchestration:operate terminal:operate review:write relay:read"
 }
 ```
+
+Sessions issued from a plain bearer exchange use the store's
+`DEFAULT_SESSION_TTL` of 30 days. The shorter one-hour `expires_in: 3600` applies
+only to DPoP-bound exchanges, where the token is additionally constrained by a
+proof key. See `SessionStore.ts` and `EnvironmentAuth.ts`.
 
 Requested scopes must be a subset of the one-time bootstrap credential grant.
 An ordinary paired client therefore cannot exchange its grant for
 `access:read`, `access:write`, or `relay:write`.
 
+### DPoP-Bound Access Token
+
+The same `/oauth/token` exchange supports proof-of-possession tokens. A client
+that sends a `DPoP` header has its proof verified by `verifyRequestDpopProof`;
+the resulting JWK thumbprint is stored on the session, which is then issued with
+method `dpop-access-token` and a one-hour TTL instead of the bearer default. An
+invalid proof gets a DPoP challenge header and a credential error rather than a
+bearer token.
+
+`dpop-access-token` is advertised alongside `browser-session-cookie` and
+`bearer-access-token` in the descriptor's `sessionMethods`
+(`EnvironmentAuthPolicy.ts`), so clients can discover support rather than
+assume it. Relay-brokered clients use this mode so that a leaked token cannot be
+replayed without the corresponding key.
+
 ### WebSocket Ticket
 
 `POST /api/auth/websocket-ticket` accepts any authenticated session and returns
-a short-lived, single-purpose WebSocket ticket. This keeps bearer tokens and
-browser cookies out of WebSocket URLs while allowing the socket handshake to
-authenticate. The ticket carries its session's scopes; each RPC method then
-enforces `orchestration:read`, `orchestration:operate`, `terminal:operate`,
-`review:write`, or `access:read` as appropriate. Review feedback submission
-currently dispatches an orchestration operation, so clients performing it also
-need `orchestration:operate`. Creating a ticket is not
-authorization to call every RPC method.
+a short-lived, single-purpose WebSocket ticket, issued through
+`EnvironmentAuth.issueWebSocketTicket` with a five-minute default TTL. The
+client presents its bearer or DPoP credential in headers to get the ticket, then
+appends only that ticket to the socket URL as `wsTicket`. This keeps long-lived
+tokens and browser cookies out of WebSocket URLs while letting the handshake
+authenticate.
+
+The ticket carries its session's scopes; each RPC method then enforces
+`orchestration:read`, `orchestration:operate`, `terminal:operate`,
+`review:write`, `relay:write`, or `access:read` as appropriate, through
+`RPC_REQUIRED_SCOPES` in `apps/server/src/auth/RpcAuthorization.ts`. Review feedback submission currently dispatches
+an orchestration operation, so clients performing it also need
+`orchestration:operate`. Creating a ticket is not authorization to call every
+RPC method.
 
 ## Standards Alignment
 
