@@ -131,12 +131,13 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
-// UIKit's own `.medium()` and `.large()` detents, so a sheet opens and expands to the
-// heights the running iOS version considers right. The negative values are sentinels
-// our react-native-screens patch understands (SHEET_SYSTEM_DETENT_* in
-// patches/react-native-screens@4.25.2.patch); Android has no system detents, so it
-// gets the fractions those two approximate.
-const SYSTEM_MEDIUM_LARGE_DETENTS = Platform.OS === "ios" ? [-3, -2] : [0.5, 1.0];
+// UIKit's own `.medium()` and `.large()` detents, so sheets sit at the heights the
+// running iOS version considers right. The negative values are sentinels our
+// react-native-screens patch understands (SHEET_SYSTEM_DETENT_* in
+// patches/react-native-screens@4.25.2.patch). Android has no system detents and throws
+// on anything outside 0..1, so it keeps the fractions these sheets used before.
+const SYSTEM_MEDIUM_LARGE_DETENTS = Platform.OS === "ios" ? [-3, -2] : [0.55, 0.92];
+const SYSTEM_LARGE_DETENTS = Platform.OS === "ios" ? [-2] : [0.92];
 
 const SettingsSheetStack = createNativeStackNavigator({
   initialRouteName: "Settings",
