@@ -82,7 +82,9 @@ import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../.
 import {
   resolveMarkdownFontSizes,
   resolveNativeMarkdownTypography,
+  scaledTypographyLineHeight,
 } from "../../lib/appearancePreferences";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
@@ -124,11 +126,14 @@ function formatMessageTime(input: string): string {
 const FEED_ITEM_LAYOUT_DURATION_MS = 180;
 
 // Pre-measurement heights for getFixedItemSize, mirroring renderFeedEntry's
-// classNames. Both rows hold a single text line shorter than the fixed parts,
-// so the height is deterministic; a drifted value costs one correction on
+// classNames. The fold row's min-h-11 (44px) stays taller than its single
+// text-sm line at every supported base font size (26px at the 22pt maximum),
+// so its height is a constant; a drifted value costs one correction on
 // measure, not a persistent offset.
 const TURN_FOLD_HEIGHT = 56; // min-h-11 (44) + mb-3 (12)
-const WORKING_ROW_HEIGHT = 40; // py-1 (8) + text-xs line (16) + mb-4 (16)
+// The working row has no min-height clamp — its height follows the scaled
+// text-xs line height (see workingRowHeight in ThreadFeed).
+const WORKING_ROW_VERTICAL_EXTRAS = 24; // py-1 (8) + mb-4 (16)
 
 // Entering animations must only play for rows born just now — LegendList
 // remounts rows when they scroll back into view, and replaying an entrance for
@@ -1319,6 +1324,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const headerMaterialVisibleRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
   const { width: windowWidth } = useWindowDimensions();
+  const { appearance } = useAppearancePreferences();
   const [viewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
@@ -1695,7 +1701,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // scrolling up through unmeasured content corrects each row's height as it
   // mounts — the feed visibly jumps. Fixed sizes make the small chrome rows
   // exact; message rows stay undefined and use LegendList's per-type running
-  // average once one of their type has been measured.
+  // average once one of their type has been measured. Text-driven heights
+  // follow the configurable base font size via scaledTypographyLineHeight.
+  const workingRowHeight =
+    WORKING_ROW_VERTICAL_EXTRAS +
+    scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.label, appearance.baseFontSize);
   const getFixedItemSize = useCallback(
     (entry: ThreadFeedEntry) => {
       switch (entry.type) {
@@ -1704,18 +1714,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         case "work-toggle":
           return WORK_GROUP_TOGGLE_HEIGHT;
         case "working":
-          return WORKING_ROW_HEIGHT;
+          return workingRowHeight;
         case "activity-group":
           // Expanded rows append a variable detail block — fall back to
           // measurement for those groups.
           return entry.activities.some((activity) => expandedWorkRows[activity.id])
             ? undefined
-            : collapsedWorkLogHeight(entry.activities);
+            : collapsedWorkLogHeight(entry.activities, appearance.baseFontSize);
         default:
           return undefined;
       }
     },
-    [expandedWorkRows],
+    [expandedWorkRows, workingRowHeight, appearance.baseFontSize],
   );
 
   const renderItem = useCallback(
