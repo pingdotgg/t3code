@@ -36,7 +36,11 @@ export function ComposerControlIcon({
   return (
     <Icon
       aria-hidden="true"
-      className={cn("shrink-0", opticalSize === "large" ? "size-4.5" : "size-4", className)}
+      className={cn(
+        "shrink-0 text-current opacity-100",
+        opticalSize === "large" ? "size-4.5" : "size-4",
+        className,
+      )}
       data-composer-control-icon
     />
   );
@@ -46,7 +50,7 @@ export function ComposerControlChevron() {
   return (
     <ChevronDownIcon
       aria-hidden="true"
-      className="-mx-0.5 size-3.5 shrink-0 text-muted-foreground opacity-70"
+      className="-mx-0.5 size-3.5 shrink-0 text-current opacity-70"
       data-composer-control-chevron
       strokeWidth={2.25}
     />

@@ -2,6 +2,7 @@ import { type CSSProperties, memo } from "react";
 import { type ProviderDriverKind } from "@t3tools/contracts";
 
 import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
+import { type ProviderIconVariant } from "../Icons";
 import { cn } from "~/lib/utils";
 
 export function providerInstanceInitials(label: string): string {
@@ -22,6 +23,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   badgeContent?: "initials" | "none";
   className?: string;
   iconClassName?: string;
+  iconVariant?: ProviderIconVariant;
   badgeClassName?: string;
   statusDotClassName?: string;
   indicatorBackground?: string;
@@ -43,7 +45,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       data-provider-accent-color={props.accentColor}
     >
       {Icon ? (
-        <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
+        <Icon
+          {...(props.iconVariant ? { variant: props.iconVariant } : {})}
+          className={cn("size-5 shrink-0", props.iconClassName)}
+          aria-hidden
+        />
       ) : (
         <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>
           {providerInstanceInitials(props.displayName)}

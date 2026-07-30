@@ -298,11 +298,12 @@ function SidebarV2ThreadTooltip({
             </div>
           ) : null}
           {driverKind ? (
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
               <ProviderInstanceIcon
                 driverKind={driverKind}
                 displayName={thread.session?.providerName ?? modelInstanceId}
-                iconClassName="size-3 shrink-0 grayscale opacity-60"
+                iconVariant="monochrome"
+                iconClassName="size-3 shrink-0"
               />
               <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
             </div>
@@ -1023,10 +1024,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center opacity-60">
+                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70 group-hover/v2-row:text-sidebar-foreground">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={thread.session?.providerName ?? modelInstanceId}
+                      iconVariant="monochrome"
                       iconClassName="size-3.5"
                     />
                   </span>
