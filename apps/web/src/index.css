@@ -920,11 +920,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-/* Keep both navigation implementations on the same quiet zinc hierarchy:
-   zinc-50 navigation, zinc-25 hover, and white selected/raised surfaces.
-   The version attribute remains useful for layout-specific styling without
-   changing the color system when the beta is toggled. */
+/* Forma's project-grouped sidebar inherits the selected theme exactly as PR #1
+   did. Its surface is the theme card, with no extra grain or zinc palette
+   substitution. Sidebar v2 keeps upstream's independent navigation palette. */
 [data-sidebar-version="v1"],
+.forma-sidebar-v1 {
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-muted-foreground: var(--muted-foreground);
+  --sidebar-control-surface: var(--secondary);
+  --sidebar-row-hover: var(--accent);
+  --sidebar-row-active: var(--accent);
+  --sidebar-row-selected: var(--muted);
+  --sidebar-border: var(--border);
+  --sidebar-stage-fade: var(--card);
+  --surface-grain: none;
+  background-color: var(--sidebar);
+}
+
 [data-sidebar-version="v2"] {
   --background: var(--color-zinc-25);
   --foreground: var(--color-zinc-800);
@@ -948,7 +961,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background-color: var(--sidebar);
 }
 
-.dark [data-sidebar-version="v1"],
 .dark [data-sidebar-version="v2"] {
   --background: #000;
   --foreground: #f1f3f7;

@@ -2273,7 +2273,7 @@ export default function SidebarV2() {
     shortcutLabelForCommand(keybindings, "chat.new");
   return (
     <>
-      <SidebarChromeHeader isElectron={isElectron} />
+      <SidebarChromeHeader isElectron={isElectron} variant="v2" />
       <SidebarContent
         className="gap-0"
         fixedHeader={
@@ -2805,7 +2805,7 @@ export default function SidebarV2() {
           </DialogFooter>
         </DialogPopup>
       </Dialog>
-      <SidebarChromeFooter />
+      <SidebarChromeFooter variant="v2" />
     </>
   );
 }

@@ -1,6 +1,10 @@
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  type ThreadCleanupInactiveDays,
+} from "@t3tools/contracts/settings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { formatThreadCleanupWindowLabel } from "../../lib/threadCleanup";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -10,6 +14,8 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+
+const THREAD_CLEANUP_DAY_OPTIONS: readonly ThreadCleanupInactiveDays[] = [1, 3, 7, 14, 30];
 
 export function ThreadsSettingsPanel() {
   const settings = usePrimarySettings();
@@ -146,6 +152,50 @@ export function ThreadsSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="Safety & cleanup">
+        <SettingsRow
+          title="Thread cleanup window"
+          description="Sidebar cleanup archives threads with no user message in this many days."
+          resetAction={
+            settings.threadCleanupInactiveDays !==
+            DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays ? (
+              <SettingResetButton
+                label="thread cleanup window"
+                onClick={() =>
+                  updateSettings({
+                    threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.threadCleanupInactiveDays)}
+              onValueChange={(value) => {
+                const nextValue = Number(value);
+                if (THREAD_CLEANUP_DAY_OPTIONS.includes(nextValue as ThreadCleanupInactiveDays)) {
+                  updateSettings({
+                    threadCleanupInactiveDays: nextValue as ThreadCleanupInactiveDays,
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Thread cleanup window">
+                <SelectValue>
+                  {formatThreadCleanupWindowLabel(settings.threadCleanupInactiveDays)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THREAD_CLEANUP_DAY_OPTIONS.map((days) => (
+                  <SelectItem key={days} hideIndicator value={String(days)}>
+                    {formatThreadCleanupWindowLabel(days)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
         <SettingsRow
           title="Archive confirmation"
           description="Require a second click on the inline archive action before a thread is archived."

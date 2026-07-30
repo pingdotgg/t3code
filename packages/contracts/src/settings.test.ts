@@ -132,6 +132,26 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings thread cleanup", () => {
+  it("defaults cleanup to one inactive day", () => {
+    expect(decodeClientSettings({}).threadCleanupInactiveDays).toBe(1);
+  });
+
+  it.each([1, 3, 7, 14, 30] as const)("accepts the %s day cleanup window", (value) => {
+    expect(
+      decodeClientSettings({ threadCleanupInactiveDays: value }).threadCleanupInactiveDays,
+    ).toBe(value);
+    expect(
+      decodeClientSettingsPatch({ threadCleanupInactiveDays: value }).threadCleanupInactiveDays,
+    ).toBe(value);
+  });
+
+  it.each([0, 2, 31])("rejects an unsupported cleanup window: %s", (value) => {
+    expect(() => decodeClientSettings({ threadCleanupInactiveDays: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ threadCleanupInactiveDays: value })).toThrow();
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

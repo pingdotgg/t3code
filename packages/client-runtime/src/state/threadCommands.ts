@@ -76,6 +76,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    getExtensions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread-extension:get",
+      tag: WS_METHODS.threadExtensionsGet,
+      scheduler,
+      concurrency,
+    }),
     extensions: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:thread:extensions",
       tag: WS_METHODS.subscribeThreadExtensions,

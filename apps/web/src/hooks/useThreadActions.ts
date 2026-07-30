@@ -5,7 +5,13 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSettle, canSnooze } from "@t3tools/client-runtime/state/thread-settled";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
+import type { ThreadCleanupInactiveDays } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -40,6 +46,27 @@ import {
   downloadThreadMarkdown,
   threadMarkdownFilename,
 } from "../lib/threadMarkdownExport";
+import { bucketThreadsForCleanup } from "../lib/threadCleanup";
+
+function formatThreadCount(count: number): string {
+  return `${count} thread${count === 1 ? "" : "s"}`;
+}
+
+function formatCleanupSummaryParts(input: {
+  readonly skippedRunningCount: number;
+  readonly skippedQueuedCount: number;
+  readonly failedCount: number;
+}): string[] {
+  return [
+    ...(input.skippedRunningCount > 0
+      ? [`${formatThreadCount(input.skippedRunningCount)} running`]
+      : []),
+    ...(input.skippedQueuedCount > 0
+      ? [`${formatThreadCount(input.skippedQueuedCount)} queued`]
+      : []),
+    ...(input.failedCount > 0 ? [`${formatThreadCount(input.failedCount)} failed`] : []),
+  ];
+}
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -104,6 +131,9 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedErrorClass<ThreadSnoo
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
+    reportFailure: false,
+  });
+  const getThreadExtensions = useAtomCommand(threadEnvironment.getExtensions, {
     reportFailure: false,
   });
   const unarchiveThreadMutation = useAtomCommand(threadEnvironment.unarchive, {
@@ -208,6 +238,106 @@ export function useThreadActions() {
       return archiveResult;
     },
     [archiveThreadMutation, getCurrentRouteThreadRef, resolveThreadTarget],
+  );
+
+  const cleanupInactiveThreads = useCallback(
+    async (input: {
+      readonly inactiveDays: ThreadCleanupInactiveDays;
+      readonly projectDisplayName: string;
+      readonly projectRefs: readonly ScopedProjectRef[];
+    }) => {
+      const projectIdsByEnvironment = new Map<EnvironmentId, Set<string>>();
+      for (const projectRef of input.projectRefs) {
+        const projectIds = projectIdsByEnvironment.get(projectRef.environmentId) ?? new Set();
+        projectIds.add(projectRef.projectId);
+        projectIdsByEnvironment.set(projectRef.environmentId, projectIds);
+      }
+      const threads = [...projectIdsByEnvironment].flatMap(([environmentId, projectIds]) =>
+        readEnvironmentThreadRefs(environmentId).flatMap((threadRef) => {
+          const thread = readThreadShell(threadRef);
+          return thread && projectIds.has(thread.projectId) ? [thread] : [];
+        }),
+      );
+      const buckets = bucketThreadsForCleanup({
+        threads,
+        inactiveDays: input.inactiveDays,
+      });
+      let archivedCount = 0;
+      let skippedRunningCount = buckets.skippedRunning.length;
+      let skippedQueuedCount = buckets.skippedQueued.length;
+      let failedCount = 0;
+
+      for (const thread of buckets.eligible) {
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        const latest = resolveThreadTarget(threadRef)?.thread;
+        if (!latest) {
+          failedCount += 1;
+          continue;
+        }
+        if (latest.session?.status === "running" && latest.session.activeTurnId != null) {
+          skippedRunningCount += 1;
+          continue;
+        }
+        if (readEnvironmentSupportsThreadExtensions(threadRef.environmentId)) {
+          const extensionResult = await getThreadExtensions({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId },
+          });
+          if (extensionResult._tag === "Failure") {
+            failedCount += 1;
+            continue;
+          }
+          if (extensionResult.value.queue.items.length > 0) {
+            skippedQueuedCount += 1;
+            continue;
+          }
+        }
+        const result = await archiveThread(threadRef);
+        if (result._tag === "Failure") {
+          failedCount += 1;
+          continue;
+        }
+        archivedCount += 1;
+      }
+
+      const detailParts = formatCleanupSummaryParts({
+        skippedRunningCount,
+        skippedQueuedCount,
+        failedCount,
+      });
+      const detail =
+        detailParts.length > 0
+          ? `Skipped ${detailParts.join(", ")} in ${input.projectDisplayName}.`
+          : archivedCount > 0
+            ? `Cleaned up ${input.projectDisplayName}.`
+            : `No eligible inactive threads remained in ${input.projectDisplayName}.`;
+      toastManager.add(
+        stackedThreadToast({
+          type:
+            archivedCount > 0
+              ? failedCount > 0
+                ? "warning"
+                : "success"
+              : failedCount > 0 || detailParts.length > 0
+                ? "warning"
+                : "info",
+          title:
+            archivedCount > 0
+              ? `Archived ${formatThreadCount(archivedCount)}`
+              : "No inactive threads archived",
+          description: detail,
+        }),
+      );
+
+      return {
+        archivedCount,
+        eligibleCount: buckets.eligible.length,
+        failedCount,
+        skippedQueuedCount,
+        skippedRunningCount,
+      };
+    },
+    [archiveThread, getThreadExtensions, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(
@@ -617,6 +747,7 @@ export function useThreadActions() {
   return useMemo(
     () => ({
       archiveThread,
+      cleanupInactiveThreads,
       unarchiveThread,
       deleteThread,
       confirmAndDeleteThread,
@@ -629,6 +760,7 @@ export function useThreadActions() {
     }),
     [
       archiveThread,
+      cleanupInactiveThreads,
       confirmAndDeleteThread,
       deleteThread,
       forkThread,

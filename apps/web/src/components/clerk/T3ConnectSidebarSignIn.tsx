@@ -21,7 +21,13 @@ const STATUS_DOT_CLASSNAME: Record<T3ConnectSidebarStatusTone, string> = {
   success: "bg-emerald-500",
 };
 
-export function T3ConnectSidebarControl() {
+type T3ConnectSidebarDensity = "compact" | "default";
+
+export function T3ConnectSidebarControl({
+  density = "default",
+}: {
+  readonly density?: T3ConnectSidebarDensity;
+}) {
   const configState = resolveCloudPublicConfigState();
   if (!configState.configured) {
     const diagnostic = import.meta.env.DEV
@@ -32,7 +38,7 @@ export function T3ConnectSidebarControl() {
         <SidebarMenuItem>
           <SidebarMenuButton
             aria-disabled="true"
-            className="h-10 gap-2 px-2 py-1.5 opacity-60"
+            className={cn("gap-2 px-2 py-1.5 opacity-60", density === "compact" ? "h-7" : "h-10")}
             data-testid="t3-connect-unavailable"
             disabled
             title={diagnostic}
@@ -41,9 +47,11 @@ export function T3ConnectSidebarControl() {
             <CloudIcon className="size-3.5" />
             <span className="min-w-0">
               <span className="block truncate text-xs">T3 Connect unavailable</span>
-              <span className="block truncate text-[10px] font-normal text-muted-foreground">
-                {diagnostic}
-              </span>
+              {density === "default" ? (
+                <span className="block truncate text-[10px] font-normal text-muted-foreground">
+                  {diagnostic}
+                </span>
+              ) : null}
             </span>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -51,7 +59,7 @@ export function T3ConnectSidebarControl() {
     );
   }
 
-  return <ConfiguredT3ConnectSidebarControl />;
+  return <ConfiguredT3ConnectSidebarControl density={density} />;
 }
 
 export function T3ConnectSidebarSignIn() {
@@ -91,12 +99,23 @@ function ConfiguredT3ConnectSidebarAvatar() {
   );
 }
 
-function ConfiguredT3ConnectSidebarControl() {
+function ConfiguredT3ConnectSidebarControl({
+  density,
+}: {
+  readonly density: T3ConnectSidebarDensity;
+}) {
   const { isLoaded, isSignedIn } = useAuth();
   const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
 
   if (!isLoaded) {
-    return <T3ConnectSidebarStatusRow label="Connecting…" onClick={undefined} tone="pending" />;
+    return (
+      <T3ConnectSidebarStatusRow
+        density={density}
+        label="Connecting…"
+        onClick={undefined}
+        tone="pending"
+      />
+    );
   }
 
   if (!isSignedIn) {
@@ -105,7 +124,10 @@ function ConfiguredT3ConnectSidebarControl() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              className="h-9 gap-2 px-2 py-1.5 active:scale-[0.98]"
+              className={cn(
+                "gap-2 px-2 py-1.5 active:scale-[0.98]",
+                density === "compact" ? "h-7" : "h-9",
+              )}
               data-testid="t3-connect-sign-in"
               onClick={openAuthPrompt}
               tooltip="Sign in to T3 Connect"
@@ -120,10 +142,14 @@ function ConfiguredT3ConnectSidebarControl() {
     );
   }
 
-  return <ConfiguredT3ConnectSidebarStatus />;
+  return <ConfiguredT3ConnectSidebarStatus density={density} />;
 }
 
-function ConfiguredT3ConnectSidebarStatus() {
+function ConfiguredT3ConnectSidebarStatus({
+  density,
+}: {
+  readonly density: T3ConnectSidebarDensity;
+}) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const { linkState, managedTunnelActive, publishAgentActivity, operationError } =
@@ -145,6 +171,7 @@ function ConfiguredT3ConnectSidebarStatus() {
   return (
     <div className="flex min-w-0 items-center gap-1" data-testid="t3-connect-status">
       <T3ConnectSidebarStatusRow
+        density={density}
         error={error}
         label={presentation.label}
         onClick={handleClick}
@@ -156,11 +183,13 @@ function ConfiguredT3ConnectSidebarStatus() {
 }
 
 function T3ConnectSidebarStatusRow({
+  density,
   error,
   label,
   onClick,
   tone,
 }: {
+  readonly density: T3ConnectSidebarDensity;
   readonly error?: string | null;
   readonly label: string;
   readonly onClick: (() => void) | undefined;
@@ -170,16 +199,29 @@ function T3ConnectSidebarStatusRow({
     <SidebarMenu className="min-w-0 flex-1">
       <SidebarMenuItem>
         <SidebarMenuButton
-          className="h-10 min-w-0 gap-2 px-2 py-1.5 active:scale-[0.98]"
+          className={cn(
+            "min-w-0 gap-2 px-2 py-1.5 active:scale-[0.98]",
+            density === "compact" ? "h-7" : "h-10",
+          )}
           disabled={!onClick}
           onClick={onClick}
           title={error ?? undefined}
           tooltip="Open T3 Connect settings"
         >
           <CloudIcon className="size-3.5" />
-          <span className="min-w-0 flex-1">
+          <span
+            className={cn(
+              "min-w-0 flex-1",
+              density === "compact" && "flex items-center justify-between gap-2",
+            )}
+          >
             <span className="block truncate text-xs">T3 Connect</span>
-            <span className="flex items-center gap-1.5 truncate text-[10px] font-normal text-muted-foreground">
+            <span
+              className={cn(
+                "flex items-center gap-1.5 truncate font-normal text-muted-foreground",
+                density === "compact" ? "text-ui-2xs" : "text-[10px]",
+              )}
+            >
               <span
                 aria-hidden="true"
                 className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT_CLASSNAME[tone])}

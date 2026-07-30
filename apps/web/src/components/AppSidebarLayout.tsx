@@ -12,7 +12,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { isElectron } from "../env";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import { isMacPlatform } from "../lib/utils";
+import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useSidebarV2Enabled } from "../hooks/useSettings";
 import ThreadSidebar from "./Sidebar";
@@ -184,7 +184,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         collapsible="offcanvas"
         data-app-sidebar=""
         data-sidebar-version={useSidebarV2Theme ? "v2" : "v1"}
-        className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+        className={cn(
+          "border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+          !useSidebarV2Theme && "forma-sidebar-v1",
+        )}
         resizable={{
           maxWidth: sidebarMaximumWidth,
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
