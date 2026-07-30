@@ -40,14 +40,14 @@ function cloneFailureDetail(stderr: string, remoteUrl: string): string {
   ) {
     return "HTTPS authentication failed. Configure Git credentials for the source control host and try again.";
   }
-  if (/repository not found|could not read from remote repository/iu.test(stderr)) {
-    return "The repository could not be read. Check that it exists and that your Git credentials have access.";
-  }
   if (/could not resolve (?:host|hostname)/iu.test(stderr)) {
     return "The source control host could not be resolved. Check your network or VPN connection and try again.";
   }
   if (/connection (?:timed out|refused)|failed to connect/iu.test(stderr)) {
     return "Git could not connect to the source control host. Check your network or VPN connection and try again.";
+  }
+  if (/repository not found|could not read from remote repository/iu.test(stderr)) {
+    return "The repository could not be read. Check that it exists and that your Git credentials have access.";
   }
 
   const transport = /^(?:ssh:\/\/|[^@/\s]+@[^:/\s]+:)/u.test(remoteUrl) ? "SSH" : "HTTPS";

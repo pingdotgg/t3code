@@ -214,7 +214,8 @@ it.effect("returns actionable, transport-safe clone failures", () => {
         "HTTPS authentication failed. Configure Git credentials for the source control host and try again.",
     },
     {
-      stderr: "ssh: Could not resolve hostname example.com: nodename nor servname provided\n",
+      stderr:
+        "ssh: Could not resolve hostname example.com: nodename nor servname provided\nfatal: Could not read from remote repository.\n",
       expected:
         "The source control host could not be resolved. Check your network or VPN connection and try again.",
     },
