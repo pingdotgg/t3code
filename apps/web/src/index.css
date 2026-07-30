@@ -1457,7 +1457,7 @@ label:has(> select#reasoning-effort) select {
   padding: 1rem;
   cursor: grab;
   outline: none;
-  touch-action: none;
+  touch-action: pan-x pan-y;
 }
 
 .chat-markdown .chat-markdown-mermaid-viewport:focus-visible {
