@@ -203,13 +203,17 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             title={screenTitle}
             subtitle={incomingShareSubtitle}
             onBack={layout.usesSplitView ? () => navigation.goBack() : undefined}
-            actions={[
-              {
-                accessibilityLabel: "Add project",
-                icon: "plus",
-                onPress: () => navigation.navigate("NewTaskSheet", { screen: "AddProject" }),
-              },
-            ]}
+            actions={
+              catalogState.hasReadyEnvironment
+                ? [
+                    {
+                      accessibilityLabel: "Add project",
+                      icon: "plus",
+                      onPress: () => navigation.navigate("NewTaskSheet", { screen: "AddProject" }),
+                    },
+                  ]
+                : []
+            }
           />
         </>
       ) : (
@@ -229,11 +233,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 separateBackground
               />
             ) : null}
-            <NativeHeaderToolbar.Button
-              icon="plus"
-              onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
-              separateBackground
-            />
+            {catalogState.hasReadyEnvironment ? (
+              <NativeHeaderToolbar.Button
+                icon="plus"
+                onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
+                separateBackground
+              />
+            ) : null}
           </NativeHeaderToolbar>
         </>
       )}

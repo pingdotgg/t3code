@@ -7,7 +7,10 @@ import {
   ProjectDetails,
   ProjectDetailsError,
   ProjectReadFileError,
+  ProjectSearchContentsError,
+  ProjectSearchContentsInput,
   ProjectSearchEntriesError,
+  ProjectSearchEntriesInput,
   ProjectWriteFileError,
 } from "./project.ts";
 
@@ -33,6 +36,33 @@ const baseProjectDetails = {
     remote: null,
   },
 };
+
+const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
+const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
+
+describe("project search inputs", () => {
+  it("allows an empty entries query for bounded frecency browsing", () => {
+    const decoded = decodeSearchEntriesInput({
+      cwd: "/workspace",
+      query: "   ",
+      limit: 10,
+      kind: "file",
+    });
+    expect(decoded.query).toBe("");
+  });
+
+  it("preserves whitespace in content search queries", () => {
+    const decoded = decodeSearchContentsInput({
+      cwd: "/workspace",
+      query: " foo ",
+      limit: 10,
+      caseSensitive: false,
+      wholeWord: false,
+      useRegex: false,
+    });
+    expect(decoded.query).toBe(" foo ");
+  });
+});
 
 describe("project RPC errors", () => {
   it("retains the ProjectDetailsError message with structured failure context", () => {
@@ -84,6 +114,18 @@ describe("project RPC errors", () => {
     expect(readError.message).toBe("Failed to read workspace file 'src/index.ts' in '/workspace'.");
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
+
+    const contentSearchError = new ProjectSearchContentsError({
+      cwd: "/workspace",
+      queryLength: "authorization: Bearer secret-token".length,
+      limit: 100,
+      failure: "search_index_search_failed",
+      cause,
+    });
+    expect(contentSearchError.message).toBe("Failed to search workspace contents in '/workspace'.");
+    expect(contentSearchError.message).not.toContain(cause.message);
+    expect(contentSearchError).not.toHaveProperty("query");
+    expect(contentSearchError.cause).toBe(cause);
   });
 
   it("decodes legacy message-only errors during rolling upgrades", () => {

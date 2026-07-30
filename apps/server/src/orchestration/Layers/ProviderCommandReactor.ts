@@ -51,6 +51,7 @@ type ProviderIntentEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.meta-updated"
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
@@ -90,6 +91,60 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const MAX_REGENERATION_ATTACHMENTS = 4;
+const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
+const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+
+function formatThreadTitleContext(
+  messages: ReadonlyArray<{
+    readonly role: "user" | "assistant" | "system";
+    readonly text: string;
+    readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  }>,
+): {
+  readonly message: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+} {
+  let context = "";
+  let truncated = false;
+  const retainedAttachments: Array<ChatAttachment> = [];
+
+  for (const message of messages.toReversed()) {
+    if (message.role === "system") {
+      continue;
+    }
+    const text = message.text.trim();
+    const attachmentSummary = (message.attachments ?? [])
+      .map((attachment) => attachment.name)
+      .join(", ");
+    const contents = [
+      ...(text.length > 0 ? [text] : []),
+      ...(attachmentSummary.length > 0 ? [`[Attachments: ${attachmentSummary}]`] : []),
+    ].join("\n");
+    if (contents.length === 0) {
+      continue;
+    }
+
+    const section = `${message.role.toUpperCase()}:\n${contents}`;
+    const separator = context.length > 0 ? "\n\n" : "";
+    const available = MAX_THREAD_TITLE_CONTEXT_CHARS - context.length - separator.length;
+    if (section.length > available) {
+      if (available > 0) {
+        context = `${section.slice(-available)}${separator}${context}`;
+        retainedAttachments.unshift(...(message.attachments ?? []));
+      }
+      truncated = true;
+      break;
+    }
+    context = `${section}${separator}${context}`;
+    retainedAttachments.unshift(...(message.attachments ?? []));
+  }
+
+  return {
+    message: truncated ? `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${context}` : context,
+    attachments: retainedAttachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+  };
+}
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -777,6 +832,170 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const regenerateThreadTitle = Effect.fn("regenerateThreadTitle")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>,
+    requestId: CommandId,
+  ) {
+    if (event.payload.regenerateTitle !== true) {
+      return { _tag: "Superseded" } as const;
+    }
+
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread || thread.titleRegeneration?.requestId !== requestId) {
+      return { _tag: "Superseded" } as const;
+    }
+
+    const { message, attachments } = formatThreadTitleContext(thread.messages);
+    if (message.length === 0) {
+      return { _tag: "Completed", title: undefined } as const;
+    }
+
+    const previousTitle = event.payload.previousTitle ?? thread.title;
+    if (thread.title !== previousTitle) {
+      return { _tag: "Superseded" } as const;
+    }
+    const project = yield* resolveProject(thread.projectId);
+    const cwd =
+      resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      }) ?? process.cwd();
+    const { textGenerationModelSelection: modelSelection } =
+      yield* serverSettingsService.getSettings;
+    const generated = yield* textGeneration.generateThreadTitle({
+      cwd,
+      message,
+      previousTitle,
+      ...(attachments.length > 0 ? { attachments } : {}),
+      modelSelection,
+    });
+    if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
+      return { _tag: "Completed", title: undefined } as const;
+    }
+
+    const latestThread = yield* resolveThread(event.payload.threadId);
+    if (
+      !latestThread ||
+      latestThread.titleRegeneration?.requestId !== requestId ||
+      latestThread.title !== previousTitle
+    ) {
+      return { _tag: "Superseded" } as const;
+    }
+
+    return { _tag: "Completed", title: generated.title } as const;
+  });
+  const dispatchThreadTitleRegenerationCompletion = Effect.fn(
+    "dispatchThreadTitleRegenerationCompletion",
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: CommandId;
+    readonly title?: string;
+  }) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.title.regeneration.complete",
+      commandId: yield* serverCommandId("thread-title-regeneration-complete"),
+      threadId: input.threadId,
+      requestId: input.requestId,
+      ...(input.title !== undefined ? { title: input.title } : {}),
+    });
+  });
+  const clearInterruptedThreadTitleRegenerations = Effect.fn(
+    "clearInterruptedThreadTitleRegenerations",
+  )(function* () {
+    const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
+    yield* Effect.forEach(
+      readModel.threads,
+      (thread) => {
+        const requestId = thread.titleRegeneration?.requestId;
+        if (requestId === undefined) {
+          return Effect.void;
+        }
+        return dispatchThreadTitleRegenerationCompletion({
+          threadId: thread.id,
+          requestId,
+        }).pipe(
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return Effect.interrupt;
+            }
+            return Effect.logWarning(
+              "provider command reactor failed to clear interrupted title regeneration",
+              {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              },
+            );
+          }),
+        );
+      },
+      { discard: true },
+    );
+  });
+  const processThreadTitleRegenerationSafely = Effect.fn("processThreadTitleRegenerationSafely")(
+    function* (event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>) {
+      if (event.payload.regenerateTitle !== true) {
+        return;
+      }
+
+      const requestId = event.payload.titleRegeneration?.requestId ?? event.commandId;
+      if (requestId === null) {
+        return;
+      }
+      const result = yield* regenerateThreadTitle(event, requestId).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning("provider command reactor failed to regenerate thread title", {
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ _tag: "Completed", title: undefined } as const));
+        }),
+      );
+      if (result._tag === "Superseded") {
+        return;
+      }
+
+      const completion = {
+        threadId: event.payload.threadId,
+        requestId,
+        ...(result.title !== undefined ? { title: result.title } : {}),
+      };
+      yield* dispatchThreadTitleRegenerationCompletion(completion).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning(
+            "provider command reactor retrying title regeneration completion",
+            {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            },
+          ).pipe(Effect.andThen(dispatchThreadTitleRegenerationCompletion(completion)));
+        }),
+      );
+    },
+    (effect, event) =>
+      effect.pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning(
+            "provider command reactor failed to complete title regeneration",
+            {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            },
+          );
+        }),
+      ),
+  );
+  const threadTitleRegenerationWorker = yield* makeDrainableWorker(
+    processThreadTitleRegenerationSafely,
+  );
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -1047,6 +1266,9 @@ const make = Effect.gen(function* () {
       eventType: event.type,
     });
     switch (event.type) {
+      case "thread.meta-updated":
+        yield* threadTitleRegenerationWorker.enqueue(event);
+        return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThread(event.payload.threadId);
         if (!thread?.session || thread.session.status === "stopped") {
@@ -1096,6 +1318,7 @@ const make = Effect.gen(function* () {
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
+        (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
@@ -1110,11 +1333,31 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
     );
+
+    // The domain event stream is hot, so work pending before this reactor
+    // starts cannot be resumed. Correlated completions only clear the request
+    // captured here, leaving any newer request untouched.
+    yield* clearInterruptedThreadTitleRegenerations().pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to clear interrupted title regenerations",
+          {
+            cause: Cause.pretty(cause),
+          },
+        );
+      }),
+    );
   });
 
   return {
     start,
-    drain: worker.drain,
+    drain: Effect.gen(function* () {
+      yield* worker.drain;
+      yield* threadTitleRegenerationWorker.drain;
+    }),
   } satisfies ProviderCommandReactorShape;
 });
 
