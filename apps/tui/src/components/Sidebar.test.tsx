@@ -12,10 +12,9 @@ const fakeStore = {} as unknown as Store;
 const baseProps = {
   rows: [],
   selection: null,
-  moreAbove: false,
-  moreBelow: false,
   width: 28,
   height: 16,
+  listHeight: 5,
   store: fakeStore,
   projectScopeLabel: "All projects",
   onSearchInput: () => {},
@@ -75,6 +74,46 @@ describe("Sidebar search box", () => {
 });
 
 describe("Sidebar V2 thread cards", () => {
+  const activeRow = (id: string, title: string): Row => ({
+    kind: "thread",
+    id,
+    section: "active",
+    projectTitle: "Project one",
+    timestamp: new Date().toISOString(),
+    thread: {
+      id,
+      title,
+      session: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+    } as never,
+  });
+
+  it("scrolls a selection past the viewport edge into view", async () => {
+    const rows: Row[] = Array.from({ length: 12 }, (_, index) =>
+      activeRow(`t${index}`, `Thread ${index}`),
+    );
+    const t = await testRender(
+      <Sidebar
+        {...baseProps}
+        rows={rows}
+        selection={{ kind: "thread", id: "t9" }}
+        filter=""
+        searchFocused={false}
+      />,
+      { width: 30, height: 18 },
+    );
+    await t.renderOnce();
+    // The deferred scroll lands on the next tick, once layout gave the
+    // scrollbox a real content height.
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("Thread 9");
+    expect(frame).not.toContain("Thread 0");
+    t.renderer.destroy();
+  });
+
   it("renders an active thread title with its project on a second line", async () => {
     const rows: Row[] = [
       {

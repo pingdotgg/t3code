@@ -42,10 +42,15 @@ export function resolveChatColumnLayout(
   };
 }
 
-/** Rows available to project/thread items after full-height sidebar chrome. */
+/**
+ * Rows available to the thread scrollbox after full-height sidebar chrome.
+ * Must match the Sidebar's actual chrome exactly: an oversized scrollbox makes
+ * yoga shrink the heading/margins above it and rows paint over the heading.
+ */
 export function resolveSidebarListViewport(terminalHeight: number): number {
-  // Border (2), title (1), search with margins (5), heading (1), overflow hint (1).
-  return Math.max(1, Math.floor(terminalHeight) - 10);
+  // Border (2), title (1), search with margin (4), project row with margins (3),
+  // heading (1).
+  return Math.max(1, Math.floor(terminalHeight) - 11);
 }
 
 /** Estimate the textarea's visual lines, including soft wrapping. */

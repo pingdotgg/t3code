@@ -212,68 +212,7 @@ export function buildRows(
   return rows;
 }
 
+/** Rendered height of a row: active thread cards take two terminal lines. */
 export function rowHeight(row: Row): number {
   return row.kind === "thread" && row.section === "active" ? 2 : 1;
-}
-
-/**
- * Window variable-height rows with conventional scrolling: the viewport stays
- * where it was (`scrollTop`, a row index the caller persists between renders)
- * and only shifts when the selected row would fall outside it.
- */
-export function windowRows(
-  rows: readonly Row[],
-  selection: Selection | null,
-  height: number,
-  scrollTop = 0,
-): {
-  readonly rows: Row[];
-  readonly moreAbove: boolean;
-  readonly moreBelow: boolean;
-  readonly scrollTop: number;
-} {
-  if (rows.length === 0 || height <= 0) {
-    return { rows: [], moreAbove: false, moreBelow: rows.length > 0, scrollTop: 0 };
-  }
-  let start = Math.min(Math.max(scrollTop, 0), rows.length - 1);
-
-  const selectedIndex = rows.findIndex((row) => selectionEquals(selection, row));
-  if (selectedIndex >= 0) {
-    if (selectedIndex < start) {
-      start = selectedIndex;
-    } else {
-      // Scroll down just far enough for the selected row to fit entirely.
-      let used = 0;
-      for (let index = selectedIndex; index >= start; index -= 1) used += rowHeight(rows[index]!);
-      while (used > height && start < selectedIndex) {
-        used -= rowHeight(rows[start]!);
-        start += 1;
-      }
-    }
-  }
-
-  let end = start;
-  let used = 0;
-  while (end < rows.length && used + rowHeight(rows[end]!) <= height) {
-    used += rowHeight(rows[end]!);
-    end += 1;
-  }
-  if (end === start) {
-    // A single row taller than the pane still renders (clipped) rather than
-    // leaving the list blank.
-    used += rowHeight(rows[end]!);
-    end += 1;
-  }
-  // Don't leave blank space under the last row when earlier rows could fill it.
-  while (end === rows.length && start > 0 && used + rowHeight(rows[start - 1]!) <= height) {
-    start -= 1;
-    used += rowHeight(rows[start]!);
-  }
-
-  return {
-    rows: rows.slice(start, end),
-    moreAbove: start > 0,
-    moreBelow: end < rows.length,
-    scrollTop: start,
-  };
 }

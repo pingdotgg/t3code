@@ -33,7 +33,7 @@ describe("responsive chat layout", () => {
   });
 
   it("Given a full-height sidebar, its item window reserves every chrome row", () => {
-    expect(resolveSidebarListViewport(28)).toBe(18);
+    expect(resolveSidebarListViewport(28)).toBe(17);
   });
 });
 

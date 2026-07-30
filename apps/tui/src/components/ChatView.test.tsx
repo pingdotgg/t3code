@@ -36,15 +36,32 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function findScrollBox(root: Renderable): ScrollBoxRenderable | null {
+function containsId(root: Renderable, id: string): boolean {
   const queue = [root];
   while (queue.length > 0) {
     const renderable = queue.shift();
     if (!renderable) continue;
-    if (renderable instanceof ScrollBoxRenderable) return renderable;
+    if (renderable.id === id) return true;
     queue.push(...renderable.getChildren());
   }
-  return null;
+  return false;
+}
+
+/** The conversation scrollbox — the sidebar owns a scrollbox of its own now. */
+function findScrollBox(root: Renderable): ScrollBoxRenderable | null {
+  const queue = [root];
+  const scrollBoxes: ScrollBoxRenderable[] = [];
+  while (queue.length > 0) {
+    const renderable = queue.shift();
+    if (!renderable) continue;
+    if (renderable instanceof ScrollBoxRenderable) scrollBoxes.push(renderable);
+    queue.push(...renderable.getChildren());
+  }
+  return (
+    scrollBoxes.find((scrollBox) => containsId(scrollBox, "timeline-column-shell")) ??
+    scrollBoxes[0] ??
+    null
+  );
 }
 
 const project = {

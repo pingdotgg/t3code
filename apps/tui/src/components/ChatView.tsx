@@ -77,7 +77,7 @@ import {
 } from "../models.ts";
 import { isWorking, revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
-import { buildRows, windowRows } from "./Sidebar.logic.ts";
+import { buildRows } from "./Sidebar.logic.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import {
   CHAT_CONTENT_MAX_WIDTH,
@@ -1712,20 +1712,6 @@ export function ChatView({
         }
       : null;
 
-  // Active cards use two terminal rows while shelf rows use one. Window by
-  // rendered height so selection never disappears or overflows the pane. The
-  // ref carries the scroll position across renders so the list only scrolls
-  // when the selection reaches a viewport edge, like a normal scrolling list.
-  const listScrollTopRef = React.useRef(0);
-  const listWindow = React.useMemo(() => {
-    const window = windowRows(rows, state.selection, listViewport, listScrollTopRef.current);
-    listScrollTopRef.current = window.scrollTop;
-    return window;
-  }, [rows, state.selection, listViewport]);
-  const listRows = listWindow.rows;
-  const moreAbove = listWindow.moreAbove;
-  const moreBelow = listWindow.moreBelow;
-
   const clearReply = () => {
     setReply("");
     setComposerImages([]);
@@ -3124,12 +3110,11 @@ export function ChatView({
     <box flexDirection="row" width={width} height={height}>
       {sidebarVisible || sidebarAsMain ? (
         <Sidebar
-          rows={listRows}
+          rows={rows}
           selection={state.selection}
-          moreAbove={moreAbove}
-          moreBelow={moreBelow}
           width={sidebarAsMain ? width : listWidth}
           height={height}
+          listHeight={listViewport}
           store={store}
           filter={state.filter}
           projectScopeLabel={
