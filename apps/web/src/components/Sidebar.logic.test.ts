@@ -804,6 +804,22 @@ describe("reconcileSidebarV2ThreadOrder", () => {
       hidden,
     );
     expect(returned.order).toEqual(["older", "newer"]);
+
+    const newerWake = reconcileSidebarV2ThreadOrder(
+      [
+        { ...older, updatedAt: "2026-03-09T13:00:00.000Z" },
+        { ...newer, explicitAppearanceAt: "2026-03-09T14:00:00.000Z" },
+      ],
+      returned,
+    );
+    const afterOlderMetadataUpdate = reconcileSidebarV2ThreadOrder(
+      [
+        { ...older, updatedAt: "2026-03-09T15:00:00.000Z" },
+        { ...newer, explicitAppearanceAt: "2026-03-09T14:00:00.000Z" },
+      ],
+      newerWake,
+    );
+    expect(afterOlderMetadataUpdate.order).toEqual(["newer", "older"]);
   });
 
   it("lets only a later appearance displace the current top row", () => {

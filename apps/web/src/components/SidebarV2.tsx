@@ -1591,11 +1591,6 @@ export default function SidebarV2() {
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
       const wokeAt = supportsSnooze ? threadWokeAt(thread, { now: preciseNow }) : null;
-      const manuallyUnsettledAt = thread.settledOverride === "active" ? thread.updatedAt : null;
-      const explicitAppearanceAt =
-        firstValidTimestampMs(wokeAt) >= firstValidTimestampMs(manuallyUnsettledAt)
-          ? wokeAt
-          : manuallyUnsettledAt;
       // Snooze outranks settled classification: an explicitly snoozed thread
       // belongs to the shelf even if it would also auto-settle (the shelf's
       // wake time is a stronger statement about when it matters again).
@@ -1621,7 +1616,7 @@ export default function SidebarV2() {
         active: isActive,
         createdAt: thread.createdAt,
         updatedAt: thread.updatedAt,
-        explicitAppearanceAt,
+        explicitAppearanceAt: wokeAt,
       });
     }
     const nextOrder = reconcileSidebarV2ThreadOrder(threadOrderEntries, {
