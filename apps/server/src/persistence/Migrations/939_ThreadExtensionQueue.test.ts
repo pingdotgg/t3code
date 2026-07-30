@@ -5,12 +5,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
-import Migration0039 from "./039_ThreadExtensionQueue.ts";
+import Migration0939 from "./939_ThreadExtensionQueue.ts";
 
 const freshLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 const legacyLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-freshLayer("039_ThreadExtensionQueue fresh database", (it) => {
+freshLayer("939_ThreadExtensionQueue fresh database", (it) => {
   it.effect("creates isolated extension state without widening threads", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -30,11 +30,11 @@ freshLayer("039_ThreadExtensionQueue fresh database", (it) => {
   );
 });
 
-legacyLayer("039_ThreadExtensionQueue legacy queue", (it) => {
+legacyLayer("939_ThreadExtensionQueue legacy queue", (it) => {
   it.effect("canonicalizes Ask and restores legacy work paused", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 938 });
       yield* sql`
         CREATE TABLE projection_thread_turn_queue (
           thread_id TEXT NOT NULL,
@@ -65,7 +65,7 @@ legacyLayer("039_ThreadExtensionQueue legacy queue", (it) => {
         )
       `;
 
-      yield* Migration0039;
+      yield* Migration0939;
 
       const queue = yield* sql<{
         readonly interactionMode: string;

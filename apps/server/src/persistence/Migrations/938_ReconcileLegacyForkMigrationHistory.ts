@@ -13,6 +13,11 @@ import Migration0030 from "./030_ProjectionThreadShellArchiveIndexes.ts";
  * upstream migrations with the same ids never ran. Replay the idempotent
  * upstream effects here, repair only legacy role-based auth tables, and remove
  * the old mobile-visible Ask literal.
+ *
+ * Originally registered as fork id 38, now id 938 (reserved fork block).
+ * Nothing here depends on the id it runs under: the legacy 26-31 history rows
+ * are left in place (the migrator orders by id only, so their fork names are
+ * harmless) and every replayed effect is idempotent.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

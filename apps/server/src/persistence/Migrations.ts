@@ -47,13 +47,14 @@ import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
-// Fork: component preview harness projections.
-import Migration0035 from "./Migrations/035_ProjectionProjectComponentPreviewConfig.ts";
-import Migration0036 from "./Migrations/036_ProjectionProjectComponentPreviewWorkspaceRecords.ts";
-import Migration0037 from "./Migrations/037_ResetProjectComponentPreviewState.ts";
-import Migration0038 from "./Migrations/038_ReconcileLegacyForkMigrationHistory.ts";
-import Migration0039 from "./Migrations/039_ThreadExtensionQueue.ts";
-import Migration0040 from "./Migrations/040_ProjectionThreadsForkLineage.ts";
+// Fork: fork-only migrations live in the reserved 9xx id block (935+) so
+// upstream can keep shipping 035, 036, ... without ever colliding with us.
+import Migration0935 from "./Migrations/935_ProjectionProjectComponentPreviewConfig.ts";
+import Migration0936 from "./Migrations/936_ProjectionProjectComponentPreviewWorkspaceRecords.ts";
+import Migration0937 from "./Migrations/937_ResetProjectComponentPreviewState.ts";
+import Migration0938 from "./Migrations/938_ReconcileLegacyForkMigrationHistory.ts";
+import Migration0939 from "./Migrations/939_ThreadExtensionQueue.ts";
+import Migration0940 from "./Migrations/940_ProjectionThreadsForkLineage.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -100,13 +101,19 @@ export const migrationEntries = [
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
   [34, "ProjectionThreadsSnoozed", Migration0034],
-  // Fork: component preview harness projections.
-  [35, "ProjectionProjectComponentPreviewConfig", Migration0035],
-  [36, "ProjectionProjectComponentPreviewWorkspaceRecords", Migration0036],
-  [37, "ResetProjectComponentPreviewState", Migration0037],
-  [38, "ReconcileLegacyForkMigrationHistory", Migration0038],
-  [39, "ThreadExtensionQueue", Migration0039],
-  [40, "ProjectionThreadsForkLineage", Migration0040],
+  // Fork: ids 935-940 are the reserved fork block; ids 35+ stay free for
+  // upstream. These migrations briefly shipped locally as ids 35-40, but no
+  // real database ever recorded those ids (the only live fork database was
+  // still on the legacy 26-31 history), so no renumbering compat is needed.
+  // Exception: if ~/.t3 (the official t3 app's data dir) was ever run against
+  // this fork it may carry recorded rows 35-40 with these names — that
+  // database must be cleaned up manually, never migrated by this fork.
+  [935, "ProjectionProjectComponentPreviewConfig", Migration0935],
+  [936, "ProjectionProjectComponentPreviewWorkspaceRecords", Migration0936],
+  [937, "ResetProjectComponentPreviewState", Migration0937],
+  [938, "ReconcileLegacyForkMigrationHistory", Migration0938],
+  [939, "ThreadExtensionQueue", Migration0939],
+  [940, "ProjectionThreadsForkLineage", Migration0940],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

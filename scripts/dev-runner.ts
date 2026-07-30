@@ -67,8 +67,9 @@ export function isProxiableBindHost(host: string): boolean {
   );
 }
 
+// Fork: default to ~/.forma so this fork's data stays separate from the official t3 app's ~/.t3.
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".t3"),
+  path.join(NodeOS.homedir(), ".forma"),
 );
 
 const MODE_ARGS = {

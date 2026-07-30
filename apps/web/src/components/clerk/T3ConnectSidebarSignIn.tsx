@@ -9,10 +9,12 @@ import { cn } from "../../lib/utils";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
 import {
-  resolveT3ConnectSidebarPresentation,
+  SIGN_IN_FOR_RELAY_MANAGEMENT_LABEL,
+  resolveT3ConnectSidebarView,
   type T3ConnectSidebarStatusTone,
 } from "./T3ConnectSidebarControl.logic";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
+import { useT3ConnectClerkAvailability } from "./useT3ConnectClerkAvailability";
 
 const STATUS_DOT_CLASSNAME: Record<T3ConnectSidebarStatusTone, string> = {
   error: "bg-destructive",
@@ -104,21 +106,29 @@ function ConfiguredT3ConnectSidebarControl({
 }: {
   readonly density: T3ConnectSidebarDensity;
 }) {
-  const { isLoaded, isSignedIn } = useAuth();
+  const clerk = useT3ConnectClerkAvailability();
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
   const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
+  const { linkState, managedTunnelActive, publishAgentActivity, operationError } =
+    useCloudLinkController();
+  const error = operationError ?? linkState.error;
+  const view = resolveT3ConnectSidebarView({
+    clerk,
+    error,
+    hasLinkState: linkState.data !== null,
+    isPending: linkState.isPending,
+    managedTunnelActive,
+    publishAgentActivity,
+  });
+  const handleClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/settings/connections" });
+  }, [isMobile, navigate, setOpenMobile]);
 
-  if (!isLoaded) {
-    return (
-      <T3ConnectSidebarStatusRow
-        density={density}
-        label="Connecting…"
-        onClick={undefined}
-        tone="pending"
-      />
-    );
-  }
-
-  if (!isSignedIn) {
+  if (view.kind === "sign-in") {
     return (
       <>
         <SidebarMenu>
@@ -142,42 +152,35 @@ function ConfiguredT3ConnectSidebarControl({
     );
   }
 
-  return <ConfiguredT3ConnectSidebarStatus density={density} />;
-}
-
-function ConfiguredT3ConnectSidebarStatus({
-  density,
-}: {
-  readonly density: T3ConnectSidebarDensity;
-}) {
-  const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const { linkState, managedTunnelActive, publishAgentActivity, operationError } =
-    useCloudLinkController();
-  const error = operationError ?? linkState.error;
-  const presentation = resolveT3ConnectSidebarPresentation({
-    error,
-    isPending: linkState.isPending,
-    managedTunnelActive,
-    publishAgentActivity,
-  });
-  const handleClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/settings/connections" });
-  }, [isMobile, navigate, setOpenMobile]);
-
   return (
     <div className="flex min-w-0 items-center gap-1" data-testid="t3-connect-status">
       <T3ConnectSidebarStatusRow
         density={density}
-        error={error}
-        label={presentation.label}
+        error={error ?? view.hint}
+        label={view.presentation.label}
         onClick={handleClick}
-        tone={presentation.tone}
+        tone={view.presentation.tone}
       />
-      <ConfiguredT3ConnectSidebarAvatar />
+      {clerk === "signed-in" ? <ConfiguredT3ConnectSidebarAvatar /> : null}
+      {view.showSignInAction ? (
+        <SidebarMenu className="w-auto flex-none">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              aria-label={SIGN_IN_FOR_RELAY_MANAGEMENT_LABEL}
+              className={cn(
+                "justify-center px-2 active:scale-[0.98]",
+                density === "compact" ? "h-7" : "h-10",
+              )}
+              data-testid="t3-connect-sign-in-action"
+              onClick={openAuthPrompt}
+              tooltip={SIGN_IN_FOR_RELAY_MANAGEMENT_LABEL}
+            >
+              <LogInIcon className="size-3.5" />
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      ) : null}
+      {authPrompt}
     </div>
   );
 }

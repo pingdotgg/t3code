@@ -5,17 +5,17 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
-import Migration0040 from "./040_ProjectionThreadsForkLineage.ts";
+import Migration0940 from "./940_ProjectionThreadsForkLineage.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("040_ProjectionThreadsForkLineage", (it) => {
+layer("940_ProjectionThreadsForkLineage", (it) => {
   it.effect("is idempotent and keeps lineage optional", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 39 });
-      yield* Migration0040;
-      yield* Migration0040;
+      yield* runMigrations({ toMigrationInclusive: 939 });
+      yield* Migration0940;
+      yield* Migration0940;
 
       const columns = yield* sql<{
         readonly name: string;

@@ -1071,7 +1071,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(cachedProvider, {
               ...refreshedProvider,
               models: [...initialProvider.models],
-              supportedInteractionModes: ["default", "ask", "plan"],
+              supportedInteractionModes: ["default", "ask", "plan"] as const,
             });
           }).pipe(Effect.provide(runtimeServices));
         }),
@@ -1286,7 +1286,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
             const expectedCachedProvider = {
               ...cachedProvider,
-              supportedInteractionModes: ["default", "ask", "plan"],
+              supportedInteractionModes: ["default", "ask", "plan"] as const,
             };
             assert.deepStrictEqual(yield* registry.getProviders, [expectedCachedProvider]);
             assert.deepStrictEqual(yield* registry.refresh(codexDriver), [expectedCachedProvider]);

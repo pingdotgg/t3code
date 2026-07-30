@@ -5,13 +5,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
-import Migration0038 from "./038_ReconcileLegacyForkMigrationHistory.ts";
+import Migration0938 from "./938_ReconcileLegacyForkMigrationHistory.ts";
 
 const freshLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 const currentLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 const legacyLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-freshLayer("038_ReconcileLegacyForkMigrationHistory fresh database", (it) => {
+freshLayer("938_ReconcileLegacyForkMigrationHistory fresh database", (it) => {
   it.effect("is safe on a fresh database", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -21,19 +21,19 @@ freshLayer("038_ReconcileLegacyForkMigrationHistory fresh database", (it) => {
       const migration = yield* sql<{ readonly name: string }>`
         SELECT name
         FROM effect_sql_migrations
-        WHERE migration_id = 38
+        WHERE migration_id = 938
       `;
       assert.deepStrictEqual(migration, [{ name: "ReconcileLegacyForkMigrationHistory" }]);
     }),
   );
 });
 
-currentLayer("038_ReconcileLegacyForkMigrationHistory current database", (it) => {
+currentLayer("938_ReconcileLegacyForkMigrationHistory current database", (it) => {
   it.effect("preserves auth state when the scoped schema is already current", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 37 });
+      yield* runMigrations({ toMigrationInclusive: 937 });
       yield* sql`
         INSERT INTO auth_pairing_links (
           id, credential, method, scopes, subject, created_at, expires_at
@@ -62,7 +62,7 @@ currentLayer("038_ReconcileLegacyForkMigrationHistory current database", (it) =>
         )
       `;
 
-      yield* Migration0038;
+      yield* Migration0938;
 
       const pairingLinks = yield* sql<{ readonly id: string }>`
         SELECT id FROM auth_pairing_links
@@ -76,7 +76,7 @@ currentLayer("038_ReconcileLegacyForkMigrationHistory current database", (it) =>
   );
 });
 
-legacyLayer("038_ReconcileLegacyForkMigrationHistory legacy fork database", (it) => {
+legacyLayer("938_ReconcileLegacyForkMigrationHistory legacy fork database", (it) => {
   it.effect("repairs the schema and normalizes mobile-visible Ask state", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -155,7 +155,7 @@ legacyLayer("038_ReconcileLegacyForkMigrationHistory legacy fork database", (it)
         )
       `;
 
-      yield* Migration0038;
+      yield* Migration0938;
 
       const thread = yield* sql<{
         readonly interactionMode: string;

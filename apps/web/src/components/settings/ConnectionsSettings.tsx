@@ -112,6 +112,8 @@ import {
 } from "~/versionSkew";
 import { hasCloudPublicConfig, resolveCloudPublicConfigState } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { CLERK_UNAVAILABLE_HINT } from "../clerk/T3ConnectSidebarControl.logic";
+import { useT3ConnectClerkAvailability } from "../clerk/useT3ConnectClerkAvailability";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
 import {
@@ -1577,8 +1579,8 @@ function CloudLinkSwitch({
 }
 
 function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
+  const clerk = useT3ConnectClerkAvailability();
   const {
-    isSignedIn,
     linkState: primaryCloudLinkState,
     managedTunnelActive,
     publishAgentActivity,
@@ -1588,8 +1590,14 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
+  // The switches always REFLECT the local environment link state (readable
+  // over the local session without Clerk); only managing the link requires a
+  // Clerk web session plus relay:write on the environment session.
+  const isSignedIn = clerk === "signed-in";
   const disabledReason = !isSignedIn
-    ? "Sign in to T3 Connect to manage this environment."
+    ? clerk === "unavailable"
+      ? `${CLERK_UNAVAILABLE_HINT}. Manage T3 Connect from the CLI with \`t3 connect\`.`
+      : "Sign in to T3 Connect to manage this environment."
     : !canManageRelay
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
