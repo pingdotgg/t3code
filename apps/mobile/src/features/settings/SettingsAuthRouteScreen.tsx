@@ -32,6 +32,8 @@ function ConfiguredSettingsAuthRouteScreen() {
     if (hasBeenSignedIn.current && !isSignedIn) {
       if (navigation.canGoBack()) {
         navigation.goBack();
+      } else {
+        navigation.dispatch(StackActions.replace("Settings"));
       }
     }
   }, [isSignedIn, navigation]);
