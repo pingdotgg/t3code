@@ -1559,9 +1559,24 @@ describe("orchestrator MCP toolkit", () => {
               cancellableCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(cancellable.status).toBe("running");
+            // Original delegated run alone is not "later" work.
+            expect(cancellable.hasPendingChildRuns).toBe(false);
             yield* waitForProjection(orchestrator, cancellable.childThreadId, (projection) =>
               projection.providerTurns.some((turn) => turn.status === "running"),
             );
+            const statusWhileOriginalRunningCall = yield* invoke("task_status", {
+              taskId: cancellable.taskId,
+            });
+            const statusWhileOriginalRunning = yield* decodeDelegateTaskResult(
+              statusWhileOriginalRunningCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(statusWhileOriginalRunning).toMatchObject({
+              childRunId: cancellable.childRunId,
+              status: "running",
+              hasPendingChildRuns: false,
+              latestTerminalRunId: null,
+              latestTerminalStatus: null,
+            });
             // The requested model options reach the child thread's selection.
             const optionedChild = yield* orchestrator.getThreadProjection(
               cancellable.childThreadId,

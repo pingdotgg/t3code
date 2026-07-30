@@ -906,7 +906,9 @@ const make = Effect.gen(function* () {
         childRunId: childRun?.id ?? null,
         childNodeId: task.id,
         status,
-        hasPendingChildRuns: childProjection.runs.some((run) => !isTerminalRunStatus(run.status)),
+        hasPendingChildRuns: childProjection.runs.some(
+          (run) => run.id !== childRun?.id && !isTerminalRunStatus(run.status),
+        ),
         providerInstanceId: task.providerInstanceId,
         model: task.model,
         summary: derivedResult,
