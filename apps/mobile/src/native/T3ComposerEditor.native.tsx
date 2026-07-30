@@ -1,5 +1,6 @@
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { requireNativeView } from "expo";
+import { TextInputWrapper } from "expo-paste-input";
 import {
   useCallback,
   useEffect,
@@ -9,12 +10,13 @@ import {
   useState,
   type Ref,
 } from "react";
-import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "react-native";
+import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { Image, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
+import { useNativePaste } from "../lib/useNativePaste";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useThemeColor } from "../lib/useThemeColor";
 import {
@@ -117,6 +119,7 @@ export function ComposerEditor({
   const skillBorder = useThemeColor("--color-inline-skill-border");
   const skillText = useThemeColor("--color-inline-skill-foreground");
   const fileTint = useThemeColor("--color-icon-muted");
+  const handlePaste = useNativePaste((uris) => onPasteImages?.(uris));
 
   useImperativeHandle(
     ref,
@@ -221,61 +224,63 @@ export function ComposerEditor({
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   const regularFontFamily = useFontFamily("regular");
   return (
-    <NativeView
-      ref={nativeRef}
-      controlledDocumentJson={controlledDocumentJson}
-      themeJson={themeJson}
-      placeholder={props.placeholder ?? ""}
-      fontFamily={
-        typeof resolvedTextStyle.fontFamily === "string"
-          ? resolvedTextStyle.fontFamily
-          : regularFontFamily
-      }
-      fontSize={
-        typeof resolvedTextStyle.fontSize === "number"
-          ? resolvedTextStyle.fontSize
-          : MOBILE_TYPOGRAPHY.body.fontSize
-      }
-      lineHeight={
-        typeof resolvedTextStyle.lineHeight === "number"
-          ? resolvedTextStyle.lineHeight
-          : MOBILE_TYPOGRAPHY.body.lineHeight
-      }
-      contentInsetVertical={contentInsetVertical}
-      singleLineCentered={props.singleLineCentered ?? false}
-      editable={props.editable ?? true}
-      scrollEnabled={props.scrollEnabled ?? true}
-      autoFocus={props.autoFocus ?? false}
-      autoCorrect={props.autoCorrect ?? true}
-      spellCheck={props.spellCheck ?? true}
-      style={style as StyleProp<ViewStyle>}
-      onComposerChange={(event) => {
-        const acknowledgedEventCount = acceptNativeEvent(
-          event.nativeEvent.eventCount,
-          event.nativeEvent.value,
-          event.nativeEvent.selection,
-        );
-        if (acknowledgedEventCount === false) return;
-        onChangeText(event.nativeEvent.value);
-        onSelectionChange?.(event.nativeEvent.selection);
-        setMostRecentEventCount(acknowledgedEventCount);
-        setNativeEventSequence((sequence) => sequence + 1);
-      }}
-      onComposerSelectionChange={(event) => {
-        const acknowledgedEventCount = acceptNativeEvent(
-          event.nativeEvent.eventCount,
-          event.nativeEvent.value,
-          event.nativeEvent.selection,
-        );
-        if (acknowledgedEventCount === false) return;
-        onSelectionChange?.(event.nativeEvent.selection);
-        setMostRecentEventCount(acknowledgedEventCount);
-        setNativeEventSequence((sequence) => sequence + 1);
-      }}
-      onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
-      onComposerFocus={onFocus}
-      onComposerBlur={onBlur}
-    />
+    <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
+      <NativeView
+        ref={nativeRef}
+        controlledDocumentJson={controlledDocumentJson}
+        themeJson={themeJson}
+        placeholder={props.placeholder ?? ""}
+        fontFamily={
+          typeof resolvedTextStyle.fontFamily === "string"
+            ? resolvedTextStyle.fontFamily
+            : regularFontFamily
+        }
+        fontSize={
+          typeof resolvedTextStyle.fontSize === "number"
+            ? resolvedTextStyle.fontSize
+            : MOBILE_TYPOGRAPHY.body.fontSize
+        }
+        lineHeight={
+          typeof resolvedTextStyle.lineHeight === "number"
+            ? resolvedTextStyle.lineHeight
+            : MOBILE_TYPOGRAPHY.body.lineHeight
+        }
+        contentInsetVertical={contentInsetVertical}
+        singleLineCentered={props.singleLineCentered ?? false}
+        editable={props.editable ?? true}
+        scrollEnabled={props.scrollEnabled ?? true}
+        autoFocus={props.autoFocus ?? false}
+        autoCorrect={props.autoCorrect ?? true}
+        spellCheck={props.spellCheck ?? true}
+        style={{ flex: 1, minHeight: 0 }}
+        onComposerChange={(event) => {
+          const acknowledgedEventCount = acceptNativeEvent(
+            event.nativeEvent.eventCount,
+            event.nativeEvent.value,
+            event.nativeEvent.selection,
+          );
+          if (acknowledgedEventCount === false) return;
+          onChangeText(event.nativeEvent.value);
+          onSelectionChange?.(event.nativeEvent.selection);
+          setMostRecentEventCount(acknowledgedEventCount);
+          setNativeEventSequence((sequence) => sequence + 1);
+        }}
+        onComposerSelectionChange={(event) => {
+          const acknowledgedEventCount = acceptNativeEvent(
+            event.nativeEvent.eventCount,
+            event.nativeEvent.value,
+            event.nativeEvent.selection,
+          );
+          if (acknowledgedEventCount === false) return;
+          onSelectionChange?.(event.nativeEvent.selection);
+          setMostRecentEventCount(acknowledgedEventCount);
+          setNativeEventSequence((sequence) => sequence + 1);
+        }}
+        onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+        onComposerFocus={onFocus}
+        onComposerBlur={onBlur}
+      />
+    </TextInputWrapper>
   );
 }
 
