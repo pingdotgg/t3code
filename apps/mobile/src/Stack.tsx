@@ -416,7 +416,7 @@ export const RootStack = createNativeStackNavigator({
         // Android cannot host the keyboard-driven comment composer inside a
         // formSheet; use a full-screen modal there instead.
         presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
-        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: Platform.OS !== "android",
       },
     }),
@@ -442,7 +442,7 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git`,
       options: {
         presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -451,7 +451,7 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
         presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -460,7 +460,7 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
       options: {
         presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -508,7 +508,7 @@ export const RootStack = createNativeStackNavigator({
         title: "Set up T3 Connect",
         gestureEnabled: true,
         presentation: "formSheet",
-        sheetAllowedDetents: [0.6, 0.95],
+        sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
         sheetGrabberVisible: true,
       },
     }),
@@ -553,7 +553,7 @@ export const RootStack = createNativeStackNavigator({
           ? { presentation: "card" as const }
           : {
               presentation: "formSheet" as const,
-              sheetAllowedDetents: [0.92],
+              sheetAllowedDetents: SYSTEM_LARGE_DETENTS,
               sheetGrabberVisible: true,
             }),
       },
