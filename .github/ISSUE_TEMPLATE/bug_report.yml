@@ -30,6 +30,7 @@ body:
         - apps/web
         - apps/server
         - apps/desktop
+        - apps/mobile
         - packages/contracts or packages/shared
         - Build, CI, or release tooling
         - Docs

@@ -244,22 +244,19 @@ it("selects a reachable LAN IPv4 address", () => {
 });
 
 it("maps capture scenes to the real application routes", () => {
-  assert.equal(showcaseSceneUrl("threads", "environment-1"), "t3code-dev://");
-  assert.equal(
-    showcaseSceneUrl("environments", "environment-1"),
-    "t3code-dev://settings/environments",
-  );
+  assert.equal(showcaseSceneUrl("threads", "environment-1"), "t3code://");
+  assert.equal(showcaseSceneUrl("environments", "environment-1"), "t3code://settings/environments");
   assert.equal(
     showcaseSceneUrl("thread", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center",
+    "t3code://threads/environment-1/remote-command-center",
   );
   assert.equal(
     showcaseSceneUrl("terminal", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center/terminal?terminalId=term-1",
+    "t3code://threads/environment-1/remote-command-center/terminal?terminalId=term-1",
   );
   assert.equal(
     showcaseSceneUrl("review", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center/review",
+    "t3code://threads/environment-1/remote-command-center/review",
   );
 });
 
