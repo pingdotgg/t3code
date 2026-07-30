@@ -995,6 +995,8 @@ export interface DesktopBridge {
     readonly port?: number;
   }) => Promise<DesktopServerExposureState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
+  /** User-initiated MagicDNS resolve for Tailscale HTTPS setup (may spawn CLI once). */
+  resolveTailscaleHttpsEndpoint: () => Promise<AdvertisedEndpoint | null>;
   getWslState: () => Promise<DesktopWslState>;
   setWslBackendEnabled: (enabled: boolean) => Promise<DesktopWslState>;
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;

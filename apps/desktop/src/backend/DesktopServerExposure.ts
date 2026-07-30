@@ -9,10 +9,20 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { readTailscaleStatus } from "@t3tools/tailscale";
+import {
+  DEFAULT_TAILSCALE_SERVE_PORT,
+  describeTailscaleStderrDiagnostic,
+  disableTailscaleServe,
+  ensureTailscaleServe,
+  formatTailscaleServeUserMessage,
+  readTailscaleStatus,
+  TailscaleCommandError,
+  type TailscaleStderrDiagnostic,
+} from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -203,6 +213,18 @@ const resolveDesktopCoreAdvertisedEndpoints = (
   return endpoints;
 };
 
+/**
+ * Reason text for a `tailscale` exit failure, or undefined when the CLI said
+ * nothing we recognize. Callers fall back to their own wording rather than
+ * echoing the exit code at the user.
+ */
+function describeTailscaleServeExitCause(cause: {
+  readonly stderrDiagnostic?: TailscaleStderrDiagnostic | undefined;
+}): string | undefined {
+  if (cause.stderrDiagnostic === undefined) return undefined;
+  return describeTailscaleStderrDiagnostic(cause.stderrDiagnostic) ?? undefined;
+}
+
 export class DesktopServerExposureNoNetworkAddressError extends Schema.TaggedErrorClass<DesktopServerExposureNoNetworkAddressError>()(
   "DesktopServerExposureNoNetworkAddressError",
   {
@@ -239,6 +261,54 @@ export class DesktopTailscaleServePersistenceError extends Schema.TaggedErrorCla
   }
 }
 
+export class DesktopTailscaleServeConfigureError extends Schema.TaggedErrorClass<DesktopTailscaleServeConfigureError>()(
+  "DesktopTailscaleServeConfigureError",
+  {
+    enabled: Schema.Boolean,
+    port: Schema.NullOr(Schema.Number),
+    localPort: Schema.Number,
+    /**
+     * Safe CLI summary extracted from known `tailscale serve` patterns.
+     * Never raw stderr; optional when this is a pure validation failure.
+     */
+    detail: Schema.optionalKey(Schema.String),
+    /** Admin URL from the CLI (`login.tailscale.com/f/serve...`) when present. */
+    configureUrl: Schema.NullOr(Schema.String),
+    /** Immediate CLI failure when configuration was attempted; absent for validation-only errors. */
+    cause: Schema.optionalKey(TailscaleCommandError),
+  },
+) {
+  override get message(): string {
+    // Derive only from structural attributes — never cause.message.
+    if (this.localPort <= 0 && this.cause === undefined) {
+      return "Local backend is not ready yet. Try again in a moment.";
+    }
+    const parts: string[] = [];
+    if (this.detail !== undefined) {
+      parts.push(this.detail);
+    } else if (this.enabled) {
+      parts.push(
+        `Failed to configure Tailscale Serve for the local backend on port ${this.localPort}.`,
+      );
+    } else {
+      parts.push(
+        `Failed to turn off Tailscale Serve on port ${this.port ?? DEFAULT_TAILSCALE_SERVE_PORT}.`,
+      );
+    }
+    if (!this.enabled) {
+      // Append regardless of `detail`: whatever the CLI failed on, the point the
+      // user must not miss is that the backend may still be exposed. A teardown
+      // failure that only says "could not run the tailscale CLI" reads like a
+      // no-op, which is exactly the silent-exposure case this error exists for.
+      parts.push("It may still be reachable on your tailnet.");
+    }
+    if (this.configureUrl !== null) {
+      parts.push(`To enable, visit: ${this.configureUrl}`);
+    }
+    return parts.join(" ");
+  }
+}
+
 export const DesktopServerExposureSetModeError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
@@ -246,10 +316,21 @@ export const DesktopServerExposureSetModeError = Schema.Union([
 export type DesktopServerExposureSetModeError = typeof DesktopServerExposureSetModeError.Type;
 export const isDesktopServerExposureSetModeError = Schema.is(DesktopServerExposureSetModeError);
 
+export const DesktopServerExposureSetTailscaleServeError = Schema.Union([
+  DesktopTailscaleServePersistenceError,
+  DesktopTailscaleServeConfigureError,
+]);
+export type DesktopServerExposureSetTailscaleServeError =
+  typeof DesktopServerExposureSetTailscaleServeError.Type;
+export const isDesktopServerExposureSetTailscaleServeError = Schema.is(
+  DesktopServerExposureSetTailscaleServeError,
+);
+
 export const DesktopServerExposureError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
   DesktopTailscaleServePersistenceError,
+  DesktopTailscaleServeConfigureError,
 ]);
 export type DesktopServerExposureError = typeof DesktopServerExposureError.Type;
 export const isDesktopServerExposureError = Schema.is(DesktopServerExposureError);
@@ -281,8 +362,15 @@ export class DesktopServerExposure extends Context.Service<
     readonly setTailscaleServeEnabled: (input: {
       readonly enabled: boolean;
       readonly port?: number;
-    }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
+    }) => Effect.Effect<DesktopServerExposureChange, DesktopServerExposureSetTailscaleServeError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
+    /**
+     * User-initiated MagicDNS resolve for the Tailscale HTTPS setup flow.
+     * Spawns `tailscale status` (cached). Unlike getAdvertisedEndpoints, this
+     * runs even when network access is local-only and Serve is still off so
+     * Settings can offer the toggle without probing on every panel mount.
+     */
+    readonly resolveTailscaleHttpsEndpoint: Effect.Effect<AdvertisedEndpoint | null>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
 
@@ -415,14 +503,15 @@ export const make = Effect.gen(function* () {
   // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
   // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
   // spawn re-triggers the "Other apps" TCC prompt.
-  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
-    readTailscaleStatus.pipe(
-      Effect.map((status) => status.magicDnsName),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-    ),
-    TAILSCALE_STATUS_CACHE_TTL,
-  );
+  const [cachedReadMagicDnsName, invalidateCachedMagicDnsName] =
+    yield* Effect.cachedInvalidateWithTTL(
+      readTailscaleStatus.pipe(
+        Effect.map((status) => status.magicDnsName),
+        Effect.orElseSucceed(() => null),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+      ),
+      TAILSCALE_STATUS_CACHE_TTL,
+    );
 
   const readNetworkInterfaces = networkInterfaces.read;
 
@@ -492,6 +581,118 @@ export const make = Effect.gen(function* () {
         enabled: input.enabled,
         ...(input.port === undefined ? {} : { port: input.port }),
       });
+
+      // Preflight Serve configuration before persisting so Enable can fail loudly
+      // with the same CLI guidance (including the admin setup URL) instead of a
+      // silent restart that leaves the toggle unchecked. If settings write fails
+      // after Serve is already active, roll Serve back so we do not leave
+      // unintended network exposure with UI/settings still showing disabled.
+      let preflightedServePort: number | null = null;
+      let revertEnableBinding: { readonly servePort: number; readonly localPort: number } | null =
+        null;
+      if (input.enabled) {
+        const current = yield* Ref.get(stateRef);
+        const servePort = input.port ?? current.tailscaleServePort;
+        const localPort = current.port;
+        if (localPort <= 0) {
+          return yield* new DesktopTailscaleServeConfigureError({
+            enabled: true,
+            port: servePort,
+            localPort,
+            configureUrl: null,
+          });
+        }
+
+        yield* ensureTailscaleServe({
+          localPort,
+          servePort,
+          localHost: "127.0.0.1",
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.mapError((cause) => {
+            // Lift only safe structural diagnostics from the CLI error; keep the
+            // full TailscaleCommandError as cause for the error chain/stack.
+            // Exit errors already carry a vetted `detail`; spawn/timeout/output
+            // errors have none, and the generic "port N" fallback hides the most
+            // common failure (Tailscale not installed or not on PATH), so use the
+            // shared user-facing copy for those.
+            const exitDetail =
+              cause._tag === "TailscaleCommandExitError"
+                ? describeTailscaleServeExitCause(cause)
+                : formatTailscaleServeUserMessage(cause);
+            const configureUrl =
+              cause._tag === "TailscaleCommandExitError" ? (cause.configureUrl ?? null) : null;
+            return new DesktopTailscaleServeConfigureError({
+              enabled: true,
+              port: servePort,
+              localPort,
+              ...(exitDetail === undefined ? {} : { detail: exitDetail }),
+              configureUrl,
+              cause,
+            });
+          }),
+        );
+        // Only roll back a binding this preflight actually created. When Serve
+        // was already enabled on the same port, `tailscale serve --bg` is a
+        // no-op and disabling it on a persistence failure would tear down a
+        // working HTTPS endpoint that settings still record as enabled.
+        preflightedServePort =
+          current.tailscaleServeEnabled && current.tailscaleServePort === servePort
+            ? null
+            : servePort;
+      } else {
+        // Tear Serve down here rather than leaving it to the child server's
+        // acquireRelease finalizer. That finalizer only exists when the *current*
+        // child booted with Serve enabled, so after a failed relaunch (which
+        // `lifecycle.relaunch` logs and swallows) disabling would persist
+        // `enabled: false` while `tailscale serve --https=<port>` stayed live on
+        // the tailnet. Fail loudly instead of reporting a teardown we did not do.
+        const current = yield* Ref.get(stateRef);
+        let removedBinding = false;
+        if (current.tailscaleServeEnabled) {
+          const servePort = current.tailscaleServePort;
+          removedBinding = yield* disableTailscaleServe({ servePort }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+            Effect.as(true),
+            // `serve off` on a port with nothing bound exits non-zero with
+            // "handler does not exist". The tailnet is already in the state the
+            // user asked for, so treating that as a failure would strand the
+            // toggle on and warn about an exposure that does not exist — and it
+            // would bite hardest in the very case this eager teardown exists
+            // for, where settings say enabled but no child ever bound Serve.
+            Effect.catchTags({
+              TailscaleCommandExitError: (cause) =>
+                cause.stderrDiagnostic === "no-existing-handler"
+                  ? Effect.succeed(false)
+                  : Effect.fail(cause),
+            }),
+            Effect.mapError((cause) => {
+              const exitDetail =
+                cause._tag === "TailscaleCommandExitError"
+                  ? describeTailscaleServeExitCause(cause)
+                  : formatTailscaleServeUserMessage(cause);
+              return new DesktopTailscaleServeConfigureError({
+                enabled: false,
+                port: servePort,
+                localPort: current.port,
+                ...(exitDetail === undefined ? {} : { detail: exitDetail }),
+                configureUrl: null,
+                cause,
+              });
+            }),
+          );
+          // Mirror the enable path's rollback. Serve is already down; if the
+          // settings write now fails, both stateRef and the persisted document
+          // still say enabled, so without this the UI would advertise an HTTPS
+          // endpoint that no longer answers. Only when we actually removed a
+          // binding, though — re-creating one that was never there would expose
+          // the backend rather than restore it.
+          if (removedBinding && current.port > 0) {
+            revertEnableBinding = { servePort, localPort: current.port };
+          }
+        }
+      }
+
       const result = yield* desktopSettings
         .setTailscaleServe({
           enabled: input.enabled,
@@ -506,6 +707,33 @@ export const make = Effect.gen(function* () {
                 cause,
               }),
           ),
+          // Put the tailnet back the way the still-unchanged settings describe
+          // it. `onExit` rather than `tapError`: the tailnet has already been
+          // changed by this point, so an interrupt (app quitting mid-toggle) or
+          // a defect must undo it too — `tapError` sees only typed failures, and
+          // skipping the rollback on those exits is exactly the silent-exposure
+          // case this whole path exists to prevent. Best-effort, since the
+          // original persistence failure is what the caller needs to see.
+          Effect.onExit((exit) => {
+            if (Exit.isSuccess(exit)) return Effect.void;
+            if (preflightedServePort !== null) {
+              return disableTailscaleServe({ servePort: preflightedServePort }).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Effect.ignore,
+              );
+            }
+            if (revertEnableBinding !== null) {
+              return ensureTailscaleServe({
+                localPort: revertEnableBinding.localPort,
+                servePort: revertEnableBinding.servePort,
+                localHost: "127.0.0.1",
+              }).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Effect.ignore,
+              );
+            }
+            return Effect.void;
+          }),
         );
 
       const nextState = yield* Ref.updateAndGet(stateRef, (current) => ({
@@ -516,39 +744,65 @@ export const make = Effect.gen(function* () {
 
       return {
         state: toContractState(nextState),
-        requiresRelaunch: result.changed,
+        // Always relaunch after a successful enable preflight so the child
+        // server re-binds Serve to its current listen port (which may change).
+        requiresRelaunch: result.changed || input.enabled,
       };
+    },
+  );
+
+  const resolveTailscaleEndpoints = Effect.fn("desktop.serverExposure.resolveTailscaleEndpoints")(
+    function* (input: { readonly state: RuntimeState }) {
+      const currentNetworkInterfaces = yield* readNetworkInterfaces;
+      return yield* resolveTailscaleAdvertisedEndpoints({
+        port: input.state.port,
+        serveEnabled: input.state.tailscaleServeEnabled,
+        servePort: input.state.tailscaleServePort,
+        networkInterfaces: currentNetworkInterfaces,
+        readMagicDnsName: cachedReadMagicDnsName,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
     },
   );
 
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
-    const currentNetworkInterfaces = yield* readNetworkInterfaces;
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),
       customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
     });
 
-    // Don't spawn the Tailscale CLI when the user hasn't opted into any
-    // network exposure. The spawn itself triggers a macOS "Other apps"
-    // TCC prompt on Mac App Store Tailscale builds.
+    // Don't spawn the Tailscale CLI on every Connections panel mount when the
+    // user hasn't opted into network exposure or Serve yet. MAS Tailscale's
+    // CLI lives in a sandbox, so each spawn re-fires the "Other apps" TCC
+    // prompt (#2745). Tailscale HTTPS setup uses resolveTailscaleHttpsEndpoint
+    // on explicit user interaction instead (Serve is independent of LAN bind).
     if (state.mode !== "network-accessible" && !state.tailscaleServeEnabled) {
       return coreEndpoints;
     }
 
-    const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
-      port: state.port,
-      serveEnabled: state.tailscaleServeEnabled,
-      servePort: state.tailscaleServePort,
-      networkInterfaces: currentNetworkInterfaces,
-      readMagicDnsName: cachedReadMagicDnsName,
-    }).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
+    const tailscaleEndpoints = yield* resolveTailscaleEndpoints({ state });
     return [...coreEndpoints, ...tailscaleEndpoints];
   }).pipe(Effect.withSpan("desktop.serverExposure.getAdvertisedEndpoints"));
+
+  const resolveTailscaleHttpsEndpoint = Effect.gen(function* () {
+    const state = yield* Ref.get(stateRef);
+    // This resolve is explicitly user-initiated ("turn on Tailscale HTTPS"), and
+    // the failure toast tells the user to start Tailscale and retry. Serving a
+    // stale cached miss for the rest of the TTL would make that retry fail for
+    // no reason, so force a fresh `tailscale status` here.
+    yield* invalidateCachedMagicDnsName;
+    const tailscaleEndpoints = yield* resolveTailscaleEndpoints({ state });
+    return (
+      tailscaleEndpoints.find(
+        (endpoint) =>
+          endpoint.provider.id === "tailscale" && endpoint.httpBaseUrl.startsWith("https:"),
+      ) ?? null
+    );
+  }).pipe(Effect.withSpan("desktop.serverExposure.resolveTailscaleHttpsEndpoint"));
 
   return DesktopServerExposure.of({
     getState,
@@ -557,6 +811,7 @@ export const make = Effect.gen(function* () {
     setMode,
     setTailscaleServeEnabled,
     getAdvertisedEndpoints,
+    resolveTailscaleHttpsEndpoint,
   });
 });
 

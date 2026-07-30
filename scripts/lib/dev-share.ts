@@ -34,6 +34,8 @@ const DIAGNOSTIC_EXPLANATIONS: Record<TailscaleStderrDiagnostic, string | undefi
   "no-existing-handler": "no mapping existed for that port",
   "not-logged-in": "this machine is not logged into a tailnet — run `tailscale up`",
   "permission-denied": "permission denied — `tailscale serve` may need elevated privileges",
+  "serve-not-enabled": "serve is not enabled for this tailnet — enable it in the admin console",
+  "no-https-certs": "this tailnet cannot issue the TLS certificates HTTPS serve requires",
   unknown: undefined,
 };
 

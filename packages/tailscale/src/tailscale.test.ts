@@ -13,6 +13,10 @@ import {
   buildTailscaleHttpsBaseUrl,
   disableTailscaleServe,
   ensureTailscaleServe,
+  extractTailscaleServeConfigureUrl,
+  describeTailscaleStderrDiagnostic,
+  stderrDiagnosticOf,
+  formatTailscaleServeUserMessage,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
@@ -315,8 +319,105 @@ describe("tailscale", () => {
       // key cannot reach a log through it either.
       assert.equal(error.stderrDiagnostic, "permission-denied");
       assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
+      // The URL channel is opt-in on a validated pattern, so an unrelated
+      // failure leaves it unset rather than carrying anything from stderr.
+      assert.equal(error.configureUrl, undefined);
     });
   });
+
+  it.effect("surfaces Tailscale Serve-not-enabled diagnostics without raw stderr", () => {
+    const configureUrl = "https://login.tailscale.com/f/serve?node=nExampleNodeIdForTests";
+    const stderr = [
+      "Serve is not enabled on your tailnet.",
+      "To enable, visit:",
+      "",
+      `         ${configureUrl}`,
+      "",
+      "tskey-auth-secret-token-value",
+    ].join("\n");
+    const layer = mockSpawnerLayer(() => ({
+      code: 1,
+      stderr,
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal(error.stderrDiagnostic, "serve-not-enabled");
+      assert.equal(error.configureUrl, configureUrl);
+      // The shared message stays label-free (it is logged); the prose lives at
+      // the UI edge. The validated admin URL rides along because it is the one
+      // actionable thing in the failure.
+      assert.equal(
+        error.message,
+        `tailscale serve exited with code 1. To enable, visit: ${configureUrl}`,
+      );
+      assert.equal(
+        describeTailscaleStderrDiagnostic("serve-not-enabled"),
+        "Serve is not enabled on your tailnet.",
+      );
+      assert.equal(formatTailscaleServeUserMessage(error), error.message);
+      assert.notInclude(error.message, "tskey-auth-secret-token-value");
+      assert.notProperty(error, "stderr");
+    });
+  });
+
+  it.effect("extracts only Tailscale Serve configure URLs from CLI text", () =>
+    Effect.sync(() => {
+      const configureUrl = "https://login.tailscale.com/f/serve?node=abc123";
+      assert.equal(extractTailscaleServeConfigureUrl(`visit ${configureUrl} please`), configureUrl);
+      assert.equal(
+        extractTailscaleServeConfigureUrl("https://evil.example/f/serve?node=abc123"),
+        null,
+      );
+
+      // The matched text runs to the end of the URL token, so a plausible
+      // origin and path are not enough: everything after `?` would otherwise be
+      // stderr riding into a logged error message. Only a node ID survives.
+      assert.equal(
+        extractTailscaleServeConfigureUrl(
+          "https://login.tailscale.com/f/serve?node=abc123&authkey=tskey-secret-value",
+        ),
+        configureUrl,
+      );
+      assert.equal(
+        extractTailscaleServeConfigureUrl("https://login.tailscale.com/f/serve?authkey=tskey-x"),
+        "https://login.tailscale.com/f/serve",
+      );
+      // A "node" that is not shaped like a stable ID is not one; drop it rather
+      // than pass it through.
+      assert.equal(
+        extractTailscaleServeConfigureUrl(
+          "https://login.tailscale.com/f/serve?node=tskey-secret%20leaked",
+        ),
+        "https://login.tailscale.com/f/serve",
+      );
+      // Serve-specific failures get their own labels, so the desktop toast can
+      // name the reason without any text being lifted out of stderr.
+      assert.equal(
+        stderrDiagnosticOf(
+          "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n  " + configureUrl,
+        ),
+        "serve-not-enabled",
+      );
+      assert.equal(
+        describeTailscaleStderrDiagnostic("serve-not-enabled"),
+        "Serve is not enabled on your tailnet.",
+      );
+      assert.equal(
+        stderrDiagnosticOf(
+          "500 Internal Server Error: your Tailscale account does not support getting TLS certs",
+        ),
+        "no-https-certs",
+      );
+      // An unrecognized failure stays unnamed rather than guessing.
+      assert.equal(describeTailscaleStderrDiagnostic("unknown"), null);
+    }),
+  );
 
   it.effect("disables tailscale serve through the process spawner service", () => {
     const commands: {
