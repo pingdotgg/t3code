@@ -128,6 +128,8 @@ function fakeClient({
   terminalRestart = async () => {},
   terminalClose = async () => {},
   setInteractionMode = async () => {},
+  settleThread = async () => {},
+  unsettleThread = async () => {},
   vcsStatus,
   runGitPull = async () => {},
   getAttachmentUrl = async () => null,
@@ -176,6 +178,8 @@ function fakeClient({
   readonly terminalRestart?: TuiClient["terminalRestart"];
   readonly terminalClose?: TuiClient["terminalClose"];
   readonly setInteractionMode?: TuiClient["setInteractionMode"];
+  readonly settleThread?: TuiClient["settleThread"];
+  readonly unsettleThread?: TuiClient["unsettleThread"];
   readonly vcsStatus?: VcsStatusResult;
   readonly runGitPull?: TuiClient["runGitPull"];
   readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
@@ -233,6 +237,8 @@ function fakeClient({
     terminalClear,
     terminalRestart,
     setInteractionMode,
+    settleThread,
+    unsettleThread,
     terminalClose,
     listTerminalIds,
     listModels,
@@ -1943,6 +1949,147 @@ describe("ChatView new-thread parity", () => {
       worktreePath: null,
       createWorktree: false,
     });
+    setup.renderer.destroy();
+  });
+});
+
+describe("ChatView thread settlement", () => {
+  const settlementConfig: TuiClient["getServerConfig"] = async () =>
+    ({
+      settings: DEFAULT_SERVER_SETTINGS,
+      environment: { capabilities: { threadSettlement: true } },
+    }) as never;
+
+  async function runPaletteCommand(
+    setup: Awaited<ReturnType<typeof testRender>>,
+    query: string,
+    visibleTitle: string,
+  ): Promise<void> {
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText(query);
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes(visibleTitle));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+  }
+
+  it("Given a settleable thread, when Settle runs from the palette, then the settle command targets it", async () => {
+    const settleCalls: string[] = [];
+    const fake = fakeClient({
+      detail: thread(),
+      getServerConfig: settlementConfig,
+      settleThread: async (threadId) => {
+        settleCalls.push(String(threadId));
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+    await runPaletteCommand(setup, "settle", "Settle thread");
+    await setup.waitFor(() => settleCalls.length === 1);
+    expect(settleCalls[0]).toBe("t1");
+    await setup.waitForFrame((frame) => frame.includes("Settled."));
+    setup.renderer.destroy();
+  });
+
+  it("Given a settled thread, then the palette offers Un-settle and pins it back to active", async () => {
+    const unsettleCalls: string[] = [];
+    const fake = fakeClient({
+      detail: thread(),
+      shellSnapshot: shell([
+        {
+          id: "t1",
+          projectId: "p1",
+          title: "Thread one",
+          updatedAt: "2026-07-13T00:00:00.000Z",
+          session: { status: "idle" },
+          settledOverride: "settled",
+          settledAt: "2026-07-13T00:00:00.000Z",
+        },
+      ] as unknown as OrchestrationShellSnapshot["threads"]),
+      getServerConfig: settlementConfig,
+      unsettleThread: async (threadId) => {
+        unsettleCalls.push(String(threadId));
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    // A settled-only sidebar renders slim rows (no project title), so wait for
+    // the thread row directly instead of using selectThread.
+    await React.act(async () => {
+      await setup.renderOnce();
+      fake.connect();
+      await setup.renderOnce();
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Thread one"));
+    await runPaletteCommand(setup, "settle", "Un-settle thread");
+    await setup.waitFor(() => unsettleCalls.length === 1);
+    expect(unsettleCalls[0]).toBe("t1");
+    setup.renderer.destroy();
+  });
+
+  it("Given a running session, when Settle runs, then it is blocked client-side with an explanation", async () => {
+    const settleCalls: string[] = [];
+    const fake = fakeClient({
+      detail: thread(),
+      shellSnapshot: shell([
+        {
+          id: "t1",
+          projectId: "p1",
+          title: "Thread one",
+          updatedAt: "2026-07-13T00:00:00.000Z",
+          session: { status: "running" },
+        },
+      ] as unknown as OrchestrationShellSnapshot["threads"]),
+      getServerConfig: settlementConfig,
+      settleThread: async (threadId) => {
+        settleCalls.push(String(threadId));
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+    await runPaletteCommand(setup, "settle", "Settle thread");
+    // The status line clips to the sidebar width, so match a stable prefix.
+    await setup.waitForFrame((frame) => frame.includes("still needs"));
+    expect(settleCalls).toHaveLength(0);
+    setup.renderer.destroy();
+  });
+
+  it("Given a server without the capability, then the palette offers no settle command", async () => {
+    const fake = fakeClient({ detail: thread() });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("settle");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("settle") && !frame.includes("Settle thread"),
+    );
     setup.renderer.destroy();
   });
 });

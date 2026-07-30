@@ -58,10 +58,12 @@ import {
   respondToThreadUserInput,
   setThreadInteractionMode,
   setThreadRuntimeMode,
+  settleThread as settleThreadOp,
   startThreadTurn,
   revertThreadCheckpoint,
   stopThreadSession,
   unarchiveThread as unarchiveThreadOp,
+  unsettleThread as unsettleThreadOp,
   updateThreadMetadata,
 } from "@t3tools/client-runtime/operations";
 import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
@@ -494,6 +496,10 @@ export interface TuiClient {
   readonly archiveThread: (threadId: ThreadId) => Promise<void>;
   readonly unarchiveThread: (threadId: ThreadId) => Promise<void>;
   readonly deleteThread: (threadId: ThreadId) => Promise<void>;
+  /** Park the thread in the sidebar's Settled shelf. The server rejects it while the thread still needs attention. */
+  readonly settleThread: (threadId: ThreadId) => Promise<void>;
+  /** Return a settled thread to Active, pinned there until real activity clears the pin server-side. */
+  readonly unsettleThread: (threadId: ThreadId) => Promise<void>;
   readonly stopSession: (threadId: ThreadId) => Promise<void>;
   readonly revertCheckpoint: (threadId: ThreadId, turnCount: number) => Promise<void>;
   /** Live git status for a worktree (folded from the snapshot/local/remote stream). */
@@ -927,6 +933,12 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
 
     deleteThread: (threadId) =>
       runtime.runPromise(deleteThreadOp({ threadId }).pipe(Effect.asVoid)),
+
+    settleThread: (threadId) =>
+      runtime.runPromise(settleThreadOp({ threadId }).pipe(Effect.asVoid)),
+
+    unsettleThread: (threadId) =>
+      runtime.runPromise(unsettleThreadOp({ threadId, reason: "user" }).pipe(Effect.asVoid)),
 
     stopSession: (threadId) =>
       runtime.runPromise(stopThreadSession({ threadId }).pipe(Effect.asVoid)),
