@@ -1577,28 +1577,57 @@ class T3PlatformAdapter(BasePlatformAdapter):
                 )
 
         async def restore_prior_durable_configuration() -> None:
+            failures: list[tuple[str, Exception]] = []
+
+            async def attempt(
+                label: str,
+                operation: Callable[[], Coroutine[Any, Any, Any]],
+            ) -> None:
+                try:
+                    await operation()
+                except Exception as exc:
+                    failures.append((label, exc))
+
             if durable_store is not None:
-                await durable_store.set_model_override(
-                    session_id, durable_override_snapshot
-                )
                 if (
                     durable_entry is not None
                     and durable_entry_was_auto_reset is not None
                 ):
                     durable_entry.was_auto_reset = durable_entry_was_auto_reset
+                await attempt(
+                    "session routing override",
+                    lambda: durable_store.set_model_override(
+                        session_id, durable_override_snapshot
+                    ),
+                )
             if session_db is not None and session_db_id and session_db_row is not None:
                 prior_db_model = session_db_row.get("model")
-                await session_db.update_session_model(
-                    session_db_id, prior_db_model
+                await attempt(
+                    "session database model",
+                    lambda: session_db.update_session_model(
+                        session_db_id, prior_db_model
+                    ),
                 )
-                await session_db.update_session_meta(
-                    session_db_id,
-                    session_db_row.get("model_config"),
-                    prior_db_model,
+                await attempt(
+                    "session database metadata",
+                    lambda: session_db.update_session_meta(
+                        session_db_id,
+                        session_db_row.get("model_config"),
+                        prior_db_model,
+                    ),
                 )
-                await session_db.update_system_prompt(
-                    session_db_id, session_db_row.get("system_prompt")
+                await attempt(
+                    "session database system prompt",
+                    lambda: session_db.update_system_prompt(
+                        session_db_id, session_db_row.get("system_prompt")
+                    ),
                 )
+            if failures:
+                failed_surfaces = ", ".join(label for label, _error in failures)
+                raise _TurnConfigurationError(
+                    "Hermes could not fully roll back session configuration "
+                    f"({failed_surfaces})"
+                ) from failures[0][1]
 
         def release_detached_agent_cache() -> None:
             if not detached_agent_cache.existed:

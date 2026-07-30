@@ -940,6 +940,143 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error["type"], "protocol.error")
         self.assertEqual(error["requestId"], "start-atomic-config")
 
+    async def test_store_rollback_failure_still_restores_session_database(self):
+        thread_id = "thread-partial-durable-rollback"
+        session_id = await self._ensure_thread(thread_id)
+        runner = FakeGatewayRunner()
+        prior_model = {"provider": "old-provider", "model": "old-model"}
+        runner._session_model_overrides[session_id] = dict(prior_model)
+        session_entry = types.SimpleNamespace(
+            session_id="partial-rollback-session",
+            was_auto_reset=False,
+        )
+
+        class FailingRestoreStore:
+            def __init__(self):
+                self.persisted = dict(prior_model)
+                self.fail_restore = False
+                self.restore_attempts = 0
+
+            async def get_or_create_session(self, source):
+                del source
+                return session_entry
+
+            async def get_model_override(self, key):
+                self.assert_session(key)
+                return dict(self.persisted)
+
+            async def set_model_override(self, key, value):
+                self.assert_session(key)
+                if self.fail_restore:
+                    self.restore_attempts += 1
+                    raise RuntimeError("routing store restore failed")
+                self.persisted = dict(value)
+
+            @staticmethod
+            def assert_session(key):
+                if key != session_id:
+                    raise AssertionError(f"unexpected session key: {key}")
+
+        prior_db_row = {
+            "model": "old-model",
+            "model_config": '{"browser_model_lock":"old-model"}',
+            "system_prompt": "prior system prompt",
+        }
+
+        class RecordingSessionDB:
+            def __init__(self):
+                self.row = dict(prior_db_row)
+                self.calls = []
+
+            async def get_session(self, key):
+                self.assert_session(key)
+                return dict(self.row)
+
+            async def update_session_model(self, key, model):
+                self.assert_session(key)
+                self.calls.append(("model", model))
+                self.row["model"] = model
+                self.row["model_config"] = None
+                self.row["system_prompt"] = None
+
+            async def update_session_meta(self, key, model_config, model=None):
+                self.assert_session(key)
+                self.calls.append(("meta", model_config, model))
+                self.row["model_config"] = model_config
+                if model is not None:
+                    self.row["model"] = model
+
+            async def update_system_prompt(self, key, system_prompt):
+                self.assert_session(key)
+                self.calls.append(("prompt", system_prompt))
+                self.row["system_prompt"] = system_prompt
+
+            @staticmethod
+            def assert_session(key):
+                if key != session_entry.session_id:
+                    raise AssertionError(f"unexpected database session: {key}")
+
+        store = FailingRestoreStore()
+        session_db = RecordingSessionDB()
+        runner.async_session_store = store
+        runner._session_db = session_db
+
+        async def handler(event):
+            tokens = shlex.split(event.text)
+            command_session_id = runner._session_key_for_source(event.source)
+            if tokens[0] == "/model":
+                selected = {
+                    "model": tokens[1],
+                    "provider": tokens[tokens.index("--provider") + 1],
+                }
+                await session_db.update_session_model(
+                    session_entry.session_id, selected["model"]
+                )
+                runner._session_model_overrides[command_session_id] = selected
+                await store.set_model_override(command_session_id, selected)
+                store.fail_restore = True
+                return "hidden"
+            raise RuntimeError("reasoning command failed")
+
+        self.adapter.gateway_runner = runner
+        self.adapter._message_handler = handler
+        await self.adapter._handle_server_frame(
+            {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": "start-partial-durable-rollback",
+                "threadId": thread_id,
+                "sessionId": session_id,
+                "turnId": "turn-partial-durable-rollback",
+                "text": "Must not run",
+                "modelSelection": {
+                    "mode": "specific",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.4",
+                },
+                "reasoningEffort": "high",
+            }
+        )
+
+        self.assertEqual(store.restore_attempts, 1)
+        self.assertEqual(session_db.row, prior_db_row)
+        self.assertEqual(
+            session_db.calls,
+            [
+                ("model", "gpt-5.4"),
+                ("model", "old-model"),
+                ("meta", prior_db_row["model_config"], "old-model"),
+                ("prompt", prior_db_row["system_prompt"]),
+            ],
+        )
+        self.assertEqual(
+            runner._session_model_overrides, {session_id: prior_model}
+        )
+        error = self.connection.messages[-1]
+        self.assertEqual(error["type"], "protocol.error")
+        self.assertEqual(error["code"], "invalid-message")
+        self.assertIn("session routing override", error["message"])
+
     async def test_failed_reasoning_does_not_rollback_a_later_session(self):
         first_thread = "thread-overlap-first"
         second_thread = "thread-overlap-second"
