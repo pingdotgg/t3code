@@ -1883,46 +1883,69 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
-    const resumingServerUpdate =
-      serverUpdateState.status === "running" && serverUpdateState.stage === "resuming";
-    if (activeEnvironmentUnavailableState && !resumingServerUpdate) {
-      const connection = activeEnvironmentUnavailableState.connection;
-      const isReconnecting =
-        connection.phase === "connecting" || connection.phase === "reconnecting";
-      items.push({
-        id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
-        variant: connection.phase === "error" ? "error" : "warning",
-        icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(connection)}`,
-        description:
-          connection.error ??
-          "Reconnect this environment before sending messages or running actions.",
-        actions: (
-          <>
-            <Button
-              size="xs"
-              disabled={isReconnecting}
-              onClick={() =>
-                void handleReconnectActiveEnvironment(
-                  activeEnvironmentUnavailableState.environmentId,
-                )
-              }
-            >
-              {isReconnecting ? "Reconnecting..." : "Reconnect"}
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => void navigate({ to: "/settings/connections" })}
-            >
-              Connections
-            </Button>
-          </>
-        ),
-      });
+    const updateRunning = serverUpdateState.status === "running";
+    const unavailableConnection = activeEnvironmentUnavailableState?.connection ?? null;
+    const environmentReconnecting =
+      unavailableConnection !== null &&
+      (unavailableConnection.phase === "connecting" ||
+        unavailableConnection.phase === "reconnecting");
+    // Reconnecting to a version-skewed server usually means the server is
+    // restarting mid-update (e.g. a refresh wiped the in-memory update
+    // state). Fold the reconnect and version banners into one calm line
+    // instead of stacking "Failed to connect" on "versions differ".
+    const reconnectingThroughVersionSkew =
+      !updateRunning && environmentReconnecting && versionMismatch !== null;
+    if (activeEnvironmentUnavailableState && unavailableConnection && !updateRunning) {
+      if (reconnectingThroughVersionSkew) {
+        items.push({
+          id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
+          variant: "default",
+          icon: (
+            <span
+              className="size-1.5 animate-status-pulse rounded-full bg-foreground"
+              aria-hidden="true"
+            />
+          ),
+          title: `Reconnecting to ${activeEnvironmentUnavailableState.label}`,
+          description: "It may be finishing an update. One moment.",
+        });
+      } else {
+        items.push({
+          id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
+          variant: unavailableConnection.phase === "error" ? "error" : "warning",
+          icon: <WifiOffIcon />,
+          title: `${activeEnvironmentUnavailableState.label}: ${connectionStatusTitle(unavailableConnection)}`,
+          description:
+            unavailableConnection.error ??
+            "Reconnect this environment before sending messages or running actions.",
+          actions: (
+            <>
+              <Button
+                size="xs"
+                disabled={environmentReconnecting}
+                onClick={() =>
+                  void handleReconnectActiveEnvironment(
+                    activeEnvironmentUnavailableState.environmentId,
+                  )
+                }
+              >
+                {environmentReconnecting ? "Reconnecting..." : "Reconnect"}
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => void navigate({ to: "/settings/connections" })}
+              >
+                Connections
+              </Button>
+            </>
+          ),
+        });
+      }
     }
     if (
       serverUpdateEnvironmentId &&
+      !reconnectingThroughVersionSkew &&
       (serverUpdateState.status !== "idle" ||
         (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey))
     ) {
@@ -1930,8 +1953,15 @@ function ChatViewContent(props: ChatViewProps) {
       const updateFailed = serverUpdateState.status === "failed";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
-        variant: updateFailed ? "error" : "warning",
-        icon: <TriangleAlertIcon />,
+        variant: updateFailed ? "error" : updateInProgress ? "default" : "warning",
+        icon: updateInProgress ? (
+          <span
+            className="size-1.5 animate-status-pulse rounded-full bg-foreground"
+            aria-hidden="true"
+          />
+        ) : (
+          <TriangleAlertIcon />
+        ),
         title:
           updateInProgress || updateFailed
             ? `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
@@ -1940,7 +1970,6 @@ function ChatViewContent(props: ChatViewProps) {
           updateInProgress || updateFailed ? (
             <ServerUpdateProgress
               fromVersion={serverUpdateState.fromVersion}
-              serverLabel={versionMismatchServerLabel}
               state={serverUpdateState}
             />
           ) : versionMismatch ? (
