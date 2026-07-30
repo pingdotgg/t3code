@@ -365,7 +365,13 @@ export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
 ): ServerConfig | null {
-  if (projection?.source === "live") return projection.config;
+  if (
+    projection?.source === "live" &&
+    (initialConfig === null ||
+      projection.config.environment.serverVersion === initialConfig.environment.serverVersion)
+  ) {
+    return projection.config;
+  }
   return initialConfig ?? projection?.config ?? null;
 }
 

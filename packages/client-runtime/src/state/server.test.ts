@@ -211,9 +211,16 @@ describe("server state projection", () => {
   });
 
   it("prefers an active session config over cache until a live event arrives", () => {
-    const cached = { ...CONFIG, settings: { source: "cache" } } as unknown as ServerConfig;
-    const initial = { ...CONFIG, settings: { source: "session" } } as unknown as ServerConfig;
-    const live = { ...CONFIG, settings: { source: "live" } } as unknown as ServerConfig;
+    const config = (source: string, serverVersion: string) =>
+      ({
+        ...CONFIG,
+        environment: { serverVersion },
+        settings: { source },
+      }) as unknown as ServerConfig;
+    const cached = config("cache", "0.0.29");
+    const staleLive = config("stale-live", "0.0.29");
+    const initial = config("session", "0.0.30");
+    const live = config("live", "0.0.30");
 
     expect(
       resolveServerConfigValue(
@@ -221,6 +228,16 @@ describe("server state projection", () => {
           config: cached,
           latestEvent: snapshotEvent(cached),
           source: "cache",
+        },
+        initial,
+      ),
+    ).toBe(initial);
+    expect(
+      resolveServerConfigValue(
+        {
+          config: staleLive,
+          latestEvent: snapshotEvent(staleLive),
+          source: "live",
         },
         initial,
       ),
