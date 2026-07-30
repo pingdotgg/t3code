@@ -27,7 +27,7 @@ import {
 } from "../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementService,
-  ThreadManagementThreadNotSendableError,
+  ThreadManagementThreadArchivedError,
   type ThreadManagementSendResult,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -177,9 +177,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
     switch (options.continuation ?? "queued") {
       case "fails":
         return Effect.fail(
-          new ThreadManagementThreadNotSendableError({
+          new ThreadManagementThreadArchivedError({
             threadId,
-            reason: { _tag: "Archived" },
           }),
         );
       case "dies":
