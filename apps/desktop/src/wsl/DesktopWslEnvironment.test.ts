@@ -15,6 +15,7 @@ import {
   DesktopWslDistroListError,
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
+  formatPackagedRuntimeStageFailure,
   formatWslShellTransportFailureReason,
   parseNodePath,
   parseNodeVersion,
@@ -141,6 +142,34 @@ describe("buildPackagedRuntimeStageScript", () => {
       'runtimeRoot:%s\\n\' "$current_dir"',
     );
     expect(script.slice(cacheHit, sourceConversion)).toContain("exit 0");
+  });
+
+  it("serializes cache misses and rechecks the cache before reading the mounted source", () => {
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\app.asar.unpacked",
+      "1.2.3-x64",
+    );
+    const firstCacheCheck = script.indexOf('if [ "$(cat "$manifest_path"');
+    const lock = script.indexOf("flock -x 9");
+    const secondCacheCheck = script.indexOf('if [ "$(cat "$manifest_path"', firstCacheCheck + 1);
+    const sourceConversion = script.indexOf("wslpath -u");
+
+    expect(lock).toBeGreaterThan(firstCacheCheck);
+    expect(secondCacheCheck).toBeGreaterThan(lock);
+    expect(sourceConversion).toBeGreaterThan(secondCacheCheck);
+    expect(script).toContain('if ! source_root=$(wslpath -u "$windows_repo_root"); then');
+    expect(script.slice(sourceConversion)).toContain("exit 5");
+  });
+});
+
+describe("formatPackagedRuntimeStageFailure", () => {
+  it("keeps a packaged wslpath failure retryable while WSL starts", () => {
+    expect(formatPackagedRuntimeStageFailure(5, "wslpath conversion failed")).toEqual({
+      ok: false,
+      reason: "wslpath conversion failed",
+      fatal: false,
+      retryLimit: 12,
+    });
   });
 });
 

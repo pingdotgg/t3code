@@ -27,6 +27,8 @@ const USER_HOME_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 const PACKAGED_RUNTIME_TRANSPORT_RETRY_LIMIT = 2;
+const PACKAGED_RUNTIME_WSLPATH_FAILURE_EXIT_CODE = 5;
+const PACKAGED_RUNTIME_WSLPATH_RETRY_LIMIT = 12;
 
 export interface EnsureWslNodePtyOptions {
   readonly allowBuild?: boolean;
@@ -415,6 +417,12 @@ export const buildPackagedRuntimeStageScript = (
   runtimeId: string,
 ): string => {
   const normalizedWindowsRepoRoot = windowsRepoRoot.replaceAll("\\", "/");
+  const cacheHitScript = [
+    'if [ "$(cat "$manifest_path" 2>/dev/null || true)" = "$runtime_id" ] && [ -f "$entry_path" ]; then',
+    `  printf 'runtimeRoot:%s\\n' "$current_dir"`,
+    "  exit 0",
+    "fi",
+  ];
   return [
     "set -eu",
     `runtime_id=${shellQuote(runtimeId)}`,
@@ -427,14 +435,25 @@ export const buildPackagedRuntimeStageScript = (
     'current_dir="$runtime_base/current"',
     'manifest_path="$current_dir/.t3code-runtime-id"',
     'entry_path="$current_dir/apps/server/dist/bin.mjs"',
-    'if [ "$(cat "$manifest_path" 2>/dev/null || true)" = "$runtime_id" ] && [ -f "$entry_path" ]; then',
-    `  printf 'runtimeRoot:%s\\n' "$current_dir"`,
-    "  exit 0",
+    ...cacheHitScript,
+    "",
+    'mkdir -p "$runtime_base"',
+    "if ! command -v flock >/dev/null 2>&1; then",
+    '  printf "packaged WSL runtime preparation requires flock (util-linux)\\n" >&2',
+    "  exit 6",
     "fi",
+    'exec 9>"$runtime_base/.prepare.lock"',
+    "flock -x 9",
+    // A concurrent preflight may have populated the cache while this process
+    // waited for the lock. Re-check before touching the Windows mount.
+    ...cacheHitScript,
     "",
     // The installed artifact only crosses /mnt/c on a cache miss. Normal
     // launches return above without converting or reading the Windows path.
-    'source_root=$(wslpath -u "$windows_repo_root")',
+    'if ! source_root=$(wslpath -u "$windows_repo_root"); then',
+    '  printf "wslpath conversion failed for packaged runtime source: %s\\n" "$windows_repo_root" >&2',
+    `  exit ${PACKAGED_RUNTIME_WSLPATH_FAILURE_EXIT_CODE}`,
+    "fi",
     'case "$source_root" in',
     "  /*) ;;",
     '  *) printf "wslpath returned a non-absolute path: %s\\n" "$source_root" >&2; exit 2 ;;',
@@ -445,7 +464,6 @@ export const buildPackagedRuntimeStageScript = (
     "  exit 3",
     "fi",
     "",
-    'mkdir -p "$runtime_base"',
     'staging_dir="$runtime_base/.staging-$$"',
     'previous_dir="$runtime_base/.previous-$$"',
     'rm -rf -- "$staging_dir" "$previous_dir"',
@@ -474,6 +492,26 @@ export const buildPackagedRuntimeStageScript = (
     "trap - EXIT HUP INT TERM",
     `printf 'runtimeRoot:%s\\n' "$current_dir"`,
   ].join("\n");
+};
+
+export const formatPackagedRuntimeStageFailure = (
+  exitCode: number,
+  outputTail: string,
+): PrepareWslPackagedRuntimeResult => {
+  if (exitCode === PACKAGED_RUNTIME_WSLPATH_FAILURE_EXIT_CODE) {
+    return {
+      ok: false,
+      reason: outputTail || "wslpath conversion failed for packaged runtime source",
+      fatal: false,
+      retryLimit: PACKAGED_RUNTIME_WSLPATH_RETRY_LIMIT,
+    };
+  }
+
+  return {
+    ok: false,
+    reason: `Failed to prepare the packaged WSL runtime (exit ${exitCode}): ${outputTail || "no output captured"}`,
+    fatal: true,
+  };
 };
 
 const parsePackagedRuntimeRoot = (stdout: string): string | null => {
@@ -516,11 +554,7 @@ const preparePackagedRuntimeImpl = (
     }
 
     const outputTail = `${stage.stdout}${stage.stderr}`.trim().slice(-500);
-    return {
-      ok: false,
-      reason: `Failed to prepare the packaged WSL runtime (exit ${stage.exitCode}): ${outputTail || "no output captured"}`,
-      fatal: true,
-    } as const;
+    return formatPackagedRuntimeStageFailure(stage.exitCode, outputTail);
   });
 
 const ensureNodePtyImpl = (
