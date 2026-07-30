@@ -56,7 +56,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import {
-  resolveSharedSettingsTailEntries,
+  SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE,
   type SettingsMode,
   type SharedSettingsTailSectionId,
 } from "./settingsContract";
@@ -533,9 +533,9 @@ const SHARED_SETTINGS_TAIL_COMPONENTS = {
 function SharedSettingsTail({ mode }: { mode: SettingsMode }) {
   return (
     <>
-      {resolveSharedSettingsTailEntries(mode, SHARED_SETTINGS_TAIL_COMPONENTS).map((entry) => {
-        const Section = entry.component;
-        return <Section key={entry.id} />;
+      {SHARED_SETTINGS_TAIL_SECTION_IDS_BY_MODE[mode].map((sectionId) => {
+        const Section = SHARED_SETTINGS_TAIL_COMPONENTS[sectionId];
+        return <Section key={sectionId} />;
       })}
     </>
   );

@@ -15,7 +15,6 @@ import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "re
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
-import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ClerkSettingsSheetDetentProvider } from "./features/cloud/ClerkSettingsSheetDetent";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
@@ -47,11 +46,7 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
-import {
-  createArchiveSettingsRouteScreens,
-  SETTINGS_ARCHIVE_ROUTE_CONTRACT,
-  SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT,
-} from "./features/settings/settingsContract";
+import { SETTINGS_ARCHIVE_AND_WAITLIST_ROUTE_SCREENS } from "./features/settings/settingsRouteScreens";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -136,12 +131,6 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
-const ARCHIVE_SETTINGS_ROUTE_SCREENS = createArchiveSettingsRouteScreens({
-  archiveScreen: ArchivedThreadsRouteScreen,
-  waitlistAliasScreen: SettingsAuthRouteScreen,
-  createScreen: (definition) => createNativeStackScreen(definition),
-});
-
 const SettingsSheetStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
@@ -171,8 +160,6 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Add Environment",
       },
     }),
-    [SETTINGS_ARCHIVE_ROUTE_CONTRACT.name]:
-      ARCHIVE_SETTINGS_ROUTE_SCREENS[SETTINGS_ARCHIVE_ROUTE_CONTRACT.name],
     SettingsAppearance: createNativeStackScreen({
       screen: SettingsAppearanceRouteScreen,
       linking: "appearance",
@@ -194,9 +181,7 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Sign in",
       },
     }),
-    // Keep the old deep link working after the Connect GA launch.
-    [SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name]:
-      ARCHIVE_SETTINGS_ROUTE_SCREENS[SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name],
+    ...SETTINGS_ARCHIVE_AND_WAITLIST_ROUTE_SCREENS,
   },
 });
 
