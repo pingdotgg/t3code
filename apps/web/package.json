@@ -38,6 +38,7 @@
     "jose": "catalog:",
     "lexical": "^0.41.0",
     "lucide-react": "^0.564.0",
+    "mermaid": "^11.16.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
