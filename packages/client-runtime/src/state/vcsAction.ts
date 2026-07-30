@@ -391,14 +391,17 @@ export function applyVcsActionProgressEvent(
       };
     case "action_finished":
       return {
-        ...EMPTY_VCS_ACTION_STATE,
+        ...current,
+        isRunning: true,
         actionId: event.actionId,
         action: event.action,
         operation: "run_change_request",
+        error: null,
       };
     case "action_failed":
       return {
-        ...EMPTY_VCS_ACTION_STATE,
+        ...current,
+        isRunning: true,
         actionId: event.actionId,
         action: event.action,
         operation: "run_change_request",
@@ -468,6 +471,12 @@ export function createVcsActionManager<R, E>(
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
         };
+        const clearOwnedState = Effect.sync(() => {
+          const current = registry.get(stateAtom);
+          if (current.actionId === input.actionId) {
+            registry.set(stateAtom, EMPTY_VCS_ACTION_STATE);
+          }
+        });
         return consumeVcsActionProgress(
           runStreamInEnvironment(
             target.environmentId,
@@ -496,6 +505,7 @@ export function createVcsActionManager<R, E>(
           },
         ).pipe(
           Effect.ensuring(invalidateCachedVcsRefs(registry, target)),
+          Effect.tap(() => clearOwnedState),
           Effect.tapError((error) =>
             Effect.sync(() => {
               const current = registry.get(stateAtom);
@@ -507,6 +517,7 @@ export function createVcsActionManager<R, E>(
               }
             }),
           ),
+          Effect.onInterrupt(() => clearOwnedState),
         );
       },
     });
