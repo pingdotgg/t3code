@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -1312,6 +1313,7 @@ it.layer(SharedApplicationDataPlaneTestLayer)("visited projection", (it) => {
       assert.isNull(created.thread.lastVisitedAt);
       const createdUpdatedAt = created.thread.updatedAt;
 
+      yield* TestClock.adjust("1 second");
       yield* orchestrator.dispatch({
         type: "thread.visit",
         commandId: CommandId.make("runtime-layer-visited-thread-visit"),
