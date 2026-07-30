@@ -50,6 +50,7 @@ import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
 import Migration0035 from "./Migrations/035_ThreadColdArchive.ts";
 import Migration0036 from "./Migrations/036_DeletedThreadCleanupQueue.ts";
 import Migration0037 from "./Migrations/037_ProjectionThreadTitleRegeneration.ts";
+import Migration0038 from "./Migrations/038_ThreadColdArchiveCompatibility.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -99,6 +100,7 @@ export const migrationEntries = [
   [35, "ThreadColdArchive", Migration0035],
   [36, "DeletedThreadCleanupQueue", Migration0036],
   [37, "ProjectionThreadTitleRegeneration", Migration0037],
+  [38, "ThreadColdArchiveCompatibility", Migration0038],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
