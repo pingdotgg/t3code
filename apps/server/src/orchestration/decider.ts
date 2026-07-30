@@ -697,7 +697,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           ...(requestIsCurrent && command.title !== undefined ? { title: command.title } : {}),
           ...(requestIsCurrent ? { titleRegeneration: null } : {}),
-          updatedAt: occurredAt,
+          updatedAt: requestIsCurrent ? occurredAt : thread.updatedAt,
         },
       };
     }
