@@ -583,11 +583,16 @@ describe("vcsActionState", () => {
         const targetKey = { environmentId, cwd };
         const successfulActionId = "invalidate-success";
         const failedActionId = "invalidate-failure";
+        const interruptedActionId = "invalidate-interrupted";
         const successfulTransportActionId = createVcsActionTransportId(
           targetKey,
           successfulActionId,
         );
         const failedTransportActionId = createVcsActionTransportId(targetKey, failedActionId);
+        const interruptedTransportActionId = createVcsActionTransportId(
+          targetKey,
+          interruptedActionId,
+        );
         const client = {
           [WS_METHODS.gitRunStackedAction]: (input: { readonly actionId: string }) =>
             input.actionId === successfulTransportActionId
@@ -600,16 +605,18 @@ describe("vcsActionState", () => {
                     result,
                   }),
                 )
-              : Stream.make(
-                  progress({
-                    kind: "action_failed",
-                    actionId: failedTransportActionId,
-                    cwd,
-                    action,
-                    phase: "push",
-                    message: "push failed after creating the branch",
-                  }),
-                ),
+              : input.actionId === interruptedTransportActionId
+                ? Stream.fromEffect(Effect.interrupt)
+                : Stream.make(
+                    progress({
+                      kind: "action_failed",
+                      actionId: failedTransportActionId,
+                      cwd,
+                      action,
+                      phase: "push",
+                      message: "push failed after creating the branch",
+                    }),
+                  ),
         } as unknown as WsRpcProtocolClient;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
           target,
@@ -679,6 +686,21 @@ describe("vcsActionState", () => {
         });
         expect(registry.get(state).revision).toBe(2);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
+
+        const interruptedResult = yield* Effect.promise(() =>
+          manager.runStackedAction(targetKey).run(registry, {
+            actionId: interruptedActionId,
+            action,
+          }),
+        );
+
+        expect(AsyncResult.isFailure(interruptedResult)).toBe(true);
+        if (AsyncResult.isFailure(interruptedResult)) {
+          expect(Cause.hasInterruptsOnly(interruptedResult.cause)).toBe(true);
+        }
+        expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
+        expect(registry.get(state).revision).toBe(3);
+        expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
       }),
     ),
   );
