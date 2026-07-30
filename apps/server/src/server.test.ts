@@ -9,6 +9,7 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
   CommandId,
+  CURRENT_KEYBINDING_COMMAND_SET_VERSION,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   EventId,
@@ -27,6 +28,7 @@ import {
   ProviderInstanceId,
   ResolvedKeybindingRule,
   ThreadId,
+  WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
@@ -4318,6 +4320,143 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.deepEqual(response.issues, []);
       assert.deepEqual(response.keybindings, [resolved]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("projects keybinding commands for each websocket client version", () =>
+    Effect.gen(function* () {
+      const currentCommands = [
+        "terminal.toggle",
+        "filePicker.toggle",
+        "projectSearch.toggle",
+        "script.format.run",
+      ] satisfies Array<ResolvedKeybindingRule["command"]>;
+      const shortcut = {
+        key: "k",
+        metaKey: false,
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false,
+        modKey: true,
+      };
+      const keybindings = currentCommands.map((command) => ({
+        command,
+        shortcut,
+      })) satisfies ReadonlyArray<ResolvedKeybindingRule>;
+      const issues = [
+        {
+          kind: "keybindings.invalid-entry",
+          message: "Preserved issue",
+          index: 4,
+        },
+      ] as const;
+      const changeEvent = { keybindings, issues };
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            loadConfigState: Effect.succeed({ keybindings, issues }),
+            streamChanges: Stream.succeed(changeEvent),
+            upsertKeybindingRule: () => Effect.succeed(keybindings),
+            removeKeybindingRule: () => Effect.succeed(keybindings),
+          },
+        },
+      });
+
+      const unnegotiatedUrl = yield* getWsServerUrl("/ws");
+      const oldClientUrl = new URL(unnegotiatedUrl);
+      oldClientUrl.searchParams.set(WS_KEYBINDING_COMMAND_SET_QUERY_PARAM, "0");
+      const currentClientUrl = new URL(unnegotiatedUrl);
+      currentClientUrl.searchParams.set(
+        WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
+        CURRENT_KEYBINDING_COMMAND_SET_VERSION,
+      );
+      const legacyCommands = ["terminal.toggle", "script.format.run"];
+      const commands = (rules: ReadonlyArray<ResolvedKeybindingRule>) =>
+        rules.map(({ command }) => command);
+      const mutationRule: KeybindingRule = {
+        command: "terminal.toggle",
+        key: "ctrl+t",
+      };
+
+      const unnegotiatedConfig = yield* Effect.scoped(
+        withWsRpcClient(unnegotiatedUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
+      );
+      const oldClientConfig = yield* Effect.scoped(
+        withWsRpcClient(oldClientUrl.toString(), (client) =>
+          client[WS_METHODS.serverGetConfig]({}),
+        ),
+      );
+      const currentClientConfig = yield* Effect.scoped(
+        withWsRpcClient(currentClientUrl.toString(), (client) =>
+          client[WS_METHODS.serverGetConfig]({}),
+        ),
+      );
+      const unnegotiatedEvents = yield* Effect.scoped(
+        withWsRpcClient(unnegotiatedUrl, (client) =>
+          client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+      const currentClientEvents = yield* Effect.scoped(
+        withWsRpcClient(currentClientUrl.toString(), (client) =>
+          client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+      const unnegotiatedUpsert = yield* Effect.scoped(
+        withWsRpcClient(unnegotiatedUrl, (client) =>
+          client[WS_METHODS.serverUpsertKeybinding](mutationRule),
+        ),
+      );
+      const currentClientUpsert = yield* Effect.scoped(
+        withWsRpcClient(currentClientUrl.toString(), (client) =>
+          client[WS_METHODS.serverUpsertKeybinding](mutationRule),
+        ),
+      );
+      const unnegotiatedRemove = yield* Effect.scoped(
+        withWsRpcClient(unnegotiatedUrl, (client) =>
+          client[WS_METHODS.serverRemoveKeybinding](mutationRule),
+        ),
+      );
+      const currentClientRemove = yield* Effect.scoped(
+        withWsRpcClient(currentClientUrl.toString(), (client) =>
+          client[WS_METHODS.serverRemoveKeybinding](mutationRule),
+        ),
+      );
+
+      assert.deepEqual(commands(unnegotiatedConfig.keybindings), legacyCommands);
+      assert.deepEqual(commands(oldClientConfig.keybindings), legacyCommands);
+      assert.deepEqual(commands(currentClientConfig.keybindings), currentCommands);
+      assert.deepEqual(unnegotiatedConfig.issues, issues);
+      assert.deepEqual(currentClientConfig.issues, issues);
+
+      const [unnegotiatedSnapshot, unnegotiatedUpdate] = Array.from(unnegotiatedEvents);
+      assert.equal(unnegotiatedSnapshot?.type, "snapshot");
+      assert.equal(unnegotiatedUpdate?.type, "keybindingsUpdated");
+      if (unnegotiatedSnapshot?.type === "snapshot") {
+        assert.deepEqual(commands(unnegotiatedSnapshot.config.keybindings), legacyCommands);
+        assert.deepEqual(unnegotiatedSnapshot.config.issues, issues);
+      }
+      if (unnegotiatedUpdate?.type === "keybindingsUpdated") {
+        assert.deepEqual(commands(unnegotiatedUpdate.payload.keybindings), legacyCommands);
+        assert.deepEqual(unnegotiatedUpdate.payload.issues, issues);
+      }
+
+      const [currentSnapshot, currentUpdate] = Array.from(currentClientEvents);
+      assert.equal(currentSnapshot?.type, "snapshot");
+      assert.equal(currentUpdate?.type, "keybindingsUpdated");
+      if (currentSnapshot?.type === "snapshot") {
+        assert.deepEqual(commands(currentSnapshot.config.keybindings), currentCommands);
+        assert.deepEqual(currentSnapshot.config.issues, issues);
+      }
+      if (currentUpdate?.type === "keybindingsUpdated") {
+        assert.deepEqual(commands(currentUpdate.payload.keybindings), currentCommands);
+        assert.deepEqual(currentUpdate.payload.issues, issues);
+      }
+
+      assert.deepEqual(commands(unnegotiatedUpsert.keybindings), legacyCommands);
+      assert.deepEqual(commands(currentClientUpsert.keybindings), currentCommands);
+      assert.deepEqual(commands(unnegotiatedRemove.keybindings), legacyCommands);
+      assert.deepEqual(commands(currentClientRemove.keybindings), currentCommands);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -162,6 +162,11 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 
+/** WebSocket capability for keybinding commands added after v0.0.31.
+    Absence means the client needs the legacy-safe keybinding projection. */
+export const WS_KEYBINDING_COMMAND_SET_QUERY_PARAM = "keybindingCommandSet";
+export const CURRENT_KEYBINDING_COMMAND_SET_VERSION = "1";
+
 export const WS_METHODS = {
   // Project registry methods
   projectsList: "projects.list",

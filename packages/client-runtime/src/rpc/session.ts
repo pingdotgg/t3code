@@ -1,4 +1,9 @@
-import { type ServerConfig, WS_METHODS } from "@t3tools/contracts";
+import {
+  CURRENT_KEYBINDING_COMMAND_SET_VERSION,
+  type ServerConfig,
+  WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -92,7 +97,12 @@ export const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
     });
-    const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
+    const socketUrl = new URL(connection.socketUrl);
+    socketUrl.searchParams.set(
+      WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
+      CURRENT_KEYBINDING_COMMAND_SET_VERSION,
+    );
+    const socketLayer = Socket.layerWebSocket(socketUrl.toString(), {
       openTimeout: SOCKET_OPEN_TIMEOUT,
     }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
     const protocolLayer = Layer.effect(

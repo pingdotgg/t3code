@@ -1,8 +1,10 @@
 import {
+  CURRENT_KEYBINDING_COMMAND_SET_VERSION,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ServerConfig,
   type ServerConfig as ServerConfigType,
+  WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -222,7 +224,11 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(PREPARED.socketUrl);
+      const socketUrl = new URL(socket.url);
+      expect(socketUrl.searchParams.get("wsTicket")).toBe("test");
+      expect(socketUrl.searchParams.get(WS_KEYBINDING_COMMAND_SET_QUERY_PARAM)).toBe(
+        CURRENT_KEYBINDING_COMMAND_SET_VERSION,
+      );
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);

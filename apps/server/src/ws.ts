@@ -16,6 +16,7 @@ import {
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
+  CURRENT_KEYBINDING_COMMAND_SET_VERSION,
   type DiscoveredLocalServerList,
   EventId,
   type OrchestrationCommand,
@@ -41,6 +42,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
+  type ResolvedKeybindingRule,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
@@ -55,6 +57,7 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  WS_KEYBINDING_COMMAND_SET_QUERY_PARAM,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -124,6 +127,16 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+const projectKeybindingsForClient = (
+  keybindings: ReadonlyArray<ResolvedKeybindingRule>,
+  supportsCurrentKeybindingCommands: boolean,
+) =>
+  supportsCurrentKeybindingCommands
+    ? keybindings
+    : keybindings.filter(
+        ({ command }) => command !== "filePicker.toggle" && command !== "projectSearch.toggle",
+      );
 
 export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
@@ -341,6 +354,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  supportsCurrentKeybindingCommands: boolean,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -983,7 +997,10 @@ const makeWsRpcLayer = (
           auth,
           cwd: config.cwd,
           keybindingsConfigPath: config.keybindingsConfigPath,
-          keybindings: keybindingsConfig.keybindings,
+          keybindings: projectKeybindingsForClient(
+            keybindingsConfig.keybindings,
+            supportsCurrentKeybindingCommands,
+          ),
           issues: keybindingsConfig.issues,
           providers,
           availableEditors: yield* resolveAvailableEditorsForConfig(
@@ -1414,7 +1431,13 @@ const makeWsRpcLayer = (
             WS_METHODS.serverUpsertKeybinding,
             Effect.gen(function* () {
               const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
-              return { keybindings: keybindingsConfig, issues: [] };
+              return {
+                keybindings: projectKeybindingsForClient(
+                  keybindingsConfig,
+                  supportsCurrentKeybindingCommands,
+                ),
+                issues: [],
+              };
             }),
             { "rpc.aggregate": "server" },
           ),
@@ -1423,7 +1446,13 @@ const makeWsRpcLayer = (
             WS_METHODS.serverRemoveKeybinding,
             Effect.gen(function* () {
               const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
-              return { keybindings: keybindingsConfig, issues: [] };
+              return {
+                keybindings: projectKeybindingsForClient(
+                  keybindingsConfig,
+                  supportsCurrentKeybindingCommands,
+                ),
+                issues: [],
+              };
             }),
             { "rpc.aggregate": "server" },
           ),
@@ -1973,7 +2002,10 @@ const makeWsRpcLayer = (
                   version: 1 as const,
                   type: "keybindingsUpdated" as const,
                   payload: {
-                    keybindings: event.keybindings,
+                    keybindings: projectKeybindingsForClient(
+                      event.keybindings,
+                      supportsCurrentKeybindingCommands,
+                    ),
                     issues: event.issues,
                   },
                 })),
@@ -2095,6 +2127,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       "/ws",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
+        const requestUrl = HttpServerRequest.toURL(request);
+        const supportsCurrentKeybindingCommands =
+          Option.isSome(requestUrl) &&
+          requestUrl.value.searchParams.get(WS_KEYBINDING_COMMAND_SET_QUERY_PARAM) ===
+            CURRENT_KEYBINDING_COMMAND_SET_VERSION;
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
@@ -2109,7 +2146,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(
+              session,
+              previewAutomationBroker,
+              supportsCurrentKeybindingCommands,
+            ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
