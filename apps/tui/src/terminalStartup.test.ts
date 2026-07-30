@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { prepareTerminalViewport, TUI_RENDERER_CONFIG } from "./terminalStartup.ts";
+import {
+  ensureColorCapabilityEnv,
+  prepareTerminalViewport,
+  TUI_RENDERER_CONFIG,
+} from "./terminalStartup.ts";
 
 describe("TUI terminal startup", () => {
   it("Given the TUI starts, then it always requests a full alternate screen with mouse scrolling", () => {
@@ -27,5 +31,31 @@ describe("TUI terminal startup", () => {
     });
 
     expect(called).toBe(false);
+  });
+});
+
+describe("ensureColorCapabilityEnv", () => {
+  it("Given a Ghostty TERM without COLORTERM, then it advertises truecolor", () => {
+    const env: NodeJS.ProcessEnv = { TERM: "xterm-ghostty" };
+    ensureColorCapabilityEnv(env);
+    expect(env.COLORTERM).toBe("truecolor");
+  });
+
+  it("Given TERM_PROGRAM names a truecolor terminal, then it advertises truecolor", () => {
+    const env: NodeJS.ProcessEnv = { TERM: "xterm-256color", TERM_PROGRAM: "WezTerm" };
+    ensureColorCapabilityEnv(env);
+    expect(env.COLORTERM).toBe("truecolor");
+  });
+
+  it("Given the shell already set COLORTERM, then it is left untouched", () => {
+    const env: NodeJS.ProcessEnv = { TERM: "xterm-ghostty", COLORTERM: "24bit" };
+    ensureColorCapabilityEnv(env);
+    expect(env.COLORTERM).toBe("24bit");
+  });
+
+  it("Given an unrecognised terminal, then no truecolor claim is invented", () => {
+    const env: NodeJS.ProcessEnv = { TERM: "xterm-256color" };
+    ensureColorCapabilityEnv(env);
+    expect(env.COLORTERM).toBeUndefined();
   });
 });

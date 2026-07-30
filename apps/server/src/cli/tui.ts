@@ -36,6 +36,26 @@ interface MintRequest {
 }
 
 /**
+ * OpenTUI's native renderer reads colour capabilities from the child's real
+ * environ (COLORTERM for truecolor, a "256color" TERM for the indexed palette),
+ * and Bun does not propagate `process.env` writes down to it — so the child
+ * cannot fix this up itself. Terminals that ship their own TERM value (Ghostty's
+ * `xterm-ghostty`) and sessions that dropped COLORTERM would otherwise render
+ * with the renderer's baked legacy palette instead of the terminal's theme.
+ * Mirrors `ensureColorCapabilityEnv` in @t3tools/tui.
+ */
+const TRUECOLOR_TERMINAL_PATTERN =
+  /ghostty|kitty|wezterm|alacritty|foot|rio|contour|iterm|vscode|-direct/i;
+
+export function colorCapabilityEnv(env: NodeJS.ProcessEnv): { readonly COLORTERM?: string } {
+  if (env.COLORTERM) return {};
+  const truecolor =
+    TRUECOLOR_TERMINAL_PATTERN.test(env.TERM ?? "") ||
+    TRUECOLOR_TERMINAL_PATTERN.test(env.TERM_PROGRAM ?? "");
+  return truecolor ? { COLORTERM: "truecolor" } : {};
+}
+
+/**
  * Run the Bun TUI subprocess. The OpenTUI renderer requires Bun, so the Node
  * `t3 tui` command (which holds the server's auth) bootstraps a session here and
  * spawns `bun <entry>`, then answers the child's websocket-ticket requests over
@@ -56,6 +76,7 @@ function runBunTui(input: {
       stdio: ["inherit", "inherit", "inherit", "ipc"],
       env: {
         ...process.env,
+        ...colorCapabilityEnv(process.env),
         T3_TUI_ORIGIN: input.origin,
         T3_TUI_BEARER: input.bearerToken,
         T3_TUI_LOG: input.logPath,

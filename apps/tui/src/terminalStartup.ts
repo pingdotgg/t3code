@@ -18,6 +18,35 @@ export interface TerminalStartupEnvironment {
   readonly TMUX_PANE?: string;
 }
 
+/**
+ * OpenTUI only trusts the environment for colour capabilities: COLORTERM for
+ * truecolor, a "256color" TERM for the 256-colour palette. Ghostty and friends
+ * ship their own TERM values (e.g. `xterm-ghostty`) and the capability
+ * handshake does not fill the gap, so when the shell drops COLORTERM the
+ * renderer decides the terminal is 16-colour and flattens every themed ANSI
+ * slot to its baked legacy palette (red → #800000, cyan → #008080, …) — the
+ * whole UI silently loses the user's theme. Advertise truecolor for terminals
+ * known to support it before the renderer reads the environment.
+ *
+ * Bun does not propagate `process.env` writes to the native environ that the
+ * renderer's Zig layer reads, so the `t3 tui` Node parent injects the same
+ * default at spawn time (`colorCapabilityEnv` in apps/server/src/cli/tui.ts).
+ * This in-process call still covers JS-side consumers and any subprocesses the
+ * TUI spawns.
+ */
+const TRUECOLOR_TERMINAL_PATTERN =
+  /ghostty|kitty|wezterm|alacritty|foot|rio|contour|iterm|vscode|-direct/i;
+
+export function ensureColorCapabilityEnv(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.COLORTERM) return;
+  if (
+    TRUECOLOR_TERMINAL_PATTERN.test(env.TERM ?? "") ||
+    TRUECOLOR_TERMINAL_PATTERN.test(env.TERM_PROGRAM ?? "")
+  ) {
+    env.COLORTERM = "truecolor";
+  }
+}
+
 type RunTmux = (args: ReadonlyArray<string>) => void;
 
 const runTmux: RunTmux = (args) => {
