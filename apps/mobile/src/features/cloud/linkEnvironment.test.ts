@@ -2,6 +2,7 @@ import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { Platform } from "react-native";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
@@ -189,6 +190,7 @@ function listedEnvironment(environmentId: string) {
 describe("mobile cloud link environment client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(Platform, "OS", { value: "ios", configurable: true });
     createProofMock.mockClear();
     loadPreferences.mockClear();
   });
@@ -855,6 +857,40 @@ describe("mobile cloud link environment client", () => {
       const preferencesRequest = fetchMock.mock.calls.at(-1)?.[1];
       expect(new Headers(preferencesRequest?.headers).get("authorization")).toBe(
         "Bearer local-bearer",
+      );
+    }),
+  );
+
+  it.effect("does not enable environment activity publishing on Android", () =>
+    Effect.gen(function* () {
+      Object.defineProperty(Platform, "OS", { value: "android", configurable: true });
+      const fetchMock = vi.fn((url: string | URL) => {
+        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
+          return Promise.resolve(Response.json(validLinkChallengeResponse()));
+        }
+        if (String(url).endsWith("/api/connect/link-proof")) {
+          return Promise.resolve(Response.json(validLinkProof()));
+        }
+        if (String(url).endsWith("/v1/client/environment-links")) {
+          return Promise.resolve(Response.json(validLinkResponse()));
+        }
+        return Promise.resolve(
+          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withCloudServices(
+        linkEnvironmentToCloudWithPreference({
+          clerkToken: "clerk-token",
+          connection: savedConnection,
+          liveActivitiesEnabled: true,
+        }),
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).not.toContain(
+        "https://desktop.example.test/api/connect/preferences",
       );
     }),
   );

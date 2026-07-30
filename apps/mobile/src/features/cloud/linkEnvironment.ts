@@ -32,6 +32,7 @@ import { authClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import * as MobilePreferences from "../../persistence/mobile-preferences";
 import * as MobileStorage from "../../persistence/mobile-storage";
+import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { resolveCloudPublicConfig } from "./publicConfig";
 
 const RELAY_STATUS_AND_CONNECT_SCOPES = [
@@ -359,7 +360,7 @@ export function linkEnvironmentToCloudWithPreference(
         Effect.mapError(cloudEnvironmentLinkError("Could not configure environment relay access.")),
       );
 
-    if (liveActivitiesEnabled) {
+    if (liveActivitiesEnabled && supportsAgentAwarenessPush()) {
       yield* environmentClient.connect
         .preferences({
           headers: { authorization: `Bearer ${localBearerToken}` },
