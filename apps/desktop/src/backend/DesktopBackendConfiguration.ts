@@ -238,6 +238,8 @@ const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
+  readonly isPackaged: boolean;
+  readonly runtimeId: string;
   readonly windowsEntryPath: string;
   readonly windowsRepoRoot: string;
   readonly allowBuild: boolean;
@@ -299,16 +301,36 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
-  const linuxEntry = yield* wslEnv.windowsToWslPath(runningDistro, input.windowsEntryPath);
-  if (Option.isNone(linuxEntry)) {
-    return {
-      _tag: "Failed",
-      reason: `wslpath conversion failed for ${input.windowsEntryPath}`,
-      fatal: false,
-    } as const;
+  let linuxRepoRoot: string;
+  if (input.isPackaged) {
+    const prepared = yield* wslEnv.preparePackagedRuntime(
+      runningDistro,
+      input.windowsRepoRoot,
+      input.runtimeId,
+    );
+    if (!prepared.ok) {
+      return {
+        _tag: "Failed",
+        reason: prepared.reason,
+        fatal: prepared.fatal,
+        ...(prepared.retryLimit === undefined ? {} : { retryLimit: prepared.retryLimit }),
+      } as const;
+    }
+    linuxRepoRoot = prepared.linuxRepoRoot;
+  } else {
+    const convertedRepoRoot = yield* wslEnv.windowsToWslPath(runningDistro, input.windowsRepoRoot);
+    if (Option.isNone(convertedRepoRoot)) {
+      return {
+        _tag: "Failed",
+        reason: `wslpath conversion failed for ${input.windowsRepoRoot}`,
+        fatal: false,
+      } as const;
+    }
+    linuxRepoRoot = convertedRepoRoot.value;
   }
 
-  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, input.windowsRepoRoot, {
+  const linuxEntryPath = `${linuxRepoRoot.replace(/\/+$/, "")}/apps/server/dist/bin.mjs`;
+  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, linuxRepoRoot, {
     allowBuild: input.allowBuild,
     nodeEngineRange: serverPackageJson.engines.node,
   });
@@ -324,7 +346,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   return {
     _tag: "Ready",
     runningDistro,
-    linuxEntryPath: linuxEntry.value,
+    linuxEntryPath,
     nodePath: nodePtyResult.nodePath,
     resolvedPath: nodePtyResult.resolvedPath,
   } as const;
@@ -469,8 +491,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   // ELECTRON_RUN_AS_NODE (asar-aware), but the WSL backend launches plain
   // `wsl.exe -- node`, which can't read inside an asar. electron-builder unpacks
   // the server bundle + node-pty (see asarUnpack in build-desktop-artifact.ts)
-  // to the app.asar.unpacked sibling, so point WSL there. In dev appRoot is
-  // already a real directory, so this is a no-op.
+  // to the app.asar.unpacked sibling. That directory is the packaged staging
+  // source; preflight copies it to WSL's native filesystem and launches there.
+  // In dev appRoot is already a real checkout, so preflight uses it in place.
   const wslAppRoot = environment.isPackaged
     ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
     : environment.appRoot;
@@ -478,6 +501,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   const preflight = yield* runWslPreflight({
     distro: input.distro,
+    isPackaged: environment.isPackaged,
+    runtimeId: `${environment.appVersion}-${environment.processArch}`,
     windowsEntryPath: wslEntryPath,
     windowsRepoRoot: wslAppRoot,
     // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and

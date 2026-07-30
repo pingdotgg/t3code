@@ -10,6 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildPackagedRuntimeStageScript,
   buildWslNodeEnvPreamble,
   DesktopWslDistroListError,
   formatMissingToolsReason,
@@ -122,6 +123,24 @@ describe("buildWslNodeEnvPreamble", () => {
 
   it("keeps the shared resolver permissive when no Node engine range is provided", () => {
     expect(buildWslNodeEnvPreamble()).toContain("T3_NODE_ENGINE_RANGE=''");
+  });
+});
+
+describe("buildPackagedRuntimeStageScript", () => {
+  it("checks the Linux-native cache before converting or reading the mounted source", () => {
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\app.asar.unpacked",
+      "1.2.3-x64",
+    );
+    const cacheHit = script.indexOf('if [ "$(cat "$manifest_path"');
+    const sourceConversion = script.indexOf("wslpath -u");
+
+    expect(cacheHit).toBeGreaterThanOrEqual(0);
+    expect(sourceConversion).toBeGreaterThan(cacheHit);
+    expect(script.slice(cacheHit, sourceConversion)).toContain(
+      'runtimeRoot:%s\\n\' "$current_dir"',
+    );
+    expect(script.slice(cacheHit, sourceConversion)).toContain("exit 0");
   });
 });
 
