@@ -112,6 +112,7 @@ import {
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
+  resolveSidebarBranchLabel,
   resolveSidebarV2Status,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
@@ -496,6 +497,22 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         })
       : null,
   );
+  const branchRefs = useEnvironmentQuery(
+    thread.branch !== null && gitCwd !== null
+      ? vcsEnvironment.listRefs({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd, query: thread.branch, limit: 10 },
+        })
+      : null,
+  );
+  const matchingBranchRef = branchRefs.data?.refs.find((refName) => refName.name === thread.branch);
+  const isDefaultBranch =
+    matchingBranchRef?.isDefault === true ||
+    (gitStatus.data?.isDefaultRef === true && gitStatus.data.refName === thread.branch);
+  const branchLabel =
+    branchRefs.isPending && branchRefs.data === null
+      ? null
+      : resolveSidebarBranchLabel(thread.branch, isDefaultBranch);
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
@@ -947,8 +964,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             </div>
             <div className="mt-1 flex min-w-0">{title}</div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground/75">
-              {thread.branch ? (
-                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+              {branchLabel ? (
+                <span className="min-w-0 flex-1 truncate whitespace-nowrap">{branchLabel}</span>
               ) : (
                 <span className="flex-1" />
               )}

@@ -14,6 +14,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarBranchLabel,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
@@ -45,6 +46,16 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarBranchLabel", () => {
+  it("hides the default branch", () => {
+    expect(resolveSidebarBranchLabel("trunk", true)).toBeNull();
+  });
+
+  it("shows a custom branch", () => {
+    expect(resolveSidebarBranchLabel("feature/demo", false)).toBe("feature/demo");
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

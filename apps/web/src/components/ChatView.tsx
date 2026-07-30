@@ -229,7 +229,11 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
-import { resolveEffectiveEnvMode, resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
+import {
+  resolveBranchToolbarValue,
+  resolveEffectiveEnvMode,
+  resolveLocalCheckoutBranchMismatch,
+} from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
   ProviderStatusBanner,
@@ -4749,6 +4753,12 @@ function ChatViewContent(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const branchForCreate = resolveBranchToolbarValue({
+        envMode: sendEnvMode,
+        activeWorktreePath: activeThread.worktreePath,
+        activeThreadBranch,
+        currentGitBranch: gitStatusQuery.data?.refName ?? null,
+      });
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -4760,7 +4770,7 @@ function ChatViewContent(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode,
-                      branch: activeThreadBranch,
+                      branch: branchForCreate,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
