@@ -11,6 +11,11 @@ interface LocalCommentAnnotationProps {
   onCancel: () => void;
   onComment: (text: string) => void;
   onDelete: () => void;
+  /**
+   * Attach the selected lines to the chat composer as a code context chip
+   * (no comment text required). Omitted when no composer is available.
+   */
+  onAddToChat?: (() => void) | undefined;
 }
 
 export function LocalCommentAnnotation({
@@ -20,6 +25,7 @@ export function LocalCommentAnnotation({
   onCancel,
   onComment,
   onDelete,
+  onAddToChat,
 }: LocalCommentAnnotationProps) {
   const [text, setText] = useState("");
 
@@ -77,7 +83,12 @@ export function LocalCommentAnnotation({
           }
         }}
       />
-      <div className="mt-3 flex justify-end gap-2">
+      <div className="mt-3 flex items-center justify-end gap-2">
+        {onAddToChat ? (
+          <Button variant="outline" size="sm" className="mr-auto" onClick={onAddToChat}>
+            Add to chat
+          </Button>
+        ) : null}
         <Button variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>

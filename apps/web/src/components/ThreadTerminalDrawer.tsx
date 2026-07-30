@@ -29,9 +29,15 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  getCodeTerminalFontSize,
+  readStoredInterfaceAppearanceSettings,
+  subscribeToInterfaceAppearanceChanges,
+} from "~/interfaceAppearance";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -318,6 +324,24 @@ export function TerminalViewport({
     serverConfig?.availableEditors ?? [],
   );
   const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
+  const readTerminalFontSize = () =>
+    getCodeTerminalFontSize(readStoredInterfaceAppearanceSettings().codeFontScale);
+  const terminalFontSize = useSyncExternalStore(
+    subscribeToInterfaceAppearanceChanges,
+    readTerminalFontSize,
+    readTerminalFontSize,
+  );
+  const terminalFontSizeRef = useRef(terminalFontSize);
+  useEffect(() => {
+    terminalFontSizeRef.current = terminalFontSize;
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    terminal.options.fontSize = terminalFontSize;
+    fitAddonRef.current?.fit();
+    terminal.refresh(0, terminal.rows - 1);
+  }, [terminalFontSize]);
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -389,7 +413,7 @@ export function TerminalViewport({
     const terminal = new Terminal({
       cursorBlink: true,
       lineHeight: 1,
-      fontSize: 12,
+      fontSize: terminalFontSizeRef.current,
       scrollback: 5_000,
       fontFamily:
         '"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',

@@ -15,6 +15,20 @@ export const DEFAULT_CODE_FONT_SIZE_PX: CodeFontSizePx = 14;
 export const DEFAULT_MAC_OS_FONT_SMOOTHING: MacOsFontSmoothing = "auto";
 
 export const INTERFACE_APPEARANCE_STORAGE_KEY = "forma:interface-appearance";
+export const INTERFACE_APPEARANCE_CHANGED_EVENT = "forma:interface-appearance-changed";
+
+/**
+ * Subscribe to appearance changes applied via
+ * `applyInterfaceSettingsToDocument`. Used by consumers that need a JS value
+ * (e.g. the terminal's xterm font size) rather than a CSS variable.
+ */
+export function subscribeToInterfaceAppearanceChanges(listener: () => void): () => void {
+  if (typeof document === "undefined") {
+    return () => {};
+  }
+  document.addEventListener(INTERFACE_APPEARANCE_CHANGED_EVENT, listener);
+  return () => document.removeEventListener(INTERFACE_APPEARANCE_CHANGED_EVENT, listener);
+}
 
 export interface InterfaceAppearanceSettings {
   uiFontScale?: UiFontSizePx | null | undefined;
@@ -161,6 +175,12 @@ export function applyInterfaceSettingsToDocument(
     "--app-code-font-size-compact",
     formatPx(Math.max(MIN_INTERFACE_FONT_SIZE_PX, codeFontSizePx - 3)),
   );
+  // Code editor / diff pane body text. Offset so the default (14px) matches
+  // the @pierre/diffs default of 13px, then scales with the user preference.
+  root.style.setProperty(
+    "--app-code-editor-font-size",
+    formatPx(Math.max(MIN_INTERFACE_FONT_SIZE_PX, getCodeEditorFontSize(codeFontSizePx) - 1)),
+  );
 
   switch (macOsFontSmoothing) {
     case "grayscale":
@@ -171,5 +191,9 @@ export function applyInterfaceSettingsToDocument(
       root.style.removeProperty("-webkit-font-smoothing");
       root.style.removeProperty("-moz-osx-font-smoothing");
       break;
+  }
+
+  if (typeof CustomEvent !== "undefined" && typeof safeDocument.dispatchEvent === "function") {
+    safeDocument.dispatchEvent(new CustomEvent(INTERFACE_APPEARANCE_CHANGED_EVENT));
   }
 }

@@ -17,6 +17,8 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+import { useComposerHandleContext } from "~/composerHandleContext";
+import { getCodeContextSelectionLimitMessage } from "~/lib/codeContext";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
@@ -83,6 +85,11 @@ const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
+  [data-file],
+  [data-virtualizer-buffer] {
+    --diffs-font-size: var(--app-code-editor-font-size, 13px) !important;
+  }
+
   [${FILE_LINK_REVEAL_ATTRIBUTE}][data-line] {
     background-color: light-dark(
       color-mix(
@@ -344,6 +351,7 @@ function EditableFileSurface({
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
+  const composerHandleRef = useComposerHandleContext();
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
@@ -402,6 +410,62 @@ function EditableFileSurface({
       editor.cleanUp();
     },
     [editor],
+  );
+
+  const addSelectionToChat = useCallback(
+    (entryId: string, startLine: number, endLine: number) => {
+      const composer = composerHandleRef?.current;
+      if (!composer) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to add to chat",
+            description: "Open a chat for this project and try again.",
+          }),
+        );
+        return;
+      }
+      const normalizedStart = Math.max(1, Math.min(startLine, endLine));
+      const normalizedEnd = Math.max(normalizedStart, Math.max(startLine, endLine));
+      const selection = {
+        filePath: relativePath,
+        lineStart: normalizedStart,
+        lineEnd: normalizedEnd,
+        text: contents
+          .split("\n")
+          .slice(normalizedStart - 1, normalizedEnd)
+          .join("\n"),
+      };
+      const limitMessage = getCodeContextSelectionLimitMessage(selection);
+      if (limitMessage !== null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Selection too large",
+            description: limitMessage,
+          }),
+        );
+        return;
+      }
+      const added = composer.addCodeContext(selection, { focusComposerAfterInsert: true });
+      if (!added) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Already added",
+            description: "This selection is already attached to the chat.",
+          }),
+        );
+      }
+      setSelectedRange(null);
+      setLineAnnotations((current) =>
+        current.flatMap((annotation) => {
+          const entries = annotation.metadata.entries.filter((entry) => entry.id !== entryId);
+          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
+        }),
+      );
+    },
+    [composerHandleRef, contents, relativePath, setSelectedRange],
   );
 
   const removeAnnotationEntry = useCallback(
@@ -586,6 +650,11 @@ function EditableFileSurface({
                     onCancel={() => removeAnnotationEntry(entry.id)}
                     onComment={(text) => submitAnnotationEntry(entry.id, text)}
                     onDelete={() => removeAnnotationEntry(entry.id)}
+                    onAddToChat={
+                      entry.kind === "draft"
+                        ? () => addSelectionToChat(entry.id, entry.startLine, entry.endLine)
+                        : undefined
+                    }
                   />
                 ))}
               </div>

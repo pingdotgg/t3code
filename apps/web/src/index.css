@@ -1639,6 +1639,7 @@ label:has(> select#reasoning-effort) select {
   --app-ui-text-sm: 13.5px;
   --app-code-font-size: 12px;
   --app-code-font-size-compact: 11px;
+  --app-code-editor-font-size: 13px;
   /* Unified motion tokens (fork commit "add unified motion tokens").
      Consumed by src/lib/motion.ts class-name constants and by inline
      [transition-*:var(...)] arbitrary utilities across the shell. */

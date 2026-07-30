@@ -20,6 +20,11 @@ import {
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
+import {
+  type CodeContextDraft,
+  filterCodeContextsWithText,
+  stripInlineCodeContextPlaceholders,
+} from "../lib/codeContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
@@ -265,6 +270,11 @@ export function deriveComposerSendState(options: {
   imageCount: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   /**
+   * Optional workspace code selections attached from the files panel. Only
+   * selections that still carry text are sendable.
+   */
+  codeContexts?: ReadonlyArray<CodeContextDraft>;
+  /**
    * Optional element-pick attachment count. Element contexts contribute to
    * "sendable content" exactly like images and (text-bearing) terminal
    * contexts do: a prompt of just element chips is still a valid send.
@@ -273,22 +283,28 @@ export function deriveComposerSendState(options: {
 }): {
   trimmedPrompt: string;
   sendableTerminalContexts: TerminalContextDraft[];
+  sendableCodeContexts: CodeContextDraft[];
   expiredTerminalContextCount: number;
   hasSendableContent: boolean;
 } {
-  const trimmedPrompt = stripInlineTerminalContextPlaceholders(options.prompt).trim();
+  const trimmedPrompt = stripInlineCodeContextPlaceholders(
+    stripInlineTerminalContextPlaceholders(options.prompt),
+  ).trim();
   const sendableTerminalContexts = filterTerminalContextsWithText(options.terminalContexts);
+  const sendableCodeContexts = filterCodeContextsWithText(options.codeContexts ?? []);
   const expiredTerminalContextCount =
     options.terminalContexts.length - sendableTerminalContexts.length;
   const elementContextCount = options.elementContextCount ?? 0;
   return {
     trimmedPrompt,
     sendableTerminalContexts,
+    sendableCodeContexts,
     expiredTerminalContextCount,
     hasSendableContent:
       trimmedPrompt.length > 0 ||
       options.imageCount > 0 ||
       sendableTerminalContexts.length > 0 ||
+      sendableCodeContexts.length > 0 ||
       elementContextCount > 0,
   };
 }

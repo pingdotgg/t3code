@@ -82,11 +82,11 @@ import {
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
+import { CodeContextInlineChip } from "./CodeContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  deriveDisplayedUserMessageState,
-  type ParsedTerminalContextEntry,
-} from "~/lib/terminalContext";
+import { type ParsedTerminalContextEntry } from "~/lib/terminalContext";
+import { type ParsedCodeContextEntry } from "~/lib/codeContext";
+import { deriveDisplayedUserMessageState } from "~/lib/composerAttachedContexts";
 import {
   extractTrailingElementContexts,
   type ParsedElementContextEntry,
@@ -105,6 +105,11 @@ import {
   formatInlineTerminalContextLabel,
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
+import {
+  buildInlineCodeContextText,
+  formatInlineCodeContextLabel,
+  textContainsInlineCodeContextLabels,
+} from "./userMessageCodeContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -871,6 +876,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userImages = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
+  const codeContexts = displayedUserMessage.codeContexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
   let visibleText = displayedUserMessage.visibleText;
   while (true) {
@@ -944,6 +950,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <CollapsibleUserMessageBody
           text={elementContextState.promptText}
           terminalContexts={terminalContexts}
+          codeContexts={codeContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
         />
@@ -1320,6 +1327,17 @@ const UserMessageTerminalContextInlineLabel = memo(
   },
 );
 
+const UserMessageCodeContextInlineLabel = memo(function UserMessageCodeContextInlineLabel(props: {
+  context: ParsedCodeContextEntry;
+}) {
+  const tooltipText =
+    props.context.body.length > 0
+      ? `${props.context.header}\n${props.context.body}`
+      : props.context.header;
+
+  return <CodeContextInlineChip selection={props.context} tooltipText={tooltipText} />;
+});
+
 const UserMessageElementContextChip = memo(function UserMessageElementContextChip(props: {
   context: ParsedElementContextEntry;
 }) {
@@ -1414,12 +1432,16 @@ function shouldCollapseUserMessage(text: string): boolean {
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  codeContexts: ParsedCodeContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
   footer?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
+  const hasVisibleBody =
+    props.text.trim().length > 0 ||
+    props.terminalContexts.length > 0 ||
+    props.codeContexts.length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
   const isCollapsed = canCollapse && !expanded;
 
@@ -1444,6 +1466,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           <UserMessageBody
             text={props.text}
             terminalContexts={props.terminalContexts}
+            codeContexts={props.codeContexts}
             skills={props.skills}
             markdownCwd={props.markdownCwd}
           />
@@ -1482,6 +1505,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  codeContexts: ParsedCodeContextEntry[];
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
 }) {
@@ -1539,39 +1563,77 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     );
   }
 
-  if (props.terminalContexts.length > 0) {
-    const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
-      props.text,
-      props.terminalContexts,
-    );
-    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
+  if (props.terminalContexts.length > 0 || props.codeContexts.length > 0) {
+    const hasEmbeddedInlineLabels =
+      textContainsInlineTerminalContextLabels(props.text, props.terminalContexts) &&
+      textContainsInlineCodeContextLabels(props.text, props.codeContexts);
+    const inlinePrefix = [
+      buildInlineTerminalContextText(props.terminalContexts),
+      buildInlineCodeContextText(props.codeContexts),
+    ]
+      .filter((value) => value.length > 0)
+      .join(" ");
     const inlineNodes: ReactNode[] = [];
 
     if (hasEmbeddedInlineLabels) {
       let cursor = 0;
+      const remainingTerminalContexts = [...props.terminalContexts];
+      const remainingCodeContexts = [...props.codeContexts];
 
-      for (const context of props.terminalContexts) {
-        const label = formatInlineTerminalContextLabel(context.header);
-        const matchIndex = props.text.indexOf(label, cursor);
-        if (matchIndex === -1) {
+      while (remainingTerminalContexts.length > 0 || remainingCodeContexts.length > 0) {
+        const nextTerminalContext = remainingTerminalContexts[0];
+        const nextCodeContext = remainingCodeContexts[0];
+        const nextTerminalLabel = nextTerminalContext
+          ? formatInlineTerminalContextLabel(nextTerminalContext.header)
+          : null;
+        const nextCodeLabel = nextCodeContext
+          ? formatInlineCodeContextLabel(nextCodeContext)
+          : null;
+        const nextTerminalIndex =
+          nextTerminalLabel === null ? -1 : props.text.indexOf(nextTerminalLabel, cursor);
+        const nextCodeIndex =
+          nextCodeLabel === null ? -1 : props.text.indexOf(nextCodeLabel, cursor);
+
+        if (nextTerminalIndex === -1 && nextCodeIndex === -1) {
           inlineNodes.length = 0;
           break;
         }
+
+        const useTerminal =
+          nextTerminalIndex !== -1 && (nextCodeIndex === -1 || nextTerminalIndex <= nextCodeIndex);
+        const matchIndex = useTerminal ? nextTerminalIndex : nextCodeIndex;
+        const matchLabel = useTerminal ? nextTerminalLabel : nextCodeLabel;
+        const key = useTerminal
+          ? (nextTerminalContext?.header ?? `terminal:${cursor}`)
+          : `${nextCodeContext?.filePath ?? "code"}:${nextCodeContext?.lineStart ?? 0}:${nextCodeContext?.lineEnd ?? 0}`;
+
         if (matchIndex > cursor) {
           inlineNodes.push(
             renderInlineMarkdownSegment(
               props.text.slice(cursor, matchIndex),
-              `user-terminal-context-inline-before:${context.header}:${cursor}`,
+              `user-inline-context-before:${key}:${cursor}`,
             ),
           );
         }
         inlineNodes.push(
-          <UserMessageTerminalContextInlineLabel
-            key={`user-terminal-context-inline:${context.header}`}
-            context={context}
-          />,
+          useTerminal && nextTerminalContext ? (
+            <UserMessageTerminalContextInlineLabel
+              key={`user-terminal-context-inline:${key}`}
+              context={nextTerminalContext}
+            />
+          ) : nextCodeContext ? (
+            <UserMessageCodeContextInlineLabel
+              key={`user-code-context-inline:${key}`}
+              context={nextCodeContext}
+            />
+          ) : null,
         );
-        cursor = matchIndex + label.length;
+        cursor = matchIndex + (matchLabel?.length ?? 0);
+        if (useTerminal) {
+          remainingTerminalContexts.shift();
+        } else {
+          remainingCodeContexts.shift();
+        }
       }
 
       if (inlineNodes.length > 0) {
@@ -1579,7 +1641,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           inlineNodes.push(
             renderInlineMarkdownSegment(
               props.text.slice(cursor),
-              `user-message-terminal-context-inline-rest:${cursor}`,
+              `user-message-inline-context-rest:${cursor}`,
             ),
           );
         }
@@ -1601,6 +1663,20 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       );
       inlineNodes.push(
         <span key={`user-terminal-context-inline-space:${context.header}`} aria-hidden="true">
+          {" "}
+        </span>,
+      );
+    }
+    for (const context of props.codeContexts) {
+      const key = `${context.filePath}:${context.lineStart}:${context.lineEnd}`;
+      inlineNodes.push(
+        <UserMessageCodeContextInlineLabel
+          key={`user-code-context-inline:${key}`}
+          context={context}
+        />,
+      );
+      inlineNodes.push(
+        <span key={`user-code-context-inline-space:${key}`} aria-hidden="true">
           {" "}
         </span>,
       );
