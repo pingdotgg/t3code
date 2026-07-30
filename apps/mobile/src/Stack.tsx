@@ -48,6 +48,7 @@ import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnv
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import {
+  createArchiveSettingsRouteScreens,
   SETTINGS_ARCHIVE_ROUTE_CONTRACT,
   SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT,
 } from "./features/settings/settingsContract";
@@ -135,6 +136,12 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
+const ARCHIVE_SETTINGS_ROUTE_SCREENS = createArchiveSettingsRouteScreens({
+  archiveScreen: ArchivedThreadsRouteScreen,
+  waitlistAliasScreen: SettingsAuthRouteScreen,
+  createScreen: (definition) => createNativeStackScreen(definition),
+});
+
 const SettingsSheetStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
@@ -164,13 +171,8 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Add Environment",
       },
     }),
-    [SETTINGS_ARCHIVE_ROUTE_CONTRACT.name]: createNativeStackScreen({
-      screen: ArchivedThreadsRouteScreen,
-      linking: SETTINGS_ARCHIVE_ROUTE_CONTRACT.linking,
-      options: {
-        title: SETTINGS_ARCHIVE_ROUTE_CONTRACT.title,
-      },
-    }),
+    [SETTINGS_ARCHIVE_ROUTE_CONTRACT.name]:
+      ARCHIVE_SETTINGS_ROUTE_SCREENS[SETTINGS_ARCHIVE_ROUTE_CONTRACT.name],
     SettingsAppearance: createNativeStackScreen({
       screen: SettingsAppearanceRouteScreen,
       linking: "appearance",
@@ -192,14 +194,9 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Sign in",
       },
     }),
-    [SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name]: createNativeStackScreen({
-      // Keep the old deep link working after the Connect GA launch.
-      screen: SettingsAuthRouteScreen,
-      linking: SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.linking,
-      options: {
-        title: SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.title,
-      },
-    }),
+    // Keep the old deep link working after the Connect GA launch.
+    [SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name]:
+      ARCHIVE_SETTINGS_ROUTE_SCREENS[SETTINGS_WAITLIST_ALIAS_ROUTE_CONTRACT.name],
   },
 });
 
