@@ -16,7 +16,7 @@ import {
   type ProviderInstanceId,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeCustomModelSlug } from "@t3tools/shared/model";
+import { getCustomModelLabel, normalizeCustomModelSlug } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
 import { sortModelsForProviderInstance } from "../../modelOrdering";
@@ -70,6 +70,14 @@ interface ProviderModelsSectionProps {
    */
   readonly onChange: (next: ReadonlyArray<string>) => void;
   readonly onLabelChange: (next: Readonly<Record<string, string>>) => void;
+  /**
+   * Atomic models+labels update. Prefer this over sequential onChange +
+   * onLabelChange so both fields are written from the same base config.
+   */
+  readonly onModelsAndLabelsChange?: (
+    nextModels: ReadonlyArray<string>,
+    nextLabels: Readonly<Record<string, string>>,
+  ) => void;
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
@@ -97,6 +105,7 @@ export function ProviderModelsSection({
   modelOrder,
   onChange,
   onLabelChange,
+  onModelsAndLabelsChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,
   onModelOrderChange,
@@ -154,13 +163,22 @@ export function ProviderModelsSection({
   };
 
   const handleRemove = (slug: string) => {
-    onChange(customModels.filter((model) => model !== slug));
+    const nextModels = customModels.filter((model) => model !== slug);
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
-    if (customModelLabels[slug] !== undefined) {
+
+    const hasOwnLabel = Object.prototype.hasOwnProperty.call(customModelLabels, slug);
+    if (hasOwnLabel) {
       const nextLabels = { ...customModelLabels };
       delete nextLabels[slug];
-      onLabelChange(nextLabels);
+      if (onModelsAndLabelsChange) {
+        onModelsAndLabelsChange(nextModels, nextLabels);
+      } else {
+        onChange(nextModels);
+        onLabelChange(nextLabels);
+      }
+    } else {
+      onChange(nextModels);
     }
     setError(null);
   };
@@ -244,7 +262,7 @@ export function ProviderModelsSection({
                 {model.isCustom ? (
                   <Input
                     className="h-6 min-w-0 max-w-44 text-xs"
-                    defaultValue={customModelLabels[model.slug] ?? ""}
+                    defaultValue={getCustomModelLabel(customModelLabels, model.slug) ?? ""}
                     placeholder="Display label (optional)"
                     aria-label={`Display label for ${model.slug}`}
                     onBlur={(event) => {
@@ -263,7 +281,7 @@ export function ProviderModelsSection({
                   )}
                 >
                   {model.isCustom
-                    ? customModelLabels[model.slug]?.trim() || model.name
+                    ? (getCustomModelLabel(customModelLabels, model.slug) ?? model.name)
                     : model.name}
                 </span>
                 {hasDetails ? (

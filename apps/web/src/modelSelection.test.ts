@@ -302,4 +302,54 @@ describe("instance-scoped model selection", () => {
       model: "openai/gpt-5.5",
     });
   });
+
+  it("applies persisted labels to custom models already present in the snapshot", () => {
+    const providers = [
+      {
+        ...provider({
+          instanceId: "claude_openrouter",
+          models: ["claude-sonnet-4-6"],
+        }),
+        models: [
+          {
+            slug: "claude-sonnet-4-6",
+            name: "claude-sonnet-4-6",
+            isCustom: false,
+            capabilities: {},
+          },
+          {
+            slug: "openai/gpt-5.5",
+            name: "openai/gpt-5.5",
+            isCustom: true,
+            capabilities: {},
+          },
+        ],
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: {
+            customModels: ["openai/gpt-5.5"],
+            customModelLabels: { "openai/gpt-5.5": "GPT 5.5 Display" },
+          },
+        },
+      },
+    };
+    const openrouter = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "claude_openrouter",
+    )!;
+
+    const option = getAppModelOptionsForInstance(settings, openrouter).find(
+      (entry) => entry.slug === "openai/gpt-5.5",
+    );
+    expect(option).toMatchObject({
+      slug: "openai/gpt-5.5",
+      name: "GPT 5.5 Display",
+      isCustom: true,
+    });
+  });
 });

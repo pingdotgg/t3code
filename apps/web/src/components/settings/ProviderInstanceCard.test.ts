@@ -33,4 +33,29 @@ describe("deriveProviderModelsForDisplay", () => {
       }).map((model) => model.slug),
     ).toEqual(["server-model", "kept-custom"]);
   });
+
+  it("applies persisted labels over live custom model names", () => {
+    const liveModels: ReadonlyArray<ServerProviderModel> = [
+      {
+        slug: "kept-custom",
+        name: "Server Name",
+        isCustom: true,
+        capabilities: null,
+      },
+    ];
+
+    expect(
+      deriveProviderModelsForDisplay({
+        liveModels,
+        customModels: ["kept-custom", "new-custom"],
+        customModelLabels: {
+          "kept-custom": "Friendly Kept",
+          "new-custom": "Friendly New",
+        },
+      }),
+    ).toMatchObject([
+      { slug: "kept-custom", name: "Friendly Kept", isCustom: true },
+      { slug: "new-custom", name: "Friendly New", isCustom: true },
+    ]);
+  });
 });

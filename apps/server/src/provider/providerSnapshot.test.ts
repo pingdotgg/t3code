@@ -84,6 +84,16 @@ describe("providerModelsFromSettings", () => {
       { slug: "other", name: "other" },
     ]);
   });
+
+  it("does not crash when a custom slug collides with Object.prototype keys", () => {
+    const capabilities = createModelCapabilities({ optionDescriptors: [] });
+    expect(
+      providerModelsFromSettings([], ["__proto__", "constructor"], capabilities, {}),
+    ).toMatchObject([
+      { slug: "__proto__", name: "__proto__", isCustom: true },
+      { slug: "constructor", name: "constructor", isCustom: true },
+    ]);
+  });
 });
 
 describe("ProviderCommandNotFoundError", () => {

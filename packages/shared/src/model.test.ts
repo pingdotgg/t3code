@@ -5,6 +5,7 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
+  getCustomModelLabel,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -153,5 +154,14 @@ describe("model slug normalization", () => {
 
     expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
     expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
+});
+
+describe("getCustomModelLabel", () => {
+  it("returns trimmed own labels and ignores inherited prototype keys", () => {
+    expect(getCustomModelLabel({ "gpt-5": "  GPT 5  " }, "gpt-5")).toBe("GPT 5");
+    expect(getCustomModelLabel({ "gpt-5": "   " }, "gpt-5")).toBeNull();
+    expect(getCustomModelLabel({}, "__proto__")).toBeNull();
+    expect(getCustomModelLabel({ constructor: "nope" }, "constructor")).toBe("nope");
   });
 });

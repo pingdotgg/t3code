@@ -22,6 +22,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { getCustomModelLabel } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -132,15 +133,19 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: input.customModelLabels?.[slug]?.trim() || slug,
-        isCustom: true,
-        capabilities: null,
-      },
-  );
+  const customModels = input.customModels.map((slug) => {
+    const live = liveCustomModelsBySlug.get(slug);
+    const label = getCustomModelLabel(input.customModelLabels, slug);
+    if (live) {
+      return label ? { ...live, name: label } : live;
+    }
+    return {
+      slug,
+      name: label ?? slug,
+      isCustom: true,
+      capabilities: null,
+    };
+  });
   return [...serverModels, ...customModels];
 }
 
@@ -512,6 +517,21 @@ export function ProviderInstanceCard({
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
 
+  /**
+   * Atomically update both customModels and customModelLabels from the same
+   * base config. Sequential onChange + onLabelChange clobber each other
+   * because each rebuilds from stale `instance.config`.
+   */
+  const updateCustomModelsAndLabels = (
+    nextModels: ReadonlyArray<string>,
+    nextLabels: Readonly<Record<string, string>>,
+  ) => {
+    let nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...nextModels]);
+    nextConfig = nextConfigBlobWithValue(nextConfig, "customModelLabels", { ...nextLabels });
+    const { config: _omit, ...rest } = instance;
+    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+  };
+
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
     const { environment: _omit, ...rest } = instance;
@@ -807,6 +827,7 @@ export function ProviderInstanceCard({
                 modelOrder={modelOrder}
                 onChange={updateCustomModels}
                 onLabelChange={updateCustomModelLabels}
+                onModelsAndLabelsChange={updateCustomModelsAndLabels}
                 onHiddenModelsChange={onHiddenModelsChange}
                 onFavoriteModelsChange={onFavoriteModelsChange}
                 onModelOrderChange={onModelOrderChange}

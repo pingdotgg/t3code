@@ -241,7 +241,9 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
   },
   {
     order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
@@ -275,7 +277,9 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     launchArgs: Schema.String.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -322,7 +326,9 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
   },
   {
     order: ["binaryPath", "apiEndpoint"],
@@ -347,7 +353,9 @@ export const GrokSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
   },
   {
     order: ["binaryPath"],
@@ -398,7 +406,9 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
   },
   {
     order: ["binaryPath", "serverUrl", "serverPassword"],

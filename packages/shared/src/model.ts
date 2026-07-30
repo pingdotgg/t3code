@@ -263,8 +263,11 @@ export function getCustomModelLabel(
   slug: string,
 ): string | null {
   const normalized = normalizeCustomModelSlug(slug);
-  if (!normalized) return null;
-  const label = labels?.[normalized];
+  if (!normalized || !labels) return null;
+  // Own-property only: bare `labels[slug]` can hit Object.prototype for
+  // hostile keys like `__proto__` / `constructor` and then crash on `.trim()`.
+  if (!Object.prototype.hasOwnProperty.call(labels, normalized)) return null;
+  const label = labels[normalized];
   return typeof label === "string" && label.trim() ? label.trim() : null;
 }
 
