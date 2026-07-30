@@ -1,18 +1,11 @@
 diff --git a/build/serializer/sourceMap.js b/build/serializer/sourceMap.js
-index 4cc9aa4..703dfe0 100644
+index 547e53377a7c560db8dfd983601606de15896e07..a4b3f09d6d42b025c7193e522f81f98d6f2ad89b 100644
 --- a/build/serializer/sourceMap.js
 +++ b/build/serializer/sourceMap.js
-@@ -20,6 +20,20 @@ function loadRemapping() {
+@@ -224,6 +224,67 @@ function repairInvalidNegativeIndices(map) {
      }
-     return _remapping;
+     return changed ? { ...map, mappings: encode(decoded) } : map;
  }
-+let _sourceMapCodec;
-+function loadSourceMapCodec() {
-+    if (!_sourceMapCodec) {
-+        _sourceMapCodec = require('@jridgewell/sourcemap-codec');
-+    }
-+    return _sourceMapCodec;
-+}
 +let _traceMapping;
 +function loadTraceMapping() {
 +    if (!_traceMapping) {
@@ -20,16 +13,11 @@ index 4cc9aa4..703dfe0 100644
 +    }
 +    return _traceMapping;
 +}
- let _Generator;
- function loadGenerator() {
-     if (!_Generator) {
-@@ -199,6 +213,58 @@ function patchMetroSourceMapStringForPackedMaps() {
-     stock.sourceMapString = sourceMapString;
-     stock.sourceMapStringNonBlocking = sourceMapStringNonBlocking;
- }
 +// Hermes can emit mappings for Metro trailer/debug lines that have no
 +// corresponding Metro source-map line. @jridgewell/remapping assumes every
 +// referenced generated line exists, so strip those invalid bridge segments.
++// (Upstream's `repairInvalidNegativeIndices` only covers negative indices,
++// not lines past the previous map's end.)
 +function getGeneratedLineCount(map) {
 +    const { TraceMap, decodedMappings } = loadTraceMapping();
 +    return decodedMappings(new TraceMap(map)).length;
@@ -62,7 +50,7 @@ index 4cc9aa4..703dfe0 100644
 +    }
 +    return {
 +        ...map,
-+        mappings: loadSourceMapCodec().encode(filtered),
++        mappings: loadSourcemapCodec().encode(filtered),
 +    };
 +}
 +function sanitizeSourceMapsForComposition(maps) {
@@ -82,12 +70,12 @@ index 4cc9aa4..703dfe0 100644
  // `maps[0]` is the original-most transform; `maps[maps.length - 1]` is
  // the most recent. Built on `@jridgewell/remapping` instead of mozilla's
  // `SourceMapConsumer`-based composer.
-@@ -226,7 +292,7 @@ function composeSourceMaps(maps) {
+@@ -251,7 +312,7 @@ function composeSourceMaps(maps) {
          return { ...map, ignoreList: map.x_google_ignoreList };
      });
      // Metro convention is original-first; remapping is most-recent first.
--    const reversed = normalized.slice().reverse();
-+    const reversed = sanitizeSourceMapsForComposition(normalized).slice().reverse();
-     const composed = loadRemapping()(reversed, () => null);
-     // Re-emit as a plain object — remapping returns a `SourceMap` class
-     // instance, which doesn't round-trip JSON cleanly.
+-    let input = normalized.slice().reverse();
++    let input = sanitizeSourceMapsForComposition(normalized).slice().reverse();
+     const remap = loadRemapping();
+     let composed;
+     try {
