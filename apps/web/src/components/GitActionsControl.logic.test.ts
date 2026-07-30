@@ -71,11 +71,29 @@ describe("git action progress presentation", () => {
     );
   });
 
+  it("presents pull progress inline without a second row", () => {
+    assert.deepEqual(
+      resolveGitActionProgressPresentation({
+        isRunning: true,
+        operation: "pull",
+        currentLabel: "Pulling latest changes...",
+        lastOutputLine: null,
+        phaseStartedAtMs: 1_000,
+        hookStartedAtMs: null,
+      }),
+      {
+        status: "Pulling latest changes...",
+        output: null,
+        startedAtMs: 1_000,
+      },
+    );
+  });
+
   it("does not present unrelated or completed actions", () => {
     const input = {
       isRunning: true,
-      operation: "pull",
-      currentLabel: "Pulling...",
+      operation: "publish_repository",
+      currentLabel: "Publishing repository",
       lastOutputLine: null,
       phaseStartedAtMs: 1_000,
       hookStartedAtMs: null,

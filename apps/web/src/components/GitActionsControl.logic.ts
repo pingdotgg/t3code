@@ -65,19 +65,27 @@ export function resolveGitActionProgressPresentation(input: {
   readonly phaseStartedAtMs: number | null;
   readonly hookStartedAtMs: number | null;
 }): GitActionProgressPresentation | null {
-  if (!input.isRunning || input.operation !== "run_change_request") {
+  if (
+    !input.isRunning ||
+    (input.operation !== "run_change_request" && input.operation !== "pull")
+  ) {
     return null;
   }
 
   const currentLabel = input.currentLabel?.trim();
   const output = input.lastOutputLine?.trim();
+  const isPull = input.operation === "pull";
   return {
     status:
-      !currentLabel || currentLabel === "Running source control action"
-        ? "Starting source control action..."
-        : currentLabel,
-    output: output ? output : null,
-    startedAtMs: input.hookStartedAtMs ?? input.phaseStartedAtMs,
+      currentLabel && currentLabel !== "Running source control action"
+        ? currentLabel
+        : isPull
+          ? "Pulling latest changes..."
+          : "Starting source control action...",
+    output: !isPull && output ? output : null,
+    startedAtMs: isPull
+      ? input.phaseStartedAtMs
+      : (input.hookStartedAtMs ?? input.phaseStartedAtMs),
   };
 }
 
