@@ -45,7 +45,7 @@ import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { OrchestrationV2EventSinkLayerLive, OrchestrationV2LayerLive } from "./runtimeLayer.ts";
-import { shellStreamItemFromSnapshot } from "./ShellStream.ts";
+import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 
@@ -632,9 +632,9 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
       );
       assert.deepEqual(
-        shellStreamItemFromSnapshot({
+        shellStreamItemFromThreadShell({
           stored: archive.storedEvents[0]!,
-          snapshot: archivedShell,
+          shell: yield* orchestrator.getThreadShell(threadId),
         }),
         {
           kind: "thread.updated",
@@ -659,7 +659,10 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
       );
       assert.deepEqual(
-        shellStreamItemFromSnapshot({ stored: remove.storedEvents[0]!, snapshot: deletedShell }),
+        shellStreamItemFromThreadShell({
+          stored: remove.storedEvents[0]!,
+          shell: yield* orchestrator.getThreadShell(threadId),
+        }),
         {
           kind: "thread.removed",
           sequence: remove.sequence,

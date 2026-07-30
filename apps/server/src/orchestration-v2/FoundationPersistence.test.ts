@@ -265,6 +265,145 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("compacts superseded state events, imported v1 events, and legacy receipts", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:foundation-compact");
+      const thread = makeThread(threadId, now);
+      const messageId = MessageId.make("message:foundation-compact");
+      const threadStateEvent = (
+        suffix: string,
+        type: "thread.visited" | "thread.metadata-updated",
+      ): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`event:foundation-compact:${suffix}`),
+        type,
+        threadId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, lastVisitedAt: now },
+      });
+      const messageEvent = (suffix: string, text: string): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`event:foundation-compact:${suffix}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: messageId,
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({ id: "event:foundation-compact:create", thread, now }),
+          threadStateEvent("meta", "thread.metadata-updated"),
+          threadStateEvent("visit-1", "thread.visited"),
+          threadStateEvent("visit-2", "thread.visited"),
+          messageEvent("message-1", "streaming"),
+          messageEvent("message-2", "final"),
+        ],
+      });
+
+      // A fully imported legacy thread: its v1 events and pre-migration
+      // receipts are dead weight; a still-pending import keeps its rows.
+      const importedV1ThreadId = "thread:foundation-compact-v1-imported";
+      const pendingV1ThreadId = "thread:foundation-compact-v1-pending";
+      const insertV1Event = (threadIdValue: string, version: number) => sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        )
+        VALUES (
+          ${`event:v1:${threadIdValue}:${version}`}, 'thread', ${threadIdValue}, ${version},
+          'thread.message-appended', ${nowIso}, 'user', '{}', '{}', 1
+        )
+      `;
+      yield* insertV1Event(importedV1ThreadId, 1);
+      yield* insertV1Event(importedV1ThreadId, 2);
+      yield* insertV1Event(pendingV1ThreadId, 1);
+      yield* sql`
+        INSERT INTO orchestration_v2_legacy_imports (
+          thread_id, source_updated_at, shell_imported_at, transcript_imported_at,
+          imported_message_count, last_error
+        )
+        VALUES
+          (${importedV1ThreadId}, ${nowIso}, ${nowIso}, ${nowIso}, 2, NULL),
+          (${pendingV1ThreadId}, ${nowIso}, ${nowIso}, NULL, 0, NULL)
+        ON CONFLICT(thread_id) DO NOTHING
+      `;
+      yield* sql`
+        INSERT INTO orchestration_command_receipts (
+          command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status, command_type
+        )
+        VALUES
+          ('command:foundation-compact:legacy', 'thread', ${importedV1ThreadId}, ${nowIso}, 1, 'accepted', 'legacy'),
+          ('command:foundation-compact:pending', 'thread', ${pendingV1ThreadId}, ${nowIso}, 1, 'accepted', 'legacy')
+        ON CONFLICT(command_id) DO NOTHING
+      `;
+
+      const summary = yield* maintenance.compactEventStore;
+      // meta + visit-1 (superseded thread state), message-1, and the two
+      // imported v1 events.
+      assert.isAtLeast(summary.deletedEventCount, 5);
+      assert.isAtLeast(summary.deletedReceiptCount, 1);
+
+      const remaining = yield* sql<{ readonly event_id: string }>`
+        SELECT event_id
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+        ORDER BY sequence ASC
+      `;
+      assert.deepEqual(
+        remaining.map((row) => row.event_id),
+        [
+          "event:foundation-compact:create",
+          "event:foundation-compact:visit-2",
+          "event:foundation-compact:message-2",
+        ],
+      );
+
+      const remainingV1 = yield* sql<{ readonly stream_id: string }>`
+        SELECT stream_id
+        FROM orchestration_events
+        WHERE application_event_version = 1
+          AND stream_id IN (${importedV1ThreadId}, ${pendingV1ThreadId})
+      `;
+      assert.deepEqual(
+        remainingV1.map((row) => row.stream_id),
+        [pendingV1ThreadId],
+      );
+
+      const remainingReceipts = yield* sql<{ readonly command_id: string }>`
+        SELECT command_id
+        FROM orchestration_command_receipts
+        WHERE command_id IN ('command:foundation-compact:legacy', 'command:foundation-compact:pending')
+      `;
+      assert.deepEqual(
+        remainingReceipts.map((row) => row.command_id),
+        ["command:foundation-compact:pending"],
+      );
+
+      // Replay across the deletion gaps must still produce a valid projection.
+      assert.isTrue((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+    }),
+  );
+
   it.effect("verifies and rebuilds projections with cross-thread subagent relations", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
