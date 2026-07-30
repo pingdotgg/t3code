@@ -69,6 +69,115 @@ layer("035-036 thread storage lifecycle migrations", (it) => {
   );
 });
 
+const branchHistoryLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+
+branchHistoryLayer("038 branch-history compatibility", (it) => {
+  it.effect("preserves lifecycle state when cold archive setup reruns", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 34 });
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at, archived_at, deleted_at
+        ) VALUES
+          (
+            'cold-thread', 'project-1', 'Cold thread',
+            '{"instanceId":"codex","model":"gpt-5.5","options":[]}',
+            'full-access', 'default', '2026-07-01T00:00:00.000Z',
+            '2026-07-01T00:00:00.000Z', '2026-07-02T00:00:00.000Z', NULL
+          ),
+          (
+            'cleanup-pending-thread', 'project-1', 'Cleanup pending thread',
+            '{"instanceId":"codex","model":"gpt-5.5","options":[]}',
+            'full-access', 'default', '2026-07-01T00:00:00.000Z',
+            '2026-07-01T00:00:00.000Z', '2026-07-03T00:00:00.000Z', NULL
+          )
+      `;
+
+      yield* runMigrations({ toMigrationInclusive: 36 });
+      yield* sql`
+        UPDATE thread_archive_manifests
+        SET
+          status = CASE thread_id
+            WHEN 'cold-thread' THEN 'cold'
+            ELSE 'cleanup_pending'
+          END,
+          original_bytes = CASE thread_id
+            WHEN 'cold-thread' THEN 1024
+            ELSE 2048
+          END,
+          compressed_bytes = CASE thread_id
+            WHEN 'cold-thread' THEN 512
+            ELSE 1024
+          END
+        WHERE thread_id IN ('cold-thread', 'cleanup-pending-thread')
+      `;
+      yield* sql`
+        UPDATE thread_storage_maintenance
+        SET status = 'complete'
+        WHERE task = 'compact-legacy-thread-storage'
+      `;
+
+      const beforeManifests = yield* sql<{
+        readonly threadId: string;
+        readonly status: string;
+        readonly originalBytes: number;
+        readonly compressedBytes: number;
+      }>`
+        SELECT
+          thread_id AS "threadId",
+          status,
+          original_bytes AS "originalBytes",
+          compressed_bytes AS "compressedBytes"
+        FROM thread_archive_manifests
+        ORDER BY thread_id
+      `;
+      const beforeMaintenance = yield* sql<{
+        readonly task: string;
+        readonly status: string;
+      }>`
+        SELECT task, status
+        FROM thread_storage_maintenance
+        ORDER BY task
+      `;
+
+      const executed = yield* runMigrations({ toMigrationInclusive: 38 });
+      assert.deepStrictEqual(executed, [
+        [37, "ProjectionThreadTitleRegeneration"],
+        [38, "ThreadColdArchiveCompatibility"],
+      ]);
+
+      const afterManifests = yield* sql<{
+        readonly threadId: string;
+        readonly status: string;
+        readonly originalBytes: number;
+        readonly compressedBytes: number;
+      }>`
+        SELECT
+          thread_id AS "threadId",
+          status,
+          original_bytes AS "originalBytes",
+          compressed_bytes AS "compressedBytes"
+        FROM thread_archive_manifests
+        ORDER BY thread_id
+      `;
+      const afterMaintenance = yield* sql<{
+        readonly task: string;
+        readonly status: string;
+      }>`
+        SELECT task, status
+        FROM thread_storage_maintenance
+        ORDER BY task
+      `;
+
+      assert.deepStrictEqual(afterManifests, beforeManifests);
+      assert.deepStrictEqual(afterMaintenance, beforeMaintenance);
+    }),
+  );
+});
+
 const upstreamHistoryLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
 upstreamHistoryLayer("035 upstream title-regeneration compatibility", (it) => {
