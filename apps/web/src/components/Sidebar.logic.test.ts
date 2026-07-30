@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   archiveSelectedThreadEntries,
-  buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
@@ -11,7 +10,6 @@ import {
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
-  isThreadTitleRegenerationPending,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -30,7 +28,6 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
-  THREAD_TITLE_REGENERATION_TIMEOUT_MS,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -48,76 +45,6 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
-
-describe("isThreadTitleRegenerationPending", () => {
-  const now = Date.parse("2026-03-09T10:00:30.000Z");
-
-  it("keeps a recent request pending", () => {
-    expect(
-      isThreadTitleRegenerationPending(
-        {
-          titleRegeneration: {
-            startedAt: new Date(now - THREAD_TITLE_REGENERATION_TIMEOUT_MS + 1).toISOString(),
-          },
-        },
-        now,
-      ),
-    ).toBe(true);
-  });
-
-  it("expires stale, missing, and malformed requests", () => {
-    expect(
-      isThreadTitleRegenerationPending(
-        {
-          titleRegeneration: {
-            startedAt: new Date(now - THREAD_TITLE_REGENERATION_TIMEOUT_MS).toISOString(),
-          },
-        },
-        now,
-      ),
-    ).toBe(false);
-    expect(isThreadTitleRegenerationPending({ titleRegeneration: null }, now)).toBe(false);
-    expect(
-      isThreadTitleRegenerationPending({ titleRegeneration: { startedAt: "not-a-date" } }, now),
-    ).toBe(false);
-  });
-});
-
-describe("buildBulkTitleRegenerationContextMenuItem", () => {
-  it("counts only threads that can start a new regeneration", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 4,
-        actionableCount: 3,
-      }),
-    ).toEqual({
-      id: "regenerate-title",
-      label: "Regenerate titles (3)",
-    });
-  });
-
-  it("shows a disabled progress item when every supported thread is pending", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 2,
-        actionableCount: 0,
-      }),
-    ).toEqual({
-      id: "regenerate-title",
-      label: "Regenerating… (2)",
-      disabled: true,
-    });
-  });
-
-  it("omits the action when no selected environment supports it", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 0,
-        actionableCount: 0,
-      }),
-    ).toBeNull();
-  });
-});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

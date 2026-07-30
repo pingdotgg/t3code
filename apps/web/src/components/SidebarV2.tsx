@@ -106,11 +106,9 @@ import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat"
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import {
-  buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
-  isThreadTitleRegenerationPending,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveAdjacentThreadId,
@@ -121,7 +119,6 @@ import {
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
-  threadTitleRegenerationRemainingMs,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -447,23 +444,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
-  const titleRegeneration = thread.titleRegeneration ?? null;
-  const [timedOutTitleRegenerationRequestId, setTimedOutTitleRegenerationRequestId] = useState<
-    string | null
-  >(null);
-  const titleRegenerationRemaining = threadTitleRegenerationRemainingMs(thread, Date.now());
-  const isRegeneratingTitle =
-    titleRegeneration !== null &&
-    timedOutTitleRegenerationRequestId !== titleRegeneration.requestId &&
-    titleRegenerationRemaining > 0;
-  useEffect(() => {
-    if (titleRegeneration === null || titleRegenerationRemaining <= 0) return;
-    const timeoutId = window.setTimeout(
-      () => setTimedOutTitleRegenerationRequestId(titleRegeneration.requestId),
-      titleRegenerationRemaining,
-    );
-    return () => window.clearTimeout(timeoutId);
-  }, [titleRegeneration, titleRegenerationRemaining]);
+  const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
@@ -1957,18 +1938,6 @@ export default function SidebarV2() {
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
           canSnooze(thread, { now: selectionNow.toISOString() }),
       );
-      const titleRegenerationThreads = selectedThreads.filter(
-        (thread) =>
-          serverConfigs.get(thread.environmentId)?.environment.capabilities
-            .threadTitleRegeneration === true,
-      );
-      const regeneratableTitleThreads = titleRegenerationThreads.filter(
-        (thread) => !isThreadTitleRegenerationPending(thread, selectionNow.getTime()),
-      );
-      const titleRegenerationMenuItem = buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: titleRegenerationThreads.length,
-        actionableCount: regeneratableTitleThreads.length,
-      });
       const snoozePresets = resolveSnoozePresets(new Date());
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
@@ -1986,7 +1955,6 @@ export default function SidebarV2() {
                   },
                 ]
               : []),
-            ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
             { id: "delete", label: `Delete (${count})`, destructive: true },
           ],
@@ -2009,28 +1977,6 @@ export default function SidebarV2() {
           }
           clearSelection();
         }
-        return;
-      }
-      if (clicked.value === "regenerate-title") {
-        for (const thread of regeneratableTitleThreads) {
-          const result = await updateThreadMetadata({
-            environmentId: thread.environmentId,
-            input: { threadId: thread.id, regenerateTitle: true },
-          });
-          if (result._tag === "Success") continue;
-          if (!isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to regenerate thread titles",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          }
-          return;
-        }
-        clearSelection();
         return;
       }
       if (clicked.value === "settle") {
@@ -2104,7 +2050,6 @@ export default function SidebarV2() {
       markThreadUnread,
       removeFromSelection,
       serverConfigs,
-      updateThreadMetadata,
     ],
   );
 
@@ -2137,7 +2082,7 @@ export default function SidebarV2() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
-        const isRegeneratingTitle = isThreadTitleRegenerationPending(thread, Date.now());
+        const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         // Presets resolve at menu-open time (same as the popover).

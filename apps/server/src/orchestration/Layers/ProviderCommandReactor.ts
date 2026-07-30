@@ -834,24 +834,25 @@ const make = Effect.gen(function* () {
 
   const regenerateThreadTitle = Effect.fn("regenerateThreadTitle")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>,
+    requestId: CommandId,
   ) {
     if (event.payload.regenerateTitle !== true) {
-      return;
+      return { _tag: "Superseded" } as const;
     }
 
     const thread = yield* resolveThread(event.payload.threadId);
-    if (!thread) {
-      return;
+    if (!thread || thread.titleRegeneration?.requestId !== requestId) {
+      return { _tag: "Superseded" } as const;
     }
 
     const { message, attachments } = formatThreadTitleContext(thread.messages);
     if (message.length === 0) {
-      return;
+      return { _tag: "Completed", title: undefined } as const;
     }
 
     const previousTitle = event.payload.previousTitle ?? thread.title;
     if (thread.title !== previousTitle) {
-      return;
+      return { _tag: "Superseded" } as const;
     }
     const project = yield* resolveProject(thread.projectId);
     const cwd =
@@ -869,15 +870,19 @@ const make = Effect.gen(function* () {
       modelSelection,
     });
     if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
-      return;
+      return { _tag: "Completed", title: undefined } as const;
     }
 
     const latestThread = yield* resolveThread(event.payload.threadId);
-    if (!latestThread || latestThread.title !== previousTitle) {
-      return;
+    if (
+      !latestThread ||
+      latestThread.titleRegeneration?.requestId !== requestId ||
+      latestThread.title !== previousTitle
+    ) {
+      return { _tag: "Superseded" } as const;
     }
 
-    return generated.title;
+    return { _tag: "Completed", title: generated.title } as const;
   });
   const dispatchThreadTitleRegenerationCompletion = Effect.fn(
     "dispatchThreadTitleRegenerationCompletion",
@@ -894,6 +899,25 @@ const make = Effect.gen(function* () {
       ...(input.title !== undefined ? { title: input.title } : {}),
     });
   });
+  const clearInterruptedThreadTitleRegenerations = Effect.fn(
+    "clearInterruptedThreadTitleRegenerations",
+  )(function* () {
+    const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
+    yield* Effect.forEach(
+      readModel.threads,
+      (thread) => {
+        const requestId = thread.titleRegeneration?.requestId;
+        if (requestId === undefined) {
+          return Effect.void;
+        }
+        return dispatchThreadTitleRegenerationCompletion({
+          threadId: thread.id,
+          requestId,
+        });
+      },
+      { discard: true },
+    );
+  });
   const processThreadTitleRegenerationSafely = Effect.fn("processThreadTitleRegenerationSafely")(
     function* (event: Extract<ProviderIntentEvent, { type: "thread.meta-updated" }>) {
       if (event.payload.regenerateTitle !== true) {
@@ -901,7 +925,10 @@ const make = Effect.gen(function* () {
       }
 
       const requestId = event.payload.titleRegeneration?.requestId ?? event.commandId;
-      const generatedTitle = yield* regenerateThreadTitle(event).pipe(
+      if (requestId === null) {
+        return;
+      }
+      const result = yield* regenerateThreadTitle(event, requestId).pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) {
             return Effect.failCause(cause);
@@ -909,17 +936,17 @@ const make = Effect.gen(function* () {
           return Effect.logWarning("provider command reactor failed to regenerate thread title", {
             threadId: event.payload.threadId,
             cause: Cause.pretty(cause),
-          }).pipe(Effect.as(undefined));
+          }).pipe(Effect.as({ _tag: "Completed", title: undefined } as const));
         }),
       );
-      if (requestId === null) {
+      if (result._tag === "Superseded") {
         return;
       }
 
       const completion = {
         threadId: event.payload.threadId,
         requestId,
-        ...(generatedTitle !== undefined ? { title: generatedTitle } : {}),
+        ...(result.title !== undefined ? { title: result.title } : {}),
       };
       yield* dispatchThreadTitleRegenerationCompletion(completion).pipe(
         Effect.catchCause((cause) => {
@@ -1276,6 +1303,23 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
+    // The domain event stream is hot, so work pending before this reactor
+    // starts cannot be resumed. Correlated completions only clear the request
+    // captured here, leaving any newer request untouched.
+    yield* clearInterruptedThreadTitleRegenerations().pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to clear interrupted title regenerations",
+          {
+            cause: Cause.pretty(cause),
+          },
+        );
+      }),
+    );
+
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
