@@ -11,6 +11,15 @@ export const TUI_RENDERER_CONFIG = {
   enableMouseMovement: false,
   useMouse: true,
   screenMode: "alternate-screen",
+  // In SSH sessions the renderer flags itself remote and, unlike the local
+  // path, forwards no environment to the native capability detection — so
+  // TERM/COLORTERM are ignored, rgb/ansi256 stay false (no capability
+  // handshake advertises truecolor), and every themed ANSI slot flattens to
+  // the baked legacy palette. ssh forwards TERM and we default COLORTERM
+  // (ensureColorCapabilityEnv), and both describe the viewer's terminal, so
+  // hand them to the native layer explicitly. Harmless locally, where the
+  // native side reads the same values from the real environ anyway.
+  forwardEnvKeys: ["TERM", "COLORTERM", "TERM_PROGRAM"],
 } satisfies CliRendererConfig;
 
 export interface TerminalStartupEnvironment {

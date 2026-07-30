@@ -13,6 +13,13 @@ describe("TUI terminal startup", () => {
     expect(TUI_RENDERER_CONFIG.enableMouseMovement).toBe(false);
   });
 
+  it("Given an SSH session, then colour env still reaches the native capability detection", () => {
+    // Remote-flagged renderers forward no env by default, which discards
+    // COLORTERM/TERM and flattens themed ANSI slots to the baked palette.
+    expect(TUI_RENDERER_CONFIG.forwardEnvKeys).toContain("TERM");
+    expect(TUI_RENDERER_CONFIG.forwardEnvKeys).toContain("COLORTERM");
+  });
+
   it("Given tmux is showing pane history, when the TUI starts, then it returns that pane to the live screen", () => {
     const calls: ReadonlyArray<string>[] = [];
 
