@@ -45,9 +45,8 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
     : Option.none();
 };
 
-export const resolveUserDataPath = Effect.fn("desktop.appIdentity.resolveUserDataPath")(function* (
-  environment: DesktopEnvironment.DesktopEnvironment["Service"],
-) {
+export const resolveUserDataPath = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const legacyPath = environment.path.join(
     environment.appDataDirectory,
@@ -65,7 +64,7 @@ export const resolveUserDataPath = Effect.fn("desktop.appIdentity.resolveUserDat
   return legacyPathExists
     ? legacyPath
     : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
-});
+}).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
 
 export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
@@ -112,8 +111,10 @@ export const make = Effect.gen(function* () {
     return commitHash;
   });
 
-  const userDataPath = resolveUserDataPath(environment).pipe(
-    Effect.provideService(FileSystem.FileSystem, fileSystem),
+  const userDataPath = resolveUserDataPath.pipe(
+    Effect.provide(
+      yield* Effect.context<DesktopEnvironment.DesktopEnvironment | FileSystem.FileSystem>(),
+    ),
   );
 
   const configure = Effect.gen(function* () {
