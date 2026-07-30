@@ -1,12 +1,14 @@
 export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
-export type ThreadListAction =
-  | "archive"
-  | "unarchive"
-  | "delete"
-  | "settle"
-  | "unsettle"
-  | "snooze"
-  | "unsnooze";
+export type WorkspaceDetailInvalidationAction =
+  | {
+      readonly type: "pop";
+      readonly count: number;
+      readonly source: string;
+    }
+  | {
+      readonly type: "replace";
+      readonly source: string;
+    };
 
 const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
 
@@ -42,20 +44,68 @@ export function resolveFileSelectionNavigationAction(input: {
   return input.hasPersistentFileInspector ? "replace" : "push";
 }
 
-/**
- * Removing the selected thread from the live sidebar also invalidates its
- * persistent detail pane. Reverse actions keep the current detail visible.
- */
 export function shouldInvalidateSelectedThreadDetail(input: {
-  readonly action: ThreadListAction;
-  readonly actedThreadKey: string;
-  readonly selectedThreadKey: string | null;
+  readonly previous: {
+    readonly key: string | null;
+    readonly present: boolean;
+    readonly settled: boolean;
+    readonly snoozed: boolean;
+  };
+  readonly current: {
+    readonly key: string | null;
+    readonly present: boolean;
+    readonly settled: boolean;
+    readonly snoozed: boolean;
+  };
 }): boolean {
   return (
-    input.actedThreadKey === input.selectedThreadKey &&
-    (input.action === "archive" ||
-      input.action === "delete" ||
-      input.action === "settle" ||
-      input.action === "snooze")
+    input.previous.key !== null &&
+    input.previous.key === input.current.key &&
+    input.previous.present &&
+    (!input.current.present ||
+      (!input.previous.settled && input.current.settled) ||
+      (!input.previous.snoozed && input.current.snoozed))
   );
+}
+
+export function resolveWorkspaceDetailInvalidationAction(input: {
+  readonly routes: ReadonlyArray<{
+    readonly key: string;
+    readonly name: string;
+  }>;
+  readonly overlayRouteNames: ReadonlySet<string>;
+}): WorkspaceDetailInvalidationAction | null {
+  let workspaceRouteIndex = -1;
+  for (let index = input.routes.length - 1; index >= 0; index -= 1) {
+    const route = input.routes[index];
+    if (route !== undefined && !input.overlayRouteNames.has(route.name)) {
+      workspaceRouteIndex = index;
+      break;
+    }
+  }
+  if (workspaceRouteIndex === -1) {
+    return null;
+  }
+
+  const workspaceRoute = input.routes[workspaceRouteIndex];
+  if (workspaceRoute === undefined || workspaceRoute.name === "Home") {
+    return null;
+  }
+
+  let homeRouteIndex = -1;
+  for (let index = workspaceRouteIndex - 1; index >= 0; index -= 1) {
+    if (input.routes[index]?.name === "Home") {
+      homeRouteIndex = index;
+      break;
+    }
+  }
+  if (homeRouteIndex === -1) {
+    return { type: "replace", source: workspaceRoute.key };
+  }
+
+  return {
+    type: "pop",
+    count: workspaceRouteIndex - homeRouteIndex,
+    source: workspaceRoute.key,
+  };
 }
