@@ -73,6 +73,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { openProjectSettingsDialog } from "../projectSettingsDialogStore";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -1168,15 +1169,12 @@ export default function SidebarV2() {
       event.preventDefault();
       event.stopPropagation();
       setProjectScopeMenuOpen(false);
-      void router.navigate({
-        to: "/projects/$environmentId/$projectId",
-        params: {
-          environmentId: projectGroup.environmentId,
-          projectId: projectGroup.id,
-        },
+      openProjectSettingsDialog({
+        environmentId: projectGroup.environmentId,
+        projectId: projectGroup.id,
       });
     },
-    [router],
+    [],
   );
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so

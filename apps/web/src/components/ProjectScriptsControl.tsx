@@ -81,7 +81,7 @@ const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "debug", label: "Debug" },
 ];
 
-function ScriptIcon({
+export function ScriptIcon({
   icon,
   className = "size-3.5",
 }: {
@@ -359,7 +359,7 @@ export default function ProjectScriptsControl({
     if (variant === "settings") {
       return (
         <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-3 px-3 py-2 sm:px-4">
+          <div className="flex min-h-14 min-w-0 items-center gap-3 px-3 py-3 sm:px-4">
             <div className="shrink-0 text-sm font-medium text-foreground">Actions</div>
             {scripts.length === 0 ? (
               <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
@@ -389,11 +389,8 @@ export default function ProjectScriptsControl({
                 return (
                   <div
                     key={script.id}
-                    className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-2 sm:px-4"
+                    className="flex min-h-14 min-w-0 items-center gap-3 rounded-lg px-3 py-3 sm:px-4"
                   >
-                    <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background">
-                      <ScriptIcon icon={script.icon} className="size-3.5" />
-                    </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-medium text-foreground">
@@ -452,11 +449,8 @@ export default function ProjectScriptsControl({
                   return (
                     <div
                       key={key}
-                      className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-2 sm:px-4"
+                      className="flex min-h-14 min-w-0 items-center gap-3 rounded-lg px-3 py-3 sm:px-4"
                     >
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background">
-                        <ScriptIcon icon={fileScript.icon ?? "play"} className="size-3.5" />
-                      </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <span className="truncate text-sm font-medium text-foreground">

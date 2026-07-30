@@ -112,6 +112,7 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { openProjectSettingsDialog } from "../projectSettingsDialogStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -1374,9 +1375,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (isMobile) {
         setOpenMobile(false);
       }
-      void router.navigate({
-        to: "/projects/$environmentId/$projectId",
-        params: { environmentId: project.environmentId, projectId: project.id },
+      openProjectSettingsDialog({
+        environmentId: project.environmentId,
+        projectId: project.id,
       });
     },
     [
@@ -1385,7 +1386,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       isMobile,
       project.environmentId,
       project.id,
-      router,
       setOpenMobile,
       suppressProjectClickAfterDragRef,
       suppressProjectClickForContextMenuRef,
@@ -1626,9 +1626,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           actionHandlers.set(id, () => {
             switch (action) {
               case "settings":
-                void router.navigate({
-                  to: "/projects/$environmentId/$projectId",
-                  params: { environmentId: member.environmentId, projectId: member.id },
+                openProjectSettingsDialog({
+                  environmentId: member.environmentId,
+                  projectId: member.id,
                 });
                 return;
               case "rename":

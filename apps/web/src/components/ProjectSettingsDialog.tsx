@@ -1,6 +1,4 @@
-import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, ServerIcon, Trash2Icon } from "lucide-react";
-import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
-import type { AuthGateBeforeLoadArgs } from "./-authGateRouteContext";
+import { ChevronDownIcon, PlusIcon, RefreshCwIcon, ServerIcon, Trash2Icon } from "lucide-react";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { createDefaultModelSelection, createModelSelection } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
@@ -26,42 +24,32 @@ import type {
   SourceControlProviderKind,
   ThreadEnvMode,
 } from "@t3tools/contracts";
-import { DEFAULT_MODEL, EnvironmentId } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import { DEFAULT_MODEL } from "@t3tools/contracts";
+import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "../lib/utils";
 import { ensureLocalApi, readLocalApi } from "../localApi";
-import { Button } from "../components/ui/button";
+import { Button } from "./ui/button";
+import { Dialog, DialogHeader, DialogPopup, DialogTitle } from "./ui/dialog";
+import { ScrollArea } from "./ui/scroll-area";
 import {
   NumberField,
   NumberFieldDecrement,
   NumberFieldGroup,
   NumberFieldIncrement,
   NumberFieldInput,
-} from "../components/ui/number-field";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
-import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
-import { Spinner } from "../components/ui/spinner";
-import { Switch } from "../components/ui/switch";
-import {
-  SettingResetButton,
-  SettingsPageContainer,
-  SettingsSection,
-} from "../components/settings/settingsLayout";
-import { toastManager, stackedThreadToast } from "../components/ui/toast";
-import { DraftInput } from "../components/ui/draft-input";
-import { isElectron } from "../env";
+} from "./ui/number-field";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import { Spinner } from "./ui/spinner";
+import { Switch } from "./ui/switch";
+import { SettingResetButton } from "./settings/settingsLayout";
+import { toastManager, stackedThreadToast } from "./ui/toast";
+import { DraftInput } from "./ui/draft-input";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
-} from "../components/ProjectScriptsControl";
+} from "./ProjectScriptsControl";
 import { commandForProjectScript, nextProjectScriptId } from "../projectScripts";
 import { syncProjectScriptKeybinding } from "../lib/projectScriptKeybindings";
 import {
@@ -85,9 +73,9 @@ import {
   type ProjectSettingsDraft,
   type ProjectSettingsDraftKey,
 } from "../projectSettingsCommit";
-import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
-import { TraitsPicker } from "../components/chat/TraitsPicker";
-import { ProviderInstanceIcon } from "../components/chat/ProviderInstanceIcon";
+import { ProviderModelPicker } from "./chat/ProviderModelPicker";
+import { TraitsPicker } from "./chat/TraitsPicker";
+import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -101,12 +89,17 @@ import {
 import { deriveProjectGroupingOverrideKey, selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { useT3ProjectFile } from "../hooks/useT3ProjectFileScripts";
-import T3ProjectFileSettings from "../components/T3ProjectFileSettings";
+import T3ProjectFileSettings from "./T3ProjectFileSettings";
 import {
   clearComposerDraftsForProjectGroup,
   clearComposerDraftsForProjectGroupMember,
 } from "../composerDraftStore";
 import { removeProjectGroupMembersSequentially } from "../projectGroupRemoval";
+import {
+  openProjectSettingsDialog,
+  useProjectSettingsDialogStore,
+  type ProjectSettingsDialogTarget,
+} from "../projectSettingsDialogStore";
 
 const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   github: "GitHub",
@@ -242,10 +235,55 @@ function projectScriptPreviewFields(
     : {};
 }
 
-function ProjectRouteView() {
-  const { environmentId, projectId } = Route.useParams();
-  const navigate = useNavigate();
-  const canGoBack = useCanGoBack();
+export function ProjectSettingsDialog() {
+  const target = useProjectSettingsDialogStore((state) => state.target);
+  const closeProjectSettings = useProjectSettingsDialogStore((state) => state.closeProjectSettings);
+
+  return (
+    <Dialog
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open) closeProjectSettings();
+      }}
+    >
+      <DialogPopup className="flex max-h-[min(88dvh,860px)] max-w-[45rem] flex-col">
+        {target ? (
+          <ProjectSettingsDialogContent
+            key={`${target.environmentId}\0${target.projectId}`}
+            target={target}
+            onClose={closeProjectSettings}
+          />
+        ) : null}
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+function ProjectSettingsDialogContent({
+  target,
+  onClose,
+}: {
+  target: ProjectSettingsDialogTarget;
+  onClose: () => void;
+}) {
+  const { environmentId, projectId } = target;
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // The dialog sizes itself to the collapsed rows. Opening the advanced
+  // sections pins that height so the extra rows scroll instead of stretching
+  // the dialog out from under the pointer.
+  const [lockedBodyHeight, setLockedBodyHeight] = useState<number | null>(null);
+  const bodyContentRef = useRef<HTMLDivElement | null>(null);
+  const toggleAdvanced = useCallback(() => {
+    // Measure the scroll viewport, not the content: the viewport is what the
+    // pinned height replaces, so the dialog keeps its exact current size.
+    // clientHeight, not getBoundingClientRect — the popup carries an open
+    // animation transform, and a scaled rect would pin a too-small height.
+    const scroller = bodyContentRef.current?.closest<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    setAdvancedOpen((open) => !open);
+    setLockedBodyHeight((current) => (current === null && scroller ? scroller.clientHeight : null));
+  }, []);
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
@@ -317,10 +355,7 @@ function ProjectRouteView() {
   const projectServerConfig = project?.environmentId
     ? (serverConfigs.get(project.environmentId) ?? null)
     : null;
-  const t3ProjectFile = useT3ProjectFile(
-    project?.environmentId ?? EnvironmentId.make(environmentId),
-    project?.workspaceRoot ?? null,
-  );
+  const t3ProjectFile = useT3ProjectFile(environmentId, project?.workspaceRoot ?? null);
   const keybindings =
     project?.environmentId && project.environmentId !== primaryEnvironmentId
       ? (projectServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS)
@@ -614,35 +649,6 @@ function ProjectRouteView() {
     [commitProjectSettings],
   );
 
-  const commitTitle = useCallback(
-    (nextTitle: string) => {
-      const trimmed = nextTitle.trim();
-      if (!details) return;
-      if (trimmed.length === 0) {
-        clearDraftKeys(["title"], projectDraftKey);
-        showProjectSettingsError(
-          "Failed to update project settings",
-          new Error("Project name cannot be empty."),
-        );
-        return;
-      }
-      // Compare against the displayed (draft-aware) value, not the possibly
-      // stale server snapshot, so a revert of an in-flight edit still commits.
-      if (trimmed === title) return;
-      stageDraft({ title: trimmed });
-      void commitProjectMeta({ title: trimmed });
-    },
-    [
-      clearDraftKeys,
-      commitProjectMeta,
-      details,
-      projectDraftKey,
-      showProjectSettingsError,
-      stageDraft,
-      title,
-    ],
-  );
-
   const updateProjectGroupingPreference = useCallback(
     (selection: SidebarProjectGroupingMode | "inherit") => {
       if (!project) return;
@@ -791,14 +797,6 @@ function ProjectRouteView() {
       stageDraft,
     ],
   );
-
-  const navigateBackWithinApp = () => {
-    if (canGoBack) {
-      window.history.back();
-      return;
-    }
-    void navigate({ to: "/" });
-  };
 
   const projectThreadCount = useMemo(
     () =>
@@ -971,7 +969,7 @@ function ProjectRouteView() {
         type: "success",
         title: "Project removed",
       });
-      void navigate({ to: "/" });
+      onClose();
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
@@ -983,7 +981,7 @@ function ProjectRouteView() {
     } finally {
       setRemoveProjectPending(false);
     }
-  }, [deleteProject, navigate, project, projectThreadCount, removeProjectPending]);
+  }, [deleteProject, onClose, project, projectThreadCount, removeProjectPending]);
 
   const removeProjectEverywhere = useCallback(async () => {
     if (!projectGroup || projectLocations.length < 2 || removeProjectEverywherePending) return;
@@ -1032,7 +1030,7 @@ function ProjectRouteView() {
         type: "success",
         title: "Project removed from all environments",
       });
-      void navigate({ to: "/" });
+      onClose();
     } catch (error) {
       toastManager.add(
         stackedThreadToast({
@@ -1046,7 +1044,7 @@ function ProjectRouteView() {
     }
   }, [
     deleteProject,
-    navigate,
+    onClose,
     projectGroup,
     projectGroupThreadCount,
     projectLocations,
@@ -1067,13 +1065,23 @@ function ProjectRouteView() {
     projectProviderInstanceEntries.find(
       (entry) => entry.instanceId === displayedModelSelection.instanceId,
     ) ?? null;
-  const projectIdentityHeader = project ? (
-    <section className="px-4 sm:px-5">
-      <div className="flex min-h-9 min-w-0 items-center justify-between gap-4">
-        <h1 className="min-w-0 flex-1 truncate text-2xl font-semibold leading-none tracking-tight">
-          {title}
-        </h1>
-        {projectLocations.length > 1 ? (
+
+  const header = (
+    <DialogHeader className="gap-1.5 p-5 pb-3 sm:p-6 sm:pb-3">
+      {/* The close button is absolutely positioned at the popup's top-right, so
+          the title row reserves space for it and every other control lives on
+          the second row. */}
+      <DialogTitle className="min-w-0 truncate pe-9 text-lg">
+        {title || "Project settings"}
+      </DialogTitle>
+      <div className="flex min-w-0 items-center gap-2">
+        <div
+          className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+          title={project?.workspaceRoot ?? ""}
+        >
+          {project?.workspaceRoot ?? ""}
+        </div>
+        {project && projectLocations.length > 1 ? (
           <Select
             value={`${project.environmentId}:${project.id}`}
             onValueChange={(value) => {
@@ -1081,19 +1089,16 @@ function ProjectRouteView() {
                 (candidate) => `${candidate.environmentId}:${candidate.id}` === value,
               );
               if (!nextProject) return;
-              void navigate({
-                to: "/projects/$environmentId/$projectId",
-                params: {
-                  environmentId: nextProject.environmentId,
-                  projectId: nextProject.id,
-                },
+              openProjectSettingsDialog({
+                environmentId: nextProject.environmentId,
+                projectId: nextProject.id,
               });
             }}
           >
             <SelectTrigger
               variant="ghost"
               size="sm"
-              className="h-8 w-auto max-w-full px-2 font-medium"
+              className="h-7 w-auto max-w-[50%] shrink-0 px-2 text-xs font-medium"
               aria-label="Project environment"
             >
               <SelectValue>
@@ -1103,7 +1108,7 @@ function ProjectRouteView() {
                 </span>
               </SelectValue>
             </SelectTrigger>
-            <SelectPopup align="start" alignItemWithTrigger={false}>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
               {projectLocations.map((location) => (
                 <SelectItem
                   key={`${location.environmentId}:${location.id}`}
@@ -1117,571 +1122,609 @@ function ProjectRouteView() {
             </SelectPopup>
           </Select>
         ) : (
-          <div className="flex h-8 min-w-0 shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <ServerIcon className="size-3.5 shrink-0" />
             <span className="truncate">{currentEnvironmentLabel}</span>
           </div>
         )}
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          className="shrink-0 text-muted-foreground"
+          aria-label="Refresh project settings"
+          disabled={projectDetails.isPending}
+          onClick={refreshProjectDetails}
+        >
+          <RefreshCwIcon className="size-3.5" />
+        </Button>
       </div>
-    </section>
-  ) : null;
+    </DialogHeader>
+  );
+
+  if (!project) {
+    return (
+      <>
+        {header}
+        <DialogBody>
+          <ProjectNotice title="Project not found" description="This project is not loaded." />
+        </DialogBody>
+      </>
+    );
+  }
+
+  if (projectDetails.isPending && !projectDetails.data) {
+    return (
+      <>
+        {header}
+        <DialogBody>
+          <ProjectSettingsLoading />
+        </DialogBody>
+      </>
+    );
+  }
+
+  if (projectDetails.error !== null) {
+    return (
+      <>
+        {header}
+        <DialogBody>
+          <ProjectNotice title="Unable to load project" description={projectDetails.error} />
+        </DialogBody>
+      </>
+    );
+  }
+
+  if (!projectDetails.data) {
+    return (
+      <>
+        {header}
+        <DialogBody>
+          <ProjectSettingsLoading />
+        </DialogBody>
+      </>
+    );
+  }
+
+  const loadedDetails = projectDetails.data;
+
   return (
-    <SidebarInset className="isolate h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-2 px-3 sm:px-5">
-          <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            className={isElectron ? "drag-region-none" : ""}
-            aria-label="Back"
-            onClick={navigateBackWithinApp}
-          >
-            <ArrowLeftIcon className="size-4" />
-          </Button>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">Project settings</div>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={projectDetails.isPending}
-            onClick={refreshProjectDetails}
-          >
-            <RefreshCwIcon className="size-3.5" />
-            Refresh
-          </Button>
-        </header>
-
-        {project && projectDetails.isPending && !projectDetails.data ? (
-          <SettingsPageContainer className="max-w-4xl gap-8">
-            {projectIdentityHeader}
-            <ProjectSettingsLoading />
-          </SettingsPageContainer>
-        ) : (
-          <SettingsPageContainer className="max-w-4xl gap-8">
-            {!project ? (
-              <ProjectNotice title="Project not found" description="This project is not loaded." />
-            ) : projectDetails.error !== null ? (
-              <>
-                {projectIdentityHeader}
-                <ProjectNotice title="Unable to load project" description={projectDetails.error} />
-              </>
-            ) : projectDetails.data ? (
-              <>
-                {projectIdentityHeader}
-
-                <SettingsSection title="General">
-                  <ProjectSettingRow
-                    title="Name"
-                    description="Shown throughout T3 Code for this project."
-                    control={
-                      <DraftInput className="max-w-md" value={title} onCommit={commitTitle} />
-                    }
+    <>
+      {header}
+      <DialogBody className="space-y-1" contentRef={bodyContentRef} lockedHeight={lockedBodyHeight}>
+        <DialogSettingsGroup>
+          <ProjectSettingRow
+            title="Grouping rule"
+            description="How entries group in the sidebar."
+            control={
+              <Select
+                value={projectGroupingSelection}
+                onValueChange={(value) => {
+                  if (
+                    value === "inherit" ||
+                    value === "repository" ||
+                    value === "repository_path" ||
+                    value === "separate"
+                  ) {
+                    updateProjectGroupingPreference(value);
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-64" aria-label="Project grouping rule">
+                  <SelectValue>
+                    {projectGroupingSelection === "inherit"
+                      ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                      : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="inherit">
+                    Use global default
+                  </SelectItem>
+                  <SelectItem hideIndicator value="repository">
+                    {PROJECT_GROUPING_MODE_LABELS.repository}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="repository_path">
+                    {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="separate">
+                    {PROJECT_GROUPING_MODE_LABELS.separate}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <ProjectSettingRow
+            title="New threads"
+            description="Workspace mode for new threads."
+            resetAction={
+              loadedDetails.settings.defaultThreadEnvMode !== null ||
+              loadedDetails.settings.newWorktreesStartFromOrigin !== null ? (
+                <SettingResetButton label="new threads" onClick={resetThreadWorkspaceDefaults} />
+              ) : null
+            }
+            control={
+              <Select
+                value={projectThreadEnvMode ?? "global"}
+                onValueChange={(value) => {
+                  if (value === "global") {
+                    commitDefaultThreadEnvMode(null);
+                    return;
+                  }
+                  if (value === "local" || value === "worktree") {
+                    commitDefaultThreadEnvMode(value);
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-44" aria-label="New thread workspace mode">
+                  <SelectValue>
+                    {projectThreadEnvMode === null
+                      ? `Global (${THREAD_ENV_MODE_LABELS[primarySettings.defaultThreadEnvMode]})`
+                      : THREAD_ENV_MODE_LABELS[projectThreadEnvMode]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="global">
+                    Global
+                  </SelectItem>
+                  <SelectItem hideIndicator value="local">
+                    {THREAD_ENV_MODE_LABELS.local}
+                  </SelectItem>
+                  <SelectItem hideIndicator value="worktree">
+                    {THREAD_ENV_MODE_LABELS.worktree}
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          {effectiveThreadEnvMode === "worktree" ? (
+            <ProjectSettingRow
+              className="bg-muted/20 sm:pl-9"
+              title="Start from origin"
+              description="Branch worktrees off origin, not local."
+              resetAction={
+                loadedDetails.settings.newWorktreesStartFromOrigin !== null ? (
+                  <SettingResetButton
+                    label="start new worktrees from origin"
+                    onClick={() => commitNewWorktreesStartFromOrigin(null)}
                   />
-                  <ProjectSettingRow
-                    title="Grouping rule"
-                    description="Controls how matching project entries are grouped in the sidebar."
-                    control={
-                      <Select
-                        value={projectGroupingSelection}
-                        onValueChange={(value) => {
-                          if (
-                            value === "inherit" ||
-                            value === "repository" ||
-                            value === "repository_path" ||
-                            value === "separate"
-                          ) {
-                            updateProjectGroupingPreference(value);
-                          }
-                        }}
-                      >
-                        <SelectTrigger
-                          className="w-full max-w-md"
-                          aria-label="Project grouping rule"
-                        >
-                          <SelectValue>
-                            {projectGroupingSelection === "inherit"
-                              ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                              : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectPopup align="start" alignItemWithTrigger={false}>
-                          <SelectItem hideIndicator value="inherit">
-                            Use global default
-                          </SelectItem>
-                          <SelectItem hideIndicator value="repository">
-                            {PROJECT_GROUPING_MODE_LABELS.repository}
-                          </SelectItem>
-                          <SelectItem hideIndicator value="repository_path">
-                            {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                          </SelectItem>
-                          <SelectItem hideIndicator value="separate">
-                            {PROJECT_GROUPING_MODE_LABELS.separate}
-                          </SelectItem>
-                        </SelectPopup>
-                      </Select>
-                    }
-                  />
-                  <ProjectSettingRow
-                    title="Default model"
-                    description="Used when starting new threads in this project."
-                    resetAction={
-                      projectDetails.data.defaultModelSelection !== null ? (
-                        <SettingResetButton
-                          label="project default model"
-                          onClick={() => commitDefaultModelSelection(null)}
-                        />
-                      ) : null
-                    }
-                    control={
-                      <div className="flex min-w-0 flex-wrap items-center justify-start gap-1.5">
-                        <ProviderModelPicker
-                          activeInstanceId={displayedModelSelection.instanceId}
-                          model={displayedModelSelection.model}
-                          lockedProvider={null}
-                          instanceEntries={projectProviderInstanceEntries}
-                          keybindings={keybindings}
-                          modelOptionsByInstance={modelOptionsByInstance}
-                          terminalOpen={false}
-                          triggerVariant="outline"
-                          triggerClassName="max-w-48 sm:max-w-52"
-                          disabled={projectProviderInstanceEntries.length === 0}
-                          onInstanceModelChange={(instanceId, model) =>
-                            commitDefaultModelSelection(createModelSelection(instanceId, model))
-                          }
-                        />
-                        {displayedModelInstanceEntry ? (
-                          <TraitsPicker
-                            provider={displayedModelInstanceEntry.driverKind}
-                            models={displayedModelInstanceEntry.models}
-                            model={displayedModelSelection.model}
-                            prompt=""
-                            onPromptChange={() => {}}
-                            modelOptions={displayedModelSelection.options}
-                            allowPromptInjectedEffort={false}
-                            triggerVariant="outline"
-                            triggerClassName="max-w-32 sm:max-w-36"
-                            onModelOptionsChange={(nextOptions) =>
-                              commitDefaultModelSelection(
-                                createModelSelection(
-                                  displayedModelSelection.instanceId,
-                                  displayedModelSelection.model,
-                                  nextOptions,
-                                ),
-                              )
-                            }
-                          />
-                        ) : null}
-                      </div>
-                    }
-                  />
-                  <ProjectSettingRow
-                    title="New threads"
-                    description="Pick the workspace mode for new threads in this project. Global follows the app-wide New threads setting."
-                    resetAction={
-                      projectDetails.data.settings.defaultThreadEnvMode !== null ||
-                      projectDetails.data.settings.newWorktreesStartFromOrigin !== null ? (
-                        <SettingResetButton
-                          label="new threads"
-                          onClick={resetThreadWorkspaceDefaults}
-                        />
-                      ) : null
-                    }
-                    control={
-                      <Select
-                        value={projectThreadEnvMode ?? "global"}
-                        onValueChange={(value) => {
-                          if (value === "global") {
-                            commitDefaultThreadEnvMode(null);
-                            return;
-                          }
-                          if (value === "local" || value === "worktree") {
-                            commitDefaultThreadEnvMode(value);
-                          }
-                        }}
-                      >
-                        <SelectTrigger
-                          className="w-full sm:w-44"
-                          aria-label="New thread workspace mode"
-                        >
-                          <SelectValue>
-                            {projectThreadEnvMode === null
-                              ? `Global (${THREAD_ENV_MODE_LABELS[primarySettings.defaultThreadEnvMode]})`
-                              : THREAD_ENV_MODE_LABELS[projectThreadEnvMode]}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectPopup align="end" alignItemWithTrigger={false}>
-                          <SelectItem hideIndicator value="global">
-                            Global
-                          </SelectItem>
-                          <SelectItem hideIndicator value="local">
-                            {THREAD_ENV_MODE_LABELS.local}
-                          </SelectItem>
-                          <SelectItem hideIndicator value="worktree">
-                            {THREAD_ENV_MODE_LABELS.worktree}
-                          </SelectItem>
-                        </SelectPopup>
-                      </Select>
-                    }
-                  />
-                  {effectiveThreadEnvMode === "worktree" ? (
-                    <ProjectSettingRow
-                      className="bg-muted/20 sm:pl-9"
-                      title="Start from origin"
-                      description="Creates the worktree from the latest matching branch on origin instead of your local branch."
-                      resetAction={
-                        projectDetails.data.settings.newWorktreesStartFromOrigin !== null ? (
-                          <SettingResetButton
-                            label="start new worktrees from origin"
-                            onClick={() => commitNewWorktreesStartFromOrigin(null)}
-                          />
-                        ) : null
-                      }
-                      control={
-                        <Switch
-                          checked={
-                            projectNewWorktreesStartFromOrigin ??
-                            primarySettings.newWorktreesStartFromOrigin
-                          }
-                          onCheckedChange={(checked) =>
-                            commitNewWorktreesStartFromOrigin(Boolean(checked))
-                          }
-                          aria-label="Start new worktrees from origin in this project"
-                        />
-                      }
-                    />
-                  ) : null}
-                  <ProjectSettingRow
-                    title="Path"
-                    description="Local folder used for this project."
-                    control={<ProjectPathLink path={projectDetails.data.workspaceRoot} />}
-                  />
-                </SettingsSection>
-
-                <SettingsSection title="Git">
-                  <ProjectSettingRow
-                    title="Remote"
-                    description={
-                      overrideEnabled ? undefined : (
-                        <RemoteSettingDescription remote={effectiveRemote} />
+                ) : null
+              }
+              control={
+                <Switch
+                  checked={
+                    projectNewWorktreesStartFromOrigin ??
+                    primarySettings.newWorktreesStartFromOrigin
+                  }
+                  onCheckedChange={(checked) => commitNewWorktreesStartFromOrigin(Boolean(checked))}
+                  aria-label="Start new worktrees from origin in this project"
+                />
+              }
+            />
+          ) : null}
+          <ProjectSettingRow
+            title="Default model"
+            description="Used for new threads in this project."
+            resetAction={
+              loadedDetails.defaultModelSelection !== null ? (
+                <SettingResetButton
+                  label="project default model"
+                  onClick={() => commitDefaultModelSelection(null)}
+                />
+              ) : null
+            }
+            control={
+              <div className="flex min-w-0 flex-wrap items-center justify-start gap-1.5">
+                <ProviderModelPicker
+                  activeInstanceId={displayedModelSelection.instanceId}
+                  model={displayedModelSelection.model}
+                  lockedProvider={null}
+                  instanceEntries={projectProviderInstanceEntries}
+                  keybindings={keybindings}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  terminalOpen={false}
+                  triggerVariant="outline"
+                  triggerClassName="max-w-48 sm:max-w-52"
+                  disabled={projectProviderInstanceEntries.length === 0}
+                  onInstanceModelChange={(instanceId, model) =>
+                    commitDefaultModelSelection(createModelSelection(instanceId, model))
+                  }
+                />
+                {displayedModelInstanceEntry ? (
+                  <TraitsPicker
+                    provider={displayedModelInstanceEntry.driverKind}
+                    models={displayedModelInstanceEntry.models}
+                    model={displayedModelSelection.model}
+                    prompt=""
+                    onPromptChange={() => {}}
+                    modelOptions={displayedModelSelection.options}
+                    allowPromptInjectedEffort={false}
+                    triggerVariant="outline"
+                    triggerClassName="max-w-32 sm:max-w-36"
+                    onModelOptionsChange={(nextOptions) =>
+                      commitDefaultModelSelection(
+                        createModelSelection(
+                          displayedModelSelection.instanceId,
+                          displayedModelSelection.model,
+                          nextOptions,
+                        ),
                       )
                     }
-                    align="start"
-                    resetAction={
-                      projectDetails.data.settings.remoteOverride !== null ? (
-                        <SettingResetButton
-                          label="custom remote"
-                          onClick={() => {
-                            stageDraft({ overrideEnabled: false });
-                            void commitProjectSettings({ remoteOverride: null });
-                          }}
-                        />
-                      ) : null
-                    }
-                    control={
-                      <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                        <span>Custom</span>
-                        <Switch
-                          checked={overrideEnabled}
-                          aria-label="Use custom remote"
-                          onCheckedChange={(checked) => {
-                            const enabled = Boolean(checked);
-                            stageDraft({ overrideEnabled: enabled });
-                            persistRemoteOverrideIfValid({
-                              enabled,
-                              provider,
-                              remoteName,
-                              remoteUrl,
-                              webUrl,
-                            });
-                          }}
-                        />
-                      </div>
-                    }
-                  >
-                    {overrideEnabled ? (
-                      <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Provider
-                          <Select
-                            value={provider}
-                            onValueChange={(value) => {
-                              const nextProvider = value as SourceControlProviderKind;
-                              stageDraft({ provider: nextProvider });
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider: nextProvider,
-                                remoteName,
-                                remoteUrl,
-                                webUrl,
-                              });
-                            }}
-                          >
-                            <SelectTrigger className="w-full" aria-label="Source control provider">
-                              <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
-                            </SelectTrigger>
-                            <SelectPopup align="start">
-                              {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
-                                <SelectItem key={value} value={value}>
-                                  {label}
-                                </SelectItem>
-                              ))}
-                            </SelectPopup>
-                          </Select>
-                        </label>
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Remote name
-                          <DraftInput
-                            className="w-full"
-                            value={remoteName}
-                            placeholder="origin"
-                            onCommit={(nextRemoteName) => {
-                              stageDraft({ remoteName: nextRemoteName });
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider,
-                                remoteName: nextRemoteName,
-                                remoteUrl,
-                                webUrl,
-                              });
-                            }}
-                          />
-                        </label>
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Remote URL
-                          <DraftInput
-                            className="w-full"
-                            value={remoteUrl}
-                            placeholder="git@git.example.com:team/repo.git"
-                            onCommit={(nextRemoteUrl) => {
-                              stageDraft({ remoteUrl: nextRemoteUrl });
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider,
-                                remoteName,
-                                remoteUrl: nextRemoteUrl,
-                                webUrl,
-                              });
-                            }}
-                          />
-                        </label>
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Web URL
-                          <DraftInput
-                            className="w-full"
-                            value={webUrl}
-                            placeholder="https://git.example.com/team/repo"
-                            onCommit={(nextWebUrl) => {
-                              stageDraft({ webUrl: nextWebUrl });
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider,
-                                remoteName,
-                                remoteUrl,
-                                webUrl: nextWebUrl,
-                              });
-                            }}
-                          />
-                        </label>
-                        {buildRemoteOverride({
-                          enabled: true,
+                  />
+                ) : null}
+              </div>
+            }
+          />
+        </DialogSettingsGroup>
+
+        <DialogSettingsGroup>
+          {globallyEnabledProviderInstanceEntries.map((entry) => {
+            const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
+            const isLastAllowedProvider = allowed && projectProviderInstanceEntries.length <= 1;
+            const duplicateDriverCount = globallyEnabledProviderInstanceEntries.filter(
+              (candidate) => candidate.driverKind === entry.driverKind,
+            ).length;
+            return (
+              <div
+                key={entry.instanceId}
+                className="flex min-h-14 min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-3 sm:px-4"
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <ProviderInstanceIcon
+                    driverKind={entry.driverKind}
+                    displayName={entry.displayName}
+                    accentColor={entry.accentColor}
+                    showBadge={Boolean(entry.accentColor) || duplicateDriverCount > 1}
+                    className="size-6"
+                    iconClassName="size-5"
+                    badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
+                  />
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {entry.displayName}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {entry.instanceId}
+                    </span>
+                  </div>
+                </div>
+                <Switch
+                  checked={allowed}
+                  disabled={isLastAllowedProvider}
+                  aria-label={`${allowed ? "Disable" : "Enable"} ${entry.displayName} for this project`}
+                  title={
+                    isLastAllowedProvider
+                      ? "At least one provider must stay enabled for this project."
+                      : undefined
+                  }
+                  onCheckedChange={(checked) =>
+                    commitProviderInstanceAllowed(entry.instanceId, Boolean(checked))
+                  }
+                />
+              </div>
+            );
+          })}
+        </DialogSettingsGroup>
+
+        {advancedOpen ? (
+          <>
+            <DialogSettingsGroup>
+              <ProjectSettingRow
+                title="Remote"
+                description={
+                  overrideEnabled ? undefined : (
+                    <RemoteSettingDescription remote={effectiveRemote} />
+                  )
+                }
+                align="start"
+                resetAction={
+                  loadedDetails.settings.remoteOverride !== null ? (
+                    <SettingResetButton
+                      label="custom remote"
+                      onClick={() => {
+                        stageDraft({ overrideEnabled: false });
+                        void commitProjectSettings({ remoteOverride: null });
+                      }}
+                    />
+                  ) : null
+                }
+                control={
+                  <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                    <span>Custom</span>
+                    <Switch
+                      checked={overrideEnabled}
+                      aria-label="Use custom remote"
+                      onCheckedChange={(checked) => {
+                        const enabled = Boolean(checked);
+                        stageDraft({ overrideEnabled: enabled });
+                        persistRemoteOverrideIfValid({
+                          enabled,
                           provider,
                           remoteName,
                           remoteUrl,
                           webUrl,
-                        }) === null ? (
-                          <p className="text-xs font-normal text-muted-foreground md:col-span-2">
-                            Not saved yet — enter a remote name and URL to apply this override.
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </ProjectSettingRow>
-                  <ProjectSettingRow
-                    title="Git root"
-                    description="Detected root of the Git repository."
-                    value={projectDetails.data.detected.gitRoot ?? "No Git repository detected"}
-                  />
-                  <ProjectSettingRow
-                    title="Branch"
-                    description="Currently checked out branch."
-                    value={
-                      projectDetails.data.detected.branch ??
-                      (projectDetails.data.detected.gitRoot ? "None" : "—")
-                    }
-                  />
-                  <ProjectSettingRow
-                    title="Fetch interval"
-                    description="How often T3 Code fetches changes from the remote (in seconds)."
-                    resetAction={
-                      projectDetails.data.settings.automaticGitFetchInterval !== null ? (
-                        <SettingResetButton
-                          label="fetch interval"
-                          onClick={() => commitAutomaticGitFetchInterval(null)}
-                        />
-                      ) : null
-                    }
-                    control={
-                      <NumberField
-                        value={automaticGitFetchIntervalSeconds}
-                        min={0}
-                        step={GIT_FETCH_INTERVAL_STEP_SECONDS}
-                        size="sm"
-                        className="w-32"
-                        onValueChange={(value) =>
-                          commitAutomaticGitFetchInterval(
-                            Duration.toMillis(
-                              Duration.seconds(normalizeFetchIntervalSeconds(value)),
-                            ),
-                          )
-                        }
-                      >
-                        <NumberFieldGroup>
-                          <NumberFieldDecrement aria-label="Decrease fetch interval" />
-                          <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
-                          <NumberFieldIncrement aria-label="Increase fetch interval" />
-                        </NumberFieldGroup>
-                      </NumberField>
-                    }
-                  />
-                </SettingsSection>
-
-                <SettingsSection title="Providers">
-                  {globallyEnabledProviderInstanceEntries.map((entry) => {
-                    const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
-                    const isLastAllowedProvider =
-                      allowed && projectProviderInstanceEntries.length <= 1;
-                    const duplicateDriverCount = globallyEnabledProviderInstanceEntries.filter(
-                      (candidate) => candidate.driverKind === entry.driverKind,
-                    ).length;
-                    return (
-                      <div
-                        key={entry.instanceId}
-                        className="flex min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2 sm:px-4"
-                      >
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <ProviderInstanceIcon
-                            driverKind={entry.driverKind}
-                            displayName={entry.displayName}
-                            accentColor={entry.accentColor}
-                            showBadge={Boolean(entry.accentColor) || duplicateDriverCount > 1}
-                            className="size-7"
-                            iconClassName="size-6"
-                            badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
-                          />
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-foreground">
-                              {entry.displayName}
-                            </div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              {entry.instanceId}
-                            </div>
-                          </div>
-                        </div>
-                        <Switch
-                          checked={allowed}
-                          disabled={isLastAllowedProvider}
-                          aria-label={`${allowed ? "Disable" : "Enable"} ${entry.displayName} for this project`}
-                          title={
-                            isLastAllowedProvider
-                              ? "At least one provider must stay enabled for this project."
-                              : undefined
-                          }
-                          onCheckedChange={(checked) =>
-                            commitProviderInstanceAllowed(entry.instanceId, Boolean(checked))
-                          }
-                        />
-                      </div>
-                    );
-                  })}
-                </SettingsSection>
-
-                <SettingsSection title="Repository">
-                  {project ? (
-                    <T3ProjectFileSettings
-                      key={`${project.environmentId}\0${project.workspaceRoot}`}
-                      environmentId={project.environmentId}
-                      cwd={project.workspaceRoot}
-                      state={t3ProjectFile}
-                    />
-                  ) : null}
-                </SettingsSection>
-
-                <SettingsSection title="Automation">
-                  <div className="min-w-0">
-                    <ProjectScriptsControl
-                      variant="settings"
-                      scripts={projectDetails.data.scripts}
-                      keybindings={keybindings}
-                      onAddScript={saveProjectScript}
-                      onUpdateScript={updateProjectScript}
-                      onDeleteScript={deleteProjectScript}
+                        });
+                      }}
                     />
                   </div>
-                  {Object.keys(actionEnvironment).length === 0 ? (
-                    <ActionEnvironmentEditor
-                      environment={actionEnvironment}
-                      onChange={commitActionEnvironment}
-                    />
-                  ) : (
-                    <ProjectSettingRow title="Variables" align="start">
-                      <ActionEnvironmentEditor
-                        environment={actionEnvironment}
-                        onChange={commitActionEnvironment}
+                }
+              >
+                {overrideEnabled ? (
+                  <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
+                    <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                      Provider
+                      <Select
+                        value={provider}
+                        onValueChange={(value) => {
+                          const nextProvider = value as SourceControlProviderKind;
+                          stageDraft({ provider: nextProvider });
+                          persistRemoteOverrideIfValid({
+                            enabled: overrideEnabled,
+                            provider: nextProvider,
+                            remoteName,
+                            remoteUrl,
+                            webUrl,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-full" aria-label="Source control provider">
+                          <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup align="start">
+                          {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </label>
+                    <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                      Remote name
+                      <DraftInput
+                        className="w-full"
+                        value={remoteName}
+                        placeholder="origin"
+                        onCommit={(nextRemoteName) => {
+                          stageDraft({ remoteName: nextRemoteName });
+                          persistRemoteOverrideIfValid({
+                            enabled: overrideEnabled,
+                            provider,
+                            remoteName: nextRemoteName,
+                            remoteUrl,
+                            webUrl,
+                          });
+                        }}
                       />
-                    </ProjectSettingRow>
-                  )}
-                </SettingsSection>
+                    </label>
+                    <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                      Remote URL
+                      <DraftInput
+                        className="w-full"
+                        value={remoteUrl}
+                        placeholder="git@git.example.com:team/repo.git"
+                        onCommit={(nextRemoteUrl) => {
+                          stageDraft({ remoteUrl: nextRemoteUrl });
+                          persistRemoteOverrideIfValid({
+                            enabled: overrideEnabled,
+                            provider,
+                            remoteName,
+                            remoteUrl: nextRemoteUrl,
+                            webUrl,
+                          });
+                        }}
+                      />
+                    </label>
+                    <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                      Web URL
+                      <DraftInput
+                        className="w-full"
+                        value={webUrl}
+                        placeholder="https://git.example.com/team/repo"
+                        onCommit={(nextWebUrl) => {
+                          stageDraft({ webUrl: nextWebUrl });
+                          persistRemoteOverrideIfValid({
+                            enabled: overrideEnabled,
+                            provider,
+                            remoteName,
+                            remoteUrl,
+                            webUrl: nextWebUrl,
+                          });
+                        }}
+                      />
+                    </label>
+                    {buildRemoteOverride({
+                      enabled: true,
+                      provider,
+                      remoteName,
+                      remoteUrl,
+                      webUrl,
+                    }) === null ? (
+                      <p className="text-xs font-normal text-muted-foreground md:col-span-2">
+                        Not saved yet — enter a remote name and URL to apply this override.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </ProjectSettingRow>
+              <ProjectSettingRow
+                title="Git root"
+                value={loadedDetails.detected.gitRoot ?? "No Git repository detected"}
+              />
+              <ProjectSettingRow
+                title="Branch"
+                value={
+                  loadedDetails.detected.branch ?? (loadedDetails.detected.gitRoot ? "None" : "—")
+                }
+              />
+              <ProjectSettingRow
+                title="Fetch interval"
+                description="Seconds between remote fetches."
+                resetAction={
+                  loadedDetails.settings.automaticGitFetchInterval !== null ? (
+                    <SettingResetButton
+                      label="fetch interval"
+                      onClick={() => commitAutomaticGitFetchInterval(null)}
+                    />
+                  ) : null
+                }
+                control={
+                  <NumberField
+                    value={automaticGitFetchIntervalSeconds}
+                    min={0}
+                    step={GIT_FETCH_INTERVAL_STEP_SECONDS}
+                    size="sm"
+                    className="w-32"
+                    onValueChange={(value) =>
+                      commitAutomaticGitFetchInterval(
+                        Duration.toMillis(Duration.seconds(normalizeFetchIntervalSeconds(value))),
+                      )
+                    }
+                  >
+                    <NumberFieldGroup>
+                      <NumberFieldDecrement aria-label="Decrease fetch interval" />
+                      <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
+                      <NumberFieldIncrement aria-label="Increase fetch interval" />
+                    </NumberFieldGroup>
+                  </NumberField>
+                }
+              />
+            </DialogSettingsGroup>
 
-                <div className="flex min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-3 sm:px-4">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-foreground">Remove project</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {projectThreadCount > 0
-                        ? "All project threads will be deleted."
-                        : "No threads will be deleted."}
-                    </div>
+            <DialogSettingsGroup>
+              <div className="min-w-0">
+                <ProjectScriptsControl
+                  variant="settings"
+                  scripts={loadedDetails.scripts}
+                  keybindings={keybindings}
+                  onAddScript={saveProjectScript}
+                  onUpdateScript={updateProjectScript}
+                  onDeleteScript={deleteProjectScript}
+                />
+              </div>
+              {Object.keys(actionEnvironment).length === 0 ? (
+                <ActionEnvironmentEditor
+                  environment={actionEnvironment}
+                  onChange={commitActionEnvironment}
+                />
+              ) : (
+                <ProjectSettingRow title="Variables" align="start">
+                  <ActionEnvironmentEditor
+                    environment={actionEnvironment}
+                    onChange={commitActionEnvironment}
+                  />
+                </ProjectSettingRow>
+              )}
+            </DialogSettingsGroup>
+
+            <DialogSettingsGroup variant="card">
+              <T3ProjectFileSettings
+                key={`${project.environmentId}\0${project.workspaceRoot}`}
+                environmentId={project.environmentId}
+                cwd={project.workspaceRoot}
+                state={t3ProjectFile}
+              />
+            </DialogSettingsGroup>
+
+            <DialogSettingsGroup>
+              <div className="flex min-h-14 min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-3 sm:px-4">
+                <div className="min-w-0 truncate text-sm font-medium text-foreground">
+                  Remove project
+                </div>
+                <Button
+                  variant="destructive-outline"
+                  size="sm"
+                  disabled={removeProjectPending}
+                  onClick={() => void removeProject()}
+                >
+                  <Trash2Icon className="size-3.5" />
+                  Remove
+                </Button>
+              </div>
+              {projectLocations.length > 1 ? (
+                <div className="flex min-h-14 min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-3 sm:px-4">
+                  <div className="min-w-0 truncate text-sm font-medium text-foreground">
+                    Remove project everywhere
                   </div>
                   <Button
                     variant="destructive-outline"
                     size="sm"
-                    disabled={removeProjectPending}
-                    onClick={() => void removeProject()}
+                    disabled={removeProjectEverywherePending}
+                    onClick={() => void removeProjectEverywhere()}
                   >
                     <Trash2Icon className="size-3.5" />
-                    Remove
+                    Remove all
                   </Button>
                 </div>
-                {projectLocations.length > 1 ? (
-                  <div className="flex min-w-0 items-center justify-between gap-4 rounded-lg px-3 py-3 sm:px-4">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-foreground">
-                        Remove project everywhere
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        Deletes all {projectLocations.length} grouped entries and their conversation
-                        history.
-                      </div>
-                    </div>
-                    <Button
-                      variant="destructive-outline"
-                      size="sm"
-                      disabled={removeProjectEverywherePending}
-                      onClick={() => void removeProjectEverywhere()}
-                    >
-                      <Trash2Icon className="size-3.5" />
-                      Remove all
-                    </Button>
-                  </div>
-                ) : null}
-              </>
-            ) : null}
-          </SettingsPageContainer>
-        )}
-      </div>
-    </SidebarInset>
+              ) : null}
+            </DialogSettingsGroup>
+          </>
+        ) : null}
+
+        <div className="px-3 pt-2 sm:px-4">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full justify-center"
+            aria-expanded={advancedOpen}
+            onClick={toggleAdvanced}
+          >
+            <ChevronDownIcon
+              className={cn("size-3.5 transition-transform", advancedOpen && "rotate-180")}
+            />
+            {advancedOpen ? "Hide advanced settings" : "Advanced settings"}
+          </Button>
+        </div>
+      </DialogBody>
+    </>
   );
+}
+
+/**
+ * Scrolling body of the dialog. Rows carry the same `px-3 sm:px-4` inset as the
+ * shared settings controls, so the body pads to just under the header's inset
+ * and every label lines up on one left edge.
+ */
+function DialogBody({
+  children,
+  className,
+  lockedHeight,
+  contentRef,
+}: {
+  children?: ReactNode;
+  className?: string;
+  lockedHeight?: number | null;
+  contentRef?: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <ScrollArea
+      scrollFade
+      className={cn("min-h-0", lockedHeight == null ? "flex-1" : "flex-none")}
+      {...(lockedHeight == null ? {} : { style: { height: lockedHeight } })}
+    >
+      <div ref={contentRef} className={cn("px-2 pb-6", className)}>
+        {children}
+      </div>
+    </ScrollArea>
+  );
+}
+
+/**
+ * Rows flow as one uniformly spaced list — no headings, no group separators —
+ * so every option sits the same distance from its neighbours.
+ */
+function DialogSettingsGroup({
+  children,
+  variant = "plain",
+}: {
+  children: ReactNode;
+  /** "card" rules off its own section (used for the t3.json block). */
+  variant?: "plain" | "card";
+}) {
+  if (variant === "card") {
+    return <section className="my-2 space-y-1 border-y border-border/60 py-2">{children}</section>;
+  }
+  return <>{children}</>;
 }
 
 function isModelSelectionEqual(left: ModelSelection | null, right: ModelSelection | null) {
@@ -1715,36 +1758,9 @@ function isStringRecordEqual(
   );
 }
 
-function ProjectPathLink({ path }: { path: string }) {
-  const openPath = () => {
-    const api = readLocalApi();
-    void api?.shell.openInEditor(path, "file-manager").catch((error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open project folder",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    });
-  };
-
-  return (
-    <button
-      type="button"
-      className="min-w-0 max-w-full cursor-pointer truncate text-left text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      title={path}
-      aria-label="Open project folder"
-      onClick={openPath}
-    >
-      {path}
-    </button>
-  );
-}
-
 function ProjectSettingsLoading() {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center">
+    <div className="flex min-h-32 items-center justify-center">
       <Spinner className="size-5 text-muted-foreground" />
     </div>
   );
@@ -1766,7 +1782,7 @@ function RemoteSettingDescription({ remote }: { remote: ProjectEffectiveRemote |
     <span className="flex min-w-0 max-w-full items-center gap-2">
       <span className="shrink-0 text-muted-foreground">{remote.remoteName}:</span>
       <span
-        className="truncate font-mono text-[11px] text-muted-foreground group-hover:underline"
+        className="truncate font-mono text-xs text-muted-foreground group-hover:underline"
         title={remoteValue}
       >
         {remoteValue}
@@ -1814,10 +1830,12 @@ function ProjectSettingRow({
   const hasChildren = Boolean(children);
   const alignStart = align === "start" || hasChildren || description !== undefined;
   return (
-    <div className={cn("min-w-0 rounded-lg px-3 py-2 sm:px-4", className)}>
+    <div className={cn("min-w-0 rounded-lg px-3 py-3 sm:px-4", className)}>
       <div
         className={cn(
-          "flex min-w-0 flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:gap-8",
+          // min-h-8 keeps every row the same height whether its control is a
+          // 32px select or a 28px button pair, so the list reads evenly spaced.
+          "flex min-h-8 min-w-0 flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(9rem,auto)] sm:gap-6",
           alignStart ? "sm:items-start" : "sm:items-center",
         )}
       >
@@ -1930,7 +1948,7 @@ function ActionEnvironmentEditor({
 
   if (entries.length === 0) {
     return (
-      <div className="flex h-full w-full min-w-0 items-center gap-3 px-3 py-2 sm:px-4">
+      <div className="flex h-full min-h-14 w-full min-w-0 items-center gap-3 px-3 py-3 sm:px-4">
         <div className="shrink-0 text-sm font-medium text-foreground">Variables</div>
         <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           No action variables configured.
@@ -1984,8 +2002,8 @@ function ActionEnvironmentEditor({
 
 function ProjectNotice({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-6 text-card-foreground">
-      <h1 className="text-lg font-semibold">{title}</h1>
+    <div className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+      <div className="text-sm font-semibold">{title}</div>
       <p className="mt-1 text-sm text-muted-foreground">{description}</p>
     </div>
   );
@@ -2004,14 +2022,4 @@ function openExternalUrl(url: string, title: string) {
   });
 }
 
-export const Route = createFileRoute("/projects/$environmentId/$projectId")({
-  beforeLoad: async ({ context }: AuthGateBeforeLoadArgs) => {
-    if (
-      context.authGateState.status !== "authenticated" &&
-      context.authGateState.status !== "hosted-static"
-    ) {
-      throw redirect({ to: "/pair", replace: true });
-    }
-  },
-  component: ProjectRouteView,
-});
+export default ProjectSettingsDialog;
