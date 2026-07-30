@@ -552,6 +552,8 @@ function TimelineRowContent(props: { row: TimelineRow }) {
             ctx.copilotResumeCommand;
           const responseMeta =
             !row.showAssistantTerminalMetadata ||
+            row.message.streaming ||
+            assistantTurnStillInProgress ||
             row.message.turnId === null ||
             row.message.turnId === undefined
               ? undefined
