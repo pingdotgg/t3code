@@ -3508,6 +3508,18 @@ export function useComposerThreadDraft(threadRef: ComposerThreadTarget): Compose
   });
 }
 
+export function hasUnsentComposerText(
+  draft: Pick<ComposerThreadDraftState, "prompt"> | null | undefined,
+): boolean {
+  return (draft?.prompt.trim().length ?? 0) > 0;
+}
+
+export function useComposerThreadHasUnsentText(threadRef: ScopedThreadRef): boolean {
+  return useComposerDraftStore((state) => {
+    return hasUnsentComposerText(getComposerDraftState(state, threadRef));
+  });
+}
+
 export function useComposerDraftModelState(
   threadRef: ComposerThreadTarget,
 ): ComposerDraftModelState {

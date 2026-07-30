@@ -60,7 +60,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  createEmptyThreadDraft,
   finalizePromotedDraftThreadByRef,
+  hasUnsentComposerText,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
   markPromotedDraftThreads,
@@ -133,6 +135,17 @@ function resetComposerDraftStore() {
     stickyActiveProvider: null,
   });
 }
+
+describe("hasUnsentComposerText", () => {
+  it("recognizes only non-whitespace prompt text as an unsent message", () => {
+    const draft = createEmptyThreadDraft();
+
+    expect(hasUnsentComposerText(null)).toBe(false);
+    expect(hasUnsentComposerText(draft)).toBe(false);
+    expect(hasUnsentComposerText({ ...draft, prompt: "  \n\t " })).toBe(false);
+    expect(hasUnsentComposerText({ ...draft, prompt: "Dictated but not sent" })).toBe(true);
+  });
+});
 
 function modelSelection(
   provider: ProviderDriverKind,
