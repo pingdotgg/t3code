@@ -248,7 +248,7 @@ const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
           `$machineValue = [Environment]::GetEnvironmentVariable('${name}', 'Machine')`,
           `$userValue = [Environment]::GetEnvironmentVariable('${name}', 'User')`,
           `$processValue = [Environment]::GetEnvironmentVariable('${name}')`,
-          `$merged = ($machineValue, $userValue, $processValue | Where-Object { $null -ne $_ -and $_.Length -gt 0 }) -join ';'`,
+          `$merged = ($processValue, $userValue, $machineValue | Where-Object { $null -ne $_ -and $_.Length -gt 0 }) -join ';'`,
           "if ($null -ne $merged -and $merged.Length -gt 0) { Write-Output $merged }",
           `Write-Output '${endMarker(name)}'`,
         ];
