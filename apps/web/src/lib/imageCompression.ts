@@ -1,13 +1,14 @@
 /**
- * Re-encoding for stashed image attachments.
+ * Downscale + re-encode for image attachments that are too big for where
+ * they're headed. Two consumers share the same pipeline:
  *
- * The composer accepts images up to `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES`
- * (10MB), but the stash persists them as base64 in localStorage, where the
- * whole origin shares a ~5MB quota. Rather than refuse large screenshots,
- * downscale + re-encode them to JPEG so a stashed prompt keeps its images.
+ * - The prompt stash persists images as base64 in localStorage (~5MB origin
+ *   quota), so `compressImageForStash` targets a per-image character budget.
+ * - The composer accepts pasted/dropped images larger than the provider's
+ *   `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` wire cap and shrinks them to fit
+ *   via `compressImageToByteLimit` instead of rejecting the paste.
  *
- * Only the *stashed copy* is compressed; the live composer attachment is
- * untouched, so sending without stashing still uploads the original file.
+ * Images already within budget pass through untouched.
  */
 
 /**
@@ -17,6 +18,12 @@
 const MAX_DIMENSION = 2048;
 /** Base64 budget for a single stashed image (~975KB of binary). */
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
+/**
+ * Ceiling on the *source* file handed to the re-encoder. File size is a
+ * proxy for pixel count, and decoding hundreds of megapixels into an
+ * ImageBitmap can OOM the tab — beyond this we refuse rather than risk it.
+ */
+export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
 /**
  * Quality ladder tried in order until the encoded image fits the budget.
  * The floor stays high enough to avoid visible blocking on UI screenshots;
@@ -35,14 +42,18 @@ export interface CompressedStashImage {
 }
 
 /**
- * Why an image could not be stashed. Callers report these differently:
+ * Why an image could not be compressed. Callers report these differently:
  * "too large" is a budget outcome, "unreadable" is a decode failure.
  */
-export type StashImageFailureReason = "too-large" | "unreadable";
+export type ImageCompressionFailureReason = "too-large" | "unreadable";
 
 export type CompressStashImageResult =
   | { ok: true; image: CompressedStashImage }
-  | { ok: false; reason: StashImageFailureReason };
+  | { ok: false; reason: ImageCompressionFailureReason };
+
+export type CompressImageFileResult =
+  | { ok: true; file: File; recompressed: boolean }
+  | { ok: false; reason: ImageCompressionFailureReason };
 
 /** Chunked so a large image can't blow the argument limit of `fromCharCode`. */
 const BASE64_CHUNK_SIZE = 0x8000;
@@ -71,6 +82,28 @@ function dataUrlByteLength(dataUrl: string): number {
   const payload = commaIndex === -1 ? dataUrl : dataUrl.slice(commaIndex + 1);
   const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
+}
+
+/** Base64 payload of a data URL decoded back into a `File`. */
+function dataUrlToFile(dataUrl: string, name: string, mimeType: string): File {
+  const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const binary = atob(payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new File([bytes], name, { type: mimeType });
+}
+
+/**
+ * Re-encoding changes the container, so a name like `shot.png` would lie
+ * about its contents. Swap the extension to match the encoded mime type.
+ */
+function fileNameForMimeType(name: string, mimeType: string): string {
+  const extension = mimeType === "image/webp" ? ".webp" : ".jpg";
+  const dotIndex = name.lastIndexOf(".");
+  const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+  return `${base}${extension}`;
 }
 
 function canRecompress(): boolean {
@@ -124,10 +157,10 @@ async function encodeToDataUrl(
 }
 
 /**
- * Draws `bitmap` scaled to fit `maxDimension` and encodes it as JPEG,
- * stepping quality down until the data URL fits `budgetChars`. Returns the
- * smallest encoding produced, even if it still exceeds the budget, so the
- * caller can decide whether to keep or drop it.
+ * Draws `bitmap` scaled to fit `maxDimension` and encodes it, stepping
+ * quality down until the data URL fits `budgetChars`. Returns the smallest
+ * encoding produced, even if it still exceeds the budget, so the caller can
+ * decide whether to keep or drop it.
  */
 async function encodeWithinBudget(
   bitmap: ImageBitmap,
@@ -165,35 +198,15 @@ async function encodeWithinBudget(
   return smallest;
 }
 
+type ReencodeResult =
+  | { ok: true; dataUrl: string; mimeType: string }
+  | { ok: false; reason: ImageCompressionFailureReason };
+
 /**
- * Produces the payload to persist for a stashed image.
- *
- * Small images are stored verbatim (preserving PNG transparency and exact
- * pixels). Anything over budget is downscaled and JPEG-encoded; if it still
- * doesn't fit after the fallback passes, returns `null` so the caller can
- * record it as dropped.
+ * Shared re-encode loop: decodes `file`, then walks the quality ladder and
+ * fallback downscale passes until an encoding fits `budgetChars`.
  */
-export async function compressImageForStash(
-  file: File,
-  budgetChars: number = MAX_STASH_IMAGE_DATA_URL_CHARS,
-): Promise<CompressStashImageResult> {
-  let originalDataUrl: string;
-  try {
-    originalDataUrl = await blobToDataUrl(file);
-  } catch {
-    return { ok: false, reason: "unreadable" };
-  }
-  if (originalDataUrl.length <= budgetChars) {
-    return {
-      ok: true,
-      image: {
-        dataUrl: originalDataUrl,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        recompressed: false,
-      },
-    };
-  }
+async function reencodeWithinBudget(file: File, budgetChars: number): Promise<ReencodeResult> {
   if (!canRecompress()) {
     return { ok: false, reason: "too-large" };
   }
@@ -225,26 +238,98 @@ export async function compressImageForStash(
         // precisely *because* the target is too big (OOM on a large bitmap).
         // Keep trying the smaller fallback scales rather than giving up: a
         // reduced pass may well succeed. The exception must never escape,
-        // though, since the caller finalizes the entry after this returns and
-        // a throw would strand it as permanently "still saving".
+        // though, since callers finalize state after this returns and a
+        // throw would strand it (e.g. a stash entry stuck "still saving").
         encodeFailed = true;
         continue;
       }
       encodeFailed = false;
       if (encoded && encoded.dataUrl.length <= budgetChars) {
-        return {
-          ok: true,
-          image: {
-            dataUrl: encoded.dataUrl,
-            mimeType: encoded.mimeType,
-            sizeBytes: dataUrlByteLength(encoded.dataUrl),
-            recompressed: true,
-          },
-        };
+        return { ok: true, dataUrl: encoded.dataUrl, mimeType: encoded.mimeType };
       }
     }
     return { ok: false, reason: encodeFailed ? "unreadable" : "too-large" };
   } finally {
     bitmap.close();
   }
+}
+
+/**
+ * Produces the payload to persist for a stashed image.
+ *
+ * Small images are stored verbatim (preserving PNG transparency and exact
+ * pixels). Anything over budget is downscaled and re-encoded; if it still
+ * doesn't fit after the fallback passes, reports a failure so the caller
+ * can record it as dropped.
+ */
+export async function compressImageForStash(
+  file: File,
+  budgetChars: number = MAX_STASH_IMAGE_DATA_URL_CHARS,
+): Promise<CompressStashImageResult> {
+  let originalDataUrl: string;
+  try {
+    originalDataUrl = await blobToDataUrl(file);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+  if (originalDataUrl.length <= budgetChars) {
+    return {
+      ok: true,
+      image: {
+        dataUrl: originalDataUrl,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        recompressed: false,
+      },
+    };
+  }
+  const reencoded = await reencodeWithinBudget(file, budgetChars);
+  if (!reencoded.ok) {
+    return reencoded;
+  }
+  return {
+    ok: true,
+    image: {
+      dataUrl: reencoded.dataUrl,
+      mimeType: reencoded.mimeType,
+      sizeBytes: dataUrlByteLength(reencoded.dataUrl),
+      recompressed: true,
+    },
+  };
+}
+
+/**
+ * Shrinks `file` until its binary size fits `maxBytes`, returning a new
+ * `File` (WebP or JPEG). Files already within the limit pass through
+ * untouched, preserving their exact bytes and format. Sources above
+ * `MAX_COMPRESSIBLE_SOURCE_BYTES` are refused outright — decoding them is
+ * the risk, so no amount of output budget makes them safe.
+ */
+export async function compressImageToByteLimit(
+  file: File,
+  maxBytes: number,
+): Promise<CompressImageFileResult> {
+  if (file.size <= maxBytes) {
+    return { ok: true, file, recompressed: false };
+  }
+  if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+    return { ok: false, reason: "too-large" };
+  }
+  // The re-encode loop budgets in data-URL characters. Base64 turns 3 bytes
+  // into 4 chars; flooring keeps the budget a hair conservative instead of
+  // admitting an encoding right at the byte cap.
+  const budgetChars = Math.floor(maxBytes / 3) * 4;
+  const reencoded = await reencodeWithinBudget(file, budgetChars);
+  if (!reencoded.ok) {
+    return reencoded;
+  }
+  return {
+    ok: true,
+    file: dataUrlToFile(
+      reencoded.dataUrl,
+      fileNameForMimeType(file.name || "image", reencoded.mimeType),
+      reencoded.mimeType,
+    ),
+    recompressed: true,
+  };
 }
