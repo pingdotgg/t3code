@@ -12,6 +12,8 @@ import type { ChatAttachment } from "@t3tools/contracts";
 import { limitSection } from "./TextGenerationUtils.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
+const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+
 function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
   return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 4_000)] : [];
@@ -150,8 +152,21 @@ interface PromptFromMessageInput {
   responseShape: string;
   rules: ReadonlyArray<string>;
   message: string;
+  messageLabel?: string | undefined;
+  preserveMessageEnd?: boolean | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   additionalInstructions?: string | undefined;
+}
+
+function preserveMessageEnd(message: string): string {
+  const alreadyTruncated = message.startsWith(EARLIER_CONTENT_TRUNCATION_MARKER);
+  const contents = alreadyTruncated
+    ? message.slice(EARLIER_CONTENT_TRUNCATION_MARKER.length)
+    : message;
+  if (!alreadyTruncated && contents.length <= 8_000) {
+    return contents;
+  }
+  return `${EARLIER_CONTENT_TRUNCATION_MARKER}${contents.slice(-8_000)}`;
 }
 
 function buildPromptFromMessage(input: PromptFromMessageInput): string {
@@ -165,8 +180,10 @@ function buildPromptFromMessage(input: PromptFromMessageInput): string {
     "Rules:",
     ...input.rules.map((rule) => `- ${rule}`),
     "",
-    "User message:",
-    limitSection(input.message, 8_000),
+    `${input.messageLabel ?? "User message"}:`,
+    input.preserveMessageEnd
+      ? preserveMessageEnd(input.message)
+      : limitSection(input.message, 8_000),
     ...policyInstruction(input.additionalInstructions),
   ];
   if (attachmentLines.length > 0) {
@@ -207,21 +224,44 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
 
 export interface ThreadTitlePromptInput {
   message: string;
+  previousTitle?: string | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   policy?: TextGenerationPolicy | undefined;
 }
 
 export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
+  const isRegeneration = input.previousTitle !== undefined;
   const prompt = buildPromptFromMessage({
-    instruction: "You write concise thread titles for coding conversations.",
+    instruction: isRegeneration
+      ? [
+          "You write concise thread titles for coding conversations.",
+          "The user requested a new title based on the contents of this thread.",
+          `The previous title was ${JSON.stringify(input.previousTitle)}.`,
+          "Come up with a new title that better represents the current state of the thread.",
+        ].join("\n")
+      : "You write concise thread titles for coding conversations.",
     responseShape: "Return a JSON object with key: title.",
     rules: [
-      "Title should summarize the user's request, not restate it verbatim.",
+      isRegeneration
+        ? "Title should summarize the thread's current state, not just its initial request."
+        : "Title should summarize the user's request, not restate it verbatim.",
+      ...(isRegeneration
+        ? [
+            "Capture the thread's intent, not a PR number or other superficial detail.",
+            "Return a different title from the previous title.",
+          ]
+        : []),
       "Keep it short and specific (3-8 words).",
       "Avoid quotes, filler, prefixes, and trailing punctuation.",
       "If images are attached, use them as primary context for visual/UI issues.",
     ],
     message: input.message,
+    ...(isRegeneration
+      ? {
+          messageLabel: "Thread contents",
+          preserveMessageEnd: true,
+        }
+      : {}),
     attachments: input.attachments,
     additionalInstructions: input.policy?.threadTitleInstructions,
   });

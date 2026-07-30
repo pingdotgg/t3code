@@ -18,6 +18,7 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
+
 type SidebarProject = {
   id: string;
   title: string;
@@ -92,6 +93,24 @@ export function buildMultiSelectThreadContextMenuItems(input: {
     },
     { id: "delete", label: `Delete (${input.count})`, destructive: true },
   ];
+}
+
+export function buildBulkTitleRegenerationContextMenuItem(input: {
+  supportedCount: number;
+  actionableCount: number;
+}): ContextMenuItem<"regenerate-title"> | null {
+  if (input.supportedCount === 0) return null;
+  if (input.actionableCount === 0) {
+    return {
+      id: "regenerate-title",
+      label: `Regenerating… (${input.supportedCount})`,
+      disabled: true,
+    };
+  }
+  return {
+    id: "regenerate-title",
+    label: `Regenerate titles (${input.actionableCount})`,
+  };
 }
 
 export interface ThreadStatusPill {

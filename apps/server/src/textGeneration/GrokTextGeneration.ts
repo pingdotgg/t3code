@@ -234,6 +234,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     Effect.fn("GrokTextGeneration.generateThreadTitle")(function* (input) {
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
+        previousTitle: input.previousTitle,
         attachments: input.attachments,
       });
 

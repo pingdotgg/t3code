@@ -175,6 +175,48 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("image/png");
     expect(result.prompt).toContain("67890 bytes");
   });
+
+  it("regenerates from recent thread contents and identifies the previous title", () => {
+    const result = buildThreadTitlePrompt({
+      message: `USER:\nInvestigate reconnect regressions\n\nASSISTANT:\nThe remaining issue is stale session state`,
+      previousTitle: "Investigate reconnect regressions",
+    });
+
+    expect(result.prompt).toContain(
+      "The user requested a new title based on the contents of this thread.",
+    );
+    expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
+    expect(result.prompt).toContain("better represents the current state of the thread");
+    expect(result.prompt).toContain(
+      "Capture the thread's intent, not a PR number or other superficial detail.",
+    );
+    expect(result.prompt).toContain("Thread contents:");
+    expect(result.prompt).toContain("The remaining issue is stale session state");
+  });
+
+  it("keeps the latest thread contents when regeneration context is truncated", () => {
+    const result = buildThreadTitlePrompt({
+      message: `${"old context ".repeat(1_000)}\n\nASSISTANT:\nCurrent thread state`,
+      previousTitle: "Old title",
+    });
+
+    expect(result.prompt).toContain("[Earlier content truncated]");
+    expect(result.prompt).toContain("Current thread state");
+    expect(result.prompt).not.toContain("[truncated]");
+  });
+
+  it("does not truncate an already-marked regeneration context twice", () => {
+    const retainedContext = "x".repeat(7_998);
+    const result = buildThreadTitlePrompt({
+      message: `[Earlier content truncated]\n\n${retainedContext}`,
+      previousTitle: "Old title",
+    });
+
+    expect(result.prompt).toContain(
+      `Thread contents:\n[Earlier content truncated]\n\n${retainedContext}`,
+    );
+    expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
+  });
 });
 
 describe("sanitizeThreadTitle", () => {
