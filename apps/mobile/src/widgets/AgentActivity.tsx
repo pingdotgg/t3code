@@ -1,6 +1,7 @@
-import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
+import { Circle, HStack, Image, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import {
+  background,
   font,
   foregroundStyle,
   frame,
@@ -8,6 +9,7 @@ import {
   lineLimit,
   padding,
   resizable,
+  shapes,
   widgetURL,
 } from "@expo/ui/swift-ui/modifiers";
 import {
@@ -60,35 +62,42 @@ export function AgentActivity(
   // device color scheme. A Live Activity banner always renders over a dark
   // system material regardless of the device's light/dark setting, so
   // scheme-derived dark text read as unreadable dark-on-dark on the lock
-  // screen. Semantic colors adapt to whatever material the OS places them on:
-  // the dark LA banner and the (light or dark) home-screen widget alike.
+  // screen. Semantic colors adapt to whatever material the OS places them on,
+  // including the dark iPhone material and light macOS notification surface.
+  //
+  // For the same reason there is no `activityBackgroundTint` here: a forced
+  // black panel would pin the background while the labels keep adapting to the
+  // material, which is how you get black-on-black on macOS.
+  // The iPhone lock screen's own material is already near-black.
   const primaryForeground = "primary";
   const secondaryForeground = "secondary";
 
-  // Status tints mirror the web sidebar's pills
-  // (apps/web/src/components/Sidebar.logic.ts resolveThreadStatusPill): amber
-  // for approval, indigo for input, sky for working, emerald for completed.
-  // On iPhone the LA sits on a dark material, but macOS (iPhone Mirroring /
-  // Mac notification center) renders it on a light one — so pick the web
-  // palette's light (-600) or dark (-300) variant off the color scheme.
+  // The phase palette uses cyan for working, orange for blocked, green for done,
+  // red for failed, and gray for stale, expressed as Apple's system colors.
+  // On iPhone the Live Activity sits on a dark material, but
+  // macOS (iPhone Mirroring / Mac notification center) renders it on a light
+  // one, so pick the light or dark variant off the color scheme.
   const isLightScheme = environment.colorScheme === "light";
   const phaseTint = (phase: AgentActivityPhase | undefined): string => {
     if (environment.isLuminanceReduced) {
       return secondaryForeground;
     }
     switch (phase) {
+      // Approval and input share a color; the glyph and status label carry the
+      // difference.
       case "waiting_for_approval":
-        return isLightScheme ? "#d97706" : "#fcd34d"; // amber-600 / amber-300
       case "waiting_for_input":
-        return isLightScheme ? "#4f46e5" : "#a5b4fc"; // indigo-600 / indigo-300
+        return isLightScheme ? "#ff9500" : "#ff9f0a"; // systemOrange
       case "failed":
-        return isLightScheme ? "#dc2626" : "#fca5a5"; // red-600 / red-300
+        return isLightScheme ? "#ff3b30" : "#ff453a"; // systemRed
       case "completed":
-        return isLightScheme ? "#059669" : "#6ee7b7"; // emerald-600 / emerald-300
+        return isLightScheme ? "#34c759" : "#30d158"; // systemGreen
+      case "stale":
+        return isLightScheme ? "#8e8e93" : "#98989d"; // systemGray
       case "starting":
       case "running":
       default:
-        return isLightScheme ? "#0284c7" : "#7dd3fc"; // sky-600 / sky-300
+        return isLightScheme ? "#32ade6" : "#64d2ff"; // systemCyan
     }
   };
 
@@ -103,18 +112,14 @@ export function AgentActivity(
   const ordered = [...props.activities].sort(
     (a, b) => phasePriority(a.phase) - phasePriority(b.phase),
   );
-  const row0 = ordered[0];
-  const row1 = ordered[1];
-  const row2 = ordered[2];
-  const row3 = ordered[3];
-  const row4 = ordered[4];
+  const topRow = ordered[0];
 
   const attentionRows = props.activities.filter(
     (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
   );
   const attentionRow = attentionRows[0];
   const failedRow = props.activities.find((row) => row.phase === "failed");
-  const heroRow = attentionRow ?? failedRow ?? row0;
+  const heroRow = attentionRow ?? failedRow ?? topRow;
   const tint = phaseTint(heroRow?.phase);
   // Headline count leans on the accent when a human is actually blocked.
   const headerTint = attentionRow
@@ -135,20 +140,43 @@ export function AgentActivity(
   const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
 
   // Header copy: "5 active agents" + (", 1 needs attention"). The banner renders
-  // the two parts in-line so the attention half can carry the accent color;
-  // `summary` is the short form for tight spots (expanded center, watch card).
+  // the two parts in-line so the attention half can carry the accent color.
   const agentWord = props.activeCount === 1 ? "agent" : "agents";
   const agentsLabel = allDone ? outcomeLabel : `${props.activeCount} active ${agentWord}`;
   const attentionSuffix =
     attentionRows.length > 0
       ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
       : "";
-  const activeLabel = allDone ? doneLabel : `${props.activeCount} active`;
-  const summary = attentionSuffix || activeLabel;
+
+  // Keep phase labels terse because both island regions are only ~50pt wide —
+  // the long forms truncated to "Needs a...". This also matches the
+  // status the relay puts on each row (AgentActivityPublisher statusForPhase),
+  // so the pill and the cards read the same words.
+  const pillHeadline = (phase: AgentActivityPhase | undefined): string => {
+    switch (phase) {
+      case "starting":
+        return "Starting";
+      case "waiting_for_approval":
+        return "Approval";
+      case "waiting_for_input":
+        return "Input";
+      case "completed":
+        return "Done";
+      case "failed":
+        return "Failed";
+      case "stale":
+        return "Stale";
+      case "running":
+        return "Working";
+      default:
+        return "Idle";
+    }
+  };
+  const pillLabel = allDone ? doneLabel : pillHeadline(heroRow?.phase);
 
   // Any registered scheme variant routes back to this app; taps are delivered
   // to the widget's containing app, so the prod scheme is safe for all builds.
-  const deepLinkRow = attentionRow ?? row0;
+  const deepLinkRow = attentionRow ?? topRow;
   const deepLink =
     deepLinkRow && deepLinkRow.deepLink.startsWith("/") && !deepLinkRow.deepLink.startsWith("//")
       ? `t3code://${deepLinkRow.deepLink.slice(1)}`
@@ -185,36 +213,128 @@ export function AgentActivity(
     </HStack>
   );
 
-  // Single-line row used by every presentation: glyph, title, inline project,
-  // status. The project and status carry layoutPriority(1) so when space runs
-  // out it's the title that truncates, never the (short) project name or the
-  // status label. Single-line keeps rows inside the expanded island's hard
-  // height budget (~160pt) and lets the banner fit more agents.
-  const renderCompactRow = (row: AgentActivityRowProps) => (
-    <HStack spacing={7} alignment="center">
+  // The status dot does not breathe the way a desktop pulse can: a Live Activity
+  // cannot animate between pushes, and a repainting view would
+  // burn the update budget for no signal.
+  const renderDot = (size: number, color: string) => (
+    <Circle
+      key={`dot-${color}`}
+      modifiers={[frame({ width: size, height: size }), foregroundStyle(color)]}
+    />
+  );
+
+  // Use a plain bold count rather than a white pill: `background` on a Text,
+  // on a wrapping HStack, and a Capsule view behind the label all rendered as a
+  // bare glyph in the island regions, so the pill is not worth more machinery.
+  const renderCountBadge = (count: number) => (
+    <Text
+      key="count"
+      modifiers={[
+        font({ weight: "bold", size: 12, design: "rounded" }),
+        foregroundStyle(primaryForeground),
+      ]}
+    >
+      {`${count}`}
+    </Text>
+  );
+
+  // A provider mark and brand tint head each card. The aggregate only carries
+  // the model name, so the brand is
+  // read off that the way the desktop app matches driver slugs: leading-token
+  // first, since custom instances prefix the driver (`codex_personal`).
+  const brandFor = (
+    modelTitle: string,
+  ): { readonly asset: string; readonly tint: string; readonly label: string } => {
+    const raw = modelTitle.toLowerCase();
+    // Tints match apps/web's provider icons; each mark is a template image, so
+    // the container's foreground style is what colours it.
+    if (raw.startsWith("claude") || raw.includes("anthropic") || raw.startsWith("opus")) {
+      return { asset: "Claude", tint: "#d97757", label: "Claude" };
+    }
+    if (raw.startsWith("cursor") || raw.startsWith("composer")) {
+      return { asset: "Cursor", tint: primaryForeground, label: "Cursor" };
+    }
+    if (raw.startsWith("opencode")) {
+      return { asset: "OpenCode", tint: primaryForeground, label: "OpenCode" };
+    }
+    if (raw.startsWith("grok") || raw.startsWith("xai")) {
+      return { asset: "Grok", tint: primaryForeground, label: "Grok" };
+    }
+    if (
+      raw.startsWith("gpt") ||
+      raw.startsWith("o1") ||
+      raw.startsWith("o3") ||
+      raw.startsWith("o4") ||
+      raw.includes("codex") ||
+      raw.includes("openai")
+    ) {
+      return { asset: "Codex", tint: primaryForeground, label: "Codex" };
+    }
+    // Nothing recognizable: fall back to the T3 mark rather than an empty slot.
+    return { asset: "T3Mark", tint: secondaryForeground, label: "Agent" };
+  };
+
+  // Same container trick as the T3 mark: Image only honors `resizable`, so the
+  // frame sizes it and the container's foreground style tints the template.
+  // Square frame — the provider marks are all roughly 1:1, unlike the wordmark.
+  const renderMark = (assetName: string, size: number, color: string) => (
+    <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color)]}>
+      <Image assetName={assetName} modifiers={[resizable()]} />
+    </HStack>
+  );
+
+  // Use one neutral gray slab for every row rather than tinting blocked rows,
+  // which muddied the card without saying anything the
+  // phase dot and the status label do not already say. Grey rather than
+  // white-with-alpha, because the same slab has to read on the lock screen's
+  // dark material and on macOS's light one.
+  const cardFill = "#8e8e9333";
+
+  // One line per agent: provider mark, thread title, the project it lives in,
+  // then the phase dot and status. Two-line cards only fitted two and a bit in
+  // the expanded island, and the mark already says what the model text did.
+  // The status carries layoutPriority(1) so the title is what truncates.
+  const renderCard = (row: AgentActivityRowProps, key: string) => (
+    <HStack
+      key={key}
+      spacing={6}
+      alignment="center"
+      modifiers={[
+        padding({ horizontal: 8, vertical: 3 }),
+        background(
+          cardFill,
+          shapes.roundedRectangle({ cornerRadius: 9, roundedCornerStyle: "continuous" }),
+        ),
+      ]}
+    >
+      {renderMark(brandFor(row.modelTitle).asset, 11, brandFor(row.modelTitle).tint)}
       <Text
         modifiers={[
-          font({ weight: "semibold", size: 13 }),
+          font({ weight: "semibold", size: 12, design: "rounded" }),
           foregroundStyle(primaryForeground),
           lineLimit(1),
         ]}
       >
         {row.threadTitle}
       </Text>
-      {/* No layoutPriority and no frame on the project: two bare texts take
-          their ideal width when it fits and shrink proportionally only when it
-          doesn't — so short rows never truncate, and long title + long project
-          truncate together. (A maxWidth frame is greedy and reserved its full
-          width even for short names; layoutPriority let the project starve the
-          title.) */}
-      <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
-        {row.projectTitle}
-      </Text>
-      <Spacer minLength={8} />
+      {/* Which project this agent is working in, kept grey and small so it reads
+          as a qualifier on the title rather than competing with it. */}
       <Text
         modifiers={[
-          font({ weight: "semibold", size: 11 }),
+          font({ size: 10, design: "rounded" }),
+          foregroundStyle(secondaryForeground),
+          lineLimit(1),
+        ]}
+      >
+        {row.projectTitle}
+      </Text>
+      <Spacer minLength={6} />
+      {renderDot(4, phaseTint(row.phase))}
+      <Text
+        modifiers={[
+          font({ weight: "semibold", size: 10, design: "rounded" }),
           foregroundStyle(phaseTint(row.phase)),
+          lineLimit(1),
           layoutPriority(1),
         ]}
       >
@@ -223,6 +343,31 @@ export function AgentActivity(
     </HStack>
   );
 
+  // Four rows is what the expanded island's ~110pt of content height allows at
+  // one line each; the rest are counted off rather than silently dropped.
+  const renderCards = (limit: number) => {
+    const nodes = [];
+    const shown = ordered.slice(0, limit);
+    for (let index = 0; index < shown.length; index++) {
+      nodes.push(renderCard(shown[index]!, `card-${index}`));
+    }
+    const overflow = ordered.length - shown.length;
+    if (overflow > 0) {
+      nodes.push(
+        <Text
+          key="overflow"
+          modifiers={[
+            font({ weight: "medium", size: 10, design: "rounded" }),
+            foregroundStyle(secondaryForeground),
+          ]}
+        >
+          {`+${overflow} more`}
+        </Text>,
+      );
+    }
+    return nodes;
+  };
+
   // The branded T3 mark. `assetName` resolves the template image set bundled in
   // the widget extension's asset catalog. Image views only honor `resizable`
   // directly (frame/foregroundStyle are dropped), so we size it via a container
@@ -230,10 +375,153 @@ export function AgentActivity(
   // foreground style, which the template image inherits. The 3:2 frame matches
   // the glyph's aspect ratio so it never distorts.
   const renderLogo = (height: number, color: string) => (
-    <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color)]}>
+    <HStack key="logo" modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color)]}>
       <Image assetName="T3Mark" modifiers={[resizable()]} />
     </HStack>
   );
+
+  // The top strip places the mark and phase dot on the leading edge, and on the
+  // trailing shoulder whatever needs a human plus the agent count. The
+  // label is plain white like the desktop strip's — the colour lives in the dot
+  // and in the per-card status, so a glance reads phase from one place.
+  const renderStrip = (logoHeight: number, label: string, withCount: boolean) => {
+    // Built as an array rather than JSX with conditionals: a child that resolves
+    // to null leaves a hole in the serialized children and the native walk stops
+    // there, so an unblocked aggregate lost the count that followed the absent
+    // attention line.
+    const cells = [
+      renderLogo(logoHeight, primaryForeground),
+      renderDot(5, tint),
+      <Text
+        key="label"
+        modifiers={[
+          font({ weight: "semibold", size: 13, design: "rounded" }),
+          foregroundStyle(primaryForeground),
+          lineLimit(1),
+        ]}
+      >
+        {label}
+      </Text>,
+      <Spacer key="gap" minLength={8} />,
+    ];
+    if (attentionSuffix) {
+      cells.push(
+        <Text
+          key="attention"
+          modifiers={[
+            font({ weight: "semibold", size: 12, design: "rounded" }),
+            foregroundStyle(headerTint),
+            lineLimit(1),
+            layoutPriority(1),
+          ]}
+        >
+          {attentionSuffix}
+        </Text>,
+      );
+    }
+    // The banner's headline already reads "5 active agents", so repeating the
+    // number on the shoulder is just two 5s. The island keeps it: there the
+    // label is only the phase word.
+    if (withCount && props.activeCount > 1) {
+      cells.push(renderCountBadge(props.activeCount));
+    }
+    return (
+      <HStack key="strip" spacing={6} alignment="center">
+        {cells}
+      </HStack>
+    );
+  };
+
+  // The watchOS Smart Stack is substantially narrower than the Lock Screen
+  // banner. Reusing the full strip there made the phase label collapse to an
+  // ellipsis between the logo and "1 needs attention", while the row repeated
+  // the same phase and sacrificed most of the useful thread title.
+  const watchHeadline = attentionRow
+    ? "Needs attention"
+    : failedRow
+      ? "Agent failed"
+      : allDone
+        ? doneLabel
+        : "Agents active";
+  const renderWatchStrip = () => (
+    <HStack key="watch-strip" spacing={6} alignment="center">
+      {renderLogo(13, primaryForeground)}
+      {renderDot(5, tint)}
+      <Text
+        modifiers={[
+          font({ weight: "semibold", size: 12, design: "rounded" }),
+          foregroundStyle(headerTint),
+          lineLimit(1),
+          layoutPriority(1),
+        ]}
+      >
+        {watchHeadline}
+      </Text>
+      <Spacer minLength={4} />
+      {props.activeCount > 0 ? renderCountBadge(props.activeCount) : null}
+    </HStack>
+  );
+
+  // A dedicated two-line Watch row gives the task title the entire first line.
+  // Project and phase become compact metadata underneath instead of four peers
+  // competing across one narrow HStack.
+  const renderWatchCard = (row: AgentActivityRowProps) => (
+    <HStack
+      key="watch-card"
+      spacing={7}
+      alignment="center"
+      modifiers={[
+        padding({ horizontal: 8, vertical: 5 }),
+        background(
+          cardFill,
+          shapes.roundedRectangle({ cornerRadius: 10, roundedCornerStyle: "continuous" }),
+        ),
+      ]}
+    >
+      {renderMark(brandFor(row.modelTitle).asset, 13, brandFor(row.modelTitle).tint)}
+      <VStack
+        alignment="leading"
+        spacing={1}
+        modifiers={[frame({ maxWidth: Infinity, alignment: "leading" })]}
+      >
+        <Text
+          modifiers={[
+            font({ weight: "semibold", size: 12, design: "rounded" }),
+            foregroundStyle(primaryForeground),
+            lineLimit(1),
+            layoutPriority(1),
+          ]}
+        >
+          {row.threadTitle}
+        </Text>
+        <HStack spacing={4} alignment="center">
+          <Text
+            modifiers={[
+              font({ size: 9, design: "rounded" }),
+              foregroundStyle(secondaryForeground),
+              lineLimit(1),
+            ]}
+          >
+            {row.projectTitle}
+          </Text>
+          <Spacer minLength={4} />
+          {renderDot(4, phaseTint(row.phase))}
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 9, design: "rounded" }),
+              foregroundStyle(phaseTint(row.phase)),
+              lineLimit(1),
+              layoutPriority(1),
+            ]}
+          >
+            {row.status}
+          </Text>
+        </HStack>
+      </VStack>
+    </HStack>
+  );
+
+  const watchOverflow = Math.max(0, ordered.length - 1);
 
   return {
     banner: (
@@ -242,96 +530,67 @@ export function AgentActivity(
         spacing={6}
         modifiers={deepLink ? [padding({ all: 14 }), widgetURL(deepLink)] : [padding({ all: 14 })]}
       >
-        {/* Logo pinned to the leading edge; the status texts centered across the
-            full width (ZStack so the logo doesn't skew the centering). No footer —
-            overflow beyond the visible rows is inferable from the count. */}
-        <ZStack>
-          <HStack spacing={0} alignment="center">
-            {renderLogo(13, primaryForeground)}
-            <Spacer minLength={0} />
-          </HStack>
-          <HStack spacing={6} alignment="center">
-            <Spacer minLength={0} />
-            <Text
-              modifiers={[
-                font({ weight: "semibold", size: 13 }),
-                // The all-done header carries the outcome tint (emerald /
-                // red) the way the Done/Failed status labels do.
-                foregroundStyle(allDone ? headerTint : primaryForeground),
-                lineLimit(1),
-              ]}
-            >
-              {agentsLabel}
-            </Text>
-            {attentionSuffix ? (
-              <Text modifiers={[font({ size: 13 }), foregroundStyle(secondaryForeground)]}>·</Text>
-            ) : null}
-            {attentionSuffix ? (
-              <Text
-                modifiers={[
-                  font({ weight: "semibold", size: 13 }),
-                  foregroundStyle(headerTint),
-                  lineLimit(1),
-                ]}
-              >
-                {attentionSuffix}
-              </Text>
-            ) : null}
-            <Spacer minLength={0} />
-          </HStack>
-        </ZStack>
-        {row0 ? renderCompactRow(row0) : null}
-        {row1 ? renderCompactRow(row1) : null}
-        {row2 ? renderCompactRow(row2) : null}
-        {row3 ? renderCompactRow(row3) : null}
-        {row4 ? renderCompactRow(row4) : null}
+        {/* Flat, not [strip, [cards]]: the widget runtime's JSX stub keeps
+            children exactly as given, so a nested array is not a node it can
+            walk and every row silently vanished. Four rows is what fits the
+            lock screen's budget; the rest are counted off at the end. */}
+        {[renderStrip(13, agentsLabel, false), ...renderCards(4)]}
       </VStack>
     ),
-    // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family):
-    // brand + count, then the single most important agent with its status glyph.
+    // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family).
+    // Its own hierarchy avoids squeezing the full Lock Screen banner into the
+    // narrow family. A solid canvas also prevents the next translucent Smart
+    // Stack card from visually bleeding through this activity.
     bannerSmall: (
-      <VStack alignment="leading" spacing={5} modifiers={[padding({ all: 10 })]}>
-        <HStack spacing={7} alignment="center">
-          {renderLogo(14, primaryForeground)}
-          <Text
-            modifiers={[
-              font({ weight: "bold", size: 13 }),
-              foregroundStyle(headerTint),
-              lineLimit(1),
-            ]}
-          >
-            {attentionRows.length > 0 ? summary : activeLabel}
-          </Text>
-          <Spacer minLength={6} />
-        </HStack>
-        {row0 ? (
-          <HStack spacing={7} alignment="center">
-            <Text
-              modifiers={[
-                font({ weight: "semibold", size: 12 }),
-                foregroundStyle(primaryForeground),
-                lineLimit(1),
-              ]}
-            >
-              {row0.threadTitle}
-            </Text>
-            <Spacer minLength={6} />
-            <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
-              {row0.status}
-            </Text>
-          </HStack>
-        ) : null}
+      <VStack
+        alignment="leading"
+        spacing={5}
+        modifiers={[
+          padding({ all: 10 }),
+          frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: "topLeading" }),
+          background("#111214"),
+        ]}
+      >
+        {[
+          renderWatchStrip(),
+          ...(topRow ? [renderWatchCard(topRow)] : []),
+          ...(watchOverflow > 0
+            ? [
+                <Text
+                  key="watch-overflow"
+                  modifiers={[
+                    font({ weight: "medium", size: 10, design: "rounded" }),
+                    foregroundStyle(secondaryForeground),
+                  ]}
+                >
+                  {`+${watchOverflow} more`}
+                </Text>,
+              ]
+            : []),
+        ]}
       </VStack>
     ),
-    compactLeading: renderLogo(14, tint),
+    // The collapsed island shows the mark plus phase dot on one shoulder, and
+    // the phase headline plus agent count on the other.
+    compactLeading: (
+      <HStack spacing={4} alignment="center">
+        {renderLogo(14, primaryForeground)}
+        {renderDot(4, tint)}
+      </HStack>
+    ),
     compactTrailing: (
-      <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint)]}>
-        {attentionRow
-          ? attentionRow.phase === "waiting_for_approval"
-            ? "Approval"
-            : "Input"
-          : activeLabel}
-      </Text>
+      <HStack spacing={5} alignment="center">
+        <Text
+          modifiers={[
+            font({ weight: "semibold", size: 11, design: "rounded" }),
+            foregroundStyle(primaryForeground),
+            lineLimit(1),
+          ]}
+        >
+          {pillLabel}
+        </Text>
+        {props.activeCount > 1 ? renderCountBadge(props.activeCount) : null}
+      </HStack>
     ),
     // The shared/minimal form is a ~22pt circle — a single signal reads there,
     // the wordmark does not. Show the blocking/outcome phase glyph, else the
@@ -342,37 +601,48 @@ export function AgentActivity(
         : renderLogo(11, tint),
     expandedLeading: (
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
-        {renderLogo(15, tint)}
-        <Text modifiers={[font({ weight: "bold", size: 13 }), foregroundStyle(tint)]}>
-          {allDone ? doneLabel : `${props.activeCount}`}
+        {renderLogo(15, primaryForeground)}
+        {renderDot(5, tint)}
+        <Text
+          modifiers={[
+            font({ weight: "bold", size: 13, design: "rounded" }),
+            foregroundStyle(primaryForeground),
+            lineLimit(1),
+          ]}
+        >
+          {pillLabel}
         </Text>
       </HStack>
     ),
-    // No center content: the phase glyphs + statuses in expandedBottom already
-    // carry the attention signal, and the expanded island's height budget is
-    // tight enough that a summary line there pushed the third row off.
+    // No center content: the status dots + statuses on the cards already carry
+    // the attention signal, and the expanded island's height budget is tight
+    // enough that a summary line there costs a whole card.
     expandedCenter: null,
-    // No trailing content: a timestamp is glanceable-lock-screen info, not
-    // useful in a view the user is actively holding open — and the trailing
-    // region hugs the island's corner radius, which clipped it anyway.
-    expandedTrailing: null,
+    // Keep the agent count on the top strip's trailing shoulder. The region hugs
+    // the island's corner radius, so the count gets trailing padding
+    // to stay clear of the curve.
+    expandedTrailing:
+      props.activeCount > 1 ? (
+        <HStack modifiers={[padding({ trailing: 5, vertical: 4 })]}>
+          {renderCountBadge(props.activeCount)}
+        </HStack>
+      ) : null,
     expandedBottom: (
-      // Vertical padding only: the expanded region provides its own horizontal
-      // content margins, so `all` padding double-indented the rows.
-      // Horizontal padding keeps both edges clear of the island's corner
-      // curvature (right edge clipped status labels; titles hugged the left).
+      // Vertical padding only for the cards themselves: the expanded region
+      // provides its own horizontal content margins, so `all` padding
+      // double-indented them. Horizontal padding keeps both edges clear of the
+      // island's corner curvature (right edge clipped status labels; titles
+      // hugged the left). Two cards is what the region's height allows.
       <VStack
         alignment="leading"
-        spacing={5}
+        spacing={4}
         modifiers={
           deepLink
             ? [padding({ vertical: 2, horizontal: 8 }), widgetURL(deepLink)]
             : [padding({ vertical: 2, horizontal: 8 })]
         }
       >
-        {row0 ? renderCompactRow(row0) : null}
-        {row1 ? renderCompactRow(row1) : null}
-        {row2 ? renderCompactRow(row2) : null}
+        {renderCards(4)}
       </VStack>
     ),
   };

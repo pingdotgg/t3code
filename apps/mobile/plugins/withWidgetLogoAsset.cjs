@@ -1,6 +1,7 @@
 "use strict";
 
-// Ships the branded T3 mark to the Live Activity / widget extension.
+// Ships the branded T3 mark and the provider marks to the Live Activity /
+// widget extension.
 //
 // expo-widgets generates ExpoWidgetsTarget without a Resources build phase and
 // has no asset support, so this plugin (a) writes an SVG template image set into
@@ -22,14 +23,16 @@ const { addWidgetAssetCatalog } = require("./lib/addWidgetAssetCatalog.cjs");
 
 const TARGET_NAME = "ExpoWidgetsTarget";
 const CATALOG_NAME = "Assets.xcassets";
-const IMAGE_SET = "T3Mark.imageset";
-const SVG_NAME = "T3Mark.svg";
+// Asset names the Live Activity layout resolves with `Image assetName`. The
+// provider marks mirror the web app's icons (apps/web/src/components/Icons) so a
+// card reads the same on the lock screen as it does in the sidebar.
+const MARK_NAMES = ["T3Mark", "Codex", "Claude", "Cursor", "OpenCode", "Grok"];
 
 const CATALOG_CONTENTS = JSON.stringify({ info: { author: "expo", version: 1 } }, null, 2) + "\n";
-const IMAGE_SET_CONTENTS =
+const imageSetContents = (svgName) =>
   JSON.stringify(
     {
-      images: [{ idiom: "universal", filename: SVG_NAME }],
+      images: [{ idiom: "universal", filename: svgName }],
       info: { author: "expo", version: 1 },
       properties: {
         "preserves-vector-representation": true,
@@ -44,13 +47,17 @@ function withAssetFiles(config) {
   return withDangerousMod(config, [
     "ios",
     (cfg) => {
-      const source = path.join(cfg.modRequest.projectRoot, "assets", "widget", SVG_NAME);
       const catalogDir = path.join(cfg.modRequest.platformProjectRoot, TARGET_NAME, CATALOG_NAME);
-      const imageSetDir = path.join(catalogDir, IMAGE_SET);
-      fs.mkdirSync(imageSetDir, { recursive: true });
+      fs.mkdirSync(catalogDir, { recursive: true });
       fs.writeFileSync(path.join(catalogDir, "Contents.json"), CATALOG_CONTENTS);
-      fs.writeFileSync(path.join(imageSetDir, "Contents.json"), IMAGE_SET_CONTENTS);
-      fs.copyFileSync(source, path.join(imageSetDir, SVG_NAME));
+      for (const name of MARK_NAMES) {
+        const svgName = `${name}.svg`;
+        const source = path.join(cfg.modRequest.projectRoot, "assets", "widget", svgName);
+        const imageSetDir = path.join(catalogDir, `${name}.imageset`);
+        fs.mkdirSync(imageSetDir, { recursive: true });
+        fs.writeFileSync(path.join(imageSetDir, "Contents.json"), imageSetContents(svgName));
+        fs.copyFileSync(source, path.join(imageSetDir, svgName));
+      }
       return cfg;
     },
   ]);
