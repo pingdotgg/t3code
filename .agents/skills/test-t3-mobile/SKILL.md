@@ -66,7 +66,7 @@ Use these client origins:
 - Android Emulator: `http://10.0.2.2:<server-port>`
 - Physical device: bind the backend to `0.0.0.0` and use the host's reachable LAN origin
 
-Always enter the complete `http://` origin; the mobile host field otherwise assumes HTTPS. When testing web and mobile together, run `vp run dev --home-dir <base-dir> --host 127.0.0.1` instead and do not launch a second backend over the same base directory.
+Enter the complete `http://` origin to make the test transport explicit. Bare IP addresses default to HTTP, while bare hostnames default to HTTPS. When testing web and mobile together, run `vp run dev --home-dir <base-dir> --host 127.0.0.1` instead and do not launch a second backend over the same base directory.
 
 ## Start or reuse Metro safely
 
