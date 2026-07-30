@@ -145,6 +145,9 @@ export const make = Effect.gen(function* () {
       threadDeltaSubscription: true,
       threadTitleRegeneration: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
+      ...(serverSelfUpdate === "boot-service" || serverSelfUpdate === "respawn"
+        ? { serverSelfUpdateProgress: true }
+        : {}),
     },
   };
 
