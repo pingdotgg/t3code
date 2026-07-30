@@ -34,7 +34,11 @@ import {
   type WorkspaceAuxiliaryPaneRole,
   type WorkspacePaneLayout,
 } from "../../lib/layout";
-import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
+import {
+  resolveThreadSelectionNavigationAction,
+  shouldInvalidateSelectedThreadDetail,
+  type ThreadListAction,
+} from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -295,6 +299,8 @@ function AdaptiveWorkspaceLayoutContent(
       return null;
     }
   }, [environmentId, threadId]);
+  const selectedThreadKeyRef = useRef(selectedThreadKey);
+  selectedThreadKeyRef.current = selectedThreadKey;
   // Wrapped in an object: bare functions in useState would be treated as
   // lazy initializers/updaters. `active: false` keeps the outgoing route's
   // content mounted so the pane can animate closed (or be replaced
@@ -446,6 +452,21 @@ function AdaptiveWorkspaceLayoutContent(
     [navigation],
   );
 
+  const handleThreadActionCompleted = useCallback(
+    (action: ThreadListAction, thread: EnvironmentThreadShell) => {
+      if (
+        shouldInvalidateSelectedThreadDetail({
+          action,
+          actedThreadKey: scopedThreadKey(thread.environmentId, thread.id),
+          selectedThreadKey: selectedThreadKeyRef.current,
+        })
+      ) {
+        navigation.dispatch(StackActions.popTo("Home"));
+      }
+    },
+    [navigation],
+  );
+
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
   );
@@ -474,6 +495,7 @@ function AdaptiveWorkspaceLayoutContent(
 
   const handleSelectThread = useCallback(
     (thread: EnvironmentThreadShell) => {
+      const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
       const params = {
         environmentId: String(thread.environmentId),
         threadId: String(thread.id),
@@ -483,14 +505,15 @@ function AdaptiveWorkspaceLayoutContent(
         pathname,
       });
       if (navigationAction === "set-params") {
-        const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
         if (nextThreadKey === selectedThreadKey) {
           return;
         }
+        selectedThreadKeyRef.current = nextThreadKey;
         setFileInspectorPreferredVisible(false);
         navigation.navigate("Thread", params);
         return;
       }
+      selectedThreadKeyRef.current = nextThreadKey;
       if (navigationAction === "replace") {
         setFileInspectorPreferredVisible(false);
         navigation.dispatch(StackActions.replace("Thread", params));
@@ -524,6 +547,7 @@ function AdaptiveWorkspaceLayoutContent(
                 onOpenSettings={handleOpenSettings}
                 onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                 onNewThreadInProject={handleNewThreadInProject}
+                onThreadActionCompleted={handleThreadActionCompleted}
                 onSelectThread={handleSelectThread}
                 onSearchQueryChange={setPrimarySidebarSearchQuery}
                 searchQuery={primarySidebarSearchQuery}
