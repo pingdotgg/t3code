@@ -180,10 +180,11 @@ function CollapsibleUserMessage({
   );
 }
 
-// The web bounds conversation previews to a grid cell of max-w-[420px]/2
-// columns with max-h-[220px] — scale down to that same pixel box here.
-const PREVIEW_MAX_WIDTH_PX = 206;
-const PREVIEW_MAX_HEIGHT_PX = 220;
+// The web bounds conversation previews to a ~206x220px grid cell; terminal
+// cells are chunky, so give the TUI twice that pixel box — still a thumbnail,
+// but readable — and scale down into it (never up).
+const PREVIEW_MAX_WIDTH_PX = 420;
+const PREVIEW_MAX_HEIGHT_PX = 440;
 /** Room the metadata line reserves for its link/state tail. */
 const ATTACHMENT_TAIL_WIDTH = 28;
 
