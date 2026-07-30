@@ -12,10 +12,6 @@ import { isMacPlatform } from "./lib/utils";
 
 let cachedApi: LocalApi | undefined;
 
-function unavailableLocalBackendError(): Error {
-  return new Error("Local backend API is unavailable before a backend is paired.");
-}
-
 async function readContextMenuStyle(): Promise<ContextMenuStyle> {
   try {
     const settings = window.desktopBridge
@@ -53,7 +49,6 @@ function createBrowserLocalApi(): LocalApi {
       },
     },
     shell: {
-      openInEditor: () => Promise.reject(unavailableLocalBackendError()),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
@@ -96,20 +91,6 @@ function createBrowserLocalApi(): LocalApi {
         writeBrowserClientSettings(settings);
       },
     },
-    server: {
-      getConfig: () => Promise.reject(unavailableLocalBackendError()),
-      refreshProviders: () => Promise.reject(unavailableLocalBackendError()),
-      updateProvider: () => Promise.reject(unavailableLocalBackendError()),
-      upsertKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      removeKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      getSettings: () => Promise.reject(unavailableLocalBackendError()),
-      updateSettings: () => Promise.reject(unavailableLocalBackendError()),
-      discoverSourceControl: () => Promise.reject(unavailableLocalBackendError()),
-      getTraceDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessResourceHistory: () => Promise.reject(unavailableLocalBackendError()),
-      signalProcess: () => Promise.reject(unavailableLocalBackendError()),
-    },
   };
 }
 
@@ -121,12 +102,7 @@ export function readLocalApi(): LocalApi | undefined {
   if (typeof window === "undefined") return undefined;
   if (cachedApi) return cachedApi;
 
-  if (window.nativeApi) {
-    cachedApi = window.nativeApi;
-    return cachedApi;
-  }
-
-  cachedApi = createBrowserLocalApi();
+  cachedApi = createLocalApi();
   return cachedApi;
 }
 
