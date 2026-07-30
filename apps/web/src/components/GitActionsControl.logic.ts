@@ -43,11 +43,27 @@ export interface GitActionProgressPresentation {
   readonly startedAtMs: number | null;
 }
 
+export interface GitActionResultToastTiming {
+  readonly timeout: 0;
+  readonly dismissAfterVisibleMs: number | null;
+}
+
 export type DefaultBranchConfirmableAction =
   | "push"
   | "create_pr"
   | "commit_push"
   | "commit_push_pr";
+
+const GIT_ACTION_SUCCESS_TOAST_VISIBLE_MS = 10_000;
+
+export function resolveGitActionResultToastTiming(
+  type: "error" | "success",
+): GitActionResultToastTiming {
+  return {
+    timeout: 0,
+    dismissAfterVisibleMs: type === "success" ? GIT_ACTION_SUCCESS_TOAST_VISIBLE_MS : null,
+  };
+}
 
 function resolveChangeRequestTerminology(
   gitStatus: VcsStatusResult | null,

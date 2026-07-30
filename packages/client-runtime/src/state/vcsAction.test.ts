@@ -203,7 +203,7 @@ describe("vcsActionState", () => {
     });
   });
 
-  it("clears running presentation state once the action finishes", () => {
+  it("keeps running presentation state until the finished action settles", () => {
     const initial = beginVcsActionState({
       operation: "run_change_request",
       label: "Running source control action",
@@ -232,18 +232,18 @@ describe("vcsActionState", () => {
     );
 
     expect(finished).toMatchObject({
-      isRunning: false,
+      isRunning: true,
       operation: "run_change_request",
       actionId,
       action,
-      currentLabel: null,
-      currentPhaseLabel: null,
+      currentLabel: "Pushing...",
+      currentPhaseLabel: "Pushing...",
       lastOutputLine: null,
       error: null,
     });
   });
 
-  it("retains a terminal action error for presentation", () => {
+  it("keeps running presentation state and retains a terminal action error until settle", () => {
     const initial = beginVcsActionState({
       operation: "run_change_request",
       label: "Running source control action",
@@ -262,7 +262,7 @@ describe("vcsActionState", () => {
     );
 
     expect(failed).toMatchObject({
-      isRunning: false,
+      isRunning: true,
       operation: "run_change_request",
       actionId,
       action,
@@ -659,6 +659,7 @@ describe("vcsActionState", () => {
         );
 
         expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
+        expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
 
@@ -670,6 +671,12 @@ describe("vcsActionState", () => {
         );
 
         expect(AsyncResult.isFailure(failedResult)).toBe(true);
+        expect(registry.get(manager.stateAtom(targetKey))).toMatchObject({
+          isRunning: false,
+          operation: "run_change_request",
+          actionId: failedActionId,
+          error: "Source control action 'commit_push' failed during push.",
+        });
         expect(registry.get(state).revision).toBe(2);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
       }),

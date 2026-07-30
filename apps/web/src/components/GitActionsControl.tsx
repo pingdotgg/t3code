@@ -46,6 +46,7 @@ import {
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
   resolveGitActionProgressPresentation,
+  resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
@@ -1317,11 +1318,13 @@ export default function GitActionsControl({
         }
 
         const error = squashAtomCommandFailure(result);
+        const errorToastTiming = resolveGitActionResultToastTiming("error");
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Action failed",
             description: error instanceof Error ? error.message : "An error occurred.",
+            timeout: errorToastTiming.timeout,
             ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
           }),
         );
@@ -1364,9 +1367,12 @@ export default function GitActionsControl({
         };
       }
 
+      const successToastTiming = resolveGitActionResultToastTiming("success");
       const successToastData = {
         ...scopedToastData,
-        dismissAfterVisibleMs: 10_000,
+        ...(successToastTiming.dismissAfterVisibleMs !== null
+          ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
+          : {}),
       };
 
       if (toastActionProps) {
@@ -1375,7 +1381,7 @@ export default function GitActionsControl({
             type: "success",
             title: actionResult.toast.title,
             description: actionResult.toast.description,
-            timeout: 0,
+            timeout: successToastTiming.timeout,
             actionProps: toastActionProps,
             data: successToastData,
           }),
@@ -1385,7 +1391,7 @@ export default function GitActionsControl({
           type: "success",
           title: actionResult.toast.title,
           description: actionResult.toast.description,
-          timeout: 0,
+          timeout: successToastTiming.timeout,
           data: successToastData,
         });
       }

@@ -8,6 +8,7 @@ import {
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
   resolveGitActionProgressPresentation,
+  resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
@@ -108,6 +109,19 @@ describe("git action progress presentation", () => {
     assert.equal(formatGitActionElapsed(10_000, 9_000), "0s");
     assert.equal(formatGitActionElapsed(10_000, 14_900), "4s");
     assert.equal(formatGitActionElapsed(10_000, 75_000), "1m 5s");
+  });
+});
+
+describe("git action result toast timing", () => {
+  it("keeps errors sticky and dismisses successes after visible time", () => {
+    assert.deepEqual(resolveGitActionResultToastTiming("error"), {
+      timeout: 0,
+      dismissAfterVisibleMs: null,
+    });
+    assert.deepEqual(resolveGitActionResultToastTiming("success"), {
+      timeout: 0,
+      dismissAfterVisibleMs: 10_000,
+    });
   });
 });
 
