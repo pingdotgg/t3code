@@ -582,12 +582,14 @@ function AdaptiveWorkspaceLayoutContent(
   return (
     <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
-        <SelectedThreadLifecycleObserver
-          latestSelectedThreadKey={selectedThreadKeyRef}
-          onInvalidate={onInvalidateSelectedThreadDetail}
-          selectedThreadKey={selectedThreadKey}
-          selectedThreadRef={selectedThreadRef}
-        />
+        {layout.usesSplitView ? (
+          <SelectedThreadLifecycleObserver
+            latestSelectedThreadKey={selectedThreadKeyRef}
+            onInvalidate={onInvalidateSelectedThreadDetail}
+            selectedThreadKey={selectedThreadKey}
+            selectedThreadRef={selectedThreadRef}
+          />
+        ) : null}
         <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
             <Animated.View
