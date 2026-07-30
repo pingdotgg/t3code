@@ -40,8 +40,27 @@ export function createSidebarHeaderItems(input: {
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
   readonly onOpenSettings: () => void;
+  /**
+   * SF Symbol for the workspace sync state, or null when there is nothing to
+   * report. Already settled by the caller (useSettledWorkspaceSyncTone) so the
+   * bouncy sync signal can't strobe the navigation bar.
+   */
+  readonly syncIcon?: string | null;
+  readonly syncLabel?: string;
+  readonly onOpenEnvironmentSettings?: () => void;
 }): NativeStackHeaderItem[] {
   return [
+    ...(input.syncIcon && input.onOpenEnvironmentSettings
+      ? [
+          withNativeGlassHeaderItem({
+            type: "button" as const,
+            label: "",
+            accessibilityLabel: input.syncLabel ?? "Workspace sync status",
+            icon: sfSymbolIcon(input.syncIcon),
+            onPress: input.onOpenEnvironmentSettings,
+          }),
+        ]
+      : []),
     withNativeGlassHeaderItem({
       type: "menu",
       label: "",

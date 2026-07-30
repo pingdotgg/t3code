@@ -55,8 +55,12 @@ import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThrea
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
-import { WorkspaceConnectionStatus } from "../home/WorkspaceConnectionStatus";
-import { shouldShowWorkspaceConnectionStatus } from "../home/workspace-connection-status";
+import {
+  WorkspaceSyncStatusButton,
+  workspaceSyncToneSymbol,
+} from "../home/WorkspaceSyncStatusButton";
+import { useSettledWorkspaceSyncTone } from "../home/use-settled-workspace-sync-tone";
+import { workspaceConnectionStatusLabel } from "../home/workspace-connection-status";
 import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
@@ -550,7 +554,11 @@ function ThreadNavigationSidebarPane(
     threadListV2Enabled,
     threadListV2Layout,
   ]);
-  const showsConnectionStatus = shouldShowWorkspaceConnectionStatus(catalogState);
+  // Settled first: the raw sync signal re-enters "synchronizing" on every
+  // resubscribe, which used to mount/unmount this indicator as a list header row.
+  const syncTone = useSettledWorkspaceSyncTone(catalogState);
+  const syncSymbol = workspaceSyncToneSymbol(syncTone);
+  const syncLabel = workspaceConnectionStatusLabel(catalogState);
   const listMenuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -1028,8 +1036,18 @@ function ThreadNavigationSidebarPane(
         filterIcon,
         filterMenu,
         onOpenSettings: props.onOpenSettings,
+        syncIcon: syncSymbol,
+        syncLabel,
+        onOpenEnvironmentSettings: props.onOpenEnvironmentSettings,
       }),
-    [filterIcon, filterMenu, props.onOpenSettings],
+    [
+      filterIcon,
+      filterMenu,
+      props.onOpenSettings,
+      props.onOpenEnvironmentSettings,
+      syncSymbol,
+      syncLabel,
+    ],
   );
   // "No threads yet" over an inbox that is merely all-snoozed reads as
   // data loss; name the snoozed threads instead.
@@ -1114,17 +1132,9 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
-                ListHeaderComponent={
-                  showsConnectionStatus ? (
-                    <View className="px-1.5 pt-0.5 pb-2">
-                      <WorkspaceConnectionStatus
-                        onPress={props.onOpenEnvironmentSettings}
-                        state={catalogState}
-                        variant="sidebar"
-                      />
-                    </View>
-                  ) : null
-                }
+                // Connection/sync state lives in the navigation bar
+                // (createSidebarHeaderItems) — as a list header it mounted and
+                // unmounted on every sync flip, flashing and reflowing the list.
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -1219,6 +1229,13 @@ function ThreadNavigationSidebarPane(
             Threads
           </Text>
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>
+            {/* Sync state as a grouped header button rather than a row above
+                the list, which flashed and reflowed on every sync flip. */}
+            <WorkspaceSyncStatusButton
+              state={catalogState}
+              onPress={props.onOpenEnvironmentSettings}
+              variant="sidebar-grouped"
+            />
             <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
               <SidebarFilterButton
                 grouped
@@ -1246,16 +1263,6 @@ function ThreadNavigationSidebarPane(
             value={props.searchQuery}
           />
         </View>
-
-        {showsConnectionStatus ? (
-          <View className="px-3.5 pt-2.5">
-            <WorkspaceConnectionStatus
-              onPress={props.onOpenEnvironmentSettings}
-              state={catalogState}
-              variant="sidebar"
-            />
-          </View>
-        ) : null}
       </View>
     </View>
   );

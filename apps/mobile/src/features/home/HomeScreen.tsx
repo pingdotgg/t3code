@@ -862,15 +862,6 @@ export function HomeScreen(props: HomeScreenProps) {
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
-  const connectionStatus =
-    shouldShowConnectionStatus && Platform.OS !== "ios" ? (
-      <View
-        className="absolute left-0 right-0 items-center"
-        style={{ bottom: Math.max(insets.bottom, 18) + 76 }}
-      >
-        <WorkspaceConnectionStatus state={props.catalogState} onPress={props.onOpenEnvironments} />
-      </View>
-    ) : null;
 
   if (!hasAnyThreads) {
     return (
@@ -894,7 +885,11 @@ export function HomeScreen(props: HomeScreenProps) {
               <ActivityIndicator color={accentColor} />
             </View>
           ) : null}
-          {shouldShowConnectionStatus && Platform.OS === "ios" ? (
+          {/* Kept inline here (unlike the thread list, where this moved to the
+              header sync button): with no threads on screen there is nothing
+              else to explain why the page is empty, and nothing below it to
+              reflow when it appears. */}
+          {shouldShowConnectionStatus ? (
             <View className="mt-4">
               <WorkspaceConnectionStatus
                 state={props.catalogState}
@@ -904,26 +899,15 @@ export function HomeScreen(props: HomeScreenProps) {
             </View>
           ) : null}
         </View>
-        {connectionStatus}
       </View>
     );
   }
 
-  const listHeader = (
-    <>
-      {Platform.OS === "ios" ? null : <HomeTopContentSpacer />}
-
-      {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-        <View className="pb-4">
-          <WorkspaceConnectionStatus
-            state={props.catalogState}
-            onPress={props.onOpenEnvironments}
-            variant="sidebar"
-          />
-        </View>
-      ) : null}
-    </>
-  );
+  // Connection/sync state is reported by the header's sync button
+  // (WorkspaceSyncStatusButton), not from inside this scroll view: mounting and
+  // unmounting it as row 0 flashed the indicator and reflowed every row below
+  // it each time the (inherently bouncy) sync signal flipped.
+  const listHeader = <>{Platform.OS === "ios" ? null : <HomeTopContentSpacer />}</>;
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
@@ -1024,7 +1008,6 @@ export function HomeScreen(props: HomeScreenProps) {
             }}
           />
         </SwipeableScrollGateProvider>
-        {connectionStatus}
       </View>
     );
   }
@@ -1076,7 +1059,6 @@ export function HomeScreen(props: HomeScreenProps) {
           }
         />
       </SwipeableScrollGateProvider>
-      {connectionStatus}
     </View>
   );
 }

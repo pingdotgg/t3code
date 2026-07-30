@@ -118,6 +118,10 @@ export function HomeRouteScreen() {
         {/* Restore the compact title in case the split branch blanked it. */}
         <NativeStackScreenOptions options={{ title: "Threads", headerTitle: "Threads" }} />
         <HomeHeader
+          catalogState={catalogState}
+          onOpenEnvironments={() =>
+            navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" })
+          }
           environments={environments}
           projects={projectFilterOptions}
           searchQuery={searchQuery}

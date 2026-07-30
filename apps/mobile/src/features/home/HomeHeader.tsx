@@ -25,6 +25,13 @@ import {
   PROJECT_SORT_OPTIONS,
   THREAD_SORT_OPTIONS,
 } from "./home-list-options";
+import { useSettledWorkspaceSyncTone } from "./use-settled-workspace-sync-tone";
+import {
+  WorkspaceSyncStatusButton,
+  workspaceSyncToneSymbol,
+} from "./WorkspaceSyncStatusButton";
+import { workspaceConnectionStatusLabel } from "./workspace-connection-status";
+import type { WorkspaceState } from "../../state/workspaceModel";
 
 export type HomeHeaderEnvironment = HomeListFilterMenuEnvironment;
 
@@ -43,6 +50,9 @@ export function HomeHeader(props: {
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
+  /** Workspace connection/sync state — surfaced as the header sync button. */
+  readonly catalogState: WorkspaceState;
+  readonly onOpenEnvironments: () => void;
 }) {
   if (Platform.OS === "android") {
     return <AndroidHomeHeader {...props} />;
@@ -212,6 +222,14 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               </View>
             </View>
 
+            {/* Sync/connection state — moved out of the thread list's scroll
+                view, where mounting and unmounting a list header row made it
+                flash and reflowed every row below it. */}
+            <WorkspaceSyncStatusButton
+              state={props.catalogState}
+              onPress={props.onOpenEnvironments}
+            />
+
             <ControlPillMenu
               actions={menuActions}
               isAnchoredToRight
@@ -298,11 +316,21 @@ function IosHomeHeader(props: HomeHeaderProps) {
     ...props,
     listOrganization: !threadListV2Enabled,
   });
+  // Native bar-button items can only carry an icon (no spinner child), so the
+  // settled tone picks an SF Symbol. Settling matters more here than in the
+  // React headers: each change re-enters navigation.setOptions.
+  const syncTone = useSettledWorkspaceSyncTone(props.catalogState);
+  const syncSymbol = workspaceSyncToneSymbol(syncTone);
+  const syncLabel = workspaceConnectionStatusLabel(props.catalogState);
 
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={filterMenu.items}
+        // Header item factories are stabilized, so a tone captured inside one
+        // can't change the options signature on its own — version it explicitly
+        // or the sync button would keep its first icon forever. Compared by
+        // value (optionsSignature), so a fresh literal each render is fine.
+        optionsVersion={{ filterMenuItems: filterMenu.items, syncSymbol, syncLabel }}
         options={{
           // Static header config (glass, title, fonts) lives in Stack.tsx
           // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
@@ -310,6 +338,18 @@ function IosHomeHeader(props: HomeHeaderProps) {
           unstable_headerRightItems:
             Platform.OS === "ios"
               ? () => [
+                  ...(syncSymbol === null
+                    ? []
+                    : [
+                        withNativeGlassHeaderItem({
+                          accessibilityLabel: syncLabel,
+                          icon: { name: syncSymbol, type: "sfSymbol" } as const,
+                          identifier: "home-sync-status",
+                          label: "",
+                          onPress: props.onOpenEnvironments,
+                          type: "button" as const,
+                        }),
+                      ]),
                   withNativeGlassHeaderItem({
                     accessibilityLabel: "Open settings",
                     icon: { name: "ellipsis", type: "sfSymbol" } as const,
