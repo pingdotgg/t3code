@@ -18,6 +18,8 @@ import {
   providerAuth,
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
+  type SourceControlDiscoveryInstance,
+  type SourceControlUnknownRemoteRefinementInput,
 } from "./SourceControlProviderDiscovery.ts";
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
@@ -82,6 +84,93 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+function githubComAuth(status: ReturnType<typeof parseGitHubAuthStatus>) {
+  const accounts = status.accounts.filter((account) => account.host === "github.com");
+  const authenticated = findAuthenticatedGitHubAccount(accounts);
+  if (authenticated) {
+    return providerAuth({
+      status: "authenticated",
+      account: authenticated.account,
+      host: "github.com",
+    });
+  }
+  return providerAuth({
+    status: "unauthenticated",
+    host: "github.com",
+    detail:
+      accounts[0]?.error ??
+      "Run `gh auth login` to authenticate GitHub CLI with an active account.",
+  });
+}
+
+export function expandGitHubInstances(
+  input: SourceControlAuthProbeInput,
+): ReadonlyArray<SourceControlDiscoveryInstance> {
+  const status = parseGitHubAuthStatus(input.stdout);
+  if (!status.parsed) {
+    return [
+      {
+        kind: "github",
+        id: "github",
+        host: "github.com",
+        label: "GitHub",
+        auth: parseGitHubAuth(input),
+      },
+    ];
+  }
+
+  const enterpriseHosts = [
+    ...new Set(
+      status.accounts.map((account) => account.host).filter((host) => host !== "github.com"),
+    ),
+  ].sort();
+
+  return [
+    {
+      kind: "github",
+      id: "github",
+      host: "github.com",
+      label: "GitHub",
+      auth: githubComAuth(status),
+    },
+    ...enterpriseHosts.map((host) => {
+      const accounts = status.accounts.filter((account) => account.host === host);
+      const authenticated = findAuthenticatedGitHubAccount(accounts);
+      return {
+        kind: "github-enterprise" as const,
+        id: `github-enterprise:${host}`,
+        host,
+        label: host,
+        auth: authenticated
+          ? providerAuth({ status: "authenticated", account: authenticated.account, host })
+          : providerAuth({
+              status: "unauthenticated",
+              host,
+              detail:
+                accounts[0]?.error ?? `Run \`gh auth login --hostname ${host}\` to authenticate.`,
+            }),
+      };
+    }),
+  ];
+}
+
+export function refineUnknownGitHubRemote(input: SourceControlUnknownRemoteRefinementInput) {
+  const host = input.context.provider.name.toLowerCase();
+  const authenticated = parseGitHubAuthStatus(input.auth.stdout).accounts.some(
+    (account) => account.host === host && account.authenticated,
+  );
+
+  if (!authenticated) {
+    return null;
+  }
+
+  return {
+    kind: "github-enterprise",
+    name: host,
+    baseUrl: input.context.provider.baseUrl,
+  } as const;
+}
+
 export const discovery = {
   type: "cli",
   kind: "github",
@@ -90,6 +179,8 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--json", "hosts"],
   parseAuth: parseGitHubAuth,
+  expandInstances: expandGitHubInstances,
+  refineUnknownRemote: refineUnknownGitHubRemote,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;

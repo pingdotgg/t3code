@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -380,4 +380,123 @@ it("reports unauthenticated when GitHub JSON has accounts but none are valid", (
       detail: Option.some("The token in keyring is invalid."),
     },
   );
+});
+
+const authStatusJson = (
+  hosts: Record<string, ReadonlyArray<{ login: string; state: string; active: boolean }>>,
+) =>
+  JSON.stringify({
+    hosts: Object.fromEntries(
+      Object.entries(hosts).map(([host, accounts]) => [
+        host,
+        accounts.map((account) => ({ ...account, host })),
+      ]),
+    ),
+  });
+
+const probe = (stdout: string) => ({
+  stdout,
+  stderr: "",
+  exitCode: ChildProcessSpawner.ExitCode(0),
+});
+
+describe("expandGitHubInstances", () => {
+  it("emits only a github row when no enterprise host is logged in", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(
+        authStatusJson({ "github.com": [{ login: "octocat", state: "success", active: true }] }),
+      ),
+    );
+
+    expect(instances.map((instance) => instance.id)).toEqual(["github"]);
+    expect(instances[0]!.kind).toBe("github");
+    expect(instances[0]!.auth.status).toBe("authenticated");
+  });
+
+  it("emits one enterprise row per non-github.com host", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(
+        authStatusJson({
+          "github.com": [{ login: "octocat", state: "success", active: true }],
+          "git.corp.com": [{ login: "dev", state: "success", active: false }],
+          "acme.ghe.com": [{ login: "dev2", state: "success", active: false }],
+        }),
+      ),
+    );
+
+    expect(instances.map((instance) => instance.id)).toEqual([
+      "github",
+      "github-enterprise:acme.ghe.com",
+      "github-enterprise:git.corp.com",
+    ]);
+    expect(instances[1]!.kind).toBe("github-enterprise");
+    expect(instances[1]!.label).toBe("acme.ghe.com");
+    expect(instances[1]!.host).toBe("acme.ghe.com");
+    expect(Option.getOrNull(instances[1]!.auth.account)).toBe("dev2");
+  });
+
+  it("still emits a github row when github.com is not logged in", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] })),
+    );
+
+    expect(instances[0]!.id).toBe("github");
+    expect(instances[0]!.auth.status).toBe("unauthenticated");
+    expect(instances).toHaveLength(2);
+  });
+
+  it("emits only an unauthenticated github row when output is unparseable", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(probe("not json"));
+
+    expect(instances).toHaveLength(1);
+    expect(instances[0]!.id).toBe("github");
+  });
+});
+
+describe("refineUnknownGitHubRemote", () => {
+  const context = {
+    provider: { kind: "unknown" as const, name: "git.corp.com", baseUrl: "https://git.corp.com" },
+    remoteName: "origin",
+    remoteUrl: "https://git.corp.com/owner/repo.git",
+  };
+
+  it("claims a remote whose host is authenticated in gh", () => {
+    const refined = GitHubSourceControlProvider.refineUnknownGitHubRemote({
+      cwd: "/repo",
+      context,
+      auth: probe(
+        authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] }),
+      ),
+    });
+
+    expect(refined).toEqual({
+      kind: "github-enterprise",
+      name: "git.corp.com",
+      baseUrl: "https://git.corp.com",
+    });
+  });
+
+  it("does not claim a host that failed authentication", () => {
+    expect(
+      GitHubSourceControlProvider.refineUnknownGitHubRemote({
+        cwd: "/repo",
+        context,
+        auth: probe(
+          authStatusJson({ "git.corp.com": [{ login: "dev", state: "error", active: true }] }),
+        ),
+      }),
+    ).toBeNull();
+  });
+
+  it("does not claim a host absent from gh auth status", () => {
+    expect(
+      GitHubSourceControlProvider.refineUnknownGitHubRemote({
+        cwd: "/repo",
+        context,
+        auth: probe(
+          authStatusJson({ "github.com": [{ login: "octocat", state: "success", active: true }] }),
+        ),
+      }),
+    ).toBeNull();
+  });
 });
