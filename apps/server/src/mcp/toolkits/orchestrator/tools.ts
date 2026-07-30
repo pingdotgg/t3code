@@ -1,5 +1,7 @@
 import {
   OrchestratorMcpCapabilitiesResult,
+  OrchestratorMcpCancelGitHubWaitInput,
+  OrchestratorMcpCancelGitHubWaitResult,
   OrchestratorMcpCreatedThread,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
@@ -9,11 +11,14 @@ import {
   OrchestratorMcpDeleteScheduledTaskResult,
   OrchestratorMcpFailure,
   OrchestratorMcpListScheduledTasksResult,
+  OrchestratorMcpListGitHubWaitsResult,
   OrchestratorMcpScheduleTaskInput,
   OrchestratorMcpScheduleTaskResult,
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpUpdateScheduledTaskInput,
+  OrchestratorMcpWaitForGitHubInput,
+  OrchestratorMcpWaitForGitHubResult,
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -136,6 +141,44 @@ export const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   .annotate(Tool.Title, "Delete a scheduled task")
   .annotate(Tool.Destructive, true);
 
+export const WaitForGitHubTool = Tool.make("wait_for_github", {
+  description:
+    "Register a durable one-shot GitHub PR wait for THIS thread. T3 checks in the background without consuming agent turns, then queues a continuation when checks settle, new review activity arrives, or the PR closes. After success, end the turn instead of polling. clientRequestId makes retries idempotent.",
+  parameters: OrchestratorMcpWaitForGitHubInput,
+  success: OrchestratorMcpWaitForGitHubResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Wait for GitHub")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+export const ListGitHubWaitsTool = Tool.make("list_github_waits", {
+  description:
+    "List durable GitHub PR waits registered by this T3 thread, including pending, delivered, expired, and cancelled waits.",
+  success: OrchestratorMcpListGitHubWaitsResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "List GitHub waits")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const CancelGitHubWaitTool = Tool.make("cancel_github_wait", {
+  description:
+    "Cancel a pending GitHub PR wait created by this T3 thread. Delivered or expired waits are returned unchanged.",
+  parameters: OrchestratorMcpCancelGitHubWaitInput,
+  success: OrchestratorMcpCancelGitHubWaitResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Cancel GitHub wait")
+  .annotate(Tool.Destructive, true);
+
 export const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Create one or more ORDINARY TOP-LEVEL T3 conversations. This is not delegation and does not create child agents/subagents. If the user asks for agents, subagents, workers, delegation, or parallel help, call delegate_task once per child instead—even when selecting different providers. Use create_threads only when the user explicitly asks for separate/new/top-level threads or conversations. Each entry may override provider, model, options, runtime mode, and interaction mode; omitted settings inherit.",
@@ -238,6 +281,9 @@ export const OrchestratorToolkit = Toolkit.make(
   ListScheduledTasksTool,
   UpdateScheduledTaskTool,
   DeleteScheduledTaskTool,
+  WaitForGitHubTool,
+  ListGitHubWaitsTool,
+  CancelGitHubWaitTool,
   CreateThreadsTool,
   ThreadStartTool,
   ThreadListTool,

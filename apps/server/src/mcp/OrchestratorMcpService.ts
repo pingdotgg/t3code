@@ -1,5 +1,6 @@
 import {
   CommandId,
+  GitHubWaitpointId,
   isProviderAvailable,
   MessageId,
   type ModelSelection,
@@ -11,6 +12,8 @@ import {
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpCancelGitHubWaitInput,
+  type OrchestratorMcpCancelGitHubWaitResult,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
@@ -20,6 +23,7 @@ import {
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
+  type OrchestratorMcpListGitHubWaitsResult,
   type OrchestratorMcpRuntimeMode,
   type OrchestratorMcpScheduledTask,
   type OrchestratorMcpScheduleTaskInput,
@@ -28,6 +32,8 @@ import {
   type OrchestratorMcpTaskCancelInput,
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpUpdateScheduledTaskInput,
+  type OrchestratorMcpWaitForGitHubInput,
+  type OrchestratorMcpWaitForGitHubResult,
   type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
@@ -72,6 +78,8 @@ import {
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import * as GitHubWaitpointService from "../github/GitHubWaitpointService.ts";
+import type { GitHubWaitpoint } from "../github/GitHubWaitpointStore.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -126,6 +134,17 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
+  readonly waitForGitHub: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpWaitForGitHubInput,
+  ) => Effect.Effect<OrchestratorMcpWaitForGitHubResult, OrchestratorMcpFailure>;
+  readonly listGitHubWaits: (
+    scope: McpInvocationScope,
+  ) => Effect.Effect<OrchestratorMcpListGitHubWaitsResult, OrchestratorMcpFailure>;
+  readonly cancelGitHubWait: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpCancelGitHubWaitInput,
+  ) => Effect.Effect<OrchestratorMcpCancelGitHubWaitResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -204,6 +223,21 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
+  };
+}
+
+function githubWaitSummary(waitpoint: GitHubWaitpoint): OrchestratorMcpWaitForGitHubResult {
+  return {
+    githubWaitpointId: waitpoint.id,
+    threadId: waitpoint.threadId,
+    repository: waitpoint.repository,
+    pullRequestNumber: waitpoint.pullRequestNumber,
+    condition: waitpoint.condition,
+    state: waitpoint.state,
+    createdAt: waitpoint.createdAt,
+    deadlineAt: waitpoint.deadlineAt,
+    completedAt: waitpoint.completedAt,
+    lastError: waitpoint.lastError,
   };
 }
 
@@ -444,6 +478,20 @@ function stableOperationMessageId(input: {
   );
 }
 
+function stableGitHubWaitpointId(input: {
+  readonly scope: McpInvocationScope;
+  readonly requestKey: string;
+}): GitHubWaitpointId {
+  return GitHubWaitpointId.make(
+    [
+      "github-waitpoint",
+      "mcp",
+      stablePart(input.scope.providerSessionId),
+      stablePart(input.requestKey),
+    ].join(":"),
+  );
+}
+
 function threadTitle(input: {
   readonly parentTitle: string;
   readonly prompt: string | undefined;
@@ -629,6 +677,7 @@ const make = Effect.gen(function* () {
   const threadManagement = yield* ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry;
   const scheduledTasks = yield* ScheduledTaskService;
+  const githubWaitpoints = yield* GitHubWaitpointService.GitHubWaitpointService;
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -993,6 +1042,71 @@ const make = Effect.gen(function* () {
           );
         return { scheduledTaskId: existing.id, deleted: true };
       }),
+    waitForGitHub: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        const parent = yield* loadProjection(scope.threadId);
+        const parentRun = latestActiveRun(parent);
+        if (parentRun === undefined || parentRun.providerInstanceId !== scope.providerInstanceId) {
+          return yield* failure(
+            "parent_not_active",
+            "GitHub waits require an active run owned by this MCP provider session.",
+          );
+        }
+        const key = yield* requestKey(input.clientRequestId);
+        const waitpoint = yield* githubWaitpoints
+          .register({
+            id: stableGitHubWaitpointId({ scope, requestKey: key }),
+            projectId: parent.thread.projectId,
+            threadId: scope.threadId,
+            originatingRunId: parentRun.id,
+            repository: input.repository,
+            pullRequestNumber: input.pullRequestNumber,
+            condition: input.condition,
+            timeoutMinutes: input.timeoutMinutes ?? 24 * 60,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure("orchestration_error", `Could not create GitHub waitpoint: ${error.message}`),
+            ),
+          );
+        return githubWaitSummary(waitpoint);
+      }),
+    listGitHubWaits: (scope) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        yield* loadProjection(scope.threadId);
+        const waits = yield* githubWaitpoints
+          .listForThread(scope.threadId)
+          .pipe(
+            Effect.mapError((error) =>
+              failure("orchestration_error", `Could not list GitHub waitpoints: ${error.message}`),
+            ),
+          );
+        return { waits: waits.map(githubWaitSummary) };
+      }),
+    cancelGitHubWait: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        yield* loadProjection(scope.threadId);
+        const waitpoint = yield* githubWaitpoints
+          .cancel({
+            id: input.githubWaitpointId,
+            threadId: scope.threadId,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag === "GitHubWaitpointNotFoundError"
+                ? failure("task_not_found", error.message)
+                : failure(
+                    "orchestration_error",
+                    `Could not cancel GitHub waitpoint: ${error.message}`,
+                  ),
+            ),
+          );
+        return githubWaitSummary(waitpoint);
+      }),
     capabilities: (scope) =>
       Effect.gen(function* () {
         yield* requireCapability(scope);
@@ -1034,6 +1148,7 @@ const make = Effect.gen(function* () {
             threadManagement: true,
             incrementalThreadRead: true,
             scheduledTasks: true,
+            githubWaitpoints: true,
             maxBatchThreads: 20,
           },
         };
@@ -1552,5 +1667,9 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
-  Crypto.Crypto | ThreadManagementService | ProviderRegistry | ScheduledTaskService
+  | Crypto.Crypto
+  | ThreadManagementService
+  | ProviderRegistry
+  | ScheduledTaskService
+  | GitHubWaitpointService.GitHubWaitpointService
 > = Layer.effect(OrchestratorMcpService, make);

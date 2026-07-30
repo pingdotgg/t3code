@@ -41,6 +41,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 
+import * as GitHubWaitpointService from "../github/GitHubWaitpointService.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
@@ -521,11 +522,62 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
+          const githubWaitStore = yield* Ref.make<
+            ReadonlyArray<GitHubWaitpointService.RegisterGitHubWaitpointInput>
+          >([]);
+          const githubWaitpointStubLayer = Layer.succeed(
+            GitHubWaitpointService.GitHubWaitpointService,
+            GitHubWaitpointService.GitHubWaitpointService.of({
+              register: (input) =>
+                Ref.modify(githubWaitStore, (all) => {
+                  const existing = all.find((candidate) => candidate.id === input.id);
+                  const value = existing ?? input;
+                  return [
+                    {
+                      id: value.id,
+                      projectId: value.projectId,
+                      threadId: value.threadId,
+                      originatingRunId: value.originatingRunId,
+                      repository: value.repository,
+                      pullRequestNumber: value.pullRequestNumber,
+                      condition: value.condition,
+                      baseline: {
+                        url: `https://github.com/${value.repository}/pull/${value.pullRequestNumber}`,
+                        state: "open",
+                        headSha: "abc123",
+                        mergedAt: null,
+                        updatedAt: "2026-07-01T09:00:00.000Z",
+                        checks: [],
+                        reviewActivity: [],
+                      },
+                      continuationPrompt: value.reason ?? "Continue.",
+                      deliveryPrompt: null,
+                      state: "pending",
+                      nextPollAt: "2026-07-01T09:00:30.000Z",
+                      deadlineAt: "2026-07-02T09:00:00.000Z",
+                      deliveryLeaseToken: null,
+                      deliveryLeaseExpiresAt: null,
+                      attemptCount: 0,
+                      lastError: null,
+                      createdAt: "2026-07-01T09:00:00.000Z",
+                      updatedAt: "2026-07-01T09:00:00.000Z",
+                      completedAt: null,
+                    },
+                    existing === undefined ? [...all, input] : all,
+                  ];
+                }),
+              get: () => Effect.die("GitHubWaitpointService.get is unused in this test"),
+              listForThread: () => Effect.succeed([]),
+              cancel: () => Effect.die("GitHubWaitpointService.cancel is unused in this test"),
+              processDue: Effect.void,
+            }),
+          );
           const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
+            Layer.provide(githubWaitpointStubLayer),
             Layer.provide(NodeServices.layer),
           );
 
@@ -610,6 +662,14 @@ describe("orchestrator MCP toolkit", () => {
               ({ tool }) => tool.name === "t3_thread_interrupt",
             );
             expect(threadInterruptTool?.tool.annotations?.destructiveHint).toBe(true);
+            const githubWaitTool = server.tools.find(({ tool }) => tool.name === "wait_for_github");
+            expect(githubWaitTool?.tool.annotations?.destructiveHint).toBe(true);
+            expect(githubWaitTool?.tool.annotations?.openWorldHint).toBe(true);
+            const githubWaitListTool = server.tools.find(
+              ({ tool }) => tool.name === "list_github_waits",
+            );
+            expect(githubWaitListTool?.tool.annotations?.readOnlyHint).toBe(true);
+            expect(githubWaitListTool?.tool.annotations?.idempotentHint).toBe(true);
 
             const capabilities = yield* invoke("orchestrator_capabilities", {});
             expect(capabilities.isError).toBe(false);
@@ -623,6 +683,7 @@ describe("orchestrator MCP toolkit", () => {
                 batchThreadCreation: true,
                 threadManagement: true,
                 incrementalThreadRead: true,
+                githubWaitpoints: true,
               },
               providers: expect.arrayContaining([
                 expect.objectContaining({
@@ -646,6 +707,30 @@ describe("orchestrator MCP toolkit", () => {
                 }),
               ]),
             });
+
+            const githubWait = yield* invoke("wait_for_github", {
+              repository: "pingdotgg/t3code",
+              pullRequestNumber: 2829,
+              condition: "checks_settled",
+              reason: "Continue once CI settles.",
+              clientRequestId: "wait-ci",
+            });
+            expect(githubWait.isError).toBe(false);
+            expect(githubWait.structuredContent).toMatchObject({
+              githubWaitpointId: "github-waitpoint:mcp:mcp-provider-session-parent:wait-ci",
+              threadId: parentThreadId,
+              repository: "pingdotgg/t3code",
+              pullRequestNumber: 2829,
+              condition: "checks_settled",
+              state: "pending",
+            });
+            yield* invoke("wait_for_github", {
+              repository: "pingdotgg/t3code",
+              pullRequestNumber: 2829,
+              condition: "checks_settled",
+              clientRequestId: "wait-ci",
+            });
+            expect(yield* Ref.get(githubWaitStore)).toHaveLength(1);
 
             const scheduleTool = server.tools.find(({ tool }) => tool.name === "schedule_task");
             expect(scheduleTool?.tool.annotations?.destructiveHint).toBe(true);

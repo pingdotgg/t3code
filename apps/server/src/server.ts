@@ -27,6 +27,9 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
+import * as GitHubPullRequestProbe from "./github/GitHubPullRequestProbe.ts";
+import * as GitHubWaitpointService from "./github/GitHubWaitpointService.ts";
+import * as GitHubWaitpointStore from "./github/GitHubWaitpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -308,9 +311,20 @@ const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
   Layer.provide(RunFinalizationService.observerLive),
 );
 
-const OrchestrationApplicationLayerLive = CheckpointDiffQuery.layer.pipe(
-  Layer.provideMerge(CheckpointStoreLayerLive),
+const GitHubWaitpointRuntimeLayerLive = GitHubWaitpointService.runtimeLayer.pipe(
+  Layer.provideMerge(GitHubWaitpointStore.layer),
+  Layer.provideMerge(GitHubPullRequestProbe.layer),
+  Layer.provideMerge(GitHubCli.layer),
+  Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(OrchestrationV2RuntimeLayerLive),
+);
+
+const OrchestrationApplicationLayerLive = Layer.mergeAll(
+  CheckpointDiffQuery.layer.pipe(
+    Layer.provideMerge(CheckpointStoreLayerLive),
+    Layer.provideMerge(OrchestrationV2RuntimeLayerLive),
+  ),
+  GitHubWaitpointRuntimeLayerLive,
 );
 
 const RuntimeCoreDependenciesBaseLive = AgentAwarenessRelay.layer.pipe(

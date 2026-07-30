@@ -5,6 +5,7 @@ import {
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpWaitForGitHubInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadReadInput,
@@ -16,6 +17,7 @@ import {
 const decodeCreateThreadsInput = Schema.decodeUnknownSync(OrchestratorMcpCreateThreadsInput);
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeWaitForGitHubInput = Schema.decodeUnknownSync(OrchestratorMcpWaitForGitHubInput);
 const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThreadInterruptInput);
 const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
@@ -164,5 +166,34 @@ describe("orchestrator MCP contracts", () => {
         reason: "Loop converged.",
       }).reason,
     ).toBe("Loop converged.");
+  });
+
+  it("decodes bounded durable GitHub waits and rejects malformed repositories", () => {
+    const request = decodeWaitForGitHubInput({
+      repository: "pingdotgg/t3code",
+      pullRequestNumber: 2829,
+      condition: "checks_settled",
+      timeoutMinutes: 120,
+      reason: "Continue the V2 port after CI settles.",
+      clientRequestId: "github-wait-1",
+    });
+
+    expect(request.repository).toBe("pingdotgg/t3code");
+    expect(request.timeoutMinutes).toBe(120);
+    expect(() =>
+      decodeWaitForGitHubInput({
+        repository: "not-a-repository",
+        pullRequestNumber: 2829,
+        condition: "checks_settled",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeWaitForGitHubInput({
+        repository: "pingdotgg/t3code",
+        pullRequestNumber: 2829,
+        condition: "checks_settled",
+        timeoutMinutes: 10_081,
+      }),
+    ).toThrow();
   });
 });
