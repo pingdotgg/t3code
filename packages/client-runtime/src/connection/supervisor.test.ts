@@ -311,6 +311,38 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("resets retries when activation arrives before the network returns", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.closeLatestSession();
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* harness.setNetworkStatus("offline");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "offline" && state.attempt === 2,
+      );
+
+      yield* harness.wake("application-active-reconnect");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "offline" && state.attempt === 1,
+      );
+      yield* harness.setNetworkStatus("online");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+      );
+    }),
+  );
+
   it.effect("retries forever with exponential backoff capped at sixteen seconds", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -498,6 +530,38 @@ describe("EnvironmentSupervisor", () => {
       yield* supervisor.retryNow;
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("resets retries when activation wakes a blocked connection", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1
+            ? Effect.fail(transient())
+            : attempt === 2
+              ? Effect.fail(blocked())
+              : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* TestClock.adjust("1 second");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "blocked" && state.attempt === 2,
+      );
+
+      yield* harness.wake("application-active-reconnect");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.attempt === 1,
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

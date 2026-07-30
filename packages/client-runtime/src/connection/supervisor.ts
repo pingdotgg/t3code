@@ -626,20 +626,27 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForSignal = Queue.take(signals);
+  const waitForSignal = Queue.take(signals).pipe(
+    Effect.map(
+      (next) => next._tag === "Wakeup" && ConnectionWakeups.isApplicationActiveWakeup(next.reason),
+    ),
+  );
 
   const run = Effect.fnUntraced(function* () {
     let failureCount = 0;
     let generation = 0;
     let latestFailure: ConnectionAttemptError | null = null;
     let pendingRetry = Option.none<PendingRetryTrace>();
+    const resetRetryLadder = () => {
+      failureCount = 0;
+      pendingRetry = Option.none();
+    };
 
     for (;;) {
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
-        failureCount = 0;
+        resetRetryLadder();
         latestFailure = null;
-        pendingRetry = Option.none();
         yield* clearLease;
         yield* setState(availableState(currentIntent, generation));
         yield* waitForSignal;
@@ -648,7 +655,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (currentIntent.network === "offline") {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
-        yield* waitForSignal;
+        const applicationActivated = yield* waitForSignal;
+        if (applicationActivated) {
+          resetRetryLadder();
+        }
         continue;
       }
 
@@ -660,15 +670,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (outcome.established) {
         generation = nextGeneration;
         if (outcome.stable) {
-          failureCount = 0;
+          resetRetryLadder();
           latestFailure = null;
-          pendingRetry = Option.none();
         }
       }
       if (outcome._tag === "Interrupted") {
         if (outcome.resetRetry) {
-          failureCount = 0;
-          pendingRetry = Option.none();
+          resetRetryLadder();
         }
         continue;
       }
@@ -688,7 +696,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure: error,
           retryAt: null,
         });
-        yield* waitForSignal;
+        const applicationActivated = yield* waitForSignal;
+        if (applicationActivated) {
+          resetRetryLadder();
+        }
         continue;
       }
 
@@ -713,8 +724,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       });
       const applicationActivated = yield* waitForRetrySignal(delayMs);
       if (applicationActivated) {
-        failureCount = 0;
-        pendingRetry = Option.none();
+        resetRetryLadder();
       }
     }
   });
