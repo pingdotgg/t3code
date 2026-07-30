@@ -234,13 +234,41 @@ describe("buildAddProjectRemoteTargets", () => {
     expect(readiness.get("url")).toEqual({ ready: true, hint: null });
   });
 
-  it("falls back to the url target and an unavailable hint when discovery is unavailable", () => {
-    expect(buildAddProjectRemoteTargets(null)).toEqual([{ id: "url", source: "url", host: null }]);
-
+  it("still lists the four base providers, unready, when discovery is unavailable", () => {
+    const targets = buildAddProjectRemoteTargets(null);
     const readiness = buildAddProjectRemoteSourceReadiness(null);
-    expect(addProjectRemoteTargetReadiness(readiness, "github")).toEqual({
-      ready: false,
-      hint: "Provider status unavailable. Open Source Control settings and rescan.",
-    });
+    const sorted = sortAddProjectProviderSources(readiness, targets);
+
+    expect(sorted.map((target) => target.id)).toEqual([
+      "azure-devops",
+      "bitbucket",
+      "github",
+      "gitlab",
+    ]);
+    for (const target of sorted) {
+      expect(addProjectRemoteTargetReadiness(readiness, target.id)).toEqual({
+        ready: false,
+        hint: "Provider status unavailable. Open Source Control settings and rescan.",
+      });
+    }
+  });
+
+  it("lists exactly the four base providers when discovery has no enterprise rows", () => {
+    const discovery = discoveryResult([
+      providerItem({ kind: "github", id: "github", host: "github.com" }),
+      providerItem({ kind: "gitlab", id: "gitlab", host: "gitlab.com" }),
+      providerItem({ kind: "bitbucket", id: "bitbucket", host: "bitbucket.org" }),
+      providerItem({ kind: "azure-devops", id: "azure-devops", host: "dev.azure.com" }),
+    ]);
+    const targets = buildAddProjectRemoteTargets(discovery);
+    const readiness = buildAddProjectRemoteSourceReadiness(discovery);
+    const sorted = sortAddProjectProviderSources(readiness, targets);
+
+    expect(sorted.map((target) => target.id)).toEqual([
+      "azure-devops",
+      "bitbucket",
+      "github",
+      "gitlab",
+    ]);
   });
 });

@@ -102,10 +102,21 @@ export function addProjectRemoteSourceProvider(
 
 const URL_TARGET: AddProjectRemoteTarget = { id: "url", source: "url", host: null };
 
+const BASE_PROVIDER_KINDS: ReadonlyArray<AddProjectRemoteProviderKind> = [
+  "github",
+  "gitlab",
+  "bitbucket",
+  "azure-devops",
+];
+
+const BASE_PROVIDER_TARGETS: ReadonlyArray<AddProjectRemoteTarget> = BASE_PROVIDER_KINDS.map(
+  (kind) => ({ id: kind, source: kind, host: null }),
+);
+
 export function buildAddProjectRemoteTargets(
   discovery: SourceControlDiscoveryResult | null,
 ): ReadonlyArray<AddProjectRemoteTarget> {
-  if (!discovery) return [URL_TARGET];
+  if (!discovery) return [URL_TARGET, ...BASE_PROVIDER_TARGETS];
   return [
     URL_TARGET,
     ...discovery.sourceControlProviders.flatMap((provider) =>
