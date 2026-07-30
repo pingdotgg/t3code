@@ -26,6 +26,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createRuntimeCommand,
+  scheduleAtomCommandEffect,
 } from "./runtime.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -374,6 +375,8 @@ export function createServerEnvironmentAtoms<R, E>(
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
+  // Updates stay serial end-to-end, but only their handoff phase occupies the config lane.
+  const updateScheduler = createAtomCommandScheduler();
   const configConcurrency = {
     mode: "serial" as const,
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
@@ -425,87 +428,97 @@ export function createServerEnvironmentAtoms<R, E>(
     unknown
   >(runtime, {
     label: "environment-data:server:update-server",
-    scheduler: configScheduler,
+    scheduler: updateScheduler,
     concurrency: configConcurrency,
     execute: (target, atomRegistry) => {
       const stateAtom = serverUpdateStateAtom(target.environmentId);
       const targetVersion = target.input.targetVersion;
-      const currentConfig = atomRegistry.get(configValueAtom(target.environmentId));
-      const fromVersion = currentConfig?.environment.serverVersion ?? targetVersion;
+      let fromVersion = targetVersion;
       let currentStage: ServerUpdateStage = "downloading";
-      atomRegistry.set(stateAtom, {
-        status: "running",
-        stage: currentStage,
-        fromVersion,
-        targetVersion,
-      });
 
       return Effect.gen(function* () {
         const environmentRegistry = yield* EnvironmentRegistry;
-        const supportsProgress =
-          currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
-
-        const result: ServerSelfUpdateResult = supportsProgress
-          ? yield* Effect.gen(function* () {
-              const terminal = yield* Ref.make<Option.Option<ServerSelfUpdateResult>>(
-                Option.none(),
-              );
-              const streamExit = yield* environmentRegistry
-                .runStream(
-                  target.environmentId,
-                  runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
-                )
-                .pipe(
-                  Stream.runForEach((event) =>
-                    Effect.sync(() => {
-                      currentStage = event.type === "complete" ? "resuming" : event.stage;
-                      atomRegistry.set(
-                        stateAtom,
-                        serverUpdateStateForProgressEvent(fromVersion, targetVersion, event),
-                      );
-                    }).pipe(
-                      Effect.andThen(
-                        event.type === "complete"
-                          ? Ref.set(terminal, Option.some(event.result))
-                          : Effect.void,
-                      ),
-                    ),
-                  ),
-                  Effect.exit,
-                );
-              return yield* resolveServerUpdateProgressResult(
-                targetVersion,
-                yield* Ref.get(terminal),
-                streamExit,
-              );
-            })
-          : yield* Effect.gen(function* () {
-              const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
-              const exit = yield* environmentRegistry
-                .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
-                .pipe(Effect.exit);
-              if (Exit.isSuccess(exit)) {
-                return exit.value;
-              }
-              if (
-                (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn") &&
-                isLegacyUpdateHandoffLoss(exit.cause)
-              ) {
-                // Older servers can tear down the transport before their
-                // unary acknowledgement arrives. Treat only that transport
-                // loss as a handoff, then prove it by waiting for target ready.
-                return { targetVersion, method: selfUpdateMethod };
-              }
-              return yield* Effect.failCause(exit.cause);
+        const result = yield* scheduleAtomCommandEffect(
+          atomRegistry,
+          configScheduler,
+          configConcurrency,
+          target,
+          Effect.gen(function* () {
+            const currentConfig = atomRegistry.get(configValueAtom(target.environmentId));
+            fromVersion = currentConfig?.environment.serverVersion ?? targetVersion;
+            atomRegistry.set(stateAtom, {
+              status: "running",
+              stage: currentStage,
+              fromVersion,
+              targetVersion,
             });
 
-        currentStage = "resuming";
-        atomRegistry.set(stateAtom, {
-          status: "running",
-          stage: currentStage,
-          fromVersion,
-          targetVersion,
-        });
+            const supportsProgress =
+              currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
+            const updateResult: ServerSelfUpdateResult = supportsProgress
+              ? yield* Effect.gen(function* () {
+                  const terminal = yield* Ref.make<Option.Option<ServerSelfUpdateResult>>(
+                    Option.none(),
+                  );
+                  const streamExit = yield* environmentRegistry
+                    .runStream(
+                      target.environmentId,
+                      runStream(WS_METHODS.serverUpdateServerWithProgress, target.input),
+                    )
+                    .pipe(
+                      Stream.runForEach((event) =>
+                        Effect.sync(() => {
+                          currentStage = event.type === "complete" ? "resuming" : event.stage;
+                          atomRegistry.set(
+                            stateAtom,
+                            serverUpdateStateForProgressEvent(fromVersion, targetVersion, event),
+                          );
+                        }).pipe(
+                          Effect.andThen(
+                            event.type === "complete"
+                              ? Ref.set(terminal, Option.some(event.result))
+                              : Effect.void,
+                          ),
+                        ),
+                      ),
+                      Effect.exit,
+                    );
+                  return yield* resolveServerUpdateProgressResult(
+                    targetVersion,
+                    yield* Ref.get(terminal),
+                    streamExit,
+                  );
+                })
+              : yield* Effect.gen(function* () {
+                  const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
+                  const exit = yield* environmentRegistry
+                    .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
+                    .pipe(Effect.exit);
+                  if (Exit.isSuccess(exit)) {
+                    return exit.value;
+                  }
+                  if (
+                    (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn") &&
+                    isLegacyUpdateHandoffLoss(exit.cause)
+                  ) {
+                    // Older servers can tear down the transport before their
+                    // unary acknowledgement arrives. Treat only that transport
+                    // loss as a handoff, then prove it by waiting for target ready.
+                    return { targetVersion, method: selfUpdateMethod };
+                  }
+                  return yield* Effect.failCause(exit.cause);
+                });
+
+            currentStage = "resuming";
+            atomRegistry.set(stateAtom, {
+              status: "running",
+              stage: currentStage,
+              fromVersion,
+              targetVersion,
+            });
+            return updateResult;
+          }),
+        );
 
         // The update restart is intentional. As soon as the supervisor sees
         // that first failed connection, discard any prior backoff debt and
