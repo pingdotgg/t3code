@@ -10,7 +10,7 @@ import {
   StarIcon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -84,6 +84,33 @@ interface ProviderModelsSectionProps {
 }
 
 /**
+ * Build the next custom-model label map for a single slug edit.
+ * Pure helper so sequential blur handlers can compose from a write-through
+ * cache instead of a stale prop snapshot.
+ */
+export function nextCustomModelLabels(
+  labels: Readonly<Record<string, string>>,
+  slug: string,
+  label: string,
+): Record<string, string> {
+  const nextLabels = { ...labels };
+  const trimmed = label.trim();
+  if (trimmed) nextLabels[slug] = trimmed;
+  else delete nextLabels[slug];
+  return nextLabels;
+}
+
+/**
+ * Primary row text for a model entry. Custom rows always show the API slug
+ * because the optional display label is edited in a sibling input.
+ */
+export function modelRowPrimaryText(
+  model: Pick<ServerProviderModel, "slug" | "name" | "isCustom">,
+): string {
+  return model.isCustom ? model.slug : model.name;
+}
+
+/**
  * Shared "Models" section rendered on both the built-in default and custom
  * provider-instance cards. Owns its own input + error local state so two
  * cards on screen don't fight over the input value.
@@ -113,6 +140,12 @@ export function ProviderModelsSection({
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Keep a write-through cache so sequential label blurs before the parent
+  // re-renders do not clobber each other by spreading a stale prop snapshot.
+  const labelsRef = useRef(customModelLabels);
+  useEffect(() => {
+    labelsRef.current = customModelLabels;
+  }, [customModelLabels]);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
   const favoriteModelSet = useMemo(() => new Set(favoriteModels), [favoriteModels]);
   const orderedModels = useMemo(() => {
@@ -167,10 +200,10 @@ export function ProviderModelsSection({
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
 
-    const hasOwnLabel = Object.prototype.hasOwnProperty.call(customModelLabels, slug);
+    const hasOwnLabel = Object.prototype.hasOwnProperty.call(labelsRef.current, slug);
     if (hasOwnLabel) {
-      const nextLabels = { ...customModelLabels };
-      delete nextLabels[slug];
+      const nextLabels = nextCustomModelLabels(labelsRef.current, slug, "");
+      labelsRef.current = nextLabels;
       if (onModelsAndLabelsChange) {
         onModelsAndLabelsChange(nextModels, nextLabels);
       } else {
@@ -266,10 +299,12 @@ export function ProviderModelsSection({
                     placeholder="Display label (optional)"
                     aria-label={`Display label for ${model.slug}`}
                     onBlur={(event) => {
-                      const label = event.currentTarget.value.trim();
-                      const nextLabels = { ...customModelLabels };
-                      if (label) nextLabels[model.slug] = label;
-                      else delete nextLabels[model.slug];
+                      const nextLabels = nextCustomModelLabels(
+                        labelsRef.current,
+                        model.slug,
+                        event.currentTarget.value,
+                      );
+                      labelsRef.current = nextLabels;
                       onLabelChange(nextLabels);
                     }}
                   />
@@ -280,9 +315,9 @@ export function ProviderModelsSection({
                     isHidden ? "text-muted-foreground line-through" : "text-foreground/90",
                   )}
                 >
-                  {model.isCustom
-                    ? (getCustomModelLabel(customModelLabels, model.slug) ?? model.name)
-                    : model.name}
+                  {/* Custom rows already have a label editor; keep the API slug
+                      visible so labels never hide which model they map to. */}
+                  {modelRowPrimaryText(model)}
                 </span>
                 {hasDetails ? (
                   <Tooltip>

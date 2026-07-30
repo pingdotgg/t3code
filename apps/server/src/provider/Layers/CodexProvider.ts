@@ -413,6 +413,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
   const models = new Set<string>();
+  const labels = codexSettings.customModelLabels ?? {};
   for (const model of codexSettings.customModels) {
     const trimmed = model.trim();
     if (trimmed.length > 0) {
@@ -421,7 +422,7 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
   }
   return Array.from(models, (model) => ({
     slug: model,
-    name: model,
+    name: getCustomModelLabel(labels, model) ?? model,
     isCustom: true,
     capabilities: null,
   }));
@@ -504,6 +505,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly launchArgs?: string;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
+    readonly customModelLabels?: Readonly<Record<string, string>>;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
@@ -543,6 +545,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
+    customModelLabels: codexSettings.customModelLabels ?? {},
     environment: resolvedEnvironment,
   }).pipe(
     Effect.scoped,
