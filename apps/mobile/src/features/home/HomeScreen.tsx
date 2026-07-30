@@ -724,11 +724,13 @@ export function HomeScreen(props: HomeScreenProps) {
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
       serverConfigs,
       savedConnectionsById: props.savedConnectionsById,
+      searchQuery: props.searchQuery,
       threadSearchMatchByKey,
     }),
     [
       projectByKey,
       projectCwdByKey,
+      props.searchQuery,
       props.savedConnectionsById,
       serverConfigs,
       threadSearchMatchByKey,
@@ -737,8 +739,13 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const extraData = useMemo(
-    () => ({ savedConnectionsById: props.savedConnectionsById, projectCwdByKey }),
-    [props.savedConnectionsById, projectCwdByKey],
+    () => ({
+      projectCwdByKey,
+      savedConnectionsById: props.savedConnectionsById,
+      searchQuery: props.searchQuery,
+      threadSearchMatchByKey,
+    }),
+    [projectCwdByKey, props.savedConnectionsById, props.searchQuery, threadSearchMatchByKey],
   );
 
   const renderItem = useCallback(
