@@ -1239,7 +1239,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const output = toolOutput(part);
           if (part.state.status === "completed" && output !== undefined) context.result = output;
           const status = terminal === undefined ? toolStatus(part) : terminalToolStatus(terminal);
-          const completedAt = terminal === undefined ? toolCompletedAt(part, now) : now;
+          // Keep the native end when OpenCode already terminalized the part
+          // (including interrupted cleanup errors restamped by finalizeTurn).
+          // Only invent finalization time for still-pending/running tools.
+          const completedAt = toolCompletedAt(part, now) ?? (terminal === undefined ? null : now);
           // `OrchestrationV2Subagent["status"]` and `OrchestrationV2TurnItemStatus`
           // carry the same literals, so the item status maps straight across and an
           // interrupted subagent stays interrupted instead of collapsing to failed.
@@ -1345,7 +1348,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const observed = toolStatus(part);
           const status = terminal === undefined ? observed : terminalToolStatus(terminal);
           const startedAt = toolStartedAt(part, now);
-          const completedAt = terminal === undefined ? toolCompletedAt(part, now) : now;
+          // Keep the native end when OpenCode already terminalized the part
+          // (including interrupted cleanup errors restamped by finalizeTurn).
+          // Only invent finalization time for still-pending/running tools.
+          const completedAt = toolCompletedAt(part, now) ?? (terminal === undefined ? null : now);
           const nativeItemRef = providerRef(part.id);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: OPENCODE_PROVIDER,
