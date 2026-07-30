@@ -1,6 +1,6 @@
 # Source Control Integrations
 
-T3 Code connects directly to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving your editor. Work stays in flow—no more jumping between browser tabs and terminal windows.
+T3 Code connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
 
 ## Supported Providers
 
@@ -24,16 +24,16 @@ T3 Code works with the platforms your team already uses:
 **Publish local projects to the cloud**
 
 - Have a local Git repository without a remote?
-- Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push—all in one flow
-- Perfect for turning a weekend prototype into a real project
+- Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push, in one flow
+- If the local repository has no commits yet, publishing creates the remote and wires it up but does not push. Make a commit, then push normally.
 
 ### Manage Code Reviews Without Context Switching
 
 **Create pull requests while you work**
 
-- Push a branch and create a pull request from the Git panel
+- Push a branch and create a pull request from the Git actions controls in the toolbar
 - T3 Code can suggest titles and descriptions based on your commits
-- Supports GitHub Pull Requests, GitLab Merge Requests, and Bitbucket Pull Requests
+- Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, and Azure DevOps Pull Requests
 
 **Stay on top of open reviews**
 
@@ -65,7 +65,7 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
    ```
 3. Open **Settings → Source Control** in T3 Code and verify GitHub shows as authenticated
 
-That's it—you can now clone, publish, and create pull requests.
+You can now clone, publish, and create pull requests.
 
 ### For GitLab
 
@@ -81,15 +81,25 @@ That's it—you can now clone, publish, and create pull requests.
 
 ### For Bitbucket
 
-Bitbucket uses API tokens instead of a CLI tool:
+Bitbucket uses tokens instead of a CLI tool. Two options, both set as environment variables on the
+machine running T3 Code.
 
-1. Create an API token in your Atlassian account with read/write access to pull requests and repositories
-2. Add these environment variables to the environment running T3 Code:
-   ```bash
-   export T3CODE_BITBUCKET_EMAIL="you@example.com"
-   export T3CODE_BITBUCKET_API_TOKEN="your-token"
-   ```
-3. Restart T3 Code and verify the connection in **Source Control settings**
+Recommended, a Bitbucket access token:
+
+```bash
+export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
+```
+
+Or an Atlassian account email plus API token, with read/write access to pull requests and
+repositories:
+
+```bash
+export T3CODE_BITBUCKET_EMAIL="you@example.com"
+export T3CODE_BITBUCKET_API_TOKEN="your-token"
+```
+
+If both are set, the access token wins. Restart T3 Code and verify the connection in **Source
+Control settings**.
 
 ### For Azure DevOps
 
@@ -124,4 +134,4 @@ Bitbucket uses API tokens instead of a CLI tool:
 
 - [GitHub CLI](https://cli.github.com/)
 - [GitLab CLI](https://gitlab.com/gitlab-org/cli)
-- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/)
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/)

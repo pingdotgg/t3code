@@ -1,10 +1,14 @@
 # Keybindings
 
-T3 Code reads keybindings from:
+Edit keybindings from **Settings** → **Keybindings**. That page lists every command, its current
+shortcut, whether it is a default or your own, and warns about conflicts.
 
-- `~/.t3/keybindings.json`
+The same configuration lives in `~/.t3/userdata/keybindings.json` on the machine running the
+server, if you prefer editing it directly. T3 Code writes the built-in defaults into that file on
+first run, and adds any new defaults on later startups unless a rule of yours already claims the
+command or the shortcut.
 
-The file must be a JSON array of rules:
+The file is a JSON array of rules.
 
 ```json
 [
@@ -13,105 +17,59 @@ The file must be a JSON array of rules:
 ]
 ```
 
-See the full schema for more details: [`packages/contracts/src/keybindings.ts`](../../packages/contracts/src/keybindings.ts)
+Invalid rules are ignored. An invalid file is ignored entirely, and the server logs a warning.
 
-## Defaults
-
-```json
-[
-  { "key": "mod+j", "command": "terminal.toggle" },
-  { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
-  { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
-  { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
-  { "key": "mod+shift+j", "command": "preview.toggle" },
-  { "key": "mod+r", "command": "preview.refresh", "when": "previewFocus" },
-  { "key": "mod+l", "command": "preview.focusUrl", "when": "previewFocus" },
-  { "key": "mod+=", "command": "preview.zoomIn", "when": "previewFocus" },
-  { "key": "mod+-", "command": "preview.zoomOut", "when": "previewFocus" },
-  { "key": "mod+0", "command": "preview.resetZoom", "when": "previewFocus" },
-  { "key": "mod+k", "command": "commandPalette.toggle", "when": "!terminalFocus" },
-  { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
-  { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
-  { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
-  { "key": "mod+o", "command": "editor.openFavorite" }
-]
-```
-
-For most up to date defaults, see [`DEFAULT_KEYBINDINGS` in `apps/server/src/keybindings.ts`](../../apps/server/src/keybindings.ts)
-
-## Configuration
-
-### Rule Shape
-
-Each entry supports:
+## Rule Shape
 
 - `key` (required): shortcut string, like `mod+j`, `ctrl+k`, `cmd+shift+d`
-- `command` (required): action ID
+- `command` (required): the command ID to run
 - `when` (optional): boolean expression controlling when the shortcut is active
 
-Invalid rules are ignored. Invalid config files are ignored. Warnings are logged by the server.
+## Key Syntax
 
-### Available Commands
+Modifiers: `mod` (`cmd` on macOS, `ctrl` elsewhere), `cmd` / `meta`, `ctrl` / `control`, `shift`,
+`alt` / `option`.
 
-- `terminal.toggle`: open/close terminal drawer
-- `terminal.split`: split terminal (in focused terminal context by default)
-- `terminal.new`: create new terminal (in focused terminal context by default)
-- `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
-- `preview.toggle`: open/close the in-app browser preview panel (desktop app only)
-- `preview.refresh`: reload the active preview tab (in focused preview context by default)
-- `preview.focusUrl`: focus the URL input of the preview panel (in focused preview context by default)
-- `preview.zoomIn`: zoom the preview viewport in one step (in focused preview context by default)
-- `preview.zoomOut`: zoom the preview viewport out one step (in focused preview context by default)
-- `preview.resetZoom`: reset the preview zoom to 100% (in focused preview context by default)
-- `commandPalette.toggle`: open or close the global command palette
-- `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
-- `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
-- `editor.openFavorite`: open current project/worktree in the last-used editor
-- `script.{id}.run`: run a project script by id (for example `script.test.run`)
+Examples: `mod+j`, `mod+shift+d`, `ctrl+l`, `cmd+k`.
 
-### Key Syntax
+## Commands
 
-Supported modifiers:
+Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refresh`, and
+`chat.new`. Project scripts are addressable as `script.{id}.run`, for example `script.test.run`.
 
-- `mod` (`cmd` on macOS, `ctrl` on non-macOS)
-- `cmd` / `meta`
-- `ctrl` / `control`
-- `shift`
-- `alt` / `option`
+The command palette searches active thread titles, projects, branches, user messages, and final
+agent responses across connected environments. Message matches show one labeled excerpt while
+keeping the thread's project, branch, and machine context visible. Message search begins after two
+characters and uses SQLite's ASCII case-insensitive matching.
 
-Examples:
+The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
+always matches the build you are running. Use that rather than a copied list.
 
-- `mod+j`
-- `mod+shift+d`
-- `ctrl+l`
-- `cmd+k`
+Note that `chat.new` and `chat.newLocal` both create a thread through the same path. A new thread
+inherits the project you were in, along with model and mode selections. Branch, worktree, and
+environment mode always come from your configured defaults, not from the thread you were looking
+at. To keep a worktree, use the explicit "new thread in this worktree" action in the branch
+toolbar. The only difference between the two commands: with the current sidebar and more than one
+project, `chat.new` opens a project chooser first.
 
-### `when` Conditions
+## `when` Conditions
 
-Currently available context keys:
+A `when` expression is evaluated against context keys describing the current UI state. The keys
+the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
+`modelPickerOpen`. The set is open and grows over time, so treat that as the current list rather
+than a fixed one. Any key the running app does not supply evaluates to `false`.
 
-- `terminalFocus`
-- `terminalOpen`
-- `previewFocus`
-- `previewOpen`
-
-Supported operators:
-
-- `!` (not)
-- `&&` (and)
-- `||` (or)
-- parentheses: `(` `)`
+Operators: `!` (not), `&&` (and), `||` (or), and parentheses.
 
 Examples:
 
 - `"when": "terminalFocus"`
 - `"when": "terminalOpen && !terminalFocus"`
-- `"when": "terminalFocus || terminalOpen"`
+- `"when": "!terminalFocus"`
 
-Unknown condition keys evaluate to `false`.
-
-### Precedence
+## Precedence
 
 - Rules are evaluated in array order.
 - For a key event, the last rule where both `key` matches and `when` evaluates to `true` wins.
-- That means precedence is across commands, not only within the same command.
+- Precedence is across commands, not only within the same command. A later rule for a different
+  command can take a key away from an earlier one.
