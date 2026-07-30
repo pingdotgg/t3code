@@ -513,6 +513,30 @@ describe("refineUnknownGitHubRemote", () => {
     });
   });
 
+  it("claims a remote whose host carries a non-default port", () => {
+    const refined = GitHubSourceControlProvider.refineUnknownGitHubRemote({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "unknown" as const,
+          name: "git.corp.com:8443",
+          baseUrl: "https://git.corp.com:8443",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://git.corp.com:8443/owner/repo.git",
+      },
+      auth: probe(
+        authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] }),
+      ),
+    });
+
+    expect(refined).toEqual({
+      kind: "github-enterprise",
+      name: "git.corp.com",
+      baseUrl: "https://git.corp.com:8443",
+    });
+  });
+
   it("does not claim a host that failed authentication", () => {
     expect(
       GitHubSourceControlProvider.refineUnknownGitHubRemote({

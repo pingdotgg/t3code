@@ -159,10 +159,20 @@ export function expandGitHubInstances(
   ];
 }
 
+// An `unknown` remote's provider name is the raw host, port included, so both
+// sides have to drop the port before they can be compared.
+function toHostName(host: string): string {
+  try {
+    return new URL(`https://${host}`).hostname.toLowerCase();
+  } catch {
+    return host.replace(/:\d+$/u, "").toLowerCase();
+  }
+}
+
 export function refineUnknownGitHubRemote(input: SourceControlUnknownRemoteRefinementInput) {
-  const host = input.context.provider.name.toLowerCase();
+  const host = toHostName(input.context.provider.name);
   const authenticated = parseGitHubAuthStatus(input.auth.stdout).accounts.some(
-    (account) => account.host === host && account.authenticated,
+    (account) => toHostName(account.host) === host && account.authenticated,
   );
 
   if (!authenticated) {
