@@ -5,6 +5,14 @@ It packages the user-facing behavior from
 [OpenTUI PR #633](https://github.com/anomalyco/opentui/pull/633) without requiring
 a forked OpenTUI native binary.
 
+The initial image sizing/renderable design and Kitty command encoding were
+adapted from that PR, contributed by
+[`@iamlemec`](https://github.com/iamlemec). OpenTUI is MIT licensed; its
+copyright and license notice are preserved in
+[`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md). The frame manager,
+clipping, tmux placement, clipboard protocol, React integration, and related
+hardening in this package are T3 Code-specific extensions.
+
 ## Core
 
 ```ts

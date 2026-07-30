@@ -1,3 +1,5 @@
+// Portions adapted from OpenTUI PR #633 by @iamlemec.
+// OpenTUI copyright and MIT license: ../THIRD_PARTY_NOTICES.md
 import {
   CliRenderEvents,
   Renderable,

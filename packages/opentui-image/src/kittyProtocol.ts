@@ -1,3 +1,5 @@
+// Kitty transmission structure adapted from OpenTUI PR #633 by @iamlemec.
+// OpenTUI copyright and MIT license: ../THIRD_PARTY_NOTICES.md
 import * as NodeBuffer from "node:buffer";
 
 const ESC = "\x1b";
