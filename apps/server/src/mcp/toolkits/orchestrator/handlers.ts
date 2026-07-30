@@ -53,6 +53,24 @@ const handlers = {
       const service = yield* OrchestratorMcpService;
       return yield* service.deleteScheduledTask(scope, input);
     }),
+  wait_for_github: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.waitForGitHub(scope, input);
+    }),
+  list_github_waits: () =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.listGitHubWaits(scope);
+    }),
+  cancel_github_wait: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.cancelGitHubWait(scope, input);
+    }),
   create_threads: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;

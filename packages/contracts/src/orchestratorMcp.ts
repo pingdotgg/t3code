@@ -4,6 +4,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   ContextTransferId,
+  GitHubWaitpointId,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -460,6 +461,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     threadManagement: Schema.Boolean,
     incrementalThreadRead: Schema.Boolean,
     scheduledTasks: Schema.Boolean,
+    githubWaitpoints: Schema.Boolean,
     maxBatchThreads: Schema.Number,
   }),
 });
@@ -535,6 +537,74 @@ export const OrchestratorMcpDeleteScheduledTaskResult = Schema.Struct({
 });
 export type OrchestratorMcpDeleteScheduledTaskResult =
   typeof OrchestratorMcpDeleteScheduledTaskResult.Type;
+
+export const OrchestratorMcpGitHubWaitCondition = Schema.Literals([
+  "checks_settled",
+  "new_review_activity",
+  "pull_request_closed",
+]);
+export type OrchestratorMcpGitHubWaitCondition = typeof OrchestratorMcpGitHubWaitCondition.Type;
+
+export const OrchestratorMcpGitHubWaitState = Schema.Literals([
+  "pending",
+  "delivering",
+  "delivered",
+  "expired",
+  "cancelled",
+]);
+export type OrchestratorMcpGitHubWaitState = typeof OrchestratorMcpGitHubWaitState.Type;
+
+export const OrchestratorMcpWaitForGitHubInput = Schema.Struct({
+  repository: TrimmedNonEmptyString.check(
+    Schema.isPattern(/^[^/\s]+\/[^/\s]+$/),
+    Schema.isMaxLength(200),
+  ).annotate({ description: "GitHub repository in owner/name form." }),
+  pullRequestNumber: PositiveInt,
+  condition: OrchestratorMcpGitHubWaitCondition,
+  timeoutMinutes: Schema.optional(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(7 * 24 * 60)).annotate({
+      description: "One-shot wait deadline in minutes; defaults to 24 hours.",
+    }),
+  ),
+  reason: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(500)).annotate({
+      description: "Work the agent should continue after GitHub satisfies the condition.",
+    }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpWaitForGitHubInput = typeof OrchestratorMcpWaitForGitHubInput.Type;
+
+export const OrchestratorMcpGitHubWait = Schema.Struct({
+  githubWaitpointId: GitHubWaitpointId,
+  threadId: ThreadId,
+  repository: Schema.String,
+  pullRequestNumber: PositiveInt,
+  condition: OrchestratorMcpGitHubWaitCondition,
+  state: OrchestratorMcpGitHubWaitState,
+  createdAt: IsoDateTime,
+  deadlineAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+  lastError: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpGitHubWait = typeof OrchestratorMcpGitHubWait.Type;
+
+export const OrchestratorMcpWaitForGitHubResult = OrchestratorMcpGitHubWait;
+export type OrchestratorMcpWaitForGitHubResult = typeof OrchestratorMcpWaitForGitHubResult.Type;
+
+export const OrchestratorMcpListGitHubWaitsResult = Schema.Struct({
+  waits: Schema.Array(OrchestratorMcpGitHubWait),
+});
+export type OrchestratorMcpListGitHubWaitsResult = typeof OrchestratorMcpListGitHubWaitsResult.Type;
+
+export const OrchestratorMcpCancelGitHubWaitInput = Schema.Struct({
+  githubWaitpointId: GitHubWaitpointId,
+});
+export type OrchestratorMcpCancelGitHubWaitInput = typeof OrchestratorMcpCancelGitHubWaitInput.Type;
+
+export const OrchestratorMcpCancelGitHubWaitResult = OrchestratorMcpGitHubWait;
+export type OrchestratorMcpCancelGitHubWaitResult =
+  typeof OrchestratorMcpCancelGitHubWaitResult.Type;
 
 export class OrchestratorMcpFailure extends Schema.TaggedErrorClass<OrchestratorMcpFailure>()(
   "OrchestratorMcpFailure",
