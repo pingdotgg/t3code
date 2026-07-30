@@ -94,7 +94,8 @@ describe("createTuiSyntaxStyle", () => {
       expect(style.getStyle("markup.heading")?.fg?.slot).toBe(6);
       expect(style.getStyle("markup.strong")?.bold).toBe(true);
       expect(style.getStyle("markup.italic")?.italic).toBe(true);
-      expect(style.getStyle("markup.raw")?.bg?.slot).toBe(8);
+      expect(style.getStyle("markup.raw")?.fg?.slot).toBe(3);
+      expect(style.getStyle("markup.raw")?.bg).toBeUndefined();
       expect(style.getStyle("markup.link.label")?.underline).toBe(true);
     } finally {
       style.destroy();

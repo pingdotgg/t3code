@@ -183,7 +183,10 @@ export function relativeTime(iso: string): string {
 // instead of hardcoding hex that fights their background:
 //   - `text`   → the terminal's default foreground (RGBA.defaultForeground)
 //   - `bg`     → the terminal's default background (used for inverse cells)
-//   - `dim`    → ANSI slot 8 ("bright black"), the theme's muted grey
+//   - `dim`    → ANSI slot 7 ("white"), the theme's readable secondary grey —
+//     used for secondary text that must stay legible (hints, labels, timestamps)
+//   - `faint`  → ANSI slot 8 ("bright black"), the theme's darkest grey —
+//     reserved for decoration: borders, separators, markers, disabled states
 //   - `accent` → ANSI slot 6 (cyan)
 //   - status/role/border colours map their names to ANSI slots 0–15 via `ansi()`.
 // The renderer itself is created with a transparent background, so the terminal's
@@ -238,6 +241,7 @@ export interface Palette {
   readonly text: RGBA;
   readonly bg: RGBA;
   readonly dim: RGBA;
+  readonly faint: RGBA;
   readonly accent: RGBA;
   readonly selectedBg: RGBA;
 }
@@ -245,7 +249,8 @@ export interface Palette {
 export const THEME: Palette = {
   text: defaultFg(),
   bg: defaultBg(),
-  dim: indexedColor(8),
+  dim: indexedColor(7),
+  faint: indexedColor(8),
   accent: indexedColor(6),
   selectedBg: indexedColor(8),
 };
@@ -258,12 +263,12 @@ export const THEME: Palette = {
 export function createTuiSyntaxStyle(palette: Palette = THEME): SyntaxStyle {
   return SyntaxStyle.fromStyles({
     default: { fg: palette.text },
-    conceal: { fg: palette.dim, dim: true },
+    conceal: { fg: palette.faint, dim: true },
     "markup.heading": { fg: palette.accent, bold: true },
     "markup.strong": { fg: palette.text, bold: true },
     "markup.italic": { fg: palette.text, italic: true },
-    "markup.strikethrough": { fg: palette.dim, dim: true },
-    "markup.raw": { fg: palette.text, bg: palette.selectedBg },
+    "markup.strikethrough": { fg: palette.faint, dim: true },
+    "markup.raw": { fg: ansi("yellow") },
     "markup.list": { fg: palette.accent, bold: true },
     "markup.quote": { fg: palette.dim, italic: true },
     "markup.link": { fg: palette.accent },
@@ -276,9 +281,10 @@ export function createTuiSyntaxStyle(palette: Palette = THEME): SyntaxStyle {
 export const usePalette = (): Palette => THEME;
 
 /** Glyph + colour for a status-line tone (mirrors the web toast icon set). */
-export function statusGlyphColor(
-  kind: "info" | "success" | "error" | "busy",
-): { readonly glyph: string; readonly color: RGBA } {
+export function statusGlyphColor(kind: "info" | "success" | "error" | "busy"): {
+  readonly glyph: string;
+  readonly color: RGBA;
+} {
   switch (kind) {
     case "success":
       return { glyph: "✓", color: ansi("green") };
@@ -287,6 +293,6 @@ export function statusGlyphColor(
     case "busy":
       return { glyph: "⟳", color: THEME.accent };
     default:
-      return { glyph: "·", color: THEME.dim };
+      return { glyph: "·", color: THEME.faint };
   }
 }
