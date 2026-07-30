@@ -56,6 +56,7 @@ interface ProviderModelsSectionProps {
    * removed) via `onChange`.
    */
   readonly customModels: ReadonlyArray<string>;
+  readonly customModelLabels: Readonly<Record<string, string>>;
   /** Server-returned model slugs hidden from the model picker. */
   readonly hiddenModels: ReadonlyArray<string>;
   /** Model slugs favorited for this provider instance. */
@@ -89,6 +90,7 @@ export function ProviderModelsSection({
   driverKind,
   models,
   customModels,
+  customModelLabels,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -238,7 +240,9 @@ export function ProviderModelsSection({
                     isHidden ? "text-muted-foreground line-through" : "text-foreground/90",
                   )}
                 >
-                  {model.name}
+                  {model.isCustom
+                    ? customModelLabels[model.slug]?.trim() || model.name
+                    : model.name}
                 </span>
                 {hasDetails ? (
                   <Tooltip>

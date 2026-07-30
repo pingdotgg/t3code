@@ -33,6 +33,17 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("Claude custom model labels", () => {
+  it("keeps labels optional for old settings and accepts the patch field", () => {
+    expect(decodeServerSettings({}).providers.claudeAgent.customModelLabels).toBeUndefined();
+    expect(
+      decodeServerSettingsPatch({
+        providers: { claudeAgent: { customModelLabels: { "claude-sonnet-4-6": "Sonnet 4.6" } } },
+      }).providers?.claudeAgent?.customModelLabels,
+    ).toEqual({ "claude-sonnet-4-6": "Sonnet 4.6" });
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

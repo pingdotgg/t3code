@@ -142,6 +142,7 @@ export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
   customModelCapabilities: ModelCapabilities,
+  customModelLabels: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<ServerProviderModel> {
   const resolvedBuiltInModels = [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
@@ -153,9 +154,10 @@ export function providerModelsFromSettings(
       continue;
     }
     seen.add(normalized);
+    const label = customModelLabels[normalized] ?? customModelLabels[candidate];
     customEntries.push({
       slug: normalized,
-      name: normalized,
+      name: typeof label === "string" && label.trim().length > 0 ? label.trim() : normalized,
       isCustom: true,
       capabilities: customModelCapabilities,
     });

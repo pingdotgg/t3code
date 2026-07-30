@@ -274,6 +274,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
     launchArgs: Schema.String.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -599,6 +600,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   launchArgs: Schema.optionalKey(TrimmedString),
 });
 

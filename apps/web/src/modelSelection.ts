@@ -69,6 +69,41 @@ function readInstanceCustomModels(
   return legacyProviders[driverKind]?.customModels ?? [];
 }
 
+function readInstanceCustomModelLabels(
+  settings: UnifiedSettings,
+  instanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+): Readonly<Record<string, string>> {
+  const instance = settings.providerInstances?.[instanceId];
+  const config = instance?.config;
+  if (config !== null && typeof config === "object") {
+    const value = (config as Record<string, unknown>).customModelLabels;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.fromEntries(
+        Object.entries(value).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[0] === "string" &&
+            typeof entry[1] === "string" &&
+            entry[1].trim().length > 0,
+        ),
+      );
+    }
+  }
+  const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
+  if (instanceId !== defaultInstanceId) return {};
+  const legacy = (settings.providers as Record<string, unknown>)[driverKind];
+  if (!legacy || typeof legacy !== "object") return {};
+  const labels = (legacy as Record<string, unknown>).customModelLabels;
+  return labels && typeof labels === "object" && !Array.isArray(labels)
+    ? Object.fromEntries(
+        Object.entries(labels).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[1] === "string" && entry[1].trim().length > 0,
+        ),
+      )
+    : {};
+}
+
 export interface AppModelOption {
   slug: string;
   name: string;
@@ -164,6 +199,7 @@ export function getAppModelOptions(
   // see the user's authored custom models.
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
   const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const labels = readInstanceCustomModelLabels(settings, defaultInstanceId, provider);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -172,7 +208,7 @@ export function getAppModelOptions(
     seen.add(slug);
     options.push({
       slug,
-      name: slug,
+      name: labels[slug]?.trim() || slug,
       isCustom: true,
     });
   }
@@ -207,13 +243,14 @@ export function getAppModelOptionsForInstance(
   );
 
   const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const labels = readInstanceCustomModelLabels(settings, entry.instanceId, entry.driverKind);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
     }
 
     seen.add(slug);
-    options.push({ slug, name: slug, isCustom: true });
+    options.push({ slug, name: labels[slug]?.trim() || slug, isCustom: true });
   }
 
   return applyInstanceModelPreferences(
