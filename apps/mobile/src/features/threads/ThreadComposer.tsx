@@ -618,6 +618,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         subactions: group.models.map((option) => ({
           id: `model:${option.key}`,
           title: option.label,
+          subtitle: option.subtitle === group.providerLabel ? undefined : option.subtitle,
           state:
             option.selection.instanceId === currentModelSelection.instanceId &&
             option.selection.model === currentModelSelection.model

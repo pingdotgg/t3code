@@ -21,6 +21,15 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "opencode") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
+        <Path fill={isDarkMode ? "#4B4646" : "#CFCECD"} d="M24 32H8V16H24V32Z" />
+        <Path fill={isDarkMode ? "#F1ECEC" : "#211E1E"} d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" />
+      </Svg>
+    );
+  }
+
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">
       <Path

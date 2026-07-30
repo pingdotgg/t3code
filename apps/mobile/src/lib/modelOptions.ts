@@ -75,7 +75,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
-        subtitle: providerLabel,
+        subtitle: model.subProvider ?? providerLabel,
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
