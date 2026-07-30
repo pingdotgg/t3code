@@ -3,6 +3,8 @@ import type {
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
+  VoiceBudRecordingStartedEvent,
+  VoiceBudTranscriptionEvent,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
@@ -128,6 +130,33 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     };
+  },
+  voiceBud: {
+    bindRecording: (input) =>
+      ipcRenderer.invoke(IpcChannels.VOICE_BUD_BIND_RECORDING_CHANNEL, input),
+    acknowledgeDelivery: (input) =>
+      ipcRenderer.invoke(IpcChannels.VOICE_BUD_ACKNOWLEDGE_DELIVERY_CHANNEL, input),
+    onRecordingStarted: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, input: unknown) => {
+        if (typeof input !== "object" || input === null) return;
+        listener(input as VoiceBudRecordingStartedEvent);
+      };
+      ipcRenderer.on(IpcChannels.VOICE_BUD_RECORDING_STARTED_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.VOICE_BUD_RECORDING_STARTED_CHANNEL,
+          wrappedListener,
+        );
+    },
+    onTranscription: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, input: unknown) => {
+        if (typeof input !== "object" || input === null) return;
+        listener(input as VoiceBudTranscriptionEvent);
+      };
+      ipcRenderer.on(IpcChannels.VOICE_BUD_TRANSCRIPTION_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.VOICE_BUD_TRANSCRIPTION_CHANNEL, wrappedListener);
+    },
   },
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel) =>

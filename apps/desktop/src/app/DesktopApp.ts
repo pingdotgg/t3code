@@ -25,6 +25,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
+import * as VoiceBudBridge from "../voicebud/VoiceBudBridge.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -145,6 +146,7 @@ const bootstrap = Effect.gen(function* () {
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const voiceBudBridge = yield* VoiceBudBridge.VoiceBudBridge;
   yield* logBootstrapInfo("bootstrap start");
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
@@ -196,6 +198,13 @@ const bootstrap = Effect.gen(function* () {
 
   yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
+  yield* voiceBudBridge.start.pipe(
+    Effect.catch((error) =>
+      logBootstrapWarning("VoiceBud local bridge unavailable", {
+        message: error.message,
+      }),
+    ),
+  );
 
   if (!(yield* Ref.get(state.quitting))) {
     // In wsl-only mode the renderer is served by the WSL backend, which can be
