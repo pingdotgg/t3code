@@ -28,7 +28,6 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import type { ThreadListAction } from "../../lib/adaptive-navigation";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -147,10 +146,6 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
-  readonly onThreadActionCompleted: (
-    action: ThreadListAction,
-    thread: EnvironmentThreadShell,
-  ) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onRequestVisibility: () => void;
@@ -221,7 +216,7 @@ function ThreadNavigationSidebarPane(
     unpinThread,
     movePinnedThread,
     regenerateThreadTitle,
-  } = useThreadListActions(props.onThreadActionCompleted);
+  } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const autoSettleOnMerge =

@@ -10,7 +10,7 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -69,6 +69,7 @@ import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
   transitionIncomingSharePresentation,
 } from "./features/sharing/incoming-share-presentation";
+import { resolveWorkspaceDetailInvalidationAction } from "./lib/adaptive-navigation";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
@@ -385,6 +386,28 @@ function RootStackLayout(props: {
       params: { incomingShareId: transition.shareIdToPresent },
     });
   }, [navigation, pendingShare, props.state]);
+  const handleInvalidateSelectedThreadDetail = useCallback(() => {
+    const state = navigation.getState();
+    if (state === undefined) {
+      return;
+    }
+    const invalidation = resolveWorkspaceDetailInvalidationAction({
+      routes: state.routes,
+      overlayRouteNames: WORKSPACE_OVERLAY_ROUTES,
+    });
+    if (invalidation === null) {
+      return;
+    }
+    const action =
+      invalidation.type === "pop"
+        ? StackActions.pop(invalidation.count)
+        : StackActions.replace("Home");
+    navigation.dispatch({
+      ...action,
+      source: invalidation.source,
+      target: state.key,
+    });
+  }, [navigation]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);
@@ -396,7 +419,10 @@ function RootStackLayout(props: {
       <ThreadOutboxDrainWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
-        <AdaptiveWorkspaceLayout pathname={workspacePathname}>
+        <AdaptiveWorkspaceLayout
+          pathname={workspacePathname}
+          onInvalidateSelectedThreadDetail={handleInvalidateSelectedThreadDetail}
+        >
           {props.children}
         </AdaptiveWorkspaceLayout>
       </ExistingThreadSettingsRouteProvider>

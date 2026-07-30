@@ -4,6 +4,7 @@ import {
   isBaseThreadRoute,
   resolveFileSelectionNavigationAction,
   resolveThreadSelectionNavigationAction,
+  resolveWorkspaceDetailInvalidationAction,
   shouldInvalidateSelectedThreadDetail,
 } from "./adaptive-navigation";
 
@@ -69,39 +70,124 @@ describe("resolveFileSelectionNavigationAction", () => {
 });
 
 describe("shouldInvalidateSelectedThreadDetail", () => {
-  it.each(["archive", "delete", "settle", "snooze"] as const)(
-    "invalidates the selected detail after a successful %s",
-    (action) => {
-      expect(
-        shouldInvalidateSelectedThreadDetail({
-          action,
-          actedThreadKey: "environment:thread-a",
-          selectedThreadKey: "environment:thread-a",
-        }),
-      ).toBe(true);
-    },
-  );
+  const active = {
+    key: "environment:thread-a",
+    present: true,
+    settled: false,
+    snoozed: false,
+  } as const;
 
-  it("preserves the detail when a different thread completes an action", () => {
+  it("invalidates when the selected shell is removed", () => {
     expect(
       shouldInvalidateSelectedThreadDetail({
-        action: "delete",
-        actedThreadKey: "environment:thread-a",
-        selectedThreadKey: "environment:thread-b",
+        previous: active,
+        current: { ...active, present: false },
+      }),
+    ).toBe(true);
+  });
+
+  it("invalidates when the selected shell becomes settled", () => {
+    expect(
+      shouldInvalidateSelectedThreadDetail({
+        previous: active,
+        current: { ...active, settled: true },
+      }),
+    ).toBe(true);
+  });
+
+  it("invalidates when the selected shell becomes snoozed", () => {
+    expect(
+      shouldInvalidateSelectedThreadDetail({
+        previous: active,
+        current: { ...active, snoozed: true },
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves detail while the selected shell initially loads", () => {
+    expect(
+      shouldInvalidateSelectedThreadDetail({
+        previous: { ...active, present: false },
+        current: active,
       }),
     ).toBe(false);
   });
 
-  it.each(["unarchive", "unsettle", "unsnooze"] as const)(
-    "preserves the selected detail after %s",
-    (action) => {
-      expect(
-        shouldInvalidateSelectedThreadDetail({
-          action,
-          actedThreadKey: "environment:thread-a",
-          selectedThreadKey: "environment:thread-a",
-        }),
-      ).toBe(false);
-    },
-  );
+  it("preserves detail when selecting an already-settled thread", () => {
+    expect(
+      shouldInvalidateSelectedThreadDetail({
+        previous: active,
+        current: {
+          key: "environment:thread-b",
+          present: true,
+          settled: true,
+          snoozed: false,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves detail when the selected shell remains active", () => {
+    expect(
+      shouldInvalidateSelectedThreadDetail({
+        previous: active,
+        current: active,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveWorkspaceDetailInvalidationAction", () => {
+  const overlays = new Set(["SettingsSheet", "NewTaskSheet", "GitOverview"]);
+
+  it("removes the thread route without dismissing a root overlay", () => {
+    expect(
+      resolveWorkspaceDetailInvalidationAction({
+        routes: [
+          { key: "home", name: "Home" },
+          { key: "thread", name: "Thread" },
+          { key: "settings", name: "SettingsSheet" },
+        ],
+        overlayRouteNames: overlays,
+      }),
+    ).toEqual({ type: "pop", count: 1, source: "thread" });
+  });
+
+  it("removes the whole thread workspace stack below an overlay", () => {
+    expect(
+      resolveWorkspaceDetailInvalidationAction({
+        routes: [
+          { key: "home", name: "Home" },
+          { key: "thread", name: "Thread" },
+          { key: "files", name: "ThreadFiles" },
+          { key: "new-task", name: "NewTaskSheet" },
+        ],
+        overlayRouteNames: overlays,
+      }),
+    ).toEqual({ type: "pop", count: 2, source: "files" });
+  });
+
+  it("replaces a deep-linked workspace route while preserving overlays", () => {
+    expect(
+      resolveWorkspaceDetailInvalidationAction({
+        routes: [
+          { key: "thread", name: "Thread" },
+          { key: "git", name: "GitOverview" },
+        ],
+        overlayRouteNames: overlays,
+      }),
+    ).toEqual({ type: "replace", source: "thread" });
+  });
+
+  it("does nothing when the underlying workspace is already home", () => {
+    expect(
+      resolveWorkspaceDetailInvalidationAction({
+        routes: [
+          { key: "home", name: "Home" },
+          { key: "settings", name: "SettingsSheet" },
+        ],
+        overlayRouteNames: overlays,
+      }),
+    ).toBeNull();
+  });
 });
