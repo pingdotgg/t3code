@@ -1133,6 +1133,12 @@ function createTerminalSpawnEnv(
     if (shouldExcludeTerminalEnvKey(key)) continue;
     spawnEnv[key] = value;
   }
+  // The PTY always feeds a headless xterm.js emulator, so TERM/COLORTERM must
+  // describe that emulator — not whatever terminal (if any) launched the server
+  // daemon. Without COLORTERM in particular, truecolor-capable programs inside
+  // the terminal silently quantise their colours to the 256-colour cube.
+  spawnEnv.TERM = "xterm-256color";
+  spawnEnv.COLORTERM = "truecolor";
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
       spawnEnv[key] = value;
