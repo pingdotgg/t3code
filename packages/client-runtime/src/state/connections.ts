@@ -10,6 +10,7 @@ import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
+  type AtomCommandScheduler,
   createAtomCommandScheduler,
   createRuntimeCommand,
   followStreamInEnvironment,
@@ -27,8 +28,11 @@ export const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.f
 
 export function createEnvironmentCatalogAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
+  options?: {
+    readonly commandScheduler?: AtomCommandScheduler;
+  },
 ) {
-  const commandScheduler = createAtomCommandScheduler();
+  const commandScheduler = options?.commandScheduler ?? createAtomCommandScheduler();
   const serial = { mode: "serial" as const, key: () => "environment-catalog" };
   const catalogAtom = runtime.atom(
     Stream.unwrap(

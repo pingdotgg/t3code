@@ -164,7 +164,6 @@ export function SettingsEnvironmentsRouteScreen() {
         {hasCloudPublicConfig() || SHOWCASE_ENABLED ? (
           <CloudEnvironmentRows
             connectedCloudEnvironments={connectedCloudEnvironments}
-            onReconnectEnvironment={onReconnectEnvironment}
             {...(SHOWCASE_ENABLED
               ? {
                   showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,

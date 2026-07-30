@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -36,7 +36,6 @@ import { type RelayEnvironmentView, useConnectionController } from "./useConnect
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
-  readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -75,35 +74,56 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
   const availableCloudEnvironments =
     props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments;
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
-  const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
-    useState<EnvironmentId | null>(null);
+  const [mutatingEnvironmentId, setMutatingEnvironmentId] = useState<EnvironmentId | null>(null);
+  const mutatingEnvironmentIdRef = useRef<EnvironmentId | null>(null);
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
+  const runCloudEnvironmentMutation = useCallback(
+    async (environmentId: EnvironmentId, mutation: () => Promise<unknown>) => {
+      if (mutatingEnvironmentIdRef.current !== null) return;
+      mutatingEnvironmentIdRef.current = environmentId;
+      setMutatingEnvironmentId(environmentId);
+      try {
+        await mutation();
+      } finally {
+        if (mutatingEnvironmentIdRef.current === environmentId) {
+          mutatingEnvironmentIdRef.current = null;
+          setMutatingEnvironmentId(null);
+        }
+      }
+    },
+    [],
+  );
+
   const handleConnectCloudEnvironment = useCallback(
-    (entry: RelayEnvironmentView) => controller.connectRelayEnvironment(entry.environment),
-    [controller],
+    (entry: RelayEnvironmentView) =>
+      runCloudEnvironmentMutation(entry.environment.environmentId, () =>
+        controller.connectRelayEnvironment(entry.environment),
+      ),
+    [controller, runCloudEnvironmentMutation],
+  );
+
+  const handleReconnectCloudEnvironment = useCallback(
+    (environmentId: EnvironmentId) =>
+      runCloudEnvironmentMutation(environmentId, () => controller.retryEnvironment(environmentId)),
+    [controller, runCloudEnvironmentMutation],
   );
 
   const handleDisconnectCloudEnvironment = useCallback(
-    (environmentId: EnvironmentId) => controller.removeEnvironment(environmentId),
-    [controller],
+    (environmentId: EnvironmentId) =>
+      runCloudEnvironmentMutation(environmentId, () => controller.removeEnvironment(environmentId)),
+    [controller, runCloudEnvironmentMutation],
   );
 
   const handleToggleCloudError = useCallback((environmentId: string) => {
     setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
   }, []);
 
-  const handleDeregisterCloudEnvironment = useCallback(
-    async (input: {
-      readonly environmentId: EnvironmentId;
-      readonly label: string;
-      readonly removeSavedConnection: boolean;
-    }) => {
-      setDeregisteringEnvironmentId(input.environmentId);
+  const deregisterCloudEnvironment = useCallback(
+    async (input: { readonly environmentId: EnvironmentId; readonly label: string }) => {
       const result = await controller.deregisterEnvironment(input.environmentId);
       if (AsyncResult.isFailure(result)) {
-        setDeregisteringEnvironmentId(null);
         if (isAtomCommandInterrupted(result)) return;
         const cause = squashAtomCommandFailure(result);
         Alert.alert(
@@ -115,24 +135,14 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
         return;
       }
 
-      if (input.removeSavedConnection) {
-        const cleanupResult = await controller.removeEnvironment(input.environmentId);
-        if (AsyncResult.isFailure(cleanupResult)) {
-          await controller.refreshRelayEnvironments();
-          setDeregisteringEnvironmentId(null);
-          if (isAtomCommandInterrupted(cleanupResult)) return;
-          const cleanupCause = squashAtomCommandFailure(cleanupResult);
-          Alert.alert(
-            "Server deregistered",
-            `${input.label} was removed from T3 Connect, but its saved connection could not be removed from this device. ${
-              cleanupCause instanceof Error ? cleanupCause.message : ""
-            }`.trim(),
-          );
-          return;
-        }
-      }
       await controller.refreshRelayEnvironments();
-      setDeregisteringEnvironmentId(null);
+      if (!result.value) {
+        Alert.alert(
+          "Server deregistered",
+          `${input.label} was removed from T3 Connect, but its saved connection could not be removed from this device.`,
+        );
+        return;
+      }
       Alert.alert(
         "Server deregistered",
         `${input.label} no longer has T3 Connect access. One host space is now available.`,
@@ -141,12 +151,14 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
     [controller],
   );
 
+  const handleDeregisterCloudEnvironment = useCallback(
+    (input: { readonly environmentId: EnvironmentId; readonly label: string }) =>
+      runCloudEnvironmentMutation(input.environmentId, () => deregisterCloudEnvironment(input)),
+    [deregisterCloudEnvironment, runCloudEnvironmentMutation],
+  );
+
   const confirmDeregisterCloudEnvironment = useCallback(
-    (input: {
-      readonly environmentId: EnvironmentId;
-      readonly label: string;
-      readonly removeSavedConnection: boolean;
-    }) => {
+    (input: { readonly environmentId: EnvironmentId; readonly label: string }) => {
       const title = `Deregister “${input.label}” from T3 Connect?`;
       const message =
         "This revokes this server’s T3 Connect access, removes its managed tunnel, and frees one of your three host spaces.";
@@ -207,16 +219,15 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
               key={environment.environmentId}
               environment={environment}
               borderTop={index !== 0}
-              onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
+              onConnect={() => handleReconnectCloudEnvironment(environment.environmentId)}
               onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
               onDeregister={() =>
                 confirmDeregisterCloudEnvironment({
                   environmentId: environment.environmentId,
                   label: environment.environmentLabel,
-                  removeSavedConnection: true,
                 })
               }
-              deregisterDisabled={deregisteringEnvironmentId !== null}
+              mutationDisabled={mutatingEnvironmentId !== null}
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
             />
@@ -231,10 +242,9 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
                 confirmDeregisterCloudEnvironment({
                   environmentId: environment.environment.environmentId,
                   label: environment.environment.label,
-                  removeSavedConnection: false,
                 })
               }
-              deregisterDisabled={deregisteringEnvironmentId !== null}
+              mutationDisabled={mutatingEnvironmentId !== null}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
             />
@@ -285,7 +295,7 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
-  readonly deregisterDisabled: boolean;
+  readonly mutationDisabled: boolean;
   readonly onConnect: () => void;
   readonly onDeregister: () => void;
   readonly onDisconnect: () => void;
@@ -294,8 +304,7 @@ function ConnectedCloudEnvironmentRow(props: {
   return (
     <CloudEnvironmentSwipeRow
       enabled={
-        !props.deregisterDisabled &&
-        canDeregisterCloudEnvironment(props.environment.connectionState)
+        !props.mutationDisabled && canDeregisterCloudEnvironment(props.environment.connectionState)
       }
       label={props.environment.environmentLabel}
       onDeregister={props.onDeregister}
@@ -305,7 +314,7 @@ function ConnectedCloudEnvironmentRow(props: {
         connectionError={props.environment.connectionError}
         connectionErrorTraceId={props.environment.connectionErrorTraceId}
         connectionState={props.environment.connectionState}
-        disabled={props.deregisterDisabled}
+        disabled={props.mutationDisabled}
         errorExpanded={props.errorExpanded}
         label={props.environment.environmentLabel}
         onValueChange={(enabled) => {
@@ -326,7 +335,7 @@ function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
-  readonly deregisterDisabled: boolean;
+  readonly mutationDisabled: boolean;
   readonly onConnect: () => void;
   readonly onDeregister: () => void;
   readonly onToggleError: () => void;
@@ -341,7 +350,7 @@ function CloudEnvironmentRow(props: {
   return (
     <CloudEnvironmentSwipeRow
       enabled={
-        !props.deregisterDisabled && canDeregisterCloudEnvironment(presentation.connectionState)
+        !props.mutationDisabled && canDeregisterCloudEnvironment(presentation.connectionState)
       }
       label={props.environment.environment.label}
       onDeregister={props.onDeregister}
@@ -351,7 +360,7 @@ function CloudEnvironmentRow(props: {
         connectionError={presentation.connectionError}
         connectionErrorTraceId={presentation.connectionErrorTraceId}
         connectionState={presentation.connectionState}
-        disabled={props.deregisterDisabled}
+        disabled={props.mutationDisabled}
         errorExpanded={props.errorExpanded}
         label={props.environment.environment.label}
         onValueChange={(enabled) => {
