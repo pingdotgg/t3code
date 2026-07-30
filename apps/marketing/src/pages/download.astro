@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
+import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
 ---
 
 <Layout title="Download — T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
@@ -57,6 +58,24 @@ import { RELEASES_URL } from "../lib/releases";
         </a>
       </div>
     </section>
+
+    <!-- Mobile -->
+    <section class="platform-section">
+      <div class="platform-header">
+        <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg>
+        <h2 class="platform-name">Mobile</h2>
+      </div>
+      <div class="download-cards">
+        <a class="download-card" href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">
+          <span class="card-arch">iPhone &amp; iPad</span>
+          <span class="card-format">App Store</span>
+        </a>
+        <a class="download-card" href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
+          <span class="card-arch">Android</span>
+          <span class="card-format">Google Play</span>
+        </a>
+      </div>
+    </section>
   </div>
 
   <p class="releases-link">
@@ -73,7 +92,8 @@ import { RELEASES_URL } from "../lib/releases";
 
   async function init() {
     const versionLabel = document.getElementById("version-label");
-    const cards = document.querySelectorAll<HTMLAnchorElement>(".download-card");
+    // Only release-asset cards; mobile store cards have no data-asset and keep their href.
+    const cards = document.querySelectorAll<HTMLAnchorElement>(".download-card[data-asset]");
 
     try {
       const release = await fetchLatestRelease();
