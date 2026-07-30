@@ -70,4 +70,34 @@ describe("parsePullRequestReference", () => {
   it("rejects non-pull-request input", () => {
     expect(parsePullRequestReference("feature/my-branch")).toBeNull();
   });
+
+  it("accepts an enterprise pull request url", () => {
+    expect(parsePullRequestReference("https://git.corp.com/owner/repo/pull/42")).toBe(
+      "https://git.corp.com/owner/repo/pull/42",
+    );
+  });
+
+  it("accepts a ghe.com pull request url", () => {
+    expect(parsePullRequestReference("https://acme.ghe.com/owner/repo/pull/7")).toBe(
+      "https://acme.ghe.com/owner/repo/pull/7",
+    );
+  });
+
+  it("still accepts github.com urls and bare numbers", () => {
+    expect(parsePullRequestReference("https://github.com/owner/repo/pull/1")).toBe(
+      "https://github.com/owner/repo/pull/1",
+    );
+    expect(parsePullRequestReference("#12")).toBe("12");
+  });
+
+  it("still rejects a non pull request url", () => {
+    expect(parsePullRequestReference("https://git.corp.com/owner/repo/issues/42")).toBeNull();
+    expect(parsePullRequestReference("https://git.corp.com/owner/repo")).toBeNull();
+  });
+
+  it("still unwraps a gh cli checkout command", () => {
+    expect(parsePullRequestReference("gh pr checkout https://git.corp.com/owner/repo/pull/9")).toBe(
+      "https://git.corp.com/owner/repo/pull/9",
+    );
+  });
 });
