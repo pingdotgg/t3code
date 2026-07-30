@@ -1,83 +1,12 @@
 /**
- * The `Stream` module describes effectful sequences that may emit many values
- * over time. A `Stream<A, E, R>` can produce zero or more `A` values, fail with
- * an `E`, and require services from `R`; the Effect runtime handles
- * backpressure, interruption, scopes, and finalizers while the stream is being
- * consumed.
+ * Describes effectful sources that emit values over time.
  *
- * Streams are useful for files, sockets, queues, subscriptions, paginated APIs,
- * background jobs, and any workflow where values should be processed
- * incrementally instead of loaded into memory all at once.
- *
- * **Mental model**
- *
- * - A stream is a lazy description; it does not run until consumed with
- *   {@link run}, {@link runCollect}, {@link runForEach}, or another `run*`
- *   function.
- * - Pulling drives evaluation. Operators request values from upstream, and the
- *   runtime propagates demand instead of pushing unbounded data downstream.
- * - Values are batched internally as chunks for throughput, while user-facing
- *   combinators still work with individual elements unless they mention chunks.
- * - `A` is the element type, `E` is the failure type, and `R` is the required
- *   service context.
- * - Composition mirrors `Effect`: use `pipe`, {@link map}, {@link flatMap},
- *   error handling, resource operators, and service provisioning.
- *
- * **Common tasks**
- *
- * - Create streams from values, effects, and collections with {@link make},
- *   {@link fromEffect}, {@link fromIterable}, and {@link fromQueue}.
- * - Transform or select values with {@link map}, {@link mapEffect},
- *   {@link flatMap}, {@link filter}, and {@link filterMap}.
- * - Combine streams with {@link concat}, {@link merge}, {@link zip},
- *   {@link race}, and {@link interleave}.
- * - Control size and timing with {@link take}, {@link drop}, {@link debounce},
- *   {@link throttle}, {@link grouped}, and {@link groupedWithin}.
- * - Handle failures with {@link catchCause}, {@link catchIf},
- *   {@link mapError}, {@link retry}, and {@link withExecutionPlan}.
- * - Connect to other protocols with {@link fromReadableStream},
- *   {@link toReadableStream}, {@link fromAsyncIterable}, {@link toQueue}, and
- *   {@link runIntoQueue}.
- * - Consume streams with {@link runCollect}, {@link runForEach},
- *   {@link runFold}, {@link runDrain}, or a {@link Sink.Sink}.
- *
- * **Quickstart**
- *
- * **Example** (Transforming and collecting values)
- *
- * ```ts
- * import { Effect, Stream } from "effect"
- *
- * const program = Stream.make(1, 2, 3).pipe(
- *   Stream.map((n) => n * 2),
- *   Stream.runCollect
- * )
- *
- * Effect.runPromise(program).then(console.log)
- * // [2, 4, 6]
- * ```
- *
- * **Gotchas**
- *
- * - A stream is not a collection. Constructors and operators build a
- *   description; effects run each time the stream is consumed.
- * - {@link runCollect} stores every emitted value in memory. Prefer
- *   {@link runForEach}, {@link runFold}, or a streaming sink for large or
- *   infinite streams.
- * - Operators such as {@link merge}, {@link race}, {@link broadcast}, and
- *   {@link share} introduce concurrency, so interruption and finalizer timing
- *   can matter.
- * - Reusing the same stream value does not share execution by itself. Use
- *   {@link share}, {@link broadcast}, queues, or external state when multiple
- *   consumers must observe one running producer.
- *
- * **See also**
- *
- * - {@link Effect.Effect} for single-result effectful programs.
- * - {@link Sink.Sink} for reusable stream consumers.
- * - {@link Channel.Channel} for the lower-level primitive behind streams.
- * - {@link Queue.Queue} and {@link PubSub.PubSub} for coordinating producers
- *   and consumers.
+ * A `Stream<A, E, R>` can emit many `A` values, fail with `E`, and require
+ * services `R` while it is being consumed. Streams are useful for data that is
+ * pulled in steps, such as values from collections, queues, pubsubs, schedules,
+ * callbacks, async iterables, or platform streams. The APIs here cover the full
+ * stream lifecycle: create a stream, transform or combine it, control buffering
+ * and timing, handle failures, and finally consume it.
  *
  * @since 2.0.0
  */
@@ -234,7 +163,7 @@ export interface StreamUnifyIgnore {
  * // Equivalent to: Stream<number, string, never>
  * ```
  *
- * @category Type Lambdas
+ * @category type lambdas
  * @since 2.0.0
  */
 export interface StreamTypeLambda extends TypeLambda {
@@ -286,7 +215,7 @@ export interface VarianceStruct<out A, out E, out R> {
  * // SuccessType is number
  * ```
  *
- * @category Type-Level
+ * @category utility types
  * @since 3.4.0
  */
 export type Success<T extends Stream<any, any, any>> = [T] extends [Stream<infer _A, infer _E, infer _R>] ? _A : never
@@ -304,7 +233,7 @@ export type Success<T extends Stream<any, any, any>> = [T] extends [Stream<infer
  * // ErrorType is string
  * ```
  *
- * @category Type-Level
+ * @category utility types
  * @since 3.4.0
  */
 export type Error<T extends Stream<any, any, any>> = [T] extends [Stream<infer _A, infer _E, infer _R>] ? _E : never
@@ -325,7 +254,7 @@ export type Error<T extends Stream<any, any, any>> = [T] extends [Stream<infer _
  * // RequiredServices is { db: Database }
  * ```
  *
- * @category Type-Level
+ * @category utility types
  * @since 4.0.0
  */
 export type Services<T extends Stream<any, any, any>> = [T] extends [Stream<infer _A, infer _E, infer _R>] ? _R
@@ -373,7 +302,7 @@ export const isStream = (u: unknown): u is Stream<unknown, unknown, unknown> => 
  * // Output: 4096
  * ```
  *
- * @category Constants
+ * @category constants
  * @since 2.0.0
  */
 export const DefaultChunkSize: number = Channel.DefaultChunkSize
@@ -464,7 +393,7 @@ export const fromEffect = <A, E, R>(effect: Effect.Effect<A, E, R>): Stream<A, E
  * // Output: [ "Hello, World!" ]
  * ```
  *
- * @category Context
+ * @category context
  * @since 4.0.0
  */
 export const service = <I, S>(service: Context.Key<I, S>): Stream<S, never, I> => fromEffect(Effect.service(service))
@@ -475,8 +404,8 @@ export const service = <I, S>(service: Context.Key<I, S>): Stream<S, never, I> =
  *
  * **When to use**
  *
- * Use to emit an optional dependency as a stream element without requiring that
- * dependency to be present.
+ * Use when you need a stream that emits an optional service from the context
+ * without requiring that service to be present.
  *
  * **Example** (Accessing an optional service as a stream)
  *
@@ -509,7 +438,7 @@ export const service = <I, S>(service: Context.Key<I, S>): Stream<S, never, I> =
  * // Output: [ "Hello, World!" ]
  * ```
  *
- * @category Context
+ * @category context
  * @since 4.0.0
  */
 export const serviceOption = <I, S>(service: Context.Key<I, S>): Stream<Option.Option<S>> =>
@@ -810,8 +739,8 @@ export const toChannel = <A, E, R>(
  *
  * **When to use**
  *
- * Use when you can use the `Queue` with the apis from the `Queue` module to emit
- * values to the stream or to signal the stream ending.
+ * Use when you need callback-based code to emit stream values by offering to a
+ * `Queue`, or signal stream completion through the `Queue` module APIs.
  *
  * By default it uses an "unbounded" buffer size.
  * You can customize the buffer size and strategy by passing an object as the
@@ -1183,6 +1112,11 @@ export const fromIterable = <A>(
 /**
  * Creates a stream from an effect producing an iterable of values.
  *
+ * **When to use**
+ *
+ * Use when the iterable must be acquired from an Effect before the stream emits,
+ * and acquisition services or failures should be part of the stream.
+ *
  * **Example** (Creating a stream from an iterable effect)
  *
  * ```ts
@@ -1271,6 +1205,11 @@ export const fromArray = <A>(array: ReadonlyArray<A>): Stream<A> =>
 
 /**
  * Creates a stream from an effect that produces an array of values.
+ *
+ * **When to use**
+ *
+ * Use when the array must be acquired from an Effect before the stream emits,
+ * and acquisition services or failures should be part of the stream.
  *
  * **Example** (Creating a stream from an effect that produces an array of values)
  *
@@ -1477,7 +1416,7 @@ export const fromReadableStream = <A, E>(
       scope,
       options.releaseLockOnEnd
         ? Effect.sync(() => reader.releaseLock())
-        : Effect.promise(() => reader.cancel())
+        : Effect.promise(() => reader.cancel().catch(constVoid))
     )
     return Effect.flatMap(
       Effect.tryPromise({
@@ -1532,7 +1471,7 @@ export const fromAsyncIterable = <A, E>(
  *
  * const program = Effect.gen(function*() {
  *   const schedule = Schedule.spaced("50 millis").pipe(
- *     Schedule.both(Schedule.recurs(2))
+ *     Schedule.upTo({ times: 3 })
  *   )
  *   const stream = Stream.fromSchedule(schedule)
  *   const values = yield* Stream.runCollect(stream)
@@ -1559,8 +1498,9 @@ export const fromSchedule = <O, E, R>(schedule: Schedule.Schedule<O, unknown, E,
  *
  * **When to use**
  *
- * Use to create the subscription and `Stream.take` or
- * cancellation to control how many values are consumed.
+ * Use when you already have a `PubSub.Subscription` and want to expose its
+ * messages as a `Stream`, with `Stream.take` or cancellation controlling how
+ * many values are consumed.
  *
  * **Example** (Creating a stream from a PubSub subscription)
  *
@@ -2040,6 +1980,11 @@ export const mapArray: {
 /**
  * Maps over elements of the stream with the specified effectful function.
  *
+ * **When to use**
+ *
+ * Use when each stream element transformation needs an Effect, service
+ * dependency, failure channel, or configured concurrency.
+ *
  * **Example** (Effectfully mapping stream values)
  *
  * ```ts
@@ -2106,6 +2051,11 @@ export const mapEffect: {
 /**
  * Flattens a stream of `Effect` values into a stream of their results.
  *
+ * **When to use**
+ *
+ * Use when stream elements already are effects and their successes should become
+ * stream elements while their failures enter the stream error channel.
+ *
  * **Example** (Flattening a stream of Effect values into a stream of their results)
  *
  * ```ts
@@ -2154,6 +2104,11 @@ export const flattenEffect: <
 
 /**
  * Maps over non-empty array chunks emitted by the stream effectfully.
+ *
+ * **When to use**
+ *
+ * Use when transformation needs to see and replace each non-empty emitted chunk
+ * effectfully instead of mapping individual stream elements.
  *
  * **Example** (Effectfully mapping stream chunks)
  *
@@ -2458,7 +2413,7 @@ export const tapSink: {
  * multiple inner streams may run at the same time and their outputs are merged
  * as they arrive.
  *
- * **Example** (FlatMapping stream values)
+ * **Example** (Flat mapping stream values)
  *
  * ```ts
  * import { Console, Effect, Stream } from "effect"
@@ -3167,7 +3122,7 @@ export const prepend: {
  * // Output: [ 1, 2, 3, 4 ]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 2.0.0
  */
 export const merge: {
@@ -3198,6 +3153,11 @@ export const merge: {
 /**
  * Merges this stream with a background effect, keeping the stream's elements.
  *
+ * **When to use**
+ *
+ * Use when an effect should run concurrently for the lifetime of a stream while
+ * only the stream's elements remain in the output.
+ *
  * **Details**
  *
  * The effect runs concurrently, fails the stream if it fails, and is interrupted
@@ -3222,7 +3182,7 @@ export const merge: {
  * // Output: [ 1, 2, 3 ]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 4.0.0
  */
 export const mergeEffect: {
@@ -3240,6 +3200,12 @@ export const mergeEffect: {
 /**
  * Merges this stream and the specified stream together, tagging values from the
  * left stream as `Result.succeed` and values from the right stream as `Result.fail`.
+ *
+ * **When to use**
+ *
+ * Use when values from both streams should be emitted and downstream code needs
+ * left values wrapped as successful `Result` values and right values wrapped as
+ * failed `Result` values.
  *
  * **Example** (Merging streams into results)
  *
@@ -3268,7 +3234,7 @@ export const mergeEffect: {
  * // Output: [ "left:left", "right:right" ]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 4.0.0
  */
 export const mergeResult: {
@@ -3290,6 +3256,11 @@ export const mergeResult: {
 
 /**
  * Merges two streams while emitting only the values from the left stream.
+ *
+ * **When to use**
+ *
+ * Use when the right stream is needed for its effects or failures, but downstream
+ * consumers should only receive values from the left stream.
  *
  * **Details**
  *
@@ -3313,7 +3284,7 @@ export const mergeResult: {
  * // Output: [ 1, 2 ]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 2.0.0
  */
 export const mergeLeft: {
@@ -3328,6 +3299,11 @@ export const mergeLeft: {
 /**
  * Merges this stream and the specified stream together, emitting only the
  * values from the right stream while the left stream runs for its effects.
+ *
+ * **When to use**
+ *
+ * Use when the left stream is needed for its effects or failures, but downstream
+ * consumers should only receive values from the right stream.
  *
  * **Details**
  *
@@ -3355,7 +3331,7 @@ export const mergeLeft: {
  * // Output: [ 1, 2 ]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 2.0.0
  */
 export const mergeRight: {
@@ -3405,7 +3381,7 @@ export const mergeRight: {
  * @see {@link merge} for merging exactly two streams and choosing a halt strategy
  * @see {@link flatten} for flattening a stream that already emits streams
  *
- * @category Merging
+ * @category merging
  * @since 2.0.0
  */
 export const mergeAll: {
@@ -4021,6 +3997,11 @@ export const zipWithPreviousAndNext = <A, E, R>(
  * Zips multiple streams so that when a value is emitted by any stream, it is
  * combined with the latest values from the other streams to produce a result.
  *
+ * **When to use**
+ *
+ * Use when each stream should contribute its latest value after all streams have
+ * emitted at least once.
+ *
  * **Gotchas**
  *
  * Note: tracking the latest value is done on a per-array basis. That means
@@ -4092,6 +4073,11 @@ export const zipLatestAll = <T extends ReadonlyArray<Stream<any, any, any>>>(
 /**
  * Combines two streams by emitting each new element with the latest value from the other stream.
  *
+ * **When to use**
+ *
+ * Use when two streams should start emitting combined pairs after both have
+ * produced at least one value.
+ *
  * **Gotchas**
  *
  * Note: tracking the latest value is done on a per-array basis. That means
@@ -4136,6 +4122,11 @@ export const zipLatest: {
 /**
  * Combines the latest values from both streams whenever either emits, using
  * the provided function.
+ *
+ * **When to use**
+ *
+ * Use when two streams should start emitting custom combined values after both
+ * have produced at least one value.
  *
  * **Gotchas**
  *
@@ -4212,7 +4203,7 @@ export const zipLatestWith: {
  * // Output: [ 0, 1, 2 ]
  * ```
  *
- * @category Racing
+ * @category racing
  * @since 3.5.0
  */
 export const raceAll = <S extends ReadonlyArray<Stream<any, any, any>>>(
@@ -4273,7 +4264,7 @@ export const raceAll = <S extends ReadonlyArray<Stream<any, any, any>>>(
  * // Output: [ 0, 1, 2 ]
  * ```
  *
- * @category Racing
+ * @category racing
  * @since 3.7.0
  */
 export const race: {
@@ -4568,8 +4559,8 @@ export const partitionQueue: {
  *
  * **When to use**
  *
- * Use when each stream element must be classified by an effectful `Filter` and
- * both passing and failing mapped values need to be consumed as streams.
+ * Use when you need to classify each stream element with an effectful `Filter`
+ * and consume both passing and failing mapped values as streams.
  *
  * **Details**
  *
@@ -5251,8 +5242,8 @@ export const catchFilter: {
  *
  * **When to use**
  *
- * Use when your error type is a tagged union with a readonly `_tag`
- * field and you want to handle a specific error case.
+ * Use when you need to handle a specific error case from a stream whose error
+ * type is a tagged union with a readonly `_tag` field.
  *
  * **Example** (Catching tagged failures)
  *
@@ -5479,7 +5470,11 @@ export const catchTags: {
  * **When to use**
  *
  * Use to handle nested error causes without removing the parent error
- * from the error channel. The handler receives the unwrapped reason.
+ * from the error channel.
+ *
+ * **Details**
+ *
+ * The handler receives the unwrapped reason.
  *
  * **Example** (Catching a tagged error reason)
  *
@@ -5738,7 +5733,8 @@ export const catchReasons: {
     }[keyof Cases]
   >
 } = dual((args) => isStream(args[0]), (self, errorTag, cases, orElse) => {
-  const handlers: Record<string, (reason: any, error: any) => Channel.Channel<any, any, any, any, any, any, any>> = {}
+  const handlers: Record<string, (reason: any, error: any) => Channel.Channel<any, any, any, any, any, any, any>> =
+    Object.create(null)
   for (const key of Object.keys(cases)) {
     const handler = (cases as any)[key]
     handlers[key] = (reason, error) => handler(reason, error).channel
@@ -5849,7 +5845,7 @@ export const catchCauseIf: {
  * **When to use**
  *
  * Use when you need to recover a stream only from causes selected by a
- * `Filter`, and the recovery needs both the selected value and the original
+ * `Filter`, while giving the recovery both the selected value and the original
  * `Cause`.
  *
  * **Details**
@@ -5999,8 +5995,12 @@ export const orDie = <A, E, R>(self: Stream<A, E, R>): Stream<A, never, R> => fr
  * **When to use**
  *
  * Use when you want a failing stream to end gracefully rather than propagate
- * the error. The `log` option controls whether the failure is logged before
- * the stream terminates.
+ * the error.
+ *
+ * **Details**
+ *
+ * The `log` option controls whether the failure is logged before the stream
+ * terminates.
  *
  * **Example** (Ignoring stream failures)
  *
@@ -6066,9 +6066,8 @@ export const ignore: <
  *
  * **When to use**
  *
- * Use when a stream may fail with defects and you want to silently suppress the
- * entire failure cause — including both typed errors and defects — rather than
- * propagate it downstream.
+ * Use when you need to silently suppress a stream's entire failure cause,
+ * including both typed errors and defects, rather than propagate it downstream.
  *
  * **Example** (Ignoring stream failure causes)
  *
@@ -6447,6 +6446,11 @@ export const takeUntil: {
 /**
  * Takes stream elements until an effectful predicate returns `true`.
  *
+ * **When to use**
+ *
+ * Use when the stopping condition needs an Effect or service and predicate
+ * failure should fail the stream.
+ *
  * **Example** (Taking until an effectful predicate matches)
  *
  * ```ts
@@ -6617,6 +6621,11 @@ export const takeWhileFilter: {
 /**
  * Takes elements from the stream while the effectful predicate is `true`.
  *
+ * **When to use**
+ *
+ * Use when the leading-prefix predicate needs an Effect or service and the
+ * stream should stop before the first false result.
+ *
  * **Example** (Effectfully taking while a predicate holds)
  *
  * ```ts
@@ -6732,9 +6741,10 @@ export const dropUntil: {
  * Drops all elements of the stream until the specified effectful predicate
  * evaluates to `true`.
  *
- * **Details**
+ * **When to use**
  *
- * The first element that satisfies the predicate is also dropped.
+ * Use when dropping the leading prefix requires an Effect or service and the
+ * first matching element should also be dropped.
  *
  * **Example** (Dropping until an effectful predicate matches)
  *
@@ -7262,7 +7272,7 @@ export const split: {
  * // Output: [ "L:A", "R:1", "L:B", "R:2", "L:C", "R:3" ]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 2.0.0
  */
 export const combine: {
@@ -7537,6 +7547,11 @@ const emptyArr = Arr.empty<never>()
  * Maps each element statefully and effectfully, emitting zero or more output
  * values per input.
  *
+ * **When to use**
+ *
+ * Use when stateful element mapping needs Effects or can fail while emitting
+ * zero or more values per input element.
+ *
  * **Details**
  *
  * The mapping effect receives the current state and element, then returns the
@@ -7617,6 +7632,11 @@ export const mapAccumEffect: {
 /**
  * Maps each non-empty input chunk statefully and effectfully, emitting zero or
  * more output values per chunk.
+ *
+ * **When to use**
+ *
+ * Use when stateful mapping should process each emitted non-empty chunk with an
+ * Effect instead of each element separately.
  *
  * **Details**
  *
@@ -8417,9 +8437,9 @@ const groupByImpl = <A, E, R, K, V, E2, R2>(
  *
  * **When to use**
  *
- * Use when a stream is already ordered by the grouping key and you want to emit
- * each consecutive run as a non-empty array while keeping later non-adjacent
- * runs separate.
+ * Use when you already have a stream ordered by the grouping key and want to
+ * emit each consecutive run as a non-empty array while keeping later
+ * non-adjacent runs separate.
  *
  * **Details**
  *
@@ -9550,7 +9570,7 @@ export const intersperseAffixes: {
  * // [2, 5, 3, 6, 7]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 2.0.0
  */
 export const interleave: {
@@ -9595,7 +9615,7 @@ export const interleave: {
  * // [ 1, 2, 4, 3, 5 ]
  * ```
  *
- * @category Merging
+ * @category merging
  * @since 2.0.0
  */
 export const interleaveWith: {
@@ -9688,7 +9708,7 @@ export const interleaveWith: {
  * // => [1, 2]
  * ```
  *
- * @category Interruption
+ * @category interruption
  * @since 2.0.0
  */
 export const interruptWhen: {
@@ -9701,7 +9721,7 @@ export const interruptWhen: {
 )
 
 /**
- * Stops a stream after the current element when an effect completes.
+ * Stops a stream after the current pull when an effect completes.
  *
  * **When to use**
  *
@@ -9714,8 +9734,10 @@ export const interruptWhen: {
  *
  * **Gotchas**
  *
- * This does not interrupt an in-progress pull. Use {@link interruptWhen} when
- * the stream should be interrupted immediately.
+ * This does not interrupt or truncate an in-progress pull. A pull may emit
+ * multiple elements in a single chunk, in which case the entire chunk is
+ * emitted. Use {@link interruptWhen} when the stream should be interrupted
+ * immediately.
  *
  * **Example** (Halting a stream after an effect completes)
  *
@@ -9737,7 +9759,7 @@ export const interruptWhen: {
  * // [1, 2]
  * ```
  *
- * @category Interruption
+ * @category interruption
  * @since 2.0.0
  */
 export const haltWhen: {
@@ -10353,7 +10375,7 @@ export const withSpan: {
  * //=> [{ value: 1, next: 2 }, { value: 2, next: 3 }]
  * ```
  *
- * @category Do Notation
+ * @category do notation
  * @since 2.0.0
  */
 export const Do: Stream<{}> = succeed({})
@@ -10397,7 +10419,7 @@ export {
    * // [{ x: 2, y: 6 }]
    * ```
    *
-   * @category Do Notation
+   * @category do notation
    * @since 2.0.0
    */
   let_ as let
@@ -10422,7 +10444,7 @@ export {
  * // [{ a: 1, b: 2 }, { a: 2, b: 3 }]
  * ```
  *
- * @category Do Notation
+ * @category do notation
  * @since 2.0.0
  */
 export const bind: {
@@ -10476,7 +10498,7 @@ export const bind: {
  * // [{ value: 1, double: 2 }, { value: 2, double: 4 }]
  * ```
  *
- * @category Do Notation
+ * @category do notation
  * @since 2.0.0
  */
 export const bindEffect: {
@@ -10527,7 +10549,7 @@ export const bindEffect: {
  * // [{ value: 1 }, { value: 2 }, { value: 3 }]
  * ```
  *
- * @category Do Notation
+ * @category do notation
  * @since 2.0.0
  */
 export const bindTo: {
@@ -10711,6 +10733,11 @@ export const runFold: {
 
 /**
  * Runs the stream and folds elements using an effectful reducer.
+ *
+ * **When to use**
+ *
+ * Use when reducing stream elements needs Effects, services, or failures in the
+ * reducer.
  *
  * **Example** (Effectfully folding stream values)
  *
@@ -10913,7 +10940,7 @@ export const runForEachWhile: {
           if (!b) done = true
         }
       }),
-      () => done
+      () => !done
     )
   }))
 
@@ -11097,6 +11124,11 @@ export const mkUint8Array = <E, R>(self: Stream<Uint8Array, E, R>): Effect.Effec
 /**
  * Converts the stream to a `ReadableStream` using the provided services.
  *
+ * **When to use**
+ *
+ * Use when bridging to Web Streams and you already have the `Context` required
+ * to run the stream outside an `Effect`.
+ *
  * **Details**
  *
  * See https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream.
@@ -11210,6 +11242,11 @@ export const toReadableStream: {
 /**
  * Creates an Effect that builds a ReadableStream from the stream.
  *
+ * **When to use**
+ *
+ * Use when bridging to Web Streams from inside an `Effect` so the required
+ * services can be captured from the current context.
+ *
  * **Details**
  *
  * See https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream.
@@ -11257,6 +11294,11 @@ export const toReadableStreamEffect: {
 /**
  * Converts the stream to an `AsyncIterable` using the provided services.
  *
+ * **When to use**
+ *
+ * Use when converting outside an Effect and you already have the `Context`
+ * needed to run the stream.
+ *
  * **Example** (Converting to an AsyncIterable with services)
  *
  * ```ts
@@ -11294,32 +11336,69 @@ export const toAsyncIterableWith: {
   ): AsyncIterable<A> => ({
     [Symbol.asyncIterator]() {
       const runPromise = Effect.runPromiseWith(context)
-      const runPromiseExit = Effect.runPromiseExitWith(context)
+      const runFork = Effect.runForkWith(context)
       const scope = Scope.makeUnsafe()
       let pull: Pull.Pull<Arr.NonEmptyReadonlyArray<A>, E, void, R> | undefined
       let currentIter: Iterator<A> | undefined
+      let currentFiber: Fiber.Fiber<Arr.NonEmptyReadonlyArray<A>, E | Cause.Done<void>> | undefined
+      let closePromise: Promise<IteratorResult<A>> | undefined
+      const close = (exit: Exit.Exit<unknown, unknown>): Promise<IteratorResult<A>> => {
+        if (closePromise) return closePromise
+        const fiber = currentFiber
+        closePromise = runPromise(Effect.as(
+          Effect.andThen(
+            fiber ? Fiber.interrupt(fiber) : Effect.void,
+            Scope.close(scope, exit)
+          ),
+          { done: true, value: undefined }
+        ))
+        return closePromise
+      }
+      const closeAndReportError = async (exit: Exit.Exit<unknown, unknown>): Promise<void> => {
+        try {
+          await close(exit)
+        } catch (error) {
+          await runPromise(Effect.logError("Suppressed error while closing Stream async iterator", error))
+        }
+      }
       return {
         async next(): Promise<IteratorResult<A>> {
+          if (closePromise) return closePromise
           if (currentIter) {
             const next = currentIter.next()
             if (!next.done) return next
             currentIter = undefined
           }
-          pull ??= await runPromise(Channel.toPullScoped(self.channel, scope))
-          const exit = await runPromiseExit(pull)
+          const fiber = runFork(
+            pull ??
+              Effect.flatMap(Channel.toPullScoped(self.channel, scope), (nextPull) => {
+                pull = nextPull
+                return nextPull
+              })
+          )
+          currentFiber = fiber
+          const exit = await runPromise(Fiber.await(fiber))
+          if (currentFiber === fiber) {
+            currentFiber = undefined
+          }
           if (Exit.isSuccess(exit)) {
             currentIter = exit.value[Symbol.iterator]()
             return currentIter.next()
           } else if (Pull.isDoneCause(exit.cause)) {
-            return { done: true, value: undefined }
+            return close(Exit.void)
           }
+          if (closePromise && Cause.hasInterruptsOnly(exit.cause)) {
+            return closePromise
+          }
+          await closeAndReportError(exit)
           throw Cause.squash(exit.cause)
         },
-        return(_) {
-          return runPromise(Effect.as(
-            Scope.close(scope, Exit.void),
-            { done: true, value: undefined }
-          ))
+        return() {
+          return close(Exit.void)
+        },
+        async throw(error) {
+          await closeAndReportError(Exit.die(error))
+          throw error
         }
       }
     }
@@ -11328,6 +11407,11 @@ export const toAsyncIterableWith: {
 
 /**
  * Creates an effect that yields an `AsyncIterable` using the current services.
+ *
+ * **When to use**
+ *
+ * Use when the `AsyncIterable` should be created inside Effect with the current
+ * context supplying the stream's services.
  *
  * **Example** (Creating an AsyncIterable effect)
  *

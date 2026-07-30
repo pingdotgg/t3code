@@ -1,48 +1,80 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as s3 from "@distilled.cloud/aws/s3";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import type * as rolldown from "rolldown";
 import * as Bundle from "../../Bundle/Bundle.ts";
-import { findCwdForBundle } from "../../Bundle/TempRoot.ts";
+import { findCwdForBundle, resolveMainPath } from "../../Bundle/TempRoot.ts";
 import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
-import * as Output from "../../Output.ts";
+import type { Input } from "../../Input.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import type { PlatformProps } from "../../Platform.ts";
 import type { ResourceBinding } from "../../Resource.ts";
-import type { ProcessContext } from "../../Server/Process.ts";
+import {
+  createHostRuntimeContext,
+  type HostRuntimeContext,
+} from "../../Server/Process.ts";
 import { createInternalTags, createTagsList, hasTags } from "../../Tags.ts";
 import { sha256 } from "../../Util/sha256.ts";
 import { zipCode } from "../../Util/zip.ts";
 import { Assets } from "../Assets.ts";
+import { AWSEnvironment } from "../Environment.ts";
 import type { PolicyStatement } from "../IAM/Policy.ts";
 
+/**
+ * Binding contract accepted by EC2-hosted runtimes: environment variables and
+ * IAM policy statements attached by capability bindings.
+ */
 export interface Ec2HostedBinding {
+  /** Environment variables injected into the hosted runtime. */
   env?: Record<string, any>;
+  /** IAM policy statements attached to the instance profile role. */
   policyStatements?: PolicyStatement[];
 }
 
+/**
+ * Shared props for EC2-backed hosted runtimes (an Instance that bundles and
+ * runs an application entrypoint).
+ */
 export interface Ec2HostedProps extends PlatformProps {
+  /** AMI ID to launch the instance from. */
   imageId: string;
+  /** EC2 instance type, e.g. `t3.micro`. */
   instanceType: string;
-  keyName?: string;
+  /** Name of an EC2 key pair for SSH access. */
+  keyName?: Input<string>;
+  /** Existing instance profile to attach instead of a managed one. */
   instanceProfileName?: string;
+  /** Additional user-data script prepended to the runtime bootstrap. */
   userData?: string;
+  /** Subnet to launch the instance into. */
   subnetId?: any;
+  /** Security groups attached to the instance. */
   securityGroupIds?: readonly any[];
+  /** Whether to associate a public IP address. */
   associatePublicIpAddress?: boolean;
+  /** Static private IP address within the subnet. */
   privateIpAddress?: string;
+  /** Availability Zone to launch into. */
   availabilityZone?: string;
+  /** Tags applied to the instance. */
   tags?: Record<string, string>;
+  /** Path to the application entrypoint to bundle and run on the instance. */
   main?: string;
+  /** Named export of the handler within `main`. */
   handler?: string;
+  /** Port the hosted HTTP server listens on. */
   port?: number;
+  /** Environment variables injected into the hosted runtime. */
   env?: Record<string, any>;
+  /** Overrides for the rolldown bundling of `main`. */
   build?: {
+    /** Rolldown input options overrides. */
     input?: Partial<rolldown.InputOptions>;
+    /** Rolldown output options overrides. */
     output?: Partial<rolldown.OutputOptions>;
   };
+  /** Managed policy ARNs attached to the instance role. */
   roleManagedPolicyArns?: string[];
 }
 
@@ -71,75 +103,25 @@ export interface Ec2HostedCleanupState {
 
 /**
  * Deploy-time / plan-time host context for EC2-backed platforms that bundle a
- * long-lived program (`exports.program`) and collect background work via `run`.
+ * long-lived program (`exports.program`) and collect background work via `run`
+ * / HTTP handlers via `serve`. Alias of the shared {@link HostRuntimeContext}.
  */
-export interface Ec2HostRuntimeContext extends ProcessContext {
-  exports: Effect.Effect<{
-    readonly program: Effect.Effect<void, never, any>;
-  }>;
-}
+export type Ec2HostRuntimeContext = HostRuntimeContext;
 
-export const createEc2HostRuntimeContext =
-  (type: string) =>
-  (id: string): Ec2HostRuntimeContext => {
-    const runners: Effect.Effect<void, never, any>[] = [];
-    const env: Record<string, any> = {};
-
-    return {
-      Type: type,
-      id,
-      env,
-      set: (bindingId: string, output: Output.Output) =>
-        Effect.sync(() => {
-          const key = bindingId.replaceAll(/[^a-zA-Z0-9]/g, "_");
-          env[key] = output.pipe(Output.map((value) => JSON.stringify(value)));
-          return key;
-        }),
-      get: <T>(key: string) =>
-        Config.string(key).pipe(
-          Effect.flatMap((value) =>
-            Effect.try({
-              try: () => JSON.parse(value) as T,
-              catch: (error) => error as Error,
-            }),
-          ),
-          Effect.catch((cause) =>
-            Effect.die(
-              new Error(`Failed to get environment variable: ${key}`, {
-                cause,
-              }),
-            ),
-          ),
-        ),
-      run: (effect: Effect.Effect<void, never, any>) =>
-        Effect.sync(() => {
-          runners.push(effect);
-        }),
-      exports: Effect.sync(() => ({
-        program: Effect.all(runners, { concurrency: "unbounded" }),
-      })),
-    } satisfies Ec2HostRuntimeContext;
-  };
+export const createEc2HostRuntimeContext = createHostRuntimeContext;
 
 export const createEc2HostedSupport = ({
-  accountId,
-  region,
   stackName,
   stage,
-  fs,
   virtualEntryPlugin,
-  assets,
   resourceType,
 }: {
-  accountId: string;
-  region: string;
   stackName: string;
   stage: string;
   fs: FileSystem.FileSystem;
   virtualEntryPlugin: (
     content: (importPath: string) => string,
   ) => rolldown.Plugin;
-  assets: typeof Assets.Service | undefined;
   resourceType: string;
 }) => {
   const alchemyEnv = {
@@ -189,10 +171,10 @@ export const createEc2HostedSupport = ({
     }
 
     const handler = props.handler ?? "default";
-    const realMain = yield* fs.realPath(props.main);
+    const realMain = yield* resolveMainPath(props.main);
     const cwd = yield* findCwdForBundle(realMain);
 
-    const buildBundle = Effect.fnUntraced(function* (
+    const buildBundle = Effect.fn(function* (
       entry: string,
       plugins?: rolldown.RolldownPluginOption,
     ) {
@@ -202,14 +184,26 @@ export const createEc2HostedSupport = ({
           input: entry,
           cwd,
           platform: "node",
+          // The hosted process runs under `bun` (installed by the user-data);
+          // keep `bun`/`bun:*` external and resolve the `bun` export condition
+          // so `@effect/platform-bun` picks its Bun implementations.
+          external: [
+            "bun",
+            "bun:*",
+            ...((props.build?.input?.external as string[] | undefined) ?? []),
+          ],
+          resolve: {
+            conditionNames: ["bun", "import", "module", "default"],
+            ...props.build?.input?.resolve,
+          },
           plugins: [props.build?.input?.plugins, plugins],
         },
         {
           ...props.build?.output,
           format: "esm",
           sourcemap: props.build?.output?.sourcemap ?? false,
-          minify: props.build?.output?.minify ?? true,
-          entryFileNames: "index.js",
+          minify: props.build?.output?.minify ?? false,
+          entryFileNames: "index.mjs",
         },
       );
     });
@@ -220,8 +214,10 @@ export const createEc2HostedSupport = ({
           realMain,
           virtualEntryPlugin(
             (importPath) => `
-import { NodeServices } from "@effect/platform-node";
+import { BunServices } from "@effect/platform-bun";
+import { BunHttpServer } from "alchemy/Http";
 import { Stack } from "alchemy/Stack";
+import { reifyBoundConfigProvider } from "alchemy/Runtime";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Credentials from "@distilled.cloud/aws/Credentials";
@@ -234,13 +230,17 @@ import * as Region from "@distilled.cloud/aws/Region";
 import { ${handler} as handler } from ${JSON.stringify(importPath)};
 
 const platform = Layer.mergeAll(
-  NodeServices.layer,
+  BunServices.layer,
   FetchHttpClient.layer,
   Logger.layer([Logger.consolePretty()]),
 );
 
+// Resolve the bundled program (the runners registered via host.run / serve)
+// and run it with a Bun HTTP server bound to PORT, so a returned { fetch }
+// handler is actually served and host.run loops stay alive.
 const program = handler.pipe(
-  Effect.flatMap((instance) => instance.RuntimeContext.exports.program),
+  Effect.flatMap((instance) => instance.RuntimeContext.exports),
+  Effect.flatMap((exports) => exports.program),
   Effect.provide(
     Layer.effect(
       Stack,
@@ -258,11 +258,12 @@ const program = handler.pipe(
     ).pipe(
       Layer.provideMerge(Credentials.fromEnv()),
       Layer.provideMerge(Region.fromEnv()),
+      Layer.provideMerge(BunHttpServer()),
       Layer.provideMerge(platform),
       Layer.provideMerge(
         Layer.succeed(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnv()
+          reifyBoundConfigProvider(ConfigProvider.fromEnv(), process.env)
         )
       ),
     )
@@ -270,18 +271,28 @@ const program = handler.pipe(
   Effect.scoped
 );
 
-await Effect.runPromise(program);
+console.log("Instance bootstrap starting...");
+await Effect.runPromise(program).catch((err) => {
+  console.error("Instance bootstrap failed:", err);
+  process.exit(1);
+});
 `,
           ),
         );
 
-    const mainFile = bundleOutput.files[0];
-    const code =
-      typeof mainFile.content === "string"
-        ? new TextEncoder().encode(mainFile.content)
-        : mainFile.content;
-
-    const archive = yield* zipCode(code);
+    // Zip every emitted file: the entry becomes `index.mjs` (what the systemd
+    // unit runs) and shared chunks keep their `*.js` names so the entry's
+    // relative imports resolve. Dropping a chunk crashes the process at start.
+    const toBytes = (content: string | Uint8Array<ArrayBufferLike>) =>
+      typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const [entryFile, ...chunkFiles] = bundleOutput.files;
+    const archive = yield* zipCode(
+      toBytes(entryFile.content),
+      chunkFiles.map((file) => ({
+        path: file.path,
+        content: toBytes(file.content),
+      })),
+    );
     return { archive, hash: bundleOutput.hash };
   });
 
@@ -297,49 +308,66 @@ await Effect.runPromise(program);
       .map(([key, value]) => `${key}=${quoteEnvValue(value)}`)
       .join("\n");
 
-  const renderHostedUserData = ({
+  const renderHostedUserData = Effect.fn(function* ({
     unitName,
     bundleKey,
     envKey,
+    region,
   }: {
     unitName: string;
     bundleKey: string;
     envKey: string;
-  }) => {
+    region: string;
+  }) {
     const appDir = `/opt/${unitName}`;
+    const bucket = yield* Assets.BucketName;
+    // User-data runs once via cloud-init's `scripts-user` (once-per-instance),
+    // and is skipped on any subsequent boot — so it must NOT carry the work
+    // that can fail transiently (bun install over the network, S3 sync). It
+    // only writes the setup script + unit and enables the service. The systemd
+    // service (Restart=always) runs the setup on every start, so a flaky bun
+    // install / S3 read self-heals and the service survives reboots.
     return `#!/bin/bash
-set -euo pipefail
-
-PKG_INSTALL=""
-if command -v dnf >/dev/null 2>&1; then
-  PKG_INSTALL="dnf install -y"
-elif command -v yum >/dev/null 2>&1; then
-  PKG_INSTALL="yum install -y"
-fi
-
-if [ -n "$PKG_INSTALL" ]; then
-  $PKG_INSTALL unzip curl awscli
-fi
+set -uo pipefail
 
 mkdir -p "${appDir}"
 
-export HOME=/root
-if [ ! -x /root/.bun/bin/bun ]; then
-  curl -fsSL https://bun.sh/install | bash
-fi
-
-cat >/usr/local/bin/${unitName}-sync.sh <<'EOF'
+cat >/usr/local/bin/${unitName}-setup.sh <<'SETUP_EOF'
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
+export HOME=/root
+
+# unzip (needed below) — install if missing.
+command -v unzip >/dev/null 2>&1 || {
+  (command -v dnf >/dev/null 2>&1 && dnf install -y unzip) \
+    || (command -v yum >/dev/null 2>&1 && yum install -y unzip) || true
+}
+
+# AWS CLI — preinstalled on Amazon Linux 2023; install v2 otherwise.
+command -v aws >/dev/null 2>&1 || {
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip \
+    && (cd /tmp && unzip -q -o awscliv2.zip && ./aws/install) || true
+}
+
+# bun — retry the network install a few times.
+if [ ! -x /root/.bun/bin/bun ]; then
+  for attempt in 1 2 3 4 5; do
+    curl -fsSL https://bun.sh/install | bash && break
+    sleep 5
+  done
+fi
+
+# Sync the bundle + env from S3 (must succeed for the service to start).
+set -e
 mkdir -p "${appDir}"
-aws s3 cp "s3://${assets?.bucketName}/${bundleKey}" "${appDir}/bundle.zip" --region "${region}"
-aws s3 cp "s3://${assets?.bucketName}/${envKey}" "${appDir}/env" --region "${region}"
+aws s3 cp "s3://${bucket}/${bundleKey}" "${appDir}/bundle.zip" --region "${region}"
+aws s3 cp "s3://${bucket}/${envKey}" "${appDir}/env" --region "${region}"
 rm -f "${appDir}/index.mjs"
 unzip -o "${appDir}/bundle.zip" -d "${appDir}"
-EOF
-chmod +x /usr/local/bin/${unitName}-sync.sh
+SETUP_EOF
+chmod +x /usr/local/bin/${unitName}-setup.sh
 
-cat >/etc/systemd/system/${unitName}.service <<'EOF'
+cat >/etc/systemd/system/${unitName}.service <<'UNIT_EOF'
 [Unit]
 Description=Alchemy EC2 instance runtime ${unitName}
 After=network-online.target
@@ -348,21 +376,20 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${appDir}
-ExecStartPre=/usr/local/bin/${unitName}-sync.sh
-EnvironmentFile=${appDir}/env
+ExecStartPre=/usr/local/bin/${unitName}-setup.sh
+EnvironmentFile=-${appDir}/env
 ExecStart=/root/.bun/bin/bun ${appDir}/index.mjs
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOF
+UNIT_EOF
 
-/usr/local/bin/${unitName}-sync.sh
 systemctl daemon-reload
 systemctl enable --now ${unitName}.service
 `;
-  };
+  });
 
   const mergeUserData = (hosted: string, userData?: string) => {
     if (!userData) {
@@ -414,6 +441,7 @@ systemctl enable --now ${unitName}.service
     roleName: string;
     managedPolicyArns: string[];
   }) {
+    const { accountId } = yield* AWSEnvironment.current;
     const tags = yield* createInternalTags(id);
     const role = yield* iam
       .createRole({
@@ -533,7 +561,7 @@ systemctl enable --now ${unitName}.service
       Sid: undefined,
       Effect: "Allow",
       Action: ["s3:GetObject"],
-      Resource: [`arn:aws:s3:::${assets?.bucketName}/${assetPrefix}/*`],
+      Resource: [`arn:aws:s3:::${yield* Assets.BucketName}/${assetPrefix}/*`],
     });
 
     yield* iam.putRolePolicy({
@@ -559,23 +587,16 @@ systemctl enable --now ${unitName}.service
     archive: Uint8Array<ArrayBufferLike>;
     env: Record<string, any>;
   }) {
-    if (!assets) {
-      return yield* Effect.fail(
-        new Error(
-          `${resourceType} host mode requires the AWS assets bucket. Run bootstrap first.`,
-        ),
-      );
-    }
-
+    const assets = yield* Assets;
     const contentHash = yield* sha256(archive);
     const uploadedAssetKey = yield* assets.uploadAsset(contentHash, archive);
     yield* s3.copyObject({
-      Bucket: assets.bucketName,
+      Bucket: yield* assets.bucketName,
       Key: bundleKey,
-      CopySource: `${assets.bucketName}/${uploadedAssetKey}`,
+      CopySource: `${yield* assets.bucketName}/${uploadedAssetKey}`,
     });
     yield* s3.putObject({
-      Bucket: assets.bucketName,
+      Bucket: yield* assets.bucketName,
       Key: envKey,
       Body: renderEnvFile(env),
       ContentType: "text/plain; charset=utf-8",
@@ -619,14 +640,8 @@ systemctl enable --now ${unitName}.service
         ),
       );
     }
-    if (!assets) {
-      return yield* Effect.fail(
-        new Error(
-          `${resourceType} host mode requires the AWS assets bucket. Run bootstrap first.`,
-        ),
-      );
-    }
 
+    const { region } = yield* AWSEnvironment.current;
     const runtimeUnitName =
       output?.runtimeUnitName ?? (yield* createRuntimeUnitName(id));
     const assetPrefix = output?.assetPrefix ?? `ec2/${runtimeUnitName}`;
@@ -697,10 +712,11 @@ systemctl enable --now ${unitName}.service
       env,
     });
 
-    const hostedUserData = renderHostedUserData({
+    const hostedUserData = yield* renderHostedUserData({
       unitName: runtimeUnitName,
       bundleKey,
       envKey,
+      region,
     });
 
     return {
@@ -765,14 +781,14 @@ systemctl enable --now ${unitName}.service
         .pipe(Effect.catchTag("NoSuchEntityException", () => Effect.void));
     }
 
-    if (assets && output.assetPrefix) {
+    if (output.assetPrefix) {
       for (const key of [
         `${output.assetPrefix}/bundle.zip`,
         `${output.assetPrefix}/env`,
       ]) {
         yield* s3
           .deleteObject({
-            Bucket: assets.bucketName,
+            Bucket: yield* Assets.BucketName,
             Key: key,
           })
           .pipe(Effect.catchTag("NotFound", () => Effect.void));
@@ -846,7 +862,7 @@ systemctl enable --now ${unitName}.service
     return {
       ImageId: news.imageId,
       InstanceType: news.instanceType,
-      KeyName: news.keyName,
+      KeyName: news.keyName as string | undefined,
       IamInstanceProfile: runtime.instanceProfileName
         ? {
             Name: runtime.instanceProfileName,

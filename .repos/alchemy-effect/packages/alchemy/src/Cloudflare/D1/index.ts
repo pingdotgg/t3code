@@ -1,3 +1,4 @@
-export * from "./D1Connection.ts";
-export * from "./D1Database.ts";
-export * from "./D1DatabaseBinding.ts";
+export * from "./Database.ts";
+export * from "./QueryDatabase.ts";
+export * from "./QueryDatabaseBinding.ts";
+export * from "./QueryDatabaseLocal.ts";

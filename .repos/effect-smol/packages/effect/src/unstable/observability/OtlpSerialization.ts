@@ -1,31 +1,9 @@
 /**
- * OTLP/HTTP serialization service shared by logs, metrics, and traces.
+ * Serializes OTLP payloads into HTTP request bodies.
  *
- * This module decides how in-memory OTLP payloads become HTTP request bodies.
- * The signal exporters build trace, metric, and log data structures, then call
- * `OtlpSerialization` immediately before posting them to a collector.
- *
- * **Mental model**
- *
- * `OtlpSerialization` has one encoder per OTLP signal. `layerJson` writes the
- * structures directly with `HttpBody.jsonUnsafe`, which is useful for debugging
- * or endpoints that explicitly accept OTLP/HTTP JSON. `layerProtobuf` encodes
- * the same structures with the internal OTLP protobuf encoder and sets the
- * `application/x-protobuf` content type expected by many production collectors.
- *
- * **Common tasks**
- *
- * - Provide `layerProtobuf` for collectors that expect binary OTLP payloads.
- * - Provide `layerJson` when inspecting payloads or using an OTLP/HTTP JSON
- *   endpoint.
- * - Provide a custom `OtlpSerialization` service only when an exporter needs a
- *   non-standard body format.
- *
- * **Gotchas**
- *
- * This module only controls the wire format for traces, metrics, and logs.
- * Endpoint paths, authentication headers, batching, retries, and shutdown
- * flushing are handled by the OTLP exporter layers that consume the service.
+ * Signal exporters build trace, metric, and log data structures in memory. This
+ * module provides the service that turns those structures into JSON or protobuf
+ * HTTP bodies before they are posted to an OTLP collector.
  *
  * @since 4.0.0
  */

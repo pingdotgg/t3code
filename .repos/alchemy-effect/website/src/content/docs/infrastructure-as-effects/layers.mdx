@@ -1,0 +1,239 @@
+---
+title: Layers
+description: A Layer defines a service contract with swappable implementations. In Alchemy, a Layer can encapsulate Resources and Bindings, so shared services carry their own infrastructure and permissions.
+---
+
+As your application grows, you'll need to start sharing components of
+your code using Layers. A **Layer** lets you define a service contract
+and swap different implementations of that service in and out across
+your code — a different storage backend or a different cloud.
+
+In Alchemy, [Resources](/infrastructure-as-code/resource) and
+[Bindings](/infrastructure-as-effects/binding) can be encapsulated inside
+a Layer, meaning you can create shareable services that carry their own
+infrastructure and permissions. You can share these within your
+codebase, across packages, or publish them to npm for others to consume.
+
+Let's look at how they work.
+
+## The contract
+
+A service is a `Context.Service` — a typed tag that names a capability:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+
+export class JobService extends Context.Service<
+  JobService,
+  {
+    getJob(id: string): Effect.Effect<Job, JobError, Alchemy.RuntimeContext>;
+  }
+>()("JobService") {}
+```
+
+Consumers write `yield* JobService` and get this typed object. The
+signature mentions `Alchemy.RuntimeContext` (covered below) and nothing
+cloud-specific.
+
+## The implementation
+
+`Layer.effect(JobService, …)` builds the service — "to construct
+`JobService`, run this Effect":
+
+```typescript
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export const JobServiceKV = Layer.effect(
+  JobService,
+  Effect.gen(function* () {
+    return {
+      getJob: Effect.fn(function* (id: string) {
+        // TODO: read the job from storage
+      }),
+    };
+  }),
+);
+```
+
+Declare the storage — a real KV namespace, owned by the Layer:
+
+```diff lang="typescript"
++import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+
+ export const JobServiceKV = Layer.effect(
+   JobService,
+   Effect.gen(function* () {
++    const MyKV = yield* Cloudflare.KV.Namespace("MyKV");
++
+     return {
+       // ...
+     };
+   }),
+ );
+```
+
+Bind it — `kv` is a typed client for reading and writing that namespace
+at runtime:
+
+```diff lang="typescript"
+   Effect.gen(function* () {
+     const MyKV = yield* Cloudflare.KV.Namespace("MyKV");
++    const kv = yield* Cloudflare.KV.ReadWriteNamespace(MyKV);
+
+     return {
+       // ...
+     };
+   }),
+```
+
+Implement the contract against the client:
+
+```diff lang="typescript"
+     return {
+       getJob: Effect.fn(function* (id: string) {
+-        // TODO: read the job from storage
++        return yield* kv.get<Job>(id, "json");
+       }),
+     };
+```
+
+## The consumer
+
+A Worker yields the service and provides the Layer:
+
+```typescript
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const jobs = yield* JobService;
+
+    return {
+      fetch: Effect.gen(function* () {
+        return yield* jobs.getJob("job-1");
+      }),
+    };
+  }).pipe(
+    Effect.provide(
+      JobServiceKV.pipe(Layer.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
+    ),
+  ),
+);
+```
+
+Providing the Layer is what brings the infrastructure in. On the next
+deploy, the `MyKV` namespace is created in the
+[Stack](/infrastructure-as-code/stack) and bound to this Worker, so
+`kv.get` works inside its handlers.
+
+The inner `Layer.provide` satisfies `JobServiceKV`'s dependency on the KV
+runtime binding privately. The handler sees only `JobService`:
+
+```typescript
+JobServiceKV.pipe(Layer.provide(Cloudflare.KV.ReadWriteNamespaceBinding))
+```
+
+## Reuse across Workers
+
+A Layer is a value. Provide `JobServiceKV` to a second Worker and both
+share the same namespace, because `KV.Namespace("MyKV")` has a stable
+logical id:
+
+```typescript
+// src/Admin.ts
+export default Cloudflare.Worker(
+  "Admin",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const jobs = yield* JobService;
+    // ...
+  }).pipe(
+    Effect.provide(
+      JobServiceKV.pipe(Layer.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
+    ),
+  ),
+);
+```
+
+The Stack ends up with one `MyKV` namespace, bound to both `Api` and
+`Admin`.
+
+## Swapping implementations
+
+Changing the implementation is a one-line change:
+
+```diff lang="typescript"
+-      JobServiceKV.pipe(Layer.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
++      JobServiceDynamo.pipe(Layer.provide(AWS.DynamoDB.GetItemHttp)),
+```
+
+This swap crossed clouds: the Worker still runs on Cloudflare, but its
+jobs now come from a DynamoDB table on AWS, with the credentials and
+permissions wired up automatically.
+
+Alchemy's own Bindings follow the same tag/Layer split
+([a contract and a Layer](/infrastructure-as-effects/binding#a-contract-and-a-layer)).
+
+## The types hold the boundary
+
+A Layer that needs an environment the host can't supply is a compile
+error:
+
+```typescript
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  handler.pipe(Effect.provide(JobServiceDynamo)),
+  // ✗ Type error: the Layer requires AWS `Credentials` and `Region`,
+  //   which a Cloudflare Worker can't provide
+);
+```
+
+And `Alchemy.RuntimeContext` marks methods that only work inside a
+deployed handler ([Phases](/infrastructure-as-effects/phases)):
+
+```typescript
+Effect.gen(function* () {
+  const jobs = yield* JobService;
+
+  yield* jobs.getJob("job-1");
+  // ✗ Type error: `RuntimeContext` only exists inside handlers
+
+  return {
+    fetch: Effect.gen(function* () {
+      return yield* jobs.getJob("job-1"); // ✓
+    }),
+  };
+});
+```
+
+## Composing Layers
+
+A typical app provides one Layer per capability:
+
+```typescript
+.pipe(
+  Effect.provide(Layer.mergeAll(
+    JobServiceKV,         // provides JobService
+    BetterAuthD1,         // provides BetterAuth
+    RateLimiterDurable,   // provides RateLimiter
+  )),
+)
+```
+
+Each Layer brings its own resources into the Stack and its own typed
+service into scope. Use `Layer.mergeAll` for independent services and
+`Layer.provide` to satisfy one Layer's dependencies privately from
+another.
+
+## Where next
+
+- [Circular Bindings](/infrastructure-as-effects/circular-bindings) —
+  the tag/Layer split applied to two services that reference each other.
+- [Bindings](/infrastructure-as-effects/binding) — the deploy-time
+  mechanics Layers are built on.

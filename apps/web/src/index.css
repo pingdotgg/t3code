@@ -77,6 +77,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 :root {
   --app-scrollbar-width: 6px;
+  --app-scrollbar-thumb: rgb(217 217 217);
+  --app-scrollbar-thumb-hover: rgb(191 191 191);
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
@@ -91,6 +93,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 .dark {
+  --app-scrollbar-thumb: rgb(255 255 255 / 8%);
+  --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
   --glass-blur: 16px;
   --glass-saturation: 1.08;
 }
@@ -327,12 +331,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         rgb(0 0 0 / 96%) 82%,
         black 100%
       ),
-      linear-gradient(black, black);
-    -webkit-mask-position: top, bottom;
+      linear-gradient(black, black), linear-gradient(black, black);
+    -webkit-mask-position: top, bottom, right;
     -webkit-mask-repeat: no-repeat;
     -webkit-mask-size:
       100% var(--topbar-scroll-fade-height),
-      100% calc(100% - var(--topbar-scroll-fade-height));
+      100% calc(100% - var(--topbar-scroll-fade-height)),
+      var(--app-scrollbar-width) 100%;
     mask-image:
       linear-gradient(
         to bottom,
@@ -344,12 +349,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         rgb(0 0 0 / 96%) 82%,
         black 100%
       ),
-      linear-gradient(black, black);
-    mask-position: top, bottom;
+      linear-gradient(black, black), linear-gradient(black, black);
+    mask-position: top, bottom, right;
     mask-repeat: no-repeat;
     mask-size:
       100% var(--topbar-scroll-fade-height),
-      100% calc(100% - var(--topbar-scroll-fade-height));
+      100% calc(100% - var(--topbar-scroll-fade-height)),
+      var(--app-scrollbar-width) 100%;
   }
 
   .workspace-titlebar-controls {
@@ -1035,20 +1041,54 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--app-scrollbar-thumb-hover);
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+.model-picker-list::-webkit-scrollbar-track {
+  margin-block: 0.5rem;
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
+.model-picker-list-scroll-fade-top,
+.model-picker-list-scroll-fade-bottom {
+  -webkit-mask-image: var(--model-picker-list-scroll-mask), linear-gradient(black, black);
+  -webkit-mask-position: left, right;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size:
+    calc(100% - var(--app-scrollbar-width)) 100%,
+    var(--app-scrollbar-width) 100%;
+  mask-image: var(--model-picker-list-scroll-mask), linear-gradient(black, black);
+  mask-position: left, right;
+  mask-repeat: no-repeat;
+  mask-size:
+    calc(100% - var(--app-scrollbar-width)) 100%,
+    var(--app-scrollbar-width) 100%;
+}
+
+.model-picker-list-scroll-fade-top {
+  --model-picker-list-scroll-mask: linear-gradient(to bottom, transparent, black var(--fade-size));
+}
+
+.model-picker-list-scroll-fade-bottom {
+  --model-picker-list-scroll-mask: linear-gradient(
+    to bottom,
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
+}
+
+.model-picker-list-scroll-fade-top.model-picker-list-scroll-fade-bottom {
+  --model-picker-list-scroll-mask: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--fade-size),
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
 }
 
 .turn-chip-strip {
@@ -1432,6 +1472,30 @@ label:has(> select#reasoning-effort) select {
   margin-top: 0.125rem;
 }
 
+/* Prompt-stash save acknowledgement: the new count fades up from just below
+   its resting position, once, then stops. One-shot and event-driven (React
+   remounts the element by key on each stash) — no continuous animation. */
+@keyframes prompt-stash-count-enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.prompt-stash-count-enter {
+  animation: prompt-stash-count-enter 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-stash-count-enter {
+    animation: none;
+  }
+}
+
 @keyframes provider-update-pill-countdown {
   from {
     transform: scaleX(1);
@@ -1543,28 +1607,6 @@ label:has(> select#reasoning-effort) select {
   background-clip: text;
   -webkit-background-clip: text;
   animation: ultrathink-rainbow 10s linear infinite;
-}
-
-/* Thin scrollbar for model picker */
-.model-picker-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-.model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 2px;
-}
-
-.model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.dark .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.dark .model-picker-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
 }
 
 /* Composer chips are non-editable decorators, so the browser skips them when

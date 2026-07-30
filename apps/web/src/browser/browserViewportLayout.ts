@@ -40,6 +40,33 @@ export const browserViewportSettingKey = (setting: PreviewViewportSetting): stri
 const normalizeZoomFactor = (zoomFactor: number): number =>
   Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 
+export function resolveFittedBrowserViewport(
+  setting: PreviewViewportSetting,
+  sourceContent: {
+    readonly width: number;
+    readonly height: number;
+    readonly scale: number;
+  } | null,
+  zoomFactor = 1,
+): Exclude<PreviewViewportSetting, { readonly _tag: "fill" }> {
+  if (setting._tag !== "fill") return setting;
+  const normalizedZoomFactor = normalizeZoomFactor(zoomFactor);
+  if (sourceContent) {
+    return {
+      _tag: "freeform",
+      width: Math.max(
+        1,
+        Math.round(sourceContent.width / sourceContent.scale / normalizedZoomFactor),
+      ),
+      height: Math.max(
+        1,
+        Math.round(sourceContent.height / sourceContent.scale / normalizedZoomFactor),
+      ),
+    };
+  }
+  return { _tag: "freeform", width: 1280, height: 800 };
+}
+
 export function resolveBrowserDeviceViewportArea(container: {
   readonly width: number;
   readonly height: number;

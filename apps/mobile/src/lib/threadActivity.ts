@@ -36,8 +36,9 @@ export interface ThreadFeedActivity {
   readonly turnId: TurnId | null;
   readonly summary: string;
   readonly detail: string | null;
-  readonly fullDetail: string | null;
-  readonly copyText: string;
+  readonly canExpand: boolean;
+  readonly getFullDetail: () => string | null;
+  readonly getCopyText: () => string;
   readonly icon:
     | "agent"
     | "alert"
@@ -552,6 +553,27 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
   }
 
   return blocks.length > 0 ? blocks.join("\n\n") : null;
+}
+
+function workEntryHasExpandedBody(entry: WorkLogEntry): boolean {
+  return (
+    (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) ||
+    Boolean((entry.rawCommand ?? entry.command)?.trim()) ||
+    Boolean(entry.detail?.trim()) ||
+    (entry.changedFiles?.some((path) => path.trim().length > 0) ?? false)
+  );
+}
+
+function memoizeValue<T>(build: () => T): () => T {
+  let value: T;
+  let initialized = false;
+  return () => {
+    if (!initialized) {
+      value = build();
+      initialized = true;
+    }
+    return value;
+  };
 }
 
 function workEntryPreview(
@@ -1353,7 +1375,14 @@ export function buildThreadFeed(
         .map<RawThreadFeedEntry>((entry) => {
           const summary = workEntryHeading(entry);
           const detail = workEntryPreview(entry);
-          const fullDetail = buildWorkEntryExpandedBody(entry);
+          const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
+          const getCopyText = memoizeValue(() =>
+            [summary, detail, getFullDetail()]
+              .filter((value, index, values): value is string => {
+                return Boolean(value) && values.indexOf(value) === index;
+              })
+              .join("\n"),
+          );
           return {
             type: "activity",
             id: entry.id,
@@ -1365,13 +1394,10 @@ export function buildThreadFeed(
               turnId: entry.turnId,
               summary,
               detail,
-              fullDetail,
+              canExpand: workEntryHasExpandedBody(entry),
+              getFullDetail,
+              getCopyText,
               icon: workEntryIcon(entry),
-              copyText: [summary, detail, fullDetail]
-                .filter((value, index, values): value is string => {
-                  return Boolean(value) && values.indexOf(value) === index;
-                })
-                .join("\n"),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
             },

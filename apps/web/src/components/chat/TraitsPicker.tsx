@@ -16,8 +16,8 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon, ZapIcon } from "lucide-react";
-import { Button, buttonVariants } from "../ui/button";
+import { ZapIcon } from "lucide-react";
+import { buttonVariants } from "../ui/button";
 import {
   Menu,
   MenuGroup,
@@ -31,6 +31,7 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { ComposerControl, ComposerControlChevron, ComposerControlIcon } from "./ComposerControl";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -387,6 +388,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
  * chevron) would leave the trigger unreadable.
  */
 export function buildTraitsTriggerDisplay(input: {
+  provider: ProviderDriverKind;
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
@@ -398,6 +400,18 @@ export function buildTraitsTriggerDisplay(input: {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       hasFastMode = true;
       continue;
+    }
+    if (
+      input.provider === "codex" &&
+      descriptor.id === "serviceTier" &&
+      descriptor.type === "select" &&
+      input.descriptors.some(({ id }) => id === "reasoningEffort")
+    ) {
+      const currentValue = getProviderOptionCurrentValue(descriptor);
+      const currentOption = descriptor.options.find((option) => option.id === currentValue);
+      if (currentOption?.id === "default" && currentOption.isDefault === true) {
+        continue;
+      }
     }
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
@@ -456,6 +470,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   }
 
   const { label: triggerLabel, showFastModeIcon } = buildTraitsTriggerDisplay({
+    provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
@@ -463,7 +478,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   });
   const fastModeIcon = showFastModeIcon ? (
     <>
-      <ZapIcon aria-hidden="true" className="size-3 shrink-0 text-foreground/80 opacity-100" />
+      <ComposerControlIcon icon={ZapIcon} className="text-foreground/80 opacity-100" />
       <span className="sr-only">Fast mode on</span>
     </>
   ) : null;
@@ -479,13 +494,12 @@ export const TraitsPicker = memo(function TraitsPicker({
     >
       <MenuTrigger
         render={
-          <Button
-            size="sm"
+          <ComposerControl
             variant={triggerVariant ?? "ghost"}
             className={cn(
               isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"
-                : "shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3",
+                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                : "shrink-0 whitespace-nowrap",
               triggerClassName,
             )}
           />
@@ -495,13 +509,13 @@ export const TraitsPicker = memo(function TraitsPicker({
           <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
             {fastModeIcon}
             <span className="min-w-0 truncate">{triggerLabel}</span>
-            <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+            <ComposerControlChevron />
           </span>
         ) : (
           <>
             {fastModeIcon}
             <span>{triggerLabel}</span>
-            <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+            <ComposerControlChevron />
           </>
         )}
       </MenuTrigger>
