@@ -2,7 +2,7 @@ import { useAuth } from "@clerk/expo";
 import { AuthView, UserProfileView } from "@clerk/expo/native";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
@@ -21,13 +21,31 @@ export function SettingsAuthRouteScreen() {
 
 function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const navigation = useNavigation();
+
+  // Clerk's UserProfileView crashes on Android if it's abruptly replaced by AuthView
+  // while its internal sign-out dialog is closing. To prevent this, once this screen
+  // renders UserProfileView, it never switches back to AuthView. Instead, we detect
+  // the sign-out and pop the screen.
+  const hasBeenSignedIn = useRef(isSignedIn);
+  if (isSignedIn) {
+    hasBeenSignedIn.current = true;
+  }
+
+  useEffect(() => {
+    if (hasBeenSignedIn.current && !isSignedIn) {
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+      }
+    }
+  }, [isSignedIn, navigation]);
 
   return (
     <>
       <NativeStackScreenOptions options={{ title: isSignedIn ? "Account" : "Sign in" }} />
       <View collapsable={false} className="flex-1 overflow-hidden bg-sheet">
         {isLoaded ? (
-          isSignedIn ? (
+          hasBeenSignedIn.current ? (
             <UserProfileView isDismissible={false} />
           ) : (
             <AuthView isDismissible={false} />
