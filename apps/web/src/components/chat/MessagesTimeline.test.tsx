@@ -161,6 +161,8 @@ beforeAll(async () => {
     documentElement: {
       classList,
       offsetHeight: 0,
+      dataset: {},
+      style: { setProperty: () => {}, backgroundColor: "" },
     },
   });
 

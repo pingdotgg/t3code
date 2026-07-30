@@ -17,13 +17,21 @@
         const DARK_BACKGROUND = "#161616";
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
-          const theme =
-            storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
-              ? storedTheme
-              : "system";
+          const storedTheme = window.localStorage.getItem("forma:theme");
+          let mode = "system";
+          if (storedTheme) {
+            try {
+              const parsed = JSON.parse(storedTheme);
+              if (parsed && typeof parsed.mode === "string") {
+                mode = parsed.mode;
+              }
+            } catch {
+              // Fall back to the system preference below.
+            }
+          }
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          const isDark = theme === "dark" || (theme === "system" && prefersDark);
+          const isDark =
+            mode === "dark" || mode === "highContrast" || (mode !== "light" && prefersDark);
           document.documentElement.classList.toggle("dark", isDark);
           const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
           document.documentElement.style.backgroundColor = chromeColor;
@@ -35,6 +43,7 @@
         }
       })();
     </script>
+    <script type="module" src="/src/themeBootstrap.ts"></script>
     <style>
       html,
       body,

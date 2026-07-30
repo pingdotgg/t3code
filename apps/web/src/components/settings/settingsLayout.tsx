@@ -88,6 +88,47 @@ export function SettingsRow({
   );
 }
 
+export function SettingsSubRows({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-4 -mx-3 sm:-mx-4" data-settings-subrows>
+      {children}
+    </div>
+  );
+}
+
+export function SettingsSubRow({
+  title,
+  description,
+  status,
+  control,
+}: {
+  title: ReactNode;
+  description: ReactNode;
+  status?: ReactNode;
+  control?: ReactNode;
+}) {
+  return (
+    <div className="border-t border-border/60 px-3 py-4 sm:px-4" data-settings-subrow>
+      <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-h-5 items-center gap-1.5">
+            <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
+          </div>
+          <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
+            {description}
+          </p>
+          {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
+        </div>
+        {control ? (
+          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {control}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <Tooltip>

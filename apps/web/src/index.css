@@ -55,7 +55,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobil
   }
 }
 
-html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
+html[data-mobile-composer-route-transition="true"]::view-transition-group(
+    t3-mobile-draft-headline
+  ) {
   animation-duration: 130ms;
 }
 
@@ -1619,4 +1621,46 @@ label:has(> select#reasoning-effort) select {
   background-color: Highlight;
   opacity: 0.3;
   pointer-events: none;
+}
+
+/* ============================================================================
+   Forma theme & appearance system (ported from the fork)
+
+   theme.ts applies its generated palette inline on <html> (CSS custom
+   properties + data-theme attributes); interfaceAppearance.ts sets the
+   --app-ui-* / --app-code-* sizing tokens below. These are the static
+   defaults and the utility classes that consume them.
+   ========================================================================= */
+
+:root {
+  --app-ui-root-font-size: 16px;
+  --app-ui-text-2xs: 10.5px;
+  --app-ui-text-xs: 11.5px;
+  --app-ui-text-sm: 13.5px;
+  --app-code-font-size: 12px;
+  --app-code-font-size-compact: 11px;
+}
+
+html {
+  font-size: var(--app-ui-root-font-size);
+}
+
+.text-ui-2xs {
+  font-size: var(--app-ui-text-2xs);
+}
+
+.text-ui-xs {
+  font-size: var(--app-ui-text-xs);
+}
+
+.text-ui-sm {
+  font-size: var(--app-ui-text-sm);
+}
+
+.text-code-body {
+  font-size: var(--app-code-font-size);
+}
+
+.text-code-compact {
+  font-size: var(--app-code-font-size-compact);
 }
