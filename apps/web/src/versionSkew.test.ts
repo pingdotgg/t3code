@@ -5,8 +5,11 @@ import { APP_VERSION } from "./branding";
 import {
   appendVersionMismatchHint,
   buildVersionMismatchDismissalKey,
+  DESKTOP_UPDATE_TRACK_DESCRIPTION,
   dismissVersionMismatch,
+  HOSTED_UPDATE_TRACK_DESCRIPTION,
   isVersionMismatchDismissed,
+  resolveDesktopManagedUpdateGuidance,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -105,6 +108,47 @@ describe("versionSkew", () => {
     );
     expect(serverUpdateGuidance(null, "Local server")).toBe(
       "Relaunch the Local server with the copied command to sync them.",
+    );
+  });
+
+  it("explains hosted nightly vs desktop-managed drift", () => {
+    expect(resolveDesktopManagedUpdateGuidance("Desktop server", "nightly")).toEqual({
+      guidance:
+        "This web app is on Nightly, which corresponds to Desktop Nightly. Choose corresponding tracks on web and desktop, then update the desktop app if versions still differ.",
+      actionHint:
+        "Nightly corresponds to Desktop Nightly. Choose corresponding tracks, then update the desktop app if versions still differ.",
+    });
+    expect(serverUpdateGuidance("desktop-managed", "Desktop server", "nightly")).toBe(
+      "This web app is on Nightly, which corresponds to Desktop Nightly. Choose corresponding tracks on web and desktop, then update the desktop app if versions still differ.",
+    );
+  });
+
+  it("explains hosted latest corresponds to desktop stable for desktop-managed drift", () => {
+    expect(resolveDesktopManagedUpdateGuidance("Desktop server", "latest")).toEqual({
+      guidance:
+        "This web app is on Latest, which corresponds to Desktop Stable. Choose corresponding tracks on web and desktop, then update the desktop app if versions still differ.",
+      actionHint:
+        "Latest corresponds to Desktop Stable. Choose corresponding tracks, then update the desktop app if versions still differ.",
+    });
+    expect(serverUpdateGuidance("desktop-managed", "Desktop server", "latest")).toBe(
+      "This web app is on Latest, which corresponds to Desktop Stable. Choose corresponding tracks on web and desktop, then update the desktop app if versions still differ.",
+    );
+  });
+
+  it("keeps generic desktop-managed guidance without a hosted channel", () => {
+    expect(resolveDesktopManagedUpdateGuidance("Desktop server", null)).toEqual({
+      guidance:
+        "The Desktop server is run by the T3 Code desktop app on its machine — update the desktop app there to sync them.",
+      actionHint: "Update the desktop app on that machine to update this server.",
+    });
+  });
+
+  it("documents update-track mapping for desktop and hosted about rows", () => {
+    expect(DESKTOP_UPDATE_TRACK_DESCRIPTION).toBe(
+      "Stable corresponds to hosted Latest. Nightly corresponds to hosted Nightly.",
+    );
+    expect(HOSTED_UPDATE_TRACK_DESCRIPTION).toBe(
+      "Latest corresponds to Desktop Stable. Nightly corresponds to Desktop Nightly.",
     );
   });
 });

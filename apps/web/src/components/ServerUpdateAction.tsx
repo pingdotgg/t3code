@@ -5,10 +5,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { HOSTED_APP_CHANNEL } from "~/branding";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { manualServerUpdateCommand } from "~/versionSkew";
+import { manualServerUpdateCommand, resolveDesktopManagedUpdateGuidance } from "~/versionSkew";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/spinner";
 import { toastManager } from "./ui/toast";
@@ -174,7 +175,7 @@ export function ServerUpdateAction({
   if (selfUpdate === "desktop-managed") {
     return (
       <span className="text-muted-foreground text-xs">
-        Update the desktop app on that machine to update this server.
+        {resolveDesktopManagedUpdateGuidance(serverLabel, HOSTED_APP_CHANNEL).actionHint}
       </span>
     );
   }
