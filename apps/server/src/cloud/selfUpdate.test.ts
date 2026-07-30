@@ -26,6 +26,33 @@ import * as SelfUpdate from "./selfUpdate.ts";
 
 const NODE_PATH = "/usr/local/bin/node";
 
+const eventuallyFileString = Effect.fn("test.eventuallyFileString")(function* (
+  filePath: string,
+  expected: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  for (let iteration = 0; iteration < 1_000; iteration += 1) {
+    const contents = yield* fs.readFileString(filePath);
+    if (contents === expected) {
+      return;
+    }
+    // The rollback performs real filesystem I/O on a detached fiber, which
+    // advancing TestClock does not await.
+    yield* Effect.yieldNow;
+  }
+  return yield* Effect.die(new Error(`Expected file contents were not observed at ${filePath}.`));
+});
+
+const eventuallyTrue = Effect.fn("test.eventuallyTrue")(function* (predicate: () => boolean) {
+  for (let iteration = 0; iteration < 1_000; iteration += 1) {
+    if (predicate()) {
+      return;
+    }
+    yield* Effect.yieldNow;
+  }
+  return yield* Effect.die(new Error("Expected condition was not observed."));
+});
+
 interface RecordedCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -457,8 +484,12 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
   it.effect("installs, preflights, and respawns a foreground server", () =>
     Effect.gen(function* () {
       const context = yield* makeContext();
-      const result = yield* context.service.update({ targetVersion: "0.0.29" });
+      const progress: Array<string> = [];
+      const result = yield* context.service.update({ targetVersion: "0.0.29" }, (stage) =>
+        Effect.sync(() => progress.push(stage)),
+      );
       assert.deepEqual(result, { targetVersion: "0.0.29", method: "respawn" });
+      assert.deepEqual(progress, ["downloading", "installing"]);
       assert.lengthOf(context.spawns, 1);
 
       const concurrentError = yield* context.service
@@ -506,10 +537,12 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       assert.include(unit, `ExecStart=${NODE_PATH} ${pinnedEntry} serve`);
       assert.deepEqual(
         context.commands.map((entry) => entry.command),
-        ["npm", NODE_PATH, "systemctl", "systemctl"],
+        ["npm", NODE_PATH, "systemctl"],
       );
       assert.deepEqual(context.commands[2]?.args, ["--user", "daemon-reload"]);
 
+      // Restart waits until after the update acknowledgement can flush.
+      yield* TestClock.adjust(Duration.seconds(10));
       assert.deepEqual(context.commands[3], {
         command: "systemctl",
         args: ["--user", "restart", "t3code.service"],
@@ -542,9 +575,11 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       );
       const previousUnit = yield* context.fs.readFileString(unitPath);
 
-      const first = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.include(first.reason, "Restarting the systemd boot service failed");
-      assert.equal(yield* context.fs.readFileString(unitPath), previousUnit);
+      const first = yield* context.service.update({ targetVersion: "0.0.29" });
+      assert.deepEqual(first, { targetVersion: "0.0.29", method: "boot-service" });
+      yield* TestClock.adjust(Duration.seconds(10));
+      yield* eventuallyFileString(unitPath, previousUnit);
+      yield* eventuallyTrue(() => context.commands.at(-1)?.args[1] === "daemon-reload");
       assert.deepEqual(
         context.commands.slice(-2).map((entry) => entry.args),
         [

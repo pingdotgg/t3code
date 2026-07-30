@@ -31,6 +31,11 @@ The update does not remove saved threads, settings, or project files.
 The available action depends on how that server was started. T3 Code does not update connected
 servers silently in the background.
 
+After selecting **Update server**, the warning becomes a three-step progress rail:
+**Download**, **Install**, and **Resume**. The same progress appears in the conversation and in
+Connections, so navigating between them does not lose the update. A failed step remains visible
+with its error and an option to retry.
+
 If the server uses the T3 Code background service, you can also update it directly on the host:
 
 ```sh
@@ -42,11 +47,11 @@ commands.
 
 ## After the Update
 
-Keep the web or desktop app open while the server restarts. When it reconnects with the matching
-version, the warning and update action disappear.
+Keep the web or desktop app open while the server restarts. The update completes only after the
+replacement server reports the requested version and is ready to accept commands. The warning and
+progress rail then disappear.
 
-If the client reports a timeout, the server may still be finishing the update. Wait a minute, then
-reconnect or open **Settings** → **Connections** again. If the warning remains:
+If a step fails:
 
 1. Retry the offered action once.
 2. Make sure you updated the machine named in the warning, not only the device you are using.

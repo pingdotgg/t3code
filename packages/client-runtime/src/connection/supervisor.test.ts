@@ -513,6 +513,43 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("explicit retry starts a fresh backoff sequence", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.fail(transient()),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* TestClock.adjust("1 second");
+      yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 2,
+      );
+
+      yield* supervisor.retryNow;
+      yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
+
+      yield* TestClock.adjust("999 millis");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
+      yield* TestClock.adjust("1 milli");
+      yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 2,
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(4);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps blocked failures idle until an external signal requests another attempt", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
