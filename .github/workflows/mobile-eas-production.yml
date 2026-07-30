@@ -57,6 +57,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
@@ -64,7 +68,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
 
       - name: Expose pnpm
         if: steps.expo-token.outputs.present == 'true'
