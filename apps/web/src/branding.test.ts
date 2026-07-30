@@ -118,13 +118,12 @@ describe("branding logic", () => {
 });
 
 describe("resolveSidebarV2Default", () => {
-  it.each(["Nightly", "Dev", "nightly", " dev "])("enables the beta for %s builds", (stage) => {
-    expect(resolveSidebarV2Default(stage)).toBe(true);
-  });
-
-  it.each(["Alpha", "Latest", ""])("leaves the beta off for %s builds", (stage) => {
-    expect(resolveSidebarV2Default(stage)).toBe(false);
-  });
+  it.each(["Nightly", "Dev", "Alpha", "Latest", "nightly", " dev ", ""])(
+    "keeps the project-grouped sidebar on for %s builds",
+    (stage) => {
+      expect(resolveSidebarV2Default(stage)).toBe(false);
+    },
+  );
 });
 
 describe("resolveSidebarV2Enabled", () => {
@@ -146,7 +145,7 @@ describe("resolveSidebarV2Enabled", () => {
     },
   );
 
-  it("applies the stage default when the beta was never enabled or configured", () => {
+  it("defaults to v1 when the beta was never enabled or configured", () => {
     expect(
       resolveSidebarV2Enabled({
         ...hydrated,
@@ -154,7 +153,7 @@ describe("resolveSidebarV2Enabled", () => {
         configuredByUser: false,
         stageLabel: "Nightly",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       resolveSidebarV2Enabled({
         ...hydrated,

@@ -12,16 +12,11 @@ export function formatAppDisplayName(input: {
 }
 
 /**
- * Whether the sidebar v2 beta is on by default for a build stage.
- *
- * Nightly and local dev opt in; Alpha and Latest stay on v1. This is resolved
- * from the client's own stage label rather than the connected server's version:
- * v2 only exists in the client, so a stable client on a nightly server has
- * nothing to turn on.
+ * Forma's project-grouped sidebar is the default in every release channel.
+ * Sidebar v2 remains available as an explicit Beta preference.
  */
-export function resolveSidebarV2Default(stageLabel: string): boolean {
-  const stage = stageLabel.trim().toLowerCase();
-  return stage === "nightly" || stage === "dev";
+export function resolveSidebarV2Default(_stageLabel: string): boolean {
+  return false;
 }
 
 /**

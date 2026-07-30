@@ -239,8 +239,8 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
 
 /**
  * Resolved sidebar v2 state: an explicit choice in Settings → Beta if the user
- * has made one, otherwise the default for this build stage (on for nightly and
- * dev, off for production). Every consumer must read through this rather than
+ * has made one, otherwise Forma's project-grouped v1 default. Every consumer
+ * must read through this rather than
  * `settings.sidebarV2Enabled`, which is only meaningful alongside
  * `sidebarV2ConfiguredByUser`.
  *

@@ -1,7 +1,7 @@
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
-import { APP_BASE_NAME } from "../../branding";
+import { APP_BASE_NAME, APP_VERSION } from "../../branding";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { SettingsHexIcon } from "../icons/custom";
@@ -13,6 +13,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   SidebarFooter,
   SidebarHeader,
@@ -36,16 +37,17 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     stageLabel,
     environmentIdentificationMode === "artwork",
   );
-  const pillLabel =
+  const identificationPillLabel =
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
+  const stageBadgeLabel = identificationPillLabel ?? stageLabel;
 
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
-        isElectron && "drag-region",
+        "@container/sidebar-header relative isolate h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center justify-between gap-2 overflow-hidden px-3 py-0 sm:px-4",
+        isElectron && "drag-region md:pl-[var(--workspace-titlebar-content-left)]",
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
@@ -56,17 +58,45 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
             "text-white/90! [:hover,[data-pressed]]:bg-white/15 hover:text-white! focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:opacity-100!",
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
-      {pillLabel ? (
-        <Badge
-          className="relative z-10 ml-1 rounded-full px-1.5 text-muted-foreground"
-          data-environment-identification="pill"
-          size="sm"
-          variant="secondary"
-        >
-          {pillLabel}
-        </Badge>
-      ) : null}
+      <div className="relative z-10 flex min-w-0 flex-1 items-center gap-2">
+        <Tooltip>
+          <TooltipTrigger render={<SidebarBrand onBackdrop={backdropVariant !== null} />} />
+          <TooltipPopup side="bottom" sideOffset={2}>
+            Version {APP_VERSION}
+          </TooltipPopup>
+        </Tooltip>
+        {stageBadgeLabel ? (
+          <Badge
+            className={cn(
+              "sidebar-brand-stage rounded-full px-1.5",
+              backdropVariant ? "bg-white/15 text-white" : "text-muted-foreground",
+            )}
+            data-build-stage=""
+            {...(identificationPillLabel
+              ? { "data-environment-identification": "pill" as const }
+              : {})}
+            size="sm"
+            variant="secondary"
+          >
+            {stageBadgeLabel}
+          </Badge>
+        ) : null}
+      </div>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarTrigger
+              className={cn(
+                "relative z-10 hidden shrink-0 md:inline-flex",
+                backdropVariant &&
+                  "text-white/90! [:hover,[data-pressed]]:bg-white/15 hover:text-white! focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:opacity-100!",
+              )}
+              data-testid="desktop-sidebar-collapse-trigger"
+            />
+          }
+        />
+        <TooltipPopup side="bottom">Collapse sidebar</TooltipPopup>
+      </Tooltip>
     </SidebarHeader>
   );
 });
@@ -76,7 +106,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-2 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
+        "sidebar-brand h-7 w-fit min-w-0 shrink-0 items-center gap-2 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
