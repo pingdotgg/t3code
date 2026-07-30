@@ -11,6 +11,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   setPendingUserInputCustomAnswer,
+  sortThreadActivities,
   type PendingUserInputDraftAnswer,
 } from "../lib/threadActivity";
 import { appAtomRegistry } from "./atom-registry";
@@ -70,14 +71,19 @@ export function useSelectedThreadRequests() {
     null,
   );
 
-  const activePendingApprovals = useMemo(
-    () => (selectedThread ? derivePendingApprovals(selectedThread.activities) : []),
+  // Sort once; both derivations expect the same lifecycle ordering.
+  const sortedActivities = useMemo(
+    () => (selectedThread ? sortThreadActivities(selectedThread.activities) : []),
     [selectedThread],
+  );
+  const activePendingApprovals = useMemo(
+    () => derivePendingApprovals(sortedActivities),
+    [sortedActivities],
   );
   const activePendingApproval = activePendingApprovals[0] ?? null;
   const activePendingUserInputs = useMemo(
-    () => (selectedThread ? derivePendingUserInputs(selectedThread.activities) : []),
-    [selectedThread],
+    () => derivePendingUserInputs(sortedActivities),
+    [sortedActivities],
   );
   const activePendingUserInput = activePendingUserInputs[0] ?? null;
   const activePendingUserInputDrafts =
