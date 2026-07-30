@@ -167,7 +167,7 @@ describe("resolveWorkspaceDetailInvalidationAction", () => {
     ).toEqual({ type: "pop", count: 2, source: "files" });
   });
 
-  it("replaces a deep-linked workspace route while preserving overlays", () => {
+  it("resets a deep-linked workspace route while preserving overlays", () => {
     expect(
       resolveWorkspaceDetailInvalidationAction({
         routes: [
@@ -176,7 +176,26 @@ describe("resolveWorkspaceDetailInvalidationAction", () => {
         ],
         overlayRouteNames: overlays,
       }),
-    ).toEqual({ type: "replace", source: "thread" });
+    ).toEqual({
+      type: "reset",
+      routes: [{ name: "Home" }, { key: "git", name: "GitOverview" }],
+    });
+  });
+
+  it("removes a deep-linked workspace stack while preserving overlays", () => {
+    expect(
+      resolveWorkspaceDetailInvalidationAction({
+        routes: [
+          { key: "thread", name: "Thread" },
+          { key: "files", name: "ThreadFiles" },
+          { key: "settings", name: "SettingsSheet" },
+        ],
+        overlayRouteNames: overlays,
+      }),
+    ).toEqual({
+      type: "reset",
+      routes: [{ name: "Home" }, { key: "settings", name: "SettingsSheet" }],
+    });
   });
 
   it("does nothing when the underlying workspace is already home", () => {
