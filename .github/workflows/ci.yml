@@ -117,10 +117,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: pnpm --filter '!@t3tools/mobile' -r run typecheck
+        run: pnpm -r run typecheck
 
       - name: Test
-        run: pnpm --filter '!@t3tools/mobile' -r --if-present run test
+        run: pnpm -r --if-present run test
 
       - name: Verify cross-platform clean script
         run: node scripts/clean.ts

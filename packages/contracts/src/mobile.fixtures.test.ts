@@ -7,10 +7,7 @@ import { Schema } from "effect";
 
 import { MobileClientMessage, MobileDescriptorResult, MobileServerMessage } from "./mobile.ts";
 
-const fixturesRoot = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../apps/mobile/Fixtures/mobile-v1",
-);
+const fixturesRoot = join(dirname(fileURLToPath(import.meta.url)), "../fixtures/mobile-v1");
 
 const decodeDescriptor = Schema.decodeUnknownSync(MobileDescriptorResult);
 const encodeDescriptor = Schema.encodeUnknownSync(MobileDescriptorResult);
@@ -29,8 +26,8 @@ function fixtureNames(folder: "server" | "client"): ReadonlyArray<string> {
     .sort();
 }
 
-describe("mobile v1 cross-language fixtures", () => {
-  it("keeps server-authored fixtures decodable by Swift and TypeScript schemas", () => {
+describe("mobile v1 wire fixtures", () => {
+  it("keeps server-authored fixtures decodable by the mobile protocol schemas", () => {
     expect(fixtureNames("server")).toEqual([
       "command-accepted.json",
       "descriptor.json",
@@ -52,7 +49,7 @@ describe("mobile v1 cross-language fixtures", () => {
     }
   });
 
-  it("accepts Swift-emitted MVP command request fixtures", () => {
+  it("accepts client-authored MVP command request fixtures", () => {
     expect(fixtureNames("client")).toEqual([
       "approval-respond-request.json",
       "checkpoint-revert-request.json",

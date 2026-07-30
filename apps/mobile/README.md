@@ -14,9 +14,7 @@ This app has three variants:
 - `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
 - `production`: store/release build as `T3 Code`
 
-Run commands from `apps/mobile-react`. This React Native app intentionally keeps the
-`@t3tools/mobile-react` package name so it can be staged alongside the existing
-Swift `apps/mobile` package while we port the upstream implementation.
+Run commands from `apps/mobile`.
 
 ## Development
 

@@ -23,8 +23,6 @@ apps/web/src/components/__screenshots__
 __screenshots__/
 .tanstack
 squashfs-root/
-apps/mobile/*.xcodeproj
-apps/mobile/.build/
 .vercel
 .gstack/
 dist-electron/
