@@ -1677,6 +1677,74 @@ it.effect("interrupts a started turn when Hermes does not acknowledge its model"
   }).pipe(Effect.scoped, Effect.provide(testEnvLayer)),
 );
 
+it.effect("suppresses a streamed start when Hermes does not acknowledge its model", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("hermes_streamed_model_mismatch");
+    const threadId = ThreadId.make("thread-streamed-model-mismatch");
+    const selectedModel = encodeHermesModelSlug({ provider: "openai", model: "gpt-5" });
+    const brokerEvents = yield* PubSub.unbounded<HermesGatewayEnvelope>();
+    const { sent, broker: turnBroker } = makeTurnBroker({ failSend: true });
+    const broker: HermesGatewayBrokerShape = {
+      ...turnBroker,
+      request: (requestedInstanceId, message) =>
+        turnBroker.request(requestedInstanceId, message).pipe(
+          Effect.tap((response) =>
+            response.type === "turn.started"
+              ? PubSub.publish(brokerEvents, {
+                  instanceId: requestedInstanceId,
+                  message: response,
+                }).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      stream: Stream.fromPubSub(brokerEvents),
+    };
+    const adapter = yield* makeHermesAdapter({ instanceId }).pipe(
+      Effect.provideService(HermesGatewayBroker, broker),
+    );
+    const { seen, fiber } = yield* collectEvents(adapter);
+    yield* drain;
+
+    yield* adapter.startSession({
+      threadId,
+      providerInstanceId: instanceId,
+      runtimeMode: "full-access",
+    });
+    yield* Effect.flip(
+      adapter.sendTurn({
+        threadId,
+        input: "use the selected model",
+        modelSelection: {
+          instanceId,
+          model: selectedModel,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      }),
+    );
+    yield* drain;
+
+    const rejectedStart = sent.find((message) => message.type === "turn.start");
+    if (!rejectedStart || rejectedStart.type !== "turn.start") {
+      return yield* Effect.die(new Error("missing rejected turn.start"));
+    }
+    assert.isUndefined(
+      seen.find((event) => event.type === "turn.started" && event.turnId === rejectedStart.turnId),
+    );
+    assert.isUndefined((yield* adapter.listSessions())[0]?.activeTurnId);
+
+    yield* adapter.sendTurn({ threadId, input: "retry with the session default" });
+    assert.lengthOf(
+      sent.filter((message) => message.type === "turn.start"),
+      2,
+    );
+    assert.lengthOf(
+      sent.filter((message) => message.type === "turn.steer"),
+      0,
+    );
+    yield* Fiber.interrupt(fiber);
+  }).pipe(Effect.scoped, Effect.provide(testEnvLayer)),
+);
+
 it.effect("interrupts only once when Hermes does not acknowledge reasoning", () =>
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("hermes_reasoning_mismatch");

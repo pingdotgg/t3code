@@ -114,7 +114,7 @@ export const HermesDriver: ProviderDriver<HermesSettings, HermesDriverEnv> = {
         ),
       );
       const instanceClosed = yield* Deferred.make<void>();
-      const catalogChanges = yield* PubSub.unbounded<void>();
+      const catalogChanges = yield* PubSub.unbounded<void>({ replay: 1 });
       yield* Scope.addFinalizer(
         instanceScope,
         Deferred.succeed(instanceClosed, undefined).pipe(

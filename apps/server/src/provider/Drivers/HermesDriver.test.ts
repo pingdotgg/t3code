@@ -185,6 +185,52 @@ it.effect("discovers the Hermes model catalog without blocking snapshots", () =>
   }).pipe(Effect.provide(testLayer()), Effect.scoped),
 );
 
+it.effect("replays a catalog completion to a late snapshot subscriber", () =>
+  Effect.gen(function* () {
+    const releaseCatalog = yield* Deferred.make<void>();
+    const defaultBroker = yield* HermesGatewayBroker;
+    const broker = {
+      ...defaultBroker,
+      getInstanceStatus: () => Effect.succeed(connectedStatus),
+      isConnected: () => Effect.succeed(true),
+      request: (_requestedInstanceId, message) =>
+        Effect.gen(function* () {
+          if (message.type !== "models.list.request") {
+            return yield* Effect.die(
+              new Error(`Unexpected Hermes gateway request '${message.type}'.`),
+            );
+          }
+          yield* Deferred.await(releaseCatalog);
+          return catalogResponse(message, "anthropic/claude-sonnet-4");
+        }),
+      streamStatuses: Stream.empty,
+    } satisfies typeof defaultBroker;
+
+    const provider = yield* HermesDriver.create({
+      instanceId,
+      displayName: "Catalog Hermes",
+      environment: [],
+      enabled: true,
+      config: HermesDriver.defaultConfig(),
+    }).pipe(Effect.provideService(HermesGatewayBroker, broker));
+    const liveSubscriber = yield* Stream.runHead(provider.snapshot.streamChanges).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+
+    const initial = yield* provider.snapshot.getSnapshot;
+    expect(initial.models).toHaveLength(1);
+    yield* Deferred.succeed(releaseCatalog, undefined);
+
+    const published = Option.getOrThrow(yield* Fiber.join(liveSubscriber));
+    expect(published.models).toHaveLength(2);
+
+    // The registry subscribes after reading its initial snapshot. A catalog
+    // that finishes in that gap must still be the first change it observes.
+    const replayed = Option.getOrThrow(yield* Stream.runHead(provider.snapshot.streamChanges));
+    expect(replayed.models).toHaveLength(2);
+  }).pipe(Effect.provide(testLayer()), Effect.scoped),
+);
+
 it.effect("retries a transient Hermes model catalog failure with bounded backoff", () =>
   Effect.gen(function* () {
     const requests: Array<ModelsListRequest> = [];

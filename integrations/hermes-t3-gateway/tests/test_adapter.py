@@ -940,6 +940,72 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error["type"], "protocol.error")
         self.assertEqual(error["requestId"], "start-atomic-config")
 
+    async def test_failed_reasoning_does_not_rollback_a_later_session(self):
+        first_thread = "thread-overlap-first"
+        second_thread = "thread-overlap-second"
+        first_session = await self._ensure_thread(first_thread)
+        second_session = await self._ensure_thread(second_thread)
+        runner = FakeGatewayRunner()
+        runner._reasoning_config = {"enabled": True, "effort": "medium"}
+        first_mutated = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def handler(event):
+            effort = shlex.split(event.text)[1]
+            session_id = runner._session_key_for_source(event.source)
+            selected = {"enabled": True, "effort": effort}
+            runner._reasoning_config = dict(selected)
+            runner._session_reasoning_overrides[session_id] = dict(selected)
+            if event.source.chat_id == first_thread:
+                first_mutated.set()
+                await release_first.wait()
+                raise RuntimeError("first reasoning command failed")
+            return "hidden"
+
+        self.adapter.gateway_runner = runner
+        self.adapter._message_handler = handler
+
+        def start_message(thread_id, session_id, effort):
+            return {
+                "type": "turn.start",
+                "protocolVersion": protocol_module.PROTOCOL_VERSION,
+                "requestId": f"start-{thread_id}",
+                "threadId": thread_id,
+                "sessionId": session_id,
+                "turnId": f"turn-{thread_id}",
+                "text": "Run",
+                "reasoningEffort": effort,
+            }
+
+        first = asyncio.create_task(
+            self.adapter._handle_server_frame(
+                start_message(first_thread, first_session, "high")
+            )
+        )
+        await asyncio.wait_for(first_mutated.wait(), timeout=1)
+
+        second = asyncio.create_task(
+            self.adapter._handle_server_frame(
+                start_message(second_thread, second_session, "low")
+            )
+        )
+        # The second task is queued before the first is released. Without a
+        # cross-thread configuration fence it commits `low` first, then the
+        # first task's rollback incorrectly overwrites that success.
+        asyncio.get_running_loop().call_soon(release_first.set)
+        await asyncio.gather(first, second)
+
+        self.assertEqual(
+            runner._reasoning_config, {"enabled": True, "effort": "low"}
+        )
+        self.assertNotIn(first_session, runner._session_reasoning_overrides)
+        self.assertEqual(
+            runner._session_reasoning_overrides[second_session],
+            {"enabled": True, "effort": "low"},
+        )
+        self.assertNotIn(first_thread, self.adapter._active_turns)
+        self.assertIn(second_thread, self.adapter._active_turns)
+
     async def test_cancelled_configuration_restores_prior_state(self):
         thread_id = "thread-cancelled-config"
         session_id = await self._ensure_thread(thread_id)

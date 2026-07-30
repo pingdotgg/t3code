@@ -343,6 +343,11 @@ class T3PlatformAdapter(BasePlatformAdapter):
         # the runner's live override, and a plugin restart naturally starts
         # empty so the first v5 turn reapplies its requested configuration.
         self._applied_turn_configuration: dict[str, dict[str, Any]] = {}
+        # Hermes' slash handlers also update runner-global compatibility state
+        # such as `_reasoning_config`. Serialize configuration transactions
+        # across T3 threads so one failed rollback cannot overwrite a later
+        # session's successful selection.
+        self._turn_configuration_lock = asyncio.Lock()
         # The most recently COMPLETED turn per thread. The base adapter's
         # delivery pipeline sends the final text (notify-marked, which
         # completes the turn here) BEFORE it sends the reply's media files
@@ -1344,6 +1349,29 @@ class T3PlatformAdapter(BasePlatformAdapter):
         return resolved
 
     async def _apply_turn_configuration(
+        self,
+        message: dict[str, Any],
+        *,
+        thread_id: str,
+        session_id: str,
+        can_commit: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        async with self._turn_configuration_lock:
+            # A different thread's configuration may have held the lock while
+            # this session was stopped. Fence it before any slash command or
+            # durable snapshot can mutate Hermes state.
+            if can_commit is not None and not can_commit():
+                raise _TurnConfigurationError(
+                    "The Hermes session stopped while its turn was starting"
+                )
+            return await self._apply_turn_configuration_locked(
+                message,
+                thread_id=thread_id,
+                session_id=session_id,
+                can_commit=can_commit,
+            )
+
+    async def _apply_turn_configuration_locked(
         self,
         message: dict[str, Any],
         *,

@@ -77,6 +77,11 @@ interface PendingInteraction {
   readonly requestType: CanonicalRequestType;
 }
 
+interface PendingTurnAcknowledgement {
+  readonly requestedModel: HermesGatewayRequestedModelSelection | undefined;
+  readonly requestedReasoning: HermesGatewayReasoningEffort | undefined;
+}
+
 interface SessionContext {
   hermesSessionId: HermesGatewaySessionId;
   modelSelection: ModelSelection | undefined;
@@ -93,6 +98,28 @@ interface SessionContext {
 }
 
 type PluginMessage = Exclude<HermesGatewayPluginToT3Message, { readonly type: "connection.hello" }>;
+
+const getSelectionAcknowledgementError = (
+  response: Extract<PluginMessage, { readonly type: "turn.started" }>,
+  pending: PendingTurnAcknowledgement,
+) => {
+  if (pending.requestedModel !== undefined) {
+    const applied = response.appliedModelSelection;
+    const modelMatches =
+      applied !== undefined &&
+      (pending.requestedModel.mode === "default" ||
+        (applied.provider === pending.requestedModel.provider &&
+          applied.model === pending.requestedModel.model));
+    if (!modelMatches) return "Hermes did not confirm the requested model selection.";
+  }
+  if (
+    pending.requestedReasoning !== undefined &&
+    response.appliedReasoningEffort !== pending.requestedReasoning
+  ) {
+    return "Hermes did not confirm the requested reasoning effort.";
+  }
+  return undefined;
+};
 
 const nowIso = () => DateTime.formatIso(DateTime.nowUnsafe());
 const MAX_PERSISTED_GATEWAY_FIELD_CHARS = 4_096;
@@ -166,6 +193,7 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (input
   const serverConfig = yield* ServerConfig;
   const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, SessionContext>();
+  const pendingTurnAcknowledgements = new Map<HermesGatewayRequestId, PendingTurnAcknowledgement>();
 
   const randomId = crypto.randomUUIDv4.pipe(
     Effect.mapError(
@@ -280,6 +308,13 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (input
           return undefined;
         case "turn.started": {
           if (!contextMatchesSession(context, message)) return undefined;
+          const pendingAcknowledgement = pendingTurnAcknowledgements.get(message.requestId);
+          if (pendingAcknowledgement !== undefined) {
+            pendingTurnAcknowledgements.delete(message.requestId);
+            if (getSelectionAcknowledgementError(message, pendingAcknowledgement) !== undefined) {
+              return undefined;
+            }
+          }
           updateSession(context, {
             status: "running",
             activeTurnId: TurnId.make(message.turnId),
@@ -859,33 +894,50 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (input
       }
       requestedReasoning = rawReasoning;
     }
-    const response = yield* broker.request(
-      input.instanceId,
-      activeTurnId
-        ? {
-            type: "turn.steer",
-            protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
-            requestId: outboundRequestId,
-            threadId: turnInput.threadId,
-            sessionId: context.hermesSessionId,
-            turnId,
-            text,
-            ...(attachments !== undefined ? { attachments } : {}),
-          }
-        : {
-            type: "turn.start",
-            protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
-            requestId: outboundRequestId,
-            threadId: turnInput.threadId,
-            sessionId: context.hermesSessionId,
-            turnId,
-            text,
-            ...(attachments !== undefined ? { attachments } : {}),
-            ...(requestedModel !== undefined ? { modelSelection: requestedModel } : {}),
-            ...(requestedReasoning !== undefined ? { reasoningEffort: requestedReasoning } : {}),
-          },
-    );
+    const pendingAcknowledgement =
+      activeTurnId === undefined &&
+      (requestedModel !== undefined || requestedReasoning !== undefined)
+        ? { requestedModel, requestedReasoning }
+        : undefined;
+    if (pendingAcknowledgement !== undefined) {
+      pendingTurnAcknowledgements.set(outboundRequestId, pendingAcknowledgement);
+    }
+    const response = yield* broker
+      .request(
+        input.instanceId,
+        activeTurnId
+          ? {
+              type: "turn.steer",
+              protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
+              requestId: outboundRequestId,
+              threadId: turnInput.threadId,
+              sessionId: context.hermesSessionId,
+              turnId,
+              text,
+              ...(attachments !== undefined ? { attachments } : {}),
+            }
+          : {
+              type: "turn.start",
+              protocolVersion: HERMES_GATEWAY_PROTOCOL_VERSION,
+              requestId: outboundRequestId,
+              threadId: turnInput.threadId,
+              sessionId: context.hermesSessionId,
+              turnId,
+              text,
+              ...(attachments !== undefined ? { attachments } : {}),
+              ...(requestedModel !== undefined ? { modelSelection: requestedModel } : {}),
+              ...(requestedReasoning !== undefined ? { reasoningEffort: requestedReasoning } : {}),
+            },
+      )
+      .pipe(
+        Effect.tapCause(() =>
+          Effect.sync(() => {
+            pendingTurnAcknowledgements.delete(outboundRequestId);
+          }),
+        ),
+      );
     if (response.type !== "turn.started") {
+      pendingTurnAcknowledgements.delete(outboundRequestId);
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
         method,
@@ -896,25 +948,10 @@ export const makeHermesAdapter = Effect.fn("makeHermesAdapter")(function* (input
       });
     }
 
-    let selectionAcknowledgementError: string | undefined;
-    if (activeTurnId === undefined && requestedModel !== undefined) {
-      const applied = response.appliedModelSelection;
-      const modelMatches =
-        applied !== undefined &&
-        (requestedModel.mode === "default" ||
-          (applied.provider === requestedModel.provider && applied.model === requestedModel.model));
-      if (!modelMatches) {
-        selectionAcknowledgementError = "Hermes did not confirm the requested model selection.";
-      }
-    }
-    if (
-      selectionAcknowledgementError === undefined &&
-      activeTurnId === undefined &&
-      requestedReasoning !== undefined &&
-      response.appliedReasoningEffort !== requestedReasoning
-    ) {
-      selectionAcknowledgementError = "Hermes did not confirm the requested reasoning effort.";
-    }
+    const selectionAcknowledgementError =
+      pendingAcknowledgement === undefined
+        ? undefined
+        : getSelectionAcknowledgementError(response, pendingAcknowledgement);
     if (selectionAcknowledgementError !== undefined) {
       // `turn.started` means Hermes has already launched the agent. If its
       // acknowledgement does not match the requested configuration, reject
