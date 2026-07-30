@@ -4,23 +4,33 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { useCallback, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Platform,
   Pressable,
   Switch,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
   View,
 } from "react-native";
+import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { AppText as Text } from "../../components/AppText";
+import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
+import { canDeregisterCloudEnvironment } from "./cloudEnvironmentSwipeActions";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
@@ -65,6 +75,8 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
   const availableCloudEnvironments =
     props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments;
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
+  const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
+    useState<EnvironmentId | null>(null);
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
@@ -81,6 +93,83 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
   const handleToggleCloudError = useCallback((environmentId: string) => {
     setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
   }, []);
+
+  const handleDeregisterCloudEnvironment = useCallback(
+    async (input: {
+      readonly environmentId: EnvironmentId;
+      readonly label: string;
+      readonly removeSavedConnection: boolean;
+    }) => {
+      setDeregisteringEnvironmentId(input.environmentId);
+      const result = await controller.deregisterEnvironment(input.environmentId);
+      if (AsyncResult.isFailure(result)) {
+        setDeregisteringEnvironmentId(null);
+        if (isAtomCommandInterrupted(result)) return;
+        const cause = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Could not deregister server",
+          cause instanceof Error
+            ? cause.message
+            : "The T3 Connect server could not be deregistered.",
+        );
+        return;
+      }
+
+      if (input.removeSavedConnection) {
+        const cleanupResult = await controller.removeEnvironment(input.environmentId);
+        if (AsyncResult.isFailure(cleanupResult)) {
+          await controller.refreshRelayEnvironments();
+          setDeregisteringEnvironmentId(null);
+          if (isAtomCommandInterrupted(cleanupResult)) return;
+          const cleanupCause = squashAtomCommandFailure(cleanupResult);
+          Alert.alert(
+            "Server deregistered",
+            `${input.label} was removed from T3 Connect, but its saved connection could not be removed from this device. ${
+              cleanupCause instanceof Error ? cleanupCause.message : ""
+            }`.trim(),
+          );
+          return;
+        }
+      }
+      await controller.refreshRelayEnvironments();
+      setDeregisteringEnvironmentId(null);
+      Alert.alert(
+        "Server deregistered",
+        `${input.label} no longer has T3 Connect access. One host space is now available.`,
+      );
+    },
+    [controller],
+  );
+
+  const confirmDeregisterCloudEnvironment = useCallback(
+    (input: {
+      readonly environmentId: EnvironmentId;
+      readonly label: string;
+      readonly removeSavedConnection: boolean;
+    }) => {
+      const title = `Deregister “${input.label}” from T3 Connect?`;
+      const message =
+        "This revokes this server’s T3 Connect access, removes its managed tunnel, and frees one of your three host spaces.";
+      const onConfirm = () => {
+        void handleDeregisterCloudEnvironment(input);
+      };
+      if (Platform.OS === "ios") {
+        Alert.alert(title, message, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Deregister", style: "destructive", onPress: onConfirm },
+        ]);
+        return;
+      }
+      showConfirmDialog({
+        title,
+        message,
+        confirmText: "Deregister",
+        destructive: true,
+        onConfirm,
+      });
+    },
+    [handleDeregisterCloudEnvironment],
+  );
 
   const showHeader = props.showHeader ?? true;
 
@@ -120,6 +209,14 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
               borderTop={index !== 0}
               onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
               onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
+              onDeregister={() =>
+                confirmDeregisterCloudEnvironment({
+                  environmentId: environment.environmentId,
+                  label: environment.environmentLabel,
+                  removeSavedConnection: true,
+                })
+              }
+              deregisterDisabled={deregisteringEnvironmentId !== null}
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
             />
@@ -130,6 +227,14 @@ function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
               environment={environment}
               borderTop={props.connectedCloudEnvironments.length > 0 || index !== 0}
               onConnect={() => handleConnectCloudEnvironment(environment)}
+              onDeregister={() =>
+                confirmDeregisterCloudEnvironment({
+                  environmentId: environment.environment.environmentId,
+                  label: environment.environment.label,
+                  removeSavedConnection: false,
+                })
+              }
+              deregisterDisabled={deregisteringEnvironmentId !== null}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
             />
@@ -180,28 +285,40 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
+  readonly deregisterDisabled: boolean;
   readonly onConnect: () => void;
+  readonly onDeregister: () => void;
   readonly onDisconnect: () => void;
   readonly onToggleError: () => void;
 }) {
   return (
-    <CloudEnvironmentRowShell
-      borderTop={props.borderTop}
-      connectionError={props.environment.connectionError}
-      connectionErrorTraceId={props.environment.connectionErrorTraceId}
-      connectionState={props.environment.connectionState}
-      errorExpanded={props.errorExpanded}
+    <CloudEnvironmentSwipeRow
+      enabled={
+        !props.deregisterDisabled &&
+        canDeregisterCloudEnvironment(props.environment.connectionState)
+      }
       label={props.environment.environmentLabel}
-      onValueChange={(enabled) => {
-        if (enabled) {
-          props.onConnect();
-          return;
-        }
-        props.onDisconnect();
-      }}
-      onToggleError={props.onToggleError}
-      value={props.environment.connectionState !== "available"}
-    />
+      onDeregister={props.onDeregister}
+    >
+      <CloudEnvironmentRowShell
+        borderTop={props.borderTop}
+        connectionError={props.environment.connectionError}
+        connectionErrorTraceId={props.environment.connectionErrorTraceId}
+        connectionState={props.environment.connectionState}
+        disabled={props.deregisterDisabled}
+        errorExpanded={props.errorExpanded}
+        label={props.environment.environmentLabel}
+        onValueChange={(enabled) => {
+          if (enabled) {
+            props.onConnect();
+            return;
+          }
+          props.onDisconnect();
+        }}
+        onToggleError={props.onToggleError}
+        value={props.environment.connectionState !== "available"}
+      />
+    </CloudEnvironmentSwipeRow>
   );
 }
 
@@ -209,7 +326,9 @@ function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
+  readonly deregisterDisabled: boolean;
   readonly onConnect: () => void;
+  readonly onDeregister: () => void;
   readonly onToggleError: () => void;
 }) {
   const presentation = availableCloudEnvironmentPresentation({
@@ -220,22 +339,74 @@ function CloudEnvironmentRow(props: {
   });
 
   return (
-    <CloudEnvironmentRowShell
-      borderTop={props.borderTop}
-      connectionError={presentation.connectionError}
-      connectionErrorTraceId={presentation.connectionErrorTraceId}
-      connectionState={presentation.connectionState}
-      errorExpanded={props.errorExpanded}
+    <CloudEnvironmentSwipeRow
+      enabled={
+        !props.deregisterDisabled && canDeregisterCloudEnvironment(presentation.connectionState)
+      }
       label={props.environment.environment.label}
-      onValueChange={(enabled) => {
-        if (enabled) {
-          props.onConnect();
-        }
-      }}
-      onToggleError={props.onToggleError}
-      statusText={presentation.statusText}
-      value={false}
-    />
+      onDeregister={props.onDeregister}
+    >
+      <CloudEnvironmentRowShell
+        borderTop={props.borderTop}
+        connectionError={presentation.connectionError}
+        connectionErrorTraceId={presentation.connectionErrorTraceId}
+        connectionState={presentation.connectionState}
+        disabled={props.deregisterDisabled}
+        errorExpanded={props.errorExpanded}
+        label={props.environment.environment.label}
+        onValueChange={(enabled) => {
+          if (enabled) {
+            props.onConnect();
+          }
+        }}
+        onToggleError={props.onToggleError}
+        statusText={presentation.statusText}
+        value={false}
+      />
+    </CloudEnvironmentSwipeRow>
+  );
+}
+
+function CloudEnvironmentSwipeRow(props: {
+  readonly children: ReactNode;
+  readonly enabled: boolean;
+  readonly label: string;
+  readonly onDeregister: () => void;
+}) {
+  const cardColor = useThemeColor("--color-card");
+  const dangerForeground = useThemeColor("--color-danger-foreground");
+
+  if (!props.enabled) {
+    return props.children;
+  }
+
+  return (
+    <ReanimatedSwipeable
+      childrenContainerStyle={{ backgroundColor: cardColor }}
+      containerStyle={{ backgroundColor: cardColor }}
+      dragOffsetFromLeftEdge={8}
+      enableTrackpadTwoFingerGesture
+      failOffsetY={[-10, 10]}
+      friction={1}
+      leftThreshold={44}
+      overshootLeft={false}
+      renderLeftActions={(_progress, _translation, methods) => (
+        <Pressable
+          accessibilityLabel={`Deregister ${props.label}`}
+          accessibilityRole="button"
+          className="w-28 items-center justify-center gap-1.5 bg-danger px-2 active:opacity-80"
+          onPress={() => {
+            methods.close();
+            props.onDeregister();
+          }}
+        >
+          <SymbolView name="trash" size={16} tintColor={dangerForeground} type="monochrome" />
+          <Text className="text-xs font-t3-bold text-danger-foreground">Deregister</Text>
+        </Pressable>
+      )}
+    >
+      {props.children}
+    </ReanimatedSwipeable>
   );
 }
 

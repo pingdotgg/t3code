@@ -16,6 +16,7 @@ import {
   connectPairingUrl as connectPairingUrlAtom,
   updateBearerConnection,
 } from "../../connection/onboarding";
+import { deregisterEnvironment as deregisterEnvironmentAtom } from "../cloud/linkEnvironmentAtoms";
 import { useEnvironments } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -39,6 +40,9 @@ export function useConnectionController() {
   const registerEnvironment = useAtomCommand(environmentCatalog.register, "environment register");
   const removeEnvironmentMutation = useAtomCommand(environmentCatalog.remove, "environment remove");
   const retryEnvironmentMutation = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const deregisterEnvironmentMutation = useAtomCommand(deregisterEnvironmentAtom, {
+    reportFailure: false,
+  });
   const refreshRelayEnvironments = useAtomCommand(
     relayEnvironmentDiscovery.refresh,
     "relay environment refresh",
@@ -92,6 +96,10 @@ export function useConnectionController() {
     (environmentId: EnvironmentId) => retryEnvironmentMutation(environmentId),
     [retryEnvironmentMutation],
   );
+  const deregisterEnvironment = useCallback(
+    (environmentId: EnvironmentId) => deregisterEnvironmentMutation({ environmentId }),
+    [deregisterEnvironmentMutation],
+  );
   const updateEnvironment = useCallback(
     (
       environmentId: EnvironmentId,
@@ -117,6 +125,7 @@ export function useConnectionController() {
     },
     connectPairingUrl,
     connectRelayEnvironment,
+    deregisterEnvironment,
     removeEnvironment,
     retryEnvironment,
     updateEnvironment,

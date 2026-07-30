@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
+  type EnvironmentId,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
   EnvironmentHttpForbiddenError,
@@ -25,6 +26,7 @@ import {
 import { exchangeRemoteDpopAccessToken } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { CloudSession } from "@t3tools/client-runtime/platform";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
@@ -389,6 +391,34 @@ export function listCloudEnvironments(input: {
         clerkToken: input.clerkToken,
       })
       .pipe(Effect.mapError(decodedRelayClientError(`${relayUrl}/v1/environments failed`)));
+  });
+}
+
+export function deregisterRelayEnvironment(input: {
+  readonly environmentId: EnvironmentId;
+}): Effect.Effect<void, CloudEnvironmentLinkError, CloudSession | ManagedRelay.ManagedRelayClient> {
+  return Effect.gen(function* () {
+    const session = yield* CloudSession;
+    const clerkToken = yield* session.clerkToken.pipe(
+      Effect.mapError(
+        (cause) =>
+          new CloudEnvironmentLinkError({
+            message: "Could not obtain the T3 Connect session token.",
+            cause,
+          }),
+      ),
+    );
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
+    yield* relayClient
+      .unlinkEnvironment({
+        clerkToken,
+        environmentId: input.environmentId,
+      })
+      .pipe(
+        Effect.mapError(
+          decodedRelayClientError("Could not remove the environment from T3 Connect."),
+        ),
+      );
   });
 }
 

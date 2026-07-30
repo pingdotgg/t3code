@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { CloudSession } from "@t3tools/client-runtime/platform";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
 import { MobilePreferencesStore } from "../../persistence/mobile-preferences";
@@ -15,6 +16,7 @@ import {
   linkEnvironmentToCloud,
   linkEnvironmentToCloudWithPreference,
   connectCloudEnvironment,
+  deregisterRelayEnvironment,
   listCloudEnvironments,
   listCloudEnvironmentsWithStatus,
   normalizeRelayBaseUrl,
@@ -98,6 +100,12 @@ function cloudClientLayer() {
         saveRecentThreadShortcuts: () => Effect.void,
       }),
     ),
+    Layer.succeed(
+      CloudSession,
+      CloudSession.of({
+        clerkToken: Effect.succeed("clerk-token"),
+      }),
+    ),
     ManagedRelay.layer({
       relayUrl: "https://relay.example.test",
       clientId: RelayMobileClientId,
@@ -112,6 +120,7 @@ const withCloudServices = <A, E>(
     | HttpClient.HttpClient
     | ManagedRelay.ManagedRelayClient
     | ManagedRelay.ManagedRelayDpopSigner
+    | CloudSession
     | MobilePreferencesStore
     | MobileStorage
   >,
@@ -198,6 +207,23 @@ describe("mobile cloud link environment client", () => {
       },
     ]);
   });
+
+  it.effect("deregisters an inaccessible environment directly through the relay", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withCloudServices(
+        deregisterRelayEnvironment({
+          environmentId: EnvironmentId.make("env-1"),
+        }),
+      );
+
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/v1/client/environment-links/env-1");
+      expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("DELETE");
+      expect(fetchMock.mock.calls[0]?.[1]?.headers.authorization).toBe("Bearer clerk-token");
+    }),
+  );
 
   it.effect("decodes relay environment list responses before returning records", () =>
     Effect.gen(function* () {
