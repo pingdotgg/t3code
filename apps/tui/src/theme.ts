@@ -188,6 +188,9 @@ export function relativeTime(iso: string): string {
 //   - `faint`  → ANSI slot 8 ("bright black"), the theme's darkest grey —
 //     reserved for decoration: borders, separators, markers, disabled states
 //   - `accent` → ANSI slot 6 (cyan)
+//   - `error` / `success` / `warning` → ANSI slots 1/2/3 — the theme author has
+//     already tuned these against their own background, so contrast holds on any
+//     dark or light scheme
 //   - status/role/border colours map their names to ANSI slots 0–15 via `ansi()`.
 // The renderer itself is created with a transparent background, so the terminal's
 // own backdrop shows through.
@@ -243,6 +246,9 @@ export interface Palette {
   readonly dim: RGBA;
   readonly faint: RGBA;
   readonly accent: RGBA;
+  readonly error: RGBA;
+  readonly success: RGBA;
+  readonly warning: RGBA;
   readonly selectedBg: RGBA;
 }
 
@@ -252,6 +258,9 @@ export const THEME: Palette = {
   dim: indexedColor(7),
   faint: indexedColor(8),
   accent: indexedColor(6),
+  error: indexedColor(1),
+  success: indexedColor(2),
+  warning: indexedColor(3),
   selectedBg: indexedColor(8),
 };
 
@@ -287,9 +296,9 @@ export function statusGlyphColor(kind: "info" | "success" | "error" | "busy"): {
 } {
   switch (kind) {
     case "success":
-      return { glyph: "✓", color: ansi("green") };
+      return { glyph: "✓", color: THEME.success };
     case "error":
-      return { glyph: "✗", color: ansi("red") };
+      return { glyph: "✗", color: THEME.error };
     case "busy":
       return { glyph: "⟳", color: THEME.accent };
     default:

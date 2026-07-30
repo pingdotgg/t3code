@@ -5,7 +5,7 @@ import * as React from "react";
 import { type ComposerControls, interactionModeLabel, runtimeModeLabel } from "../controls.ts";
 import { clip } from "../format.ts";
 import { KEYBINDING_GROUPS } from "../keymap.ts";
-import { ansi, usePalette } from "../theme.ts";
+import { usePalette } from "../theme.ts";
 
 // A read-only settings / reference overlay (the TUI form of the web Settings):
 // the live provider + source-control state for the selected thread, plus the
@@ -77,14 +77,12 @@ export const SettingsView = React.memo(function SettingsView({
         <text> </text>
         <text fg={palette.accent}>Source control</text>
         <Row label="branch" value={vcsStatus?.refName ?? "—"} width={width} />
-        <Row
-          label="pull request"
-          value={pr ? `#${pr.number} ${pr.state}` : "—"}
-          width={width}
-        />
+        <Row label="pull request" value={pr ? `#${pr.number} ${pr.state}` : "—"} width={width} />
         <Row
           label="working tree"
-          value={vcsStatus ? (vcsStatus.hasWorkingTreeChanges ? "uncommitted changes" : "clean") : "—"}
+          value={
+            vcsStatus ? (vcsStatus.hasWorkingTreeChanges ? "uncommitted changes" : "clean") : "—"
+          }
           width={width}
         />
 
@@ -94,8 +92,10 @@ export const SettingsView = React.memo(function SettingsView({
             <text fg={palette.accent}>{group.title}</text>
             {group.bindings.map((binding) => (
               <text key={binding.keys + binding.description}>
-                <span fg={ansi("cyan")}>{`  ${binding.keys.padEnd(keyCol)}`}</span>
-                <span fg={palette.text}>{clip(binding.description, Math.max(8, width - keyCol - 4))}</span>
+                <span fg={palette.accent}>{`  ${binding.keys.padEnd(keyCol)}`}</span>
+                <span fg={palette.text}>
+                  {clip(binding.description, Math.max(8, width - keyCol - 4))}
+                </span>
               </text>
             ))}
           </box>

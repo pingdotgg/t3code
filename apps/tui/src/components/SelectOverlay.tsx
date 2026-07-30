@@ -2,7 +2,7 @@ import type { SelectOption } from "@opentui/core";
 import * as React from "react";
 
 import { clip } from "../format.ts";
-import { ansi, usePalette } from "../theme.ts";
+import { usePalette } from "../theme.ts";
 
 // A picker for the composer controls (model / runtime access / reasoning), shaped
 // like the web's name+description dropdowns. Rows are clickable (onMouseDown) AND
@@ -39,7 +39,7 @@ export const SelectOverlay = React.memo(function SelectOverlay({
   if (status === "loading") {
     body = <text fg={palette.dim}>loading…</text>;
   } else if (status === "error") {
-    body = <text fg={ansi("red")}>failed to load</text>;
+    body = <text fg={palette.error}>failed to load</text>;
   } else if (status === "empty" || options.length === 0) {
     body = <text fg={palette.dim}>nothing to choose</text>;
   } else {

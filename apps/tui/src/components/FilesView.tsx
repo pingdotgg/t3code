@@ -70,7 +70,7 @@ export const FilesView = React.memo(function FilesView({
       viewing.status === "loading" ? (
         <text fg={palette.dim}>loading…</text>
       ) : viewing.status === "error" ? (
-        <text fg={ansi("red")}>failed to read file</text>
+        <text fg={palette.error}>failed to read file</text>
       ) : (
         <scrollbox
           ref={scrollRef}
@@ -93,7 +93,7 @@ export const FilesView = React.memo(function FilesView({
   } else if (status === "loading") {
     body = <text fg={palette.dim}>loading…</text>;
   } else if (status === "error") {
-    body = <text fg={ansi("red")}>failed to list files</text>;
+    body = <text fg={palette.error}>failed to list files</text>;
   } else if (status === "empty" || rows.length === 0) {
     body = <text fg={palette.dim}>no files</text>;
   } else {

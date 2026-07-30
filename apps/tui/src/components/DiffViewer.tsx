@@ -2,7 +2,7 @@ import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
 import * as React from "react";
 
 import { splitUnifiedDiff } from "../diffSplit.ts";
-import { ansi, usePalette } from "../theme.ts";
+import { usePalette } from "../theme.ts";
 
 // A turn diff viewer (mirrors the web DiffPanel): fetches a turn's unified diff
 // and renders each file in its own OpenTUI <diff> with that file's language
@@ -67,7 +67,7 @@ export const DiffViewer = React.memo(function DiffViewer({
       {status === "loading" ? (
         <text fg={palette.dim}>loading…</text>
       ) : status === "error" ? (
-        <text fg={ansi("red")}>failed to load diff</text>
+        <text fg={palette.error}>failed to load diff</text>
       ) : status === "empty" || files.length === 0 ? (
         <text fg={palette.dim}>no changes in this turn</text>
       ) : (

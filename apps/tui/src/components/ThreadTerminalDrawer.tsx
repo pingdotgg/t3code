@@ -13,7 +13,7 @@ import {
   readTerminalViewport,
   type TermSegment,
 } from "../terminalView.ts";
-import { ansi, THEME, usePalette } from "../theme.ts";
+import { THEME, usePalette } from "../theme.ts";
 
 // The embedded terminal pane (mirrors apps/web/src/components/ThreadTerminalDrawer.tsx).
 // It owns a headless xterm emulator — the same engine as the web — fed by the
@@ -302,7 +302,7 @@ const TerminalPane = React.memo(function TerminalPane({
     <box flexDirection="column" flexGrow={1} onMouseScroll={handleWheel}>
       {scrolled ? (
         <text>
-          <span fg={ansi("yellow")}>
+          <span fg={THEME.warning}>
             {`▲ scrollback −${frame.scrollOffset}/${frame.maxScroll} · ⇧PgUp/PgDn · type to return`}
           </span>
         </text>
@@ -372,7 +372,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
       overflow="hidden"
     >
       <text>
-        <span fg={focused ? palette.accent : ansi("yellow")}>{visibleHeaderLabel}</span>
+        <span fg={focused ? palette.accent : palette.warning}>{visibleHeaderLabel}</span>
         <span fg={palette.dim}>{visibleHint}</span>
       </text>
       {/* Terminal tabs (the TUI's terminal groups): click a number to switch, ✕

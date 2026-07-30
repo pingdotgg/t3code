@@ -2,7 +2,7 @@ import type { OrchestrationCheckpointSummary } from "@t3tools/contracts";
 import * as React from "react";
 
 import { clip } from "../format.ts";
-import { ansi, relativeTime, usePalette } from "../theme.ts";
+import { relativeTime, usePalette } from "../theme.ts";
 
 // Bottom-slot confirmation/picker overlays opened from the command palette (^K):
 // the destructive delete confirm-step and the checkpoint-revert picker. Purely
@@ -15,7 +15,7 @@ export const ConfirmDeleteMenu = React.memo(function ConfirmDeleteMenu({
   readonly title: string;
 }): React.ReactNode {
   const palette = usePalette();
-  const danger = ansi("red");
+  const danger = palette.error;
   return (
     <box
       flexDirection="column"
@@ -45,7 +45,7 @@ export const RevertMenu = React.memo(function RevertMenu({
   readonly selected: number;
 }): React.ReactNode {
   const palette = usePalette();
-  const danger = ansi("red");
+  const danger = palette.error;
   const visible = checkpoints.slice(0, 8);
   return (
     <box

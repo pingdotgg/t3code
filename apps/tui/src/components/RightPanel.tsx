@@ -7,7 +7,9 @@ import { deferMouseAction } from "../mouse.ts";
 import { ansi, type Palette, usePalette } from "../theme.ts";
 
 function prColor(state: string | undefined, palette: Palette): ReturnType<typeof ansi> {
-  if (state === "open") return ansi("green");
+  if (state === "open") return palette.success;
+  // Merged mirrors the web's (and GitHub's) purple; there is no semantic palette
+  // role for it, so map it to the theme's magenta slot.
   if (state === "merged") return ansi("magenta");
   return palette.dim;
 }
@@ -53,7 +55,7 @@ export function RightPanel({
     >
       <text>
         <strong>Source Control</strong>
-        {busy ? <span fg={ansi("yellow")}>{" · working…"}</span> : null}
+        {busy ? <span fg={palette.warning}>{" · working…"}</span> : null}
       </text>
       <text fg={palette.dim}>
         {focused ? "↑/↓ select · Enter activate · Esc back" : "^L focus panel"}
@@ -135,7 +137,7 @@ export function RightPanel({
       </box>
 
       {selectedAction?.hint ? (
-        <text fg={selectedAction.disabled ? ansi("yellow") : palette.dim}>
+        <text fg={selectedAction.disabled ? palette.warning : palette.dim}>
           {clip(`  ${selectedAction.hint}`, room)}
         </text>
       ) : null}

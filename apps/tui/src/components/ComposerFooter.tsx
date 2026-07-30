@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { type ComposerControls, interactionModeLabel, runtimeModeLabel } from "../controls.ts";
 import { clip } from "../format.ts";
-import { ansi, usePalette } from "../theme.ts";
+import { usePalette } from "../theme.ts";
 
 // The composer footer (mirrors apps/web ChatComposer): a model picker + mode
 // controls on the left, and the primary action on the right. Component names
@@ -120,7 +120,7 @@ function ComposerFooterPrimaryActions({
     return (
       <box onMouseDown={onStop} flexShrink={0}>
         <text>
-          <span fg={ansi("red")}>■ Stop</span>
+          <span fg={palette.error}>■ Stop</span>
           <span fg={palette.dim}> Esc</span>
         </text>
       </box>

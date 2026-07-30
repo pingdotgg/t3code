@@ -1,7 +1,7 @@
 import * as React from "react";
 
 import { clip } from "../format.ts";
-import { ansi, usePalette } from "../theme.ts";
+import { usePalette } from "../theme.ts";
 
 export interface AddProjectRow {
   readonly id: string;
@@ -116,7 +116,7 @@ export const AddProjectOverlay = React.memo(function AddProjectOverlay({
       {status === "loading" ? (
         <text fg={palette.dim}>loading…</text>
       ) : status === "error" ? (
-        <text fg={ansi("red")}>failed to load</text>
+        <text fg={palette.error}>failed to load</text>
       ) : status === "empty" || rows.length === 0 ? (
         <text fg={palette.dim}>{emptyMessage}</text>
       ) : (
@@ -137,7 +137,7 @@ export const AddProjectOverlay = React.memo(function AddProjectOverlay({
                 <span fg={row.disabled ? palette.faint : active ? palette.text : palette.dim}>
                   {clip(row.title, labelRoom)}
                 </span>
-                {row.disabled ? <span fg={ansi("yellow")}>{"  setup required"}</span> : null}
+                {row.disabled ? <span fg={palette.warning}>{"  setup required"}</span> : null}
               </text>
               {row.description ? (
                 <text fg={active ? palette.bg : palette.dim}>
