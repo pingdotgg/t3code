@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
+import * as DesktopDeepLinks from "../../app/DesktopDeepLinks.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
@@ -256,6 +257,18 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
       position: Option.fromNullishOr(input.position),
     });
     return Option.getOrNull(selectedItemId);
+  }),
+});
+
+// The renderer pulls on mount rather than only being pushed to: a link handed
+// over on the command line is captured before any renderer exists.
+export const takePendingDeepLink = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.TAKE_PENDING_DEEP_LINK_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.takePendingDeepLink")(function* () {
+    const deepLinks = yield* DesktopDeepLinks.DesktopDeepLinks;
+    return Option.getOrNull(yield* deepLinks.takePending);
   }),
 });
 

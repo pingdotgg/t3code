@@ -173,6 +173,26 @@ describe("parseDeepLinkTarget", () => {
   });
 });
 
+describe("describeDeepLinkTarget", () => {
+  it("reduces a target to diagnostics that cannot leak a token", () => {
+    assert.deepStrictEqual(
+      DesktopDeepLinks.describeDeepLinkTarget("/pair?token=super-secret#frag"),
+      { path: "/pair", hasQuery: true, hasFragment: true },
+    );
+    assert.deepStrictEqual(DesktopDeepLinks.describeDeepLinkTarget("/settings"), {
+      path: "/settings",
+      hasQuery: false,
+      hasFragment: false,
+    });
+    // A fragment can carry a credential too, so it must not survive either.
+    assert.deepStrictEqual(DesktopDeepLinks.describeDeepLinkTarget("/callback#id_token=abc"), {
+      path: "/callback",
+      hasQuery: false,
+      hasFragment: true,
+    });
+  });
+});
+
 describe("findDeepLinkTarget", () => {
   it("picks the link out of the surrounding process arguments", () => {
     assert.deepStrictEqual(
@@ -252,32 +272,77 @@ describe("DesktopDeepLinks", () => {
     });
   });
 
-  it.effect("holds a cold-start link until a renderer can receive it", () => {
+  it.effect("hands a cold-start link to the renderer that asks for it", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
-      // No window exists while the app boots, which is exactly when a link
-      // handed over on the command line arrives.
+      // No renderer exists while the app boots, which is exactly when a link
+      // handed over on the command line arrives, so the renderer claims it on
+      // mount instead of being pushed to.
       const hasRenderer = yield* Ref.make(false);
       yield* withDeepLinks(
         Effect.gen(function* () {
           const deepLinks = yield* DesktopDeepLinks.DesktopDeepLinks;
           yield* deepLinks.configure;
-          yield* deepLinks.deliverPending;
           assert.isEmpty(harness.dispatched);
 
-          yield* Ref.set(hasRenderer, true);
-          yield* deepLinks.deliverPending;
-          assert.deepStrictEqual(harness.dispatched, ["/threads/42"]);
-
-          // The link is spent, so a later flush must not replay it.
-          yield* deepLinks.deliverPending;
-          assert.deepStrictEqual(harness.dispatched, ["/threads/42"]);
+          assert.deepStrictEqual(yield* deepLinks.takePending, Option.some("/threads/42"));
+          // Claiming it clears it, so a remount does not navigate again.
+          assert.deepStrictEqual(yield* deepLinks.takePending, Option.none());
         }),
         {
           harness,
           hasRenderer,
           argv: ["/opt/T3 Code/t3code", "t3code://app/threads/42"],
         },
+      );
+    });
+  });
+
+  it.effect("keeps a link pending when no loaded renderer took it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const hasRenderer = yield* Ref.make(false);
+      yield* withDeepLinks(
+        Effect.gen(function* () {
+          const deepLinks = yield* DesktopDeepLinks.DesktopDeepLinks;
+          yield* deepLinks.configure;
+
+          // Arrives while the app runs but before a renderer can take it, so
+          // the push fails and it must survive for the next renderer.
+          harness.listeners.get("second-instance")?.({}, [
+            "/opt/T3 Code/t3code",
+            "t3code://app/settings",
+          ]);
+          yield* Effect.yieldNow;
+
+          assert.isEmpty(harness.dispatched);
+          assert.deepStrictEqual(yield* deepLinks.takePending, Option.some("/settings"));
+        }),
+        { harness, hasRenderer },
+      );
+    });
+  });
+
+  it.effect("stops holding a link once a renderer has it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const hasRenderer = yield* Ref.make(true);
+      yield* withDeepLinks(
+        Effect.gen(function* () {
+          const deepLinks = yield* DesktopDeepLinks.DesktopDeepLinks;
+          yield* deepLinks.configure;
+
+          harness.listeners.get("second-instance")?.({}, [
+            "/opt/T3 Code/t3code",
+            "t3code://app/settings",
+          ]);
+          yield* Effect.yieldNow;
+
+          assert.deepStrictEqual(harness.dispatched, ["/settings"]);
+          // Pushed successfully, so a later mount has nothing to replay.
+          assert.deepStrictEqual(yield* deepLinks.takePending, Option.none());
+        }),
+        { harness, hasRenderer },
       );
     });
   });

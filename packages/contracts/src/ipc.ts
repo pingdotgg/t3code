@@ -1011,6 +1011,9 @@ export interface DesktopBridge {
   // Receives the in-app path from a t3code:// link opened outside the app. The
   // main process only ever forwards a path within the renderer's own origin.
   onDeepLink?: (listener: (target: string) => void) => () => void;
+  // Claims a link that arrived before this renderer existed, such as one handed
+  // over on the command line at launch. Returns null when nothing is pending.
+  takePendingDeepLink?: () => Promise<string | null>;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

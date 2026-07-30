@@ -253,10 +253,10 @@ const startup = Effect.gen(function* () {
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
   yield* updates.configure;
+  // Nothing hands a pending deep link over here: bootstrap only requests the
+  // backend start, and the renderer is created later from handleBackendReady.
+  // The renderer claims the link itself once it mounts (takePendingDeepLink).
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
-  // Bootstrap is what brings up the window, so a link that arrived on the
-  // command line finally has a renderer to route it.
-  yield* deepLinks.deliverPending;
 }).pipe(Effect.withSpan("desktop.startup"));
 
 const scopedProgram = Effect.scoped(

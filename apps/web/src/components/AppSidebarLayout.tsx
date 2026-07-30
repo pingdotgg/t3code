@@ -182,23 +182,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     };
   }, [navigate, pathname]);
 
-  useEffect(() => {
-    const onDeepLink = window.desktopBridge?.onDeepLink;
-    if (typeof onDeepLink !== "function") {
-      return;
-    }
-
-    // Routing client-side keeps the current session alive; reloading the
-    // renderer at the link's URL would throw away in-memory state.
-    const unsubscribe = onDeepLink((target) => {
-      void navigate({ to: target });
-    });
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, [navigate]);
-
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
       <Sidebar

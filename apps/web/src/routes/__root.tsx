@@ -13,6 +13,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { useDesktopDeepLinks } from "../hooks/useDesktopDeepLinks";
 import { CommandPalette } from "../components/CommandPalette";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
@@ -87,6 +88,10 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+
+  // Every branch below returns a different tree, so this has to sit above them:
+  // a deep link can arrive while the pairing or sign-in screen is showing.
+  useDesktopDeepLinks();
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {

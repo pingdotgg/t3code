@@ -6,10 +6,17 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import { DESKTOP_HOST, getDesktopScheme } from "../electron/ElectronProtocol.ts";
+import { getDesktopScheme } from "../electron/ElectronProtocol.ts";
+import {
+  describeDeepLinkTarget,
+  findDeepLinkTarget,
+  parseDeepLinkTarget,
+} from "./deepLinkTarget.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
+
+export { describeDeepLinkTarget, findDeepLinkTarget, parseDeepLinkTarget };
 
 const { logInfo: logDeepLinkInfo } = makeComponentLogger("desktop-deep-links");
 
@@ -19,64 +26,12 @@ export class DesktopDeepLinks extends Context.Service<
     // Claims the scheme and starts listening. Runs before the app is ready so a
     // cold-start link in argv is captured before anything can overwrite it.
     readonly configure: Effect.Effect<void, never, Scope.Scope>;
-    // Hands over a link captured before a renderer existed. Safe to call when
-    // nothing is pending.
-    readonly deliverPending: Effect.Effect<void>;
+    // Hands the pending link to the renderer that asks for it, clearing it in
+    // the same step. The renderer pulls on mount because a cold-start link is
+    // captured long before any renderer exists to be pushed to.
+    readonly takePending: Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/desktop/app/DesktopDeepLinks") {}
-
-/**
- * Extracts the in-app target from a deep link.
- *
- * A link is untrusted input from any web page, so this only ever yields a path
- * within the renderer's own origin: a foreign scheme, a foreign host, or a
- * protocol-relative path (which a router would read as another origin) all
- * resolve to none rather than reaching the renderer.
- */
-export function parseDeepLinkTarget(rawUrl: unknown, scheme: string): Option.Option<string> {
-  if (typeof rawUrl !== "string") return Option.none();
-  const trimmedUrl = rawUrl.trim();
-  if (trimmedUrl.length === 0) return Option.none();
-
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(trimmedUrl);
-  } catch {
-    return Option.none();
-  }
-
-  if (parsedUrl.protocol !== `${scheme}:` || parsedUrl.host !== DESKTOP_HOST) {
-    return Option.none();
-  }
-
-  const target = `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
-  if (!target.startsWith("/") || target.startsWith("//")) {
-    return Option.none();
-  }
-
-  return Option.some(target);
-}
-
-/**
- * Finds the deep link among process arguments.
- *
- * Linux and Windows deliver links as an argv entry rather than an event, mixed
- * in with Chromium's own switches, so every argument gets tried and the first
- * one addressing our scheme wins.
- */
-export function findDeepLinkTarget(
-  argv: ReadonlyArray<string>,
-  scheme: string,
-): Option.Option<string> {
-  for (const argument of argv) {
-    const target = parseDeepLinkTarget(argument, scheme);
-    if (Option.isSome(target)) {
-      return target;
-    }
-  }
-
-  return Option.none();
-}
 
 export const make = (processArgv: ReadonlyArray<string> = process.argv) =>
   Effect.gen(function* () {
@@ -85,11 +40,18 @@ export const make = (processArgv: ReadonlyArray<string> = process.argv) =>
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
     const scheme = getDesktopScheme(environment.isDevelopment);
+    // One slot rather than a queue: these are navigation requests, so replaying
+    // a backlog would only flash through intermediate routes to land on the
+    // newest one anyway. The latest link wins.
     const pendingTargetRef = yield* Ref.make(Option.none<string>());
 
-    // Keeps the link until a renderer takes it. A cold-start link arrives long
-    // before the window exists, and dropping it would strand the user on whatever
-    // route the app opens by default.
+    const takePending = Ref.getAndSet(pendingTargetRef, Option.none<string>()).pipe(
+      Effect.withSpan("desktop.deepLinks.takePending"),
+    );
+
+    // Tries the renderer immediately for links that arrive while the app runs.
+    // Anything that cannot be handed over right now stays pending for the next
+    // renderer to pull, so nothing is dropped on the way.
     const deliverPending = Effect.gen(function* () {
       const pendingTarget = yield* Ref.get(pendingTargetRef);
       if (Option.isNone(pendingTarget)) {
@@ -100,7 +62,11 @@ export const make = (processArgv: ReadonlyArray<string> = process.argv) =>
         .dispatchDeepLink(pendingTarget.value)
         .pipe(Effect.orElseSucceed(() => false));
       if (delivered) {
-        yield* Ref.set(pendingTargetRef, Option.none());
+        // Compare before clearing: a newer link may have replaced this one
+        // while the send was in flight.
+        yield* Ref.update(pendingTargetRef, (current) =>
+          Option.isSome(current) && current.value === pendingTarget.value ? Option.none() : current,
+        );
       }
     }).pipe(Effect.withSpan("desktop.deepLinks.deliverPending"));
 
@@ -111,7 +77,9 @@ export const make = (processArgv: ReadonlyArray<string> = process.argv) =>
         return;
       }
 
-      yield* logDeepLinkInfo("deep link received", { target: target.value });
+      // A link is external input that can carry a token in its query or
+      // fragment, so only the route shape is logged.
+      yield* logDeepLinkInfo("deep link received", describeDeepLinkTarget(target.value));
       yield* Ref.set(pendingTargetRef, target);
       yield* deliverPending;
     });
@@ -149,7 +117,7 @@ export const make = (processArgv: ReadonlyArray<string> = process.argv) =>
       yield* Ref.set(pendingTargetRef, findDeepLinkTarget(processArgv, scheme));
     }).pipe(Effect.withSpan("desktop.deepLinks.configure"));
 
-    return DesktopDeepLinks.of({ configure, deliverPending });
+    return DesktopDeepLinks.of({ configure, takePending });
   });
 
 export const layer = Layer.effect(DesktopDeepLinks, make());

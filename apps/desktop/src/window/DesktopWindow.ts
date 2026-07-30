@@ -9,6 +9,7 @@ import * as Electron from "electron";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { describeDeepLinkTarget } from "../app/deepLinkTarget.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
@@ -681,15 +682,18 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
   // Pushes a renderer message and reveals the window it landed in. Reports
-  // whether the payload reached a renderer so callers holding something they
-  // cannot regenerate — a deep link, say — can keep it until a window exists.
+  // whether the payload actually reached a loaded renderer: "deferred" only
+  // registers a did-finish-load listener, which never fires if the window is
+  // closed first, so a caller holding something it cannot regenerate must not
+  // treat that as delivered.
   const sendToMainWindow = Effect.fn("desktop.window.sendToMainWindow")(function* (
     channel: string,
     payload: string,
+    options: { readonly deferWhileLoading: boolean },
   ) {
     const existingWindow = yield* focusedMainWindow;
     if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
-      return false;
+      return "unavailable" as const;
     }
     const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
 
@@ -700,12 +704,15 @@ export const make = Effect.gen(function* () {
     };
 
     if (targetWindow.webContents.isLoadingMainFrame()) {
+      if (!options.deferWhileLoading) {
+        return "unavailable" as const;
+      }
       targetWindow.webContents.once("did-finish-load", send);
-      return true;
+      return "deferred" as const;
     }
 
     send();
-    return true;
+    return "sent" as const;
   });
 
   const createMainIfBackendReady = Effect.gen(function* () {
@@ -802,11 +809,18 @@ export const make = Effect.gen(function* () {
     ),
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
-      yield* sendToMainWindow(MENU_ACTION_CHANNEL, action);
+      yield* sendToMainWindow(MENU_ACTION_CHANNEL, action, { deferWhileLoading: true });
     }),
     dispatchDeepLink: Effect.fn("desktop.window.dispatchDeepLink")(function* (target) {
-      yield* Effect.annotateCurrentSpan({ target });
-      return yield* sendToMainWindow(DEEP_LINK_CHANNEL, target);
+      // The target's query and fragment can carry a token, so the span records
+      // the route shape only.
+      yield* Effect.annotateCurrentSpan(describeDeepLinkTarget(target));
+      // A renderer that is still loading pulls the link itself once it mounts,
+      // so there is nothing to gain from deferring the send here.
+      const delivery = yield* sendToMainWindow(DEEP_LINK_CHANNEL, target, {
+        deferWhileLoading: false,
+      });
+      return delivery === "sent";
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

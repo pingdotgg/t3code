@@ -558,9 +558,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.notProperty(config.linux ?? {}, "protocols");
       }
 
-      assert.deepStrictEqual(DESKTOP_URL_PROTOCOLS, [
-        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
-      ]);
+      // Only the scheme a packaged build answers to: it resolves t3code from
+      // isDevelopment being false, so declaring t3code-dev would advertise a
+      // handler that rejects those links and would outrank a dev run.
+      assert.deepStrictEqual(DESKTOP_URL_PROTOCOLS, [{ name: "T3 Code", schemes: ["t3code"] }]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 

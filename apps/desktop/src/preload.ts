@@ -116,6 +116,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
     };
   },
+  takePendingDeepLink: () => ipcRenderer.invoke(IpcChannels.TAKE_PENDING_DEEP_LINK_CHANNEL),
   onDeepLink: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, target: unknown) => {
       if (typeof target !== "string") return;

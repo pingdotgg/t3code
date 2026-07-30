@@ -640,12 +640,15 @@ export const DESKTOP_FILE_EXCLUSIONS = [
 // The Windows primary backend reads the same files through the asar redirect,
 // so nothing is duplicated.
 export const WINDOWS_ASAR_UNPACK = ["apps/server/dist/**", "**/node_modules/**"] as const;
-// Both schemes ship in every artifact so a dev build and an installed build can
-// each own their own scheme without fighting over one registration.
+// Only the production scheme. A packaged artifact resolves its scheme from
+// isDevelopment, which is false once packaged, so it would reject t3code-dev
+// links after launch — and declaring that scheme anyway would let an installed
+// build take the association away from a dev run. Dev runs are unpackaged and
+// claim t3code-dev at runtime instead (see DesktopDeepLinks).
 export const DESKTOP_URL_PROTOCOLS = [
   {
     name: "T3 Code",
-    schemes: ["t3code", "t3code-dev"],
+    schemes: ["t3code"],
   },
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
