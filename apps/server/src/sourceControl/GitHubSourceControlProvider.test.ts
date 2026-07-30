@@ -479,11 +479,14 @@ describe("expandGitHubInstances", () => {
     expect(instances).toHaveLength(2);
   });
 
-  it("emits only an unauthenticated github row when output is unparseable", () => {
+  it("emits only a github row with unknown auth when output is unparseable", () => {
     const instances = GitHubSourceControlProvider.expandGitHubInstances(probe("not json"));
 
     expect(instances).toHaveLength(1);
     expect(instances[0]!.id).toBe("github");
+    expect(instances[0]!.kind).toBe("github");
+    expect(instances[0]!.host).toBe("github.com");
+    expect(instances[0]!.auth.status).toBe("unknown");
   });
 });
 
