@@ -1,5 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeMode, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   CloudIcon,
@@ -14,6 +14,7 @@ import { memo, useCallback, useMemo } from "react";
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
 import { useIsMobile } from "../hooks/useMediaQuery";
+import { cn } from "~/lib/utils";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -28,6 +29,9 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import type { ContextWindowSnapshot } from "../lib/contextWindow";
+import { ComposerRuntimeModeControl } from "./chat/ComposerRuntimeModeControl";
+import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -41,7 +45,7 @@ import {
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
 
-interface BranchToolbarProps {
+export interface ComposerMetaBarProps {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -56,6 +60,11 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  showGitControls: boolean;
+  runtimeMode: RuntimeMode;
+  activeContextWindow: ContextWindowSnapshot | null;
+  activeThreadProviderDisplayName?: string | null;
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
 }
 
 interface MobileRunContextSelectorProps {
@@ -71,6 +80,19 @@ interface MobileRunContextSelectorProps {
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel: string | null;
   onUsePreviousWorktree: () => void;
+}
+
+export function resolveComposerMetaBarLayout(input: {
+  hasActiveThread: boolean;
+  hasActiveProject: boolean;
+  showGitControls: boolean;
+}) {
+  const visible = input.hasActiveThread && input.hasActiveProject;
+  return {
+    visible,
+    showGitControls: visible && input.showGitControls,
+    showRuntimeAndContext: visible,
+  };
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
@@ -214,7 +236,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   );
 });
 
-export const BranchToolbar = memo(function BranchToolbar({
+export const ComposerMetaBar = memo(function ComposerMetaBar({
   environmentId,
   threadId,
   draftId,
@@ -229,7 +251,12 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
-}: BranchToolbarProps) {
+  showGitControls,
+  runtimeMode,
+  activeContextWindow,
+  activeThreadProviderDisplayName,
+  onRuntimeModeChange,
+}: ComposerMetaBarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -300,64 +327,100 @@ export const BranchToolbar = memo(function BranchToolbar({
     canPickEnvironment: showEnvironmentPicker,
   });
   const isMobile = useIsMobile();
+  const layout = resolveComposerMetaBarLayout({
+    hasActiveThread,
+    hasActiveProject: activeProject != null,
+    showGitControls,
+  });
 
-  if (!hasActiveThread || !activeProject) return null;
+  if (!layout.visible || !activeProject) return null;
 
   return (
-    <div className="chat-composer-context-strip -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 px-1 pt-5 pb-1">
-      {isMobile ? (
-        <MobileRunContextSelector
-          envLocked={envLocked}
-          envModeLocked={envModeLocked}
-          environmentId={environmentId}
-          availableEnvironments={availableEnvironments}
-          showEnvironmentPicker={showEnvironmentPicker}
-          showEnvironmentIndicator={showEnvironmentIndicator}
-          onEnvironmentChange={onEnvironmentChange}
-          effectiveEnvMode={effectiveEnvMode}
-          activeWorktreePath={activeWorktreePath}
-          onEnvModeChange={onEnvModeChange}
-          previousWorktreeLabel={previousWorktreeLabel}
-          onUsePreviousWorktree={onUsePreviousWorktree}
-        />
-      ) : (
+    <div
+      className="mx-auto mt-1 flex w-full max-w-208 flex-wrap items-center gap-x-3 gap-y-1 px-0.5"
+      data-composer-meta-bar="true"
+    >
+      {layout.showGitControls ? (
         <div className="flex min-w-0 flex-1 items-center gap-1">
-          {showEnvironmentIndicator && availableEnvironments && (
+          {isMobile ? (
+            <MobileRunContextSelector
+              envLocked={envLocked}
+              envModeLocked={envModeLocked}
+              environmentId={environmentId}
+              availableEnvironments={availableEnvironments}
+              showEnvironmentPicker={showEnvironmentPicker}
+              showEnvironmentIndicator={showEnvironmentIndicator}
+              onEnvironmentChange={onEnvironmentChange}
+              effectiveEnvMode={effectiveEnvMode}
+              activeWorktreePath={activeWorktreePath}
+              onEnvModeChange={onEnvModeChange}
+              previousWorktreeLabel={previousWorktreeLabel}
+              onUsePreviousWorktree={onUsePreviousWorktree}
+            />
+          ) : (
             <>
-              <BranchToolbarEnvironmentSelector
-                envLocked={envLocked}
-                environmentId={environmentId}
-                availableEnvironments={availableEnvironments}
-                {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+              {showEnvironmentIndicator && availableEnvironments ? (
+                <>
+                  <BranchToolbarEnvironmentSelector
+                    envLocked={envLocked}
+                    environmentId={environmentId}
+                    availableEnvironments={availableEnvironments}
+                    {...(showEnvironmentPicker && onEnvironmentChange
+                      ? { onEnvironmentChange }
+                      : {})}
+                  />
+                  <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+                </>
+              ) : null}
+              <BranchToolbarEnvModeSelector
+                envLocked={envModeLocked}
+                effectiveEnvMode={effectiveEnvMode}
+                activeWorktreePath={activeWorktreePath}
+                onEnvModeChange={onEnvModeChange}
+                previousWorktreeLabel={previousWorktreeLabel}
+                onUsePreviousWorktree={onUsePreviousWorktree}
               />
-              <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
             </>
           )}
-          <BranchToolbarEnvModeSelector
-            envLocked={envModeLocked}
-            effectiveEnvMode={effectiveEnvMode}
-            activeWorktreePath={activeWorktreePath}
-            onEnvModeChange={onEnvModeChange}
-            previousWorktreeLabel={previousWorktreeLabel}
-            onUsePreviousWorktree={onUsePreviousWorktree}
+          <Separator orientation="vertical" className="mx-0.5 hidden h-3.5! md:block" />
+          <BranchToolbarBranchSelector
+            className="min-w-0 flex-1 justify-end md:flex-none"
+            environmentId={environmentId}
+            threadId={threadId}
+            {...(draftId ? { draftId } : {})}
+            envLocked={envLocked}
+            {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+            {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+            {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+            startFromOrigin={startFromOrigin}
+            onStartFromOriginChange={onStartFromOriginChange}
+            {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+            {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
           />
         </div>
-      )}
+      ) : null}
 
-      <BranchToolbarBranchSelector
-        className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
-        environmentId={environmentId}
-        threadId={threadId}
-        {...(draftId ? { draftId } : {})}
-        envLocked={envLocked}
-        {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
-        {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-        {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
-        startFromOrigin={startFromOrigin}
-        onStartFromOriginChange={onStartFromOriginChange}
-        {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-        {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-      />
+      <div
+        className={cn(
+          "ml-auto flex min-w-0 shrink-0 items-center gap-1.5",
+          !layout.showGitControls && "w-full justify-end",
+        )}
+      >
+        <ComposerRuntimeModeControl
+          runtimeMode={runtimeMode}
+          onRuntimeModeChange={onRuntimeModeChange}
+        />
+        {activeContextWindow ? (
+          <>
+            <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+            <ContextWindowMeter
+              usage={activeContextWindow}
+              variant="labeled"
+              providerDisplayName={activeThreadProviderDisplayName ?? null}
+            />
+          </>
+        ) : null}
+      </div>
     </div>
   );
 });

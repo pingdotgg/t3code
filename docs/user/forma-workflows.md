@@ -30,6 +30,32 @@ Use the mode pill in the composer to choose how the next turn runs:
 The selected mode synchronizes between Forma web and desktop clients. Sending a
 normal turn from the official mobile app clears a stale Ask override.
 
+## Composer controls
+
+The Forma composer keeps writing controls inside the rounded prompt surface and places execution
+metadata in a separate row below it.
+
+The footer is ordered from left to right:
+
+1. **Add actions** opens Build, Ask, and Plan choices, image attachment, skills, and any stashed
+   prompts.
+2. The colored **Build / Ask / Plan** pill shows the active interaction mode.
+3. The **model picker** selects the provider model. A provider-instance badge appears only when
+   multiple instances of the same provider or a custom identity need disambiguation.
+4. Provider-specific traits and the plan-sidebar control follow when available.
+5. The final circular action sends while idle, adds to the queue while an agent is running, and
+   interrupts a running turn when the prompt is empty.
+
+The metadata row contains the environment, workspace or worktree, branch, access mode, and context
+usage. Non-Git projects still expose access mode and context usage. On narrow layouts the
+environment and workspace choices combine into one menu, while branch and access controls remain
+reachable.
+
+Press **Command-S** on macOS or **Control-S** elsewhere to stash a populated prompt. Use the
+**Stashed prompts** row in Add actions—or the same shortcut while the composer is empty—to restore
+one later. Stashes can be restored across threads; the menu reports attachments that are still
+being saved or could not be preserved.
+
 ## Queued turns
 
 Submitting while a thread is busy adds the prompt to a persistent FIFO queue.

@@ -2,74 +2,113 @@ import type {
   FormaInteractionMode,
   ServerProviderSupportedInteractionMode,
 } from "@t3tools/contracts";
-import {
-  BotIcon,
-  CheckIcon,
-  CirclePlusIcon,
-  ImageIcon,
-  MessageCircleQuestionIcon,
-  SparklesIcon,
-} from "lucide-react";
 import { memo } from "react";
+import {
+  IconBookmark as BookmarkIcon,
+  IconCheckmark as CheckIcon,
+  IconCubeTransparent as SkillIcon,
+  IconPlusCircleFill as PlusCircleIcon,
+} from "symbols-react";
 
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { cn } from "~/lib/utils";
+import { type MenuHandle, Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { composerInteractionModeConfig } from "./composerInteractionMode";
 
-const modeOptions = [
-  { id: "default", label: "Build", Icon: BotIcon },
-  { id: "ask", label: "Ask", Icon: MessageCircleQuestionIcon },
-  { id: "plan", label: "Plan", Icon: SparklesIcon },
-] as const;
+const ImageUploadIcon = ({ className }: { className?: string }) => (
+  <svg
+    aria-hidden="true"
+    className={cn("fill-current", className)}
+    fill="currentColor"
+    focusable="false"
+    viewBox="0 0 16 16"
+  >
+    <path d="M12.6429 7.69048L8.92925 11.4041C7.48164 12.8517 5.34347 13.0101 4.16667 11.8333C2.98733 10.654 3.14447 8.52219 4.59216 7.07451L8.00206 3.66461C8.93557 2.73109 10.2976 2.63095 11.0333 3.36667C11.7681 4.10139 11.6658 5.4675 10.7361 6.39727L7.32363 9.8097C6.90202 10.2313 6.32171 10.2741 6.02381 9.97619C5.72651 9.6789 5.76949 9.09718 6.1989 8.66776L9.29048 5.57619C9.56662 5.30005 9.56662 4.85233 9.29048 4.57619C9.01433 4.30005 8.56662 4.30005 8.29048 4.57619L5.1989 7.66776C4.24737 8.6193 4.13865 10.091 5.02381 10.9762C5.9095 11.8619 7.37984 11.7535 8.32363 10.8097L11.7361 7.39727C13.1876 5.94573 13.3564 3.68975 12.0333 2.36667C10.7099 1.04326 8.45782 1.20884 7.00206 2.66461L3.59216 6.07451C1.62229 8.04437 1.39955 11.0662 3.16667 12.8333C4.93146 14.5981 7.9596 14.3737 9.92925 12.4041L13.6429 8.69048C13.919 8.41433 13.919 7.96662 13.6429 7.69048C13.3667 7.41433 12.919 7.41433 12.6429 7.69048Z" />
+  </svg>
+);
+
+const modeOrder = ["default", "ask", "plan"] as const;
+
+export function resolveComposerAddActionModes(
+  supportedInteractionModes: ReadonlyArray<ServerProviderSupportedInteractionMode>,
+) {
+  return modeOrder.filter(
+    (mode): mode is FormaInteractionMode =>
+      mode !== "ask" || supportedInteractionModes.includes("ask"),
+  );
+}
 
 export const ComposerAddActionsMenu = memo(function ComposerAddActionsMenu(props: {
-  readonly interactionMode: FormaInteractionMode;
-  readonly supportedInteractionModes: ReadonlyArray<ServerProviderSupportedInteractionMode>;
-  readonly showInteractionModeActions: boolean;
-  readonly imageDisabled: boolean;
-  readonly skillDisabled: boolean;
-  readonly onSelectMode: (mode: FormaInteractionMode) => void;
-  readonly onSelectImage: () => void;
-  readonly onSelectSkill: () => void;
+  interactionMode: FormaInteractionMode;
+  menuHandle: MenuHandle<FormaInteractionMode>;
+  triggerId: string;
+  supportedInteractionModes: ReadonlyArray<ServerProviderSupportedInteractionMode>;
+  showInteractionModeActions: boolean;
+  imageDisabled: boolean;
+  skillDisabled: boolean;
+  stashCount: number;
+  onSelectMode: (mode: FormaInteractionMode) => void;
+  onSelectImage: () => void;
+  onSelectSkill: () => void;
+  onOpenStash: () => void;
 }) {
   return (
-    <Menu>
+    <Menu handle={props.menuHandle}>
       <MenuTrigger
+        handle={props.menuHandle}
+        id={props.triggerId}
         render={
           <button
-            aria-label="Add composer action"
-            className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground/75 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring/60"
-            data-composer-add-actions-trigger="true"
             type="button"
+            className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-[5px] text-muted-foreground/72 transition-[color,transform] [transition-duration:var(--motion-duration-micro)] hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring/60 active:scale-[0.97]"
+            aria-label="Add composer action"
+            data-composer-add-actions-trigger="true"
           />
         }
       >
-        <CirclePlusIcon className="size-5" />
+        <PlusCircleIcon className="size-6 fill-current" />
       </MenuTrigger>
       <MenuPopup align="start" className="w-56">
         {props.showInteractionModeActions
-          ? modeOptions.map(({ id, label, Icon }) =>
-              id === "ask" && !props.supportedInteractionModes.includes("ask") ? null : (
+          ? resolveComposerAddActionModes(props.supportedInteractionModes).map((mode) => {
+              const option = composerInteractionModeConfig[mode];
+              const OptionIcon = option.icon;
+              return (
                 <MenuItem
+                  key={mode}
                   className="gap-3"
-                  disabled={props.interactionMode === id}
-                  key={id}
-                  onClick={() => props.onSelectMode(id)}
+                  disabled={props.interactionMode === mode}
+                  onClick={() => props.onSelectMode(mode)}
                 >
-                  <Icon className="size-4" />
-                  <span className="font-medium">{label}</span>
-                  {props.interactionMode === id ? <CheckIcon className="ml-auto size-3" /> : null}
+                  <OptionIcon className="size-4 shrink-0 fill-current" />
+                  <span className="font-medium text-foreground">{option.label}</span>
+                  {props.interactionMode === mode ? (
+                    <CheckIcon className="ml-auto size-3 fill-current text-muted-foreground/72" />
+                  ) : null}
                 </MenuItem>
-              ),
-            )
+              );
+            })
           : null}
         {props.showInteractionModeActions ? <MenuSeparator /> : null}
         <MenuItem className="gap-3" disabled={props.imageDisabled} onClick={props.onSelectImage}>
-          <ImageIcon className="size-4" />
-          <span className="font-medium">Image</span>
+          <ImageUploadIcon className="size-4 shrink-0" />
+          <span className="font-medium text-foreground">Image</span>
         </MenuItem>
         <MenuItem className="gap-3" disabled={props.skillDisabled} onClick={props.onSelectSkill}>
-          <SparklesIcon className="size-4" />
-          <span className="font-medium">Skill</span>
+          <SkillIcon className="size-3.5 shrink-0 fill-current" />
+          <span className="font-medium text-foreground">Skill</span>
         </MenuItem>
+        {props.stashCount > 0 ? (
+          <>
+            <MenuSeparator />
+            <MenuItem className="gap-3" onClick={props.onOpenStash}>
+              <BookmarkIcon className="size-4 shrink-0 fill-current" />
+              <span className="font-medium text-foreground">Stashed prompts</span>
+              <span className="ml-auto rounded-full bg-muted px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                {props.stashCount}
+              </span>
+            </MenuItem>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

@@ -5,7 +5,8 @@ import {
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { buttonVariants } from "../ui/button";
+import { IconChevronDown as ChevronDownIcon } from "symbols-react";
+import { Button, buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -17,7 +18,17 @@ import {
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { ComposerControl, ComposerControlChevron } from "./ComposerControl";
+
+export function shouldShowProviderInstanceBadge(
+  entries: ReadonlyArray<Pick<ProviderInstanceEntry, "driverKind" | "accentColor">>,
+  activeEntry: Pick<ProviderInstanceEntry, "driverKind" | "accentColor"> | null,
+): boolean {
+  if (!activeEntry) return false;
+  return (
+    Boolean(activeEntry.accentColor) ||
+    entries.filter((entry) => entry.driverKind === activeEntry.driverKind).length > 1
+  );
+}
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -66,11 +77,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
+  const triggerSubtitle = selectedModel?.subProvider;
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
-  const duplicateDriverCount = props.instanceEntries.filter(
-    (entry) => activeEntry !== null && entry.driverKind === activeEntry.driverKind,
-  ).length;
-  const showInstanceBadge = Boolean(activeEntry?.accentColor) || duplicateDriverCount > 1;
+  const showInstanceBadge = shouldShowProviderInstanceBadge(props.instanceEntries, activeEntry);
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -146,21 +155,27 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     >
       <PopoverTrigger
         render={
-          <ComposerControl
+          <Button
+            size="sm"
             aria-label={props.triggerAriaLabel}
             variant={props.triggerVariant ?? "ghost"}
             data-chat-provider-model-picker="true"
             className={cn(
-              "min-w-0 justify-between whitespace-nowrap",
-              props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56",
+              "min-w-0 justify-start overflow-hidden whitespace-nowrap rounded-full px-2 text-muted-foreground/70 before:rounded-[inherit] hover:text-foreground/80 [&_svg]:mx-0",
+              props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-3",
               props.triggerClassName,
             )}
             disabled={props.disabled}
           />
         }
       >
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          {activeEntry ? (
+        <span
+          className={cn(
+            "box-border flex w-full min-w-0 items-center gap-2 overflow-hidden",
+            props.compact && "max-w-36 sm:pl-1",
+          )}
+        >
+          {activeEntry && showInstanceBadge ? (
             <ProviderInstanceIcon
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
@@ -176,14 +191,37 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             />
           ) : null}
           <Tooltip>
-            <TooltipTrigger render={<span className="min-w-0 flex-1 overflow-hidden truncate" />}>
-              {triggerTitle}
+            <TooltipTrigger
+              render={
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 overflow-hidden",
+                    triggerSubtitle
+                      ? "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1"
+                      : "truncate",
+                  )}
+                />
+              }
+            >
+              {triggerSubtitle ? (
+                <>
+                  <span className="min-w-0 truncate">{triggerSubtitle}</span>
+                  <span aria-hidden="true" className="shrink-0 opacity-60">
+                    ·
+                  </span>
+                  <span className="min-w-0 truncate">{triggerTitle}</span>
+                </>
+              ) : (
+                triggerTitle
+              )}
             </TooltipTrigger>
-            <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+            <TooltipPopup side="top">
+              {activeEntry && showInstanceBadge
+                ? `${activeEntry.displayName} · ${triggerLabel}`
+                : triggerLabel}
+            </TooltipPopup>
           </Tooltip>
-        </span>
-        <span aria-hidden="true" className="flex items-center">
-          <ComposerControlChevron />
+          <ChevronDownIcon aria-hidden="true" className="size-2.5 shrink-0 opacity-60" />
         </span>
       </PopoverTrigger>
       <PopoverPopup

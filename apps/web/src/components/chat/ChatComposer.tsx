@@ -7,7 +7,6 @@ import type {
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ResolvedKeybindingsConfig,
-  RuntimeMode,
   ScopedThreadRef,
   ServerLocalAgentInventory,
   ServerProvider,
@@ -30,6 +29,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -66,9 +66,9 @@ import {
   usePromptStashStore,
   type PromptStashEntry,
 } from "../../promptStashStore";
-import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { ComposerAddActionsMenu } from "./ComposerAddActionsMenu";
+import { ComposerInteractionModePill } from "./ComposerInteractionModePill";
 import { compressImageForStash } from "../../lib/stashImageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
@@ -105,7 +105,6 @@ import { ComposerQueuedTurnsPanel } from "./ComposerQueuedTurnsPanel";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
-import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -114,11 +113,11 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
-import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
+import { MenuCreateHandle } from "../ui/menu";
 
 function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
   const [position, setPosition] = useState<{
@@ -178,23 +177,12 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
   );
 }
 import { Button } from "../ui/button";
-import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import {
-  BotIcon,
-  CircleAlertIcon,
-  ListTodoIcon,
-  PencilRulerIcon,
-  type LucideIcon,
-  LockIcon,
-  LockOpenIcon,
-  PenLineIcon,
-  SparklesIcon,
-  XIcon,
-} from "lucide-react";
+import { CircleAlertIcon, XIcon } from "lucide-react";
+import { SidebarPlanReadyIcon } from "../icons/custom";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
+import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -209,10 +197,6 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
-import {
-  deriveLatestContextWindowSnapshot,
-  formatProviderDisplayName,
-} from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -220,33 +204,6 @@ import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
-const runtimeModeConfig: Record<
-  RuntimeMode,
-  { label: string; description: string; icon: LucideIcon }
-> = {
-  "approval-required": {
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
-    icon: LockIcon,
-  },
-  "auto-accept-edits": {
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
-    icon: PenLineIcon,
-  },
-  auto: {
-    label: "Auto",
-    description: "An AI reviewer approves routine actions; risky ones still ask.",
-    icon: SparklesIcon,
-  },
-  "full-access": {
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
-    icon: LockOpenIcon,
-  },
-};
-
-const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="popover-popup"]',
   '[data-slot="menu-popup"]',
@@ -304,166 +261,8 @@ function isInsideComposerFloatingLayer(element: Element): boolean {
   return element.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
 }
 
-const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
-  showInteractionModeToggle: boolean;
-  interactionMode: FormaInteractionMode;
-  supportedInteractionModes: ReadonlyArray<ServerProviderSupportedInteractionMode>;
-  runtimeMode: RuntimeMode;
-  showPlanToggle: boolean;
-  planSidebarLabel: string;
-  planSidebarOpen: boolean;
-  onInteractionModeChange: (mode: FormaInteractionMode) => void;
-  onRuntimeModeChange: (mode: RuntimeMode) => void;
-  onTogglePlanSidebar: () => void;
-}) {
-  const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
-  const RuntimeModeIcon = runtimeModeOption.icon;
-  const interactionModeTooltip =
-    props.interactionMode === "ask"
-      ? "Ask mode — read and explain without making changes"
-      : props.interactionMode === "plan"
-        ? "Plan mode — research and propose a plan"
-        : "Build mode — explore and implement changes";
-  const planSidebarTooltip = props.planSidebarOpen
-    ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
-    : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`;
-
-  const interactionModeToggle = props.showInteractionModeToggle ? (
-    <>
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-      <Tooltip>
-        <Select
-          value={props.interactionMode}
-          onValueChange={(value) =>
-            value ? props.onInteractionModeChange(value as FormaInteractionMode) : undefined
-          }
-        >
-          <TooltipTrigger
-            render={
-              <ComposerSelectControl
-                className={cn(
-                  "rounded-full border px-2.5 font-medium",
-                  props.interactionMode === "ask"
-                    ? "border-emerald-500/30 bg-emerald-500/12 text-emerald-700 dark:text-emerald-200"
-                    : props.interactionMode === "plan"
-                      ? "border-violet-500/30 bg-violet-500/12 text-violet-700 dark:text-violet-200"
-                      : "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200",
-                )}
-                aria-label={interactionModeTooltip}
-              />
-            }
-          >
-            {props.interactionMode === "plan" ? (
-              <ComposerControlIcon icon={PencilRulerIcon} className="text-current opacity-100" />
-            ) : (
-              <ComposerControlIcon icon={BotIcon} opticalSize="large" />
-            )}
-            <SelectValue>
-              {props.interactionMode === "ask"
-                ? "Ask"
-                : props.interactionMode === "plan"
-                  ? "Plan"
-                  : "Build"}
-            </SelectValue>
-          </TooltipTrigger>
-          <SelectPopup alignItemWithTrigger={false}>
-            <SelectItem value="default" hideIndicator>
-              Build
-            </SelectItem>
-            {props.supportedInteractionModes.includes("ask") ? (
-              <SelectItem value="ask" hideIndicator>
-                Ask
-              </SelectItem>
-            ) : null}
-            <SelectItem value="plan" hideIndicator>
-              Plan
-            </SelectItem>
-          </SelectPopup>
-        </Select>
-        <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
-      </Tooltip>
-    </>
-  ) : null;
-
-  return (
-    <>
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-      <Tooltip>
-        <Select
-          value={props.runtimeMode}
-          onValueChange={(value) => props.onRuntimeModeChange(value!)}
-        >
-          <TooltipTrigger
-            render={<ComposerSelectControl className="font-medium" aria-label="Runtime mode" />}
-          >
-            <ComposerControlIcon icon={RuntimeModeIcon} />
-            <SelectValue>{runtimeModeOption.label}</SelectValue>
-          </TooltipTrigger>
-          <SelectPopup alignItemWithTrigger={false}>
-            {runtimeModeOptions.map((mode) => {
-              const option = runtimeModeConfig[mode];
-              const OptionIcon = option.icon;
-              return (
-                <SelectItem key={mode} value={mode} hideIndicator className="min-w-64 py-2">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="grid min-w-0 flex-1 gap-0.5">
-                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        {option.label}
-                      </span>
-                      <span className="text-muted-foreground text-xs leading-4">
-                        {option.description}
-                      </span>
-                    </div>
-                  </div>
-                </SelectItem>
-              );
-            })}
-          </SelectPopup>
-        </Select>
-        <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
-      </Tooltip>
-
-      {interactionModeToggle}
-
-      {props.showPlanToggle ? (
-        <>
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <ComposerControl
-                  className={cn(
-                    "shrink-0 whitespace-nowrap",
-                    props.planSidebarOpen
-                      ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
-                      : "text-muted-foreground/70 hover:text-foreground/80",
-                  )}
-                  type="button"
-                  onClick={props.onTogglePlanSidebar}
-                  aria-label={planSidebarTooltip}
-                />
-              }
-            >
-              <ComposerControlIcon
-                icon={ListTodoIcon}
-                className={props.planSidebarOpen ? "text-current opacity-100" : undefined}
-              />
-              <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
-            </TooltipTrigger>
-            <TooltipPopup side="top">{planSidebarTooltip}</TooltipPopup>
-          </Tooltip>
-        </>
-      ) : null}
-    </>
-  );
-});
-
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
-  activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
-  activeThreadProviderDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -473,6 +272,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  queueStatus: "idle" | "queued" | "paused";
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -486,34 +286,24 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onImplementPlanInNewThread: () => void;
 }) {
   return (
-    <>
-      {props.activeContextWindow ? (
-        <ContextWindowMeter
-          usage={props.activeContextWindow}
-          providerDisplayName={props.activeThreadProviderDisplayName}
-        />
-      ) : null}
-      {props.isPreparingWorktree ? (
-        <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
-      ) : null}
-      <ComposerPrimaryActions
-        compact={props.compact}
-        pendingAction={props.pendingAction}
-        isRunning={props.isRunning}
-        showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
-        promptHasText={props.promptHasText}
-        isSendBusy={props.isSendBusy}
-        sendDisabledReason={props.sendDisabledReason}
-        isConnecting={props.isConnecting}
-        isEnvironmentUnavailable={props.isEnvironmentUnavailable}
-        isPreparingWorktree={props.isPreparingWorktree}
-        hasSendableContent={props.hasSendableContent}
-        preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
-        onPreviousPendingQuestion={props.onPreviousPendingQuestion}
-        onInterrupt={props.onInterrupt}
-        onImplementPlanInNewThread={props.onImplementPlanInNewThread}
-      />
-    </>
+    <ComposerPrimaryActions
+      compact={props.compact}
+      pendingAction={props.pendingAction}
+      isRunning={props.isRunning}
+      queueStatus={props.queueStatus}
+      showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
+      promptHasText={props.promptHasText}
+      isSendBusy={props.isSendBusy}
+      sendDisabledReason={props.sendDisabledReason}
+      isConnecting={props.isConnecting}
+      isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+      isPreparingWorktree={props.isPreparingWorktree}
+      hasSendableContent={props.hasSendableContent}
+      preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
+      onPreviousPendingQuestion={props.onPreviousPendingQuestion}
+      onInterrupt={props.onInterrupt}
+      onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+    />
   );
 });
 
@@ -624,7 +414,6 @@ export interface ChatComposerProps {
   planSidebarOpen: boolean;
 
   // Mode
-  runtimeMode: RuntimeMode;
   interactionMode: FormaInteractionMode;
   threadExtensionState: ThreadExtensionState | null;
 
@@ -635,9 +424,6 @@ export interface ChatComposerProps {
   activeThreadModelSelection: ModelSelection | null | undefined;
   localAgentInventory: ServerLocalAgentInventory;
   localAgentInventoryLoading: boolean;
-
-  // Context window
-  activeThreadActivities: Thread["activities"] | undefined;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -676,7 +462,6 @@ export interface ChatComposerProps {
   onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
-  handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: FormaInteractionMode) => void;
   onRemoveQueuedTurn: (messageId: MessageId) => void;
   onResumeTurnQueue: () => void;
@@ -727,7 +512,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sidebarProposedPlan,
     planSidebarLabel,
     planSidebarOpen,
-    runtimeMode,
     interactionMode,
     threadExtensionState,
     lockedProvider,
@@ -736,7 +520,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadModelSelection,
     localAgentInventory,
     localAgentInventoryLoading,
-    activeThreadActivities,
     resolvedTheme,
     settings,
     keybindings,
@@ -759,7 +542,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onProviderModelSelect,
     getModelDisabledReason,
     toggleInteractionMode,
-    handleRuntimeModeChange,
     handleInteractionModeChange,
     onRemoveQueuedTurn,
     onResumeTurnQueue,
@@ -1030,24 +812,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
 
   // ------------------------------------------------------------------
-  // Context window
-  // ------------------------------------------------------------------
-  const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
-    [activeThreadActivities],
-  );
-  const activeThreadProviderDisplayName = useMemo(() => {
-    if (!activeThreadModelSelection) return null;
-    const entry = providerStatuses.find(
-      (p) => p.instanceId === activeThreadModelSelection.instanceId,
-    );
-    if (entry) {
-      return getProviderDisplayName(providerStatuses, entry.driver);
-    }
-    return formatProviderDisplayName(activeThreadModelSelection.instanceId);
-  }, [providerStatuses, activeThreadModelSelection]);
-
-  // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
   const [composerCursor, setComposerCursor] = useState(() =>
@@ -1064,13 +828,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [composerAddActionsMenuHandle] = useState(() => MenuCreateHandle<FormaInteractionMode>());
+  const composerAddActionsTriggerId = useId();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
-  const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
-    key: 0,
-    active: false,
-  });
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused;
@@ -1091,8 +853,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
-  const stashPulseKeyRef = useRef(0);
-  const stashPulseTimeoutRef = useRef<number | null>(null);
   /**
    * Snapshots currently being encoded, keyed by target+prompt+image ids.
    * Keyed rather than boolean so a genuinely different prompt (or a different
@@ -1373,16 +1133,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null,
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
-  const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isSendDisabled ||
-    isConnecting ||
-    noProviderAvailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+  const queueStatus = threadExtensionState?.queue.status ?? "idle";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2077,27 +1828,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const takeStashEntry = usePromptStashStore((state) => state.takeEntry);
   const finalizeStashEntryImages = usePromptStashStore((state) => state.finalizeEntryImages);
 
-  useEffect(() => {
-    return () => {
-      if (stashPulseTimeoutRef.current !== null) {
-        window.clearTimeout(stashPulseTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  /** Briefly highlight the badge so the save registers without a flourish. */
-  const pulseStashBadge = useCallback(() => {
-    stashPulseKeyRef.current += 1;
-    setStashPulse({ key: stashPulseKeyRef.current, active: true });
-    if (stashPulseTimeoutRef.current !== null) {
-      window.clearTimeout(stashPulseTimeoutRef.current);
-    }
-    stashPulseTimeoutRef.current = window.setTimeout(() => {
-      stashPulseTimeoutRef.current = null;
-      setStashPulse((current) => ({ ...current, active: false }));
-    }, 1200);
-  }, []);
-
   const restoreStashEntry = useCallback(
     (entry: PromptStashEntry) => {
       // Remove first so a double activation (click + Enter) can't restore twice.
@@ -2301,7 +2031,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       clearComposerDraftPromptAndImages(stashTarget);
       setComposerCursor(0);
       setComposerTrigger(null);
-      pulseStashBadge();
 
       if (evicted) {
         toastManager.add({
@@ -2382,13 +2111,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerImagesRef,
     finalizeStashEntryImages,
     promptRef,
-    pulseStashBadge,
     stashEntryToQueue,
   ]);
 
   const toggleStashMenu = useCallback(() => {
     setIsStashMenuOpen((open) => !open);
   }, []);
+
+  const toggleComposerAddActionsMenu = useCallback(() => {
+    if (composerAddActionsMenuHandle.isOpen) {
+      composerAddActionsMenuHandle.close();
+      return;
+    }
+    composerAddActionsMenuHandle.open(composerAddActionsTriggerId);
+  }, [composerAddActionsMenuHandle, composerAddActionsTriggerId]);
 
   // Close the stash menu whenever the trigger-driven command menu opens so
   // the two popovers never stack in the same layer, and when the user
@@ -2855,7 +2591,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       >
         <div
           className={cn(
-            "group rounded-[22px] p-px transition-colors duration-200",
+            "group rounded-[22px] p-px transition-colors duration-(--motion-duration-fast) ease-(--motion-ease-standard) motion-reduce:transition-none",
             composerProviderState.composerFrameClassName,
           )}
           onDragEnter={onComposerDragEnter}
@@ -2871,7 +2607,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ref={composerSurfaceRef}
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
-              "chat-composer-surface rounded-[20px] border backdrop-blur-md transition-[background-color,border-color,box-shadow] duration-200",
+              "chat-composer-surface rounded-[20px] border transition-[background-color,border-color,box-shadow] duration-(--motion-duration-fast) ease-(--motion-ease-standard) motion-reduce:transition-none",
               isDragOverComposer ? "border-primary/70! bg-accent/30!" : null,
               projectSelectionRequired ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,
@@ -2981,6 +2717,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         compact
                         pendingAction={pendingPrimaryAction}
                         isRunning={false}
+                        queueStatus={queueStatus}
                         showPlanFollowUpPrompt={false}
                         promptHasText={false}
                         isSendBusy={isSendBusy}
@@ -3024,27 +2761,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     : prompt.trim() ||
                       (noProviderAvailable ? "Enable a provider in Settings" : "Ask anything...")}
                 </button>
-                <button
-                  type="button"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/90 text-primary-foreground disabled:opacity-30"
-                  disabled={collapsedComposerPrimaryActionDisabled}
-                  aria-label={collapsedComposerPrimaryActionLabel}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    submitComposer();
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path
-                      d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
+                <ComposerPrimaryActions
+                  compact
+                  pendingAction={null}
+                  isRunning={phase === "running"}
+                  queueStatus={queueStatus}
+                  showPlanFollowUpPrompt={false}
+                  promptHasText={prompt.trim().length > 0}
+                  isSendBusy={isSendBusy}
+                  sendDisabledReason={sendDisabledReason}
+                  isConnecting={isConnecting}
+                  isEnvironmentUnavailable={
+                    environmentUnavailable !== null ||
+                    noProviderAvailable ||
+                    projectSelectionRequired
+                  }
+                  isPreparingWorktree={isPreparingWorktree}
+                  hasSendableContent={composerSendState.hasSendableContent}
+                  preserveComposerFocusOnPointerDown
+                  onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                  onInterrupt={handleInterruptPrimaryAction}
+                  onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                />
               </div>
             ) : null}
 
@@ -3056,14 +2794,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 isComposerCollapsedMobile && "hidden",
               )}
             >
-              <ComposerStashBadge
-                count={stashQueue.length}
-                pulseKey={stashPulse.key}
-                pulsing={stashPulse.active}
-                menuOpen={isStashMenuOpen}
-                onToggleMenu={toggleStashMenu}
-              />
-
               {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                   <ComposerStashMenu
@@ -3271,6 +3001,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact
                       pendingAction={pendingPrimaryAction}
                       isRunning={false}
+                      queueStatus={queueStatus}
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
@@ -3295,7 +3026,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
             <div
               aria-hidden
-              className="pointer-events-none h-[2px] w-full shrink-0 border-t [background-color:color-mix(in_srgb,var(--composer-surface-border)_70%,transparent)] [border-top-color:color-mix(in_srgb,var(--foreground)_8%,transparent)]"
+              className="pointer-events-none h-[2px] w-full shrink-0 border-t [background-color:color-mix(in_srgb,var(--composer-footer-separator-background-color)_var(--composer-footer-separator-background-opacity),transparent)] [border-top-color:color-mix(in_srgb,var(--composer-footer-separator-border-color)_var(--composer-footer-separator-border-opacity),transparent)]"
               data-chat-composer-footer-separator
             />
 
@@ -3320,6 +3051,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <ComposerAddActionsMenu
+                    menuHandle={composerAddActionsMenuHandle}
+                    triggerId={composerAddActionsTriggerId}
                     interactionMode={interactionMode}
                     supportedInteractionModes={supportedInteractionModes}
                     showInteractionModeActions={
@@ -3331,10 +3064,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       composerImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS
                     }
                     skillDisabled={allComposerSkills.length === 0}
+                    stashCount={stashQueue.length}
                     onSelectMode={handleInteractionModeChange}
                     onSelectImage={openComposerImagePicker}
                     onSelectSkill={openComposerSkillPicker}
+                    onOpenStash={() => setIsStashMenuOpen(true)}
                   />
+                  {!isComposerFooterCompact &&
+                  composerProviderControls.showInteractionModeToggle ? (
+                    <ComposerInteractionModePill
+                      interactionMode={interactionMode}
+                      onClick={toggleComposerAddActionsMenu}
+                    />
+                  ) : null}
                   <Separator orientation="vertical" className="mx-0.5 h-4" />
                   {noProviderAvailable ? (
                     <Button
@@ -3381,12 +3123,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       supportedInteractionModes={supportedInteractionModes}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
-                      runtimeMode={runtimeMode}
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
                       onInteractionModeChange={handleInteractionModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
-                      onRuntimeModeChange={handleRuntimeModeChange}
                     />
                   ) : (
                     <>
@@ -3399,20 +3139,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           {providerTraitsPicker}
                         </>
                       ) : null}
-                      <ComposerFooterModeControls
-                        showInteractionModeToggle={
-                          composerProviderControls.showInteractionModeToggle
-                        }
-                        interactionMode={interactionMode}
-                        supportedInteractionModes={supportedInteractionModes}
-                        runtimeMode={runtimeMode}
-                        showPlanToggle={showPlanSidebarToggle}
-                        planSidebarLabel={planSidebarLabel}
-                        planSidebarOpen={planSidebarOpen}
-                        onInteractionModeChange={handleInteractionModeChange}
-                        onRuntimeModeChange={handleRuntimeModeChange}
-                        onTogglePlanSidebar={togglePlanSidebar}
-                      />
+                      {showPlanSidebarToggle ? (
+                        <>
+                          <Separator
+                            orientation="vertical"
+                            className="mx-0.5 hidden h-4 sm:block"
+                          />
+                          <Button
+                            variant="ghost"
+                            className={cn(
+                              "shrink-0 rounded-full px-2 text-violet-600 hover:text-violet-700 dark:text-violet-300/90 dark:hover:text-violet-200 sm:px-3",
+                              planSidebarOpen && "bg-violet-500/10 hover:bg-violet-500/15",
+                            )}
+                            size="sm"
+                            type="button"
+                            onClick={togglePlanSidebar}
+                            title={
+                              planSidebarOpen
+                                ? `Hide ${planSidebarLabel.toLowerCase()} sidebar`
+                                : `Show ${planSidebarLabel.toLowerCase()} sidebar`
+                            }
+                          >
+                            <SidebarPlanReadyIcon className="size-3.5 shrink-0 fill-current" />
+                            <span className="sr-only sm:not-sr-only">{planSidebarLabel}</span>
+                          </Button>
+                        </>
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -3427,10 +3179,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 >
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
-                    activeContextWindow={activeContextWindow}
-                    activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
+                    queueStatus={queueStatus}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }

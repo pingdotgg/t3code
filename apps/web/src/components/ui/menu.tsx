@@ -7,6 +7,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const MenuCreateHandle = MenuPrimitive.createHandle;
+type MenuHandle<Payload> = MenuPrimitive.Handle<Payload>;
 
 const Menu = MenuPrimitive.Root;
 
@@ -270,6 +271,7 @@ function MenuSubPopup({
 
 export {
   MenuCreateHandle,
+  type MenuHandle,
   MenuCreateHandle as DropdownMenuCreateHandle,
   Menu,
   Menu as DropdownMenu,

@@ -4,6 +4,10 @@ import { PlayIcon, Trash2Icon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import {
+  composerPopoverLabelClassName,
+  composerPopoverSurfaceClassName,
+} from "./composerPopoverStyles";
 
 interface ComposerQueuedTurnsPanelProps {
   queue: ThreadExtensionState["queue"];
@@ -24,13 +28,14 @@ export const ComposerQueuedTurnsPanel = memo(function ComposerQueuedTurnsPanel({
   return (
     <div
       data-composer-queue-panel="true"
-      className="mx-auto w-full max-w-3xl overflow-hidden rounded-2xl border border-border/60 bg-popover/95 shadow-lg shadow-black/5 backdrop-blur-xl"
+      className={cn(composerPopoverSurfaceClassName, "mx-auto w-full")}
     >
       <div className="flex items-center justify-between gap-3 px-3 pt-2 pb-1">
         <div className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
-              "font-medium text-[11px] uppercase tracking-[0.08em]",
+              composerPopoverLabelClassName,
+              "px-0 pt-0 pb-0",
               paused ? "text-amber-700/85 dark:text-amber-300/90" : "text-muted-foreground/65",
             )}
           >
@@ -58,7 +63,7 @@ export const ComposerQueuedTurnsPanel = memo(function ComposerQueuedTurnsPanel({
           return (
             <div
               key={turn.messageId}
-              className="group flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-accent/65"
+              className="group flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] transition-colors duration-(--motion-duration-fast) hover:bg-accent/65 motion-reduce:transition-none"
             >
               <div className="min-w-0 flex-1 truncate text-foreground" title={preview}>
                 {preview}
