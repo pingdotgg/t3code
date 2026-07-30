@@ -84,6 +84,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly modelSelection?: ModelSelection;
   readonly branch?: string | null;
   readonly worktreePath?: string | null;
+  /** Kick off an async title regeneration for the thread. */
+  readonly regenerateTitle?: boolean;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -418,7 +420,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
     if (
       input.title !== undefined ||
       input.branch !== undefined ||
-      input.worktreePath !== undefined
+      input.worktreePath !== undefined ||
+      input.regenerateTitle !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",
@@ -427,6 +430,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+        ...(input.regenerateTitle === undefined ? {} : { regenerateTitle: input.regenerateTitle }),
       });
     }
     if (input.modelSelection !== undefined) {

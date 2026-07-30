@@ -843,6 +843,7 @@ export function threadShellFromProjection(
     snoozedUntil: projection.thread.snoozedUntil ?? null,
     snoozedAt: projection.thread.snoozedAt ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
+    titleRegeneration: projection.thread.titleRegeneration ?? null,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -1011,6 +1012,7 @@ function shellFromState(input: {
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
+    titleRegeneration: input.state.thread.titleRegeneration ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
 }

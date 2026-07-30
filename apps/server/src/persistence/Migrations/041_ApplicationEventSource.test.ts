@@ -12,7 +12,7 @@ layer("039_ApplicationEventSource", (it) => {
   it.effect("moves V2 events and current project state behind one global sequence", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 38 });
+      yield* runMigrations({ toMigrationInclusive: 40 });
 
       yield* sql`
         INSERT INTO orchestration_v2_events (
@@ -84,7 +84,7 @@ layer("039_ApplicationEventSource", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 41 });
 
       const events = yield* sql<{
         readonly sequence: number;
