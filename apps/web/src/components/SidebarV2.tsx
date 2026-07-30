@@ -32,6 +32,7 @@ import {
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
+  TerminalIcon,
   Trash2Icon,
   Undo2Icon,
 } from "lucide-react";
@@ -124,6 +125,8 @@ import {
   prStatusIndicator,
   resolveThreadPr,
   settledPrHoverColorClass,
+  terminalStatusFromRunningIds,
+  type TerminalStatusIndicator,
 } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
@@ -136,6 +139,7 @@ import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
+import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { CommandDialogTrigger } from "./ui/command";
 import { Button } from "./ui/button";
@@ -226,6 +230,10 @@ function WorkingDuration(props: { startedAt: string | null }) {
   );
 }
 
+function terminalProcessLabel(count: number): string {
+  return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
+}
+
 function SidebarV2ThreadTooltip({
   thread,
   projectTitle,
@@ -235,6 +243,8 @@ function SidebarV2ThreadTooltip({
   modelInstanceId,
   modelLabel,
   branchMismatch,
+  terminalStatus,
+  terminalProcessCount,
 }: {
   thread: SidebarThreadSummary;
   projectTitle: string | null;
@@ -247,6 +257,8 @@ function SidebarV2ThreadTooltip({
     threadBranch: string;
     currentBranch: string;
   } | null;
+  terminalStatus: TerminalStatusIndicator | null;
+  terminalProcessCount: number;
 }) {
   return (
     <TooltipCardPopup
@@ -298,6 +310,17 @@ function SidebarV2ThreadTooltip({
                 iconClassName="size-3 shrink-0 grayscale opacity-60"
               />
               <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
+            </div>
+          ) : null}
+          {terminalStatus ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <TerminalIcon
+                aria-hidden
+                className={cn("size-3 shrink-0", terminalStatus.colorClass)}
+              />
+              <div className="min-w-0 truncate text-foreground/75">
+                {terminalProcessLabel(terminalProcessCount)}
+              </div>
             </div>
           ) : null}
           {thread.session?.lastError ? (
@@ -429,6 +452,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
+  const runningTerminalIds = useThreadRunningTerminalIds({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
+  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const terminalProcessCount = runningTerminalIds.length;
 
   // Same semantics as v1 (never-visited counts as read): flipping the beta
   // flag must not light up every historical thread as unread.
@@ -547,6 +576,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
       branchMismatch={branchMismatch}
+      terminalStatus={terminalStatus}
+      terminalProcessCount={terminalProcessCount}
     />
   );
 
@@ -740,6 +771,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         #{pr.number}
       </button>
     ) : null;
+  const terminalStatusIcon = terminalStatus ? (
+    <span
+      role="img"
+      aria-label={terminalProcessLabel(terminalProcessCount)}
+      data-testid={`sidebar-v2-terminal-status-${thread.id}`}
+      className={cn("inline-flex shrink-0 items-center justify-center", terminalStatus.colorClass)}
+    >
+      <TerminalIcon className={cn("size-3.5", terminalStatus.pulse && "animate-status-pulse")} />
+    </span>
+  ) : null;
 
   if (variant === "slim") {
     return (
@@ -779,6 +820,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               />
             </span>
             {title}
+            {terminalStatusIcon}
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
@@ -895,9 +937,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   the hidden state out of flow lets the project label reclaim
                   space without either state overlapping it. */}
               <span className="group/v2-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
+                {/* pointer-events-none: while hovered this label is absolute
+                    + opacity-0, which paints it ABOVE the in-flow settle/snooze
+                    buttons; without it the invisible label eats their clicks. */}
                 <span
                   className={cn(
-                    "self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
+                    "pointer-events-none self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
                     snoozeMenuOpen && "absolute right-0 opacity-0",
                   )}
                 >
@@ -965,6 +1010,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {terminalStatusIcon}
               {prBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
@@ -1033,7 +1079,7 @@ export default function SidebarV2() {
     reportFailure: false,
   });
   const updateSettings = useUpdateClientSettings();
-  const { copyToClipboard: copyProjectPath } = useCopyToClipboard<{ path: string }>({
+  const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
         type: "success",
@@ -1046,6 +1092,25 @@ export default function SidebarV2() {
         stackedThreadToast({
           type: "error",
           title: "Failed to copy path",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
+  const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
+    target: "branch name",
+    onCopy: ({ branch }) => {
+      toastManager.add({
+        type: "success",
+        title: "Branch copied",
+        description: branch,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy branch",
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
@@ -1990,6 +2055,10 @@ export default function SidebarV2() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const threadWorkspacePath =
+          thread.worktreePath ??
+          projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+          null;
         // Un-settle works on every settled row: for explicit settles it
         // clears the override, for auto-settled rows it pins the thread
         // active until real activity clears the pin. Environments without
@@ -2038,6 +2107,8 @@ export default function SidebarV2() {
                 : []),
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
+              { id: "copy-path", label: "Copy path", icon: "copy" },
+              ...(thread.branch ? [{ id: "copy-branch", label: "Copy branch", icon: "copy" }] : []),
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
             ],
             position,
@@ -2090,6 +2161,24 @@ export default function SidebarV2() {
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
             return;
+          case "copy-path":
+            if (!threadWorkspacePath) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Path unavailable",
+                  description: "This thread does not have a workspace path to copy.",
+                }),
+              );
+              return;
+            }
+            copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
+            return;
+          case "copy-branch":
+            if (thread.branch) {
+              copyBranchToClipboard(thread.branch, { branch: thread.branch });
+            }
+            return;
           case "delete": {
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
@@ -2127,9 +2216,12 @@ export default function SidebarV2() {
       attemptUnsettle,
       attemptUnsnooze,
       confirmThreadDelete,
+      copyBranchToClipboard,
+      copyPathToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      projectCwdByKey,
       serverConfigs,
       startThreadRename,
     ],
@@ -2605,7 +2697,7 @@ export default function SidebarV2() {
                       aria-label="Copy project path"
                       title="Copy project path"
                       onClick={() =>
-                        copyProjectPath(member.workspaceRoot, { path: member.workspaceRoot })
+                        copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot })
                       }
                     >
                       <CopyIcon className="size-3.5" />
