@@ -47,7 +47,7 @@ export function RightPanel({
       flexShrink={0}
       border
       borderStyle="rounded"
-      borderColor={focused ? palette.accent : palette.dim}
+      borderColor={focused ? palette.accent : palette.faint}
       paddingLeft={1}
       paddingRight={1}
     >
@@ -102,7 +102,7 @@ export function RightPanel({
         {actions.map((action, index) => {
           const selected = index === selectedIndex;
           const color = action.disabled
-            ? palette.dim
+            ? palette.faint
             : selected && focused
               ? palette.accent
               : action.primary

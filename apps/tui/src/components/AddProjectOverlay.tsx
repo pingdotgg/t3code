@@ -134,13 +134,15 @@ export const AddProjectOverlay = React.memo(function AddProjectOverlay({
             >
               <text>
                 <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
-                <span fg={row.disabled ? palette.dim : active ? palette.text : palette.dim}>
+                <span fg={row.disabled ? palette.faint : active ? palette.text : palette.dim}>
                   {clip(row.title, labelRoom)}
                 </span>
                 {row.disabled ? <span fg={ansi("yellow")}>{"  setup required"}</span> : null}
               </text>
               {row.description ? (
-                <text fg={palette.dim}>{`    ${clip(row.description, labelRoom)}`}</text>
+                <text fg={active ? palette.bg : palette.dim}>
+                  {`    ${clip(row.description, labelRoom)}`}
+                </text>
               ) : null}
             </box>
           );

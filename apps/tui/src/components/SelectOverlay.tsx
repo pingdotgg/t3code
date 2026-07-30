@@ -67,7 +67,9 @@ export const SelectOverlay = React.memo(function SelectOverlay({
                 <span fg={active ? palette.text : palette.dim}>{clip(option.name, labelRoom)}</span>
               </text>
               {description ? (
-                <text fg={palette.dim}>{`    ${clip(description, labelRoom)}`}</text>
+                <text fg={active ? palette.bg : palette.dim}>
+                  {`    ${clip(description, labelRoom)}`}
+                </text>
               ) : null}
             </box>
           );

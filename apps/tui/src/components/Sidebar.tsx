@@ -27,7 +27,6 @@ const SidebarThreadRow = React.memo(function SidebarThreadRow({
       flexDirection="column"
       height={active ? 2 : 1}
       onMouseDown={() => store.select({ kind: "thread", id: row.id })}
-      {...(selected ? { backgroundColor: palette.selectedBg } : {})}
     >
       <text>
         <span fg={palette.accent}>{selected ? "▌ " : "  "}</span>
@@ -54,12 +53,9 @@ const SidebarSectionRow = React.memo(function SidebarSectionRow({
   readonly store: Store;
 }): React.ReactNode {
   const palette = usePalette();
-  const color = row.section === "snoozed" ? palette.accent : palette.dim;
+  const color = row.section === "snoozed" || selected ? palette.accent : palette.dim;
   return (
-    <box
-      onMouseDown={() => store.toggleSection(row.section)}
-      {...(selected ? { backgroundColor: palette.selectedBg } : {})}
-    >
+    <box onMouseDown={() => store.toggleSection(row.section)}>
       <text fg={color}>
         {`${selected ? "▌" : " "} ${row.expanded ? "▾" : "▸"} ${row.title}${row.expanded ? "" : ` (${row.count})`} ─`}
       </text>
@@ -78,10 +74,7 @@ const SidebarMoreRow = React.memo(function SidebarMoreRow({
 }): React.ReactNode {
   const palette = usePalette();
   return (
-    <box
-      onMouseDown={() => store.loadMore(row.id)}
-      {...(selected ? { backgroundColor: palette.selectedBg } : {})}
-    >
+    <box onMouseDown={() => store.loadMore(row.id)}>
       <text fg={selected ? palette.accent : palette.dim}>
         {`  ${selected ? "▶" : "+"} Show ${Math.min(row.hiddenCount, 25)} more`}
       </text>
@@ -129,7 +122,7 @@ export const Sidebar = React.memo(function Sidebar({
       height={height}
       border
       borderStyle="rounded"
-      borderColor={palette.dim}
+      borderColor={palette.faint}
       paddingLeft={1}
       paddingRight={1}
       overflow="hidden"
@@ -143,7 +136,7 @@ export const Sidebar = React.memo(function Sidebar({
         marginTop={1}
         border
         borderStyle="rounded"
-        borderColor={searchFocused ? palette.accent : palette.dim}
+        borderColor={searchFocused ? palette.accent : palette.faint}
         paddingLeft={1}
         paddingRight={1}
         flexShrink={0}
@@ -174,16 +167,11 @@ export const Sidebar = React.memo(function Sidebar({
         )}
       </box>
       <box flexDirection="row" marginTop={1} marginBottom={1} flexShrink={0}>
-        <box
-          flexGrow={1}
-          overflow="hidden"
-          onMouseDown={onChooseProjectScope}
-          {...(projectScopeLabel !== "All projects" ? { backgroundColor: palette.selectedBg } : {})}
-        >
+        <box flexGrow={1} overflow="hidden" onMouseDown={onChooseProjectScope}>
           <text>
             <span fg={palette.dim}>Project </span>
             <span fg={projectScopeLabel === "All projects" ? palette.text : palette.accent}>
-              {padClip(projectScopeLabel, Math.max(1, innerWidth - 11))}
+              {padClip(projectScopeLabel, Math.max(1, innerWidth - 12))}
             </span>
             <span fg={palette.dim}> ▾</span>
           </text>

@@ -57,7 +57,7 @@ function renderSegment(segment: TermSegment, key: number, cursorFocused: boolean
   // cell. Use a real block glyph for an empty cursor cell, and an explicit block
   // background when it moves over a character, so both cursor states stay visible.
   const blankCursor = segment.cursor && segment.text === " ";
-  const cursorColor = cursorFocused ? THEME.accent : THEME.dim;
+  const cursorColor = cursorFocused ? THEME.accent : THEME.faint;
   const inverse = segment.cursor ? false : segment.inverse;
   // Default cells inherit the terminal's own fg/bg; inverse swaps them so the
   // cursor cell and reverse-video runs read correctly on any theme.
@@ -366,7 +366,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
       flexShrink={0}
       border
       borderStyle="single"
-      borderColor={focused ? palette.accent : palette.dim}
+      borderColor={focused ? palette.accent : palette.faint}
       paddingLeft={1}
       paddingRight={1}
       overflow="hidden"

@@ -125,7 +125,9 @@ export const FilesView = React.memo(function FilesView({
           const typeColor = fileTypeColor(row.path);
           return (
             <text key={`f:${row.path}`} {...(active ? { bg: palette.selectedBg } : {})}>
-              <span fg={typeColor ? ansi(typeColor) : palette.dim}>{`${marker}${indent}◦ `}</span>
+              <span fg={typeColor ? ansi(typeColor) : active ? palette.bg : palette.faint}>
+                {`${marker}${indent}◦ `}
+              </span>
               <span fg={active ? palette.text : palette.dim}>{clip(row.name, nameRoom)}</span>
             </text>
           );

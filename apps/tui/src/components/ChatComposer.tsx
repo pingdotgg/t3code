@@ -253,7 +253,7 @@ export const ChatComposer = React.memo(function ChatComposer({
       width={width}
       border
       borderStyle="rounded"
-      borderColor={palette.dim}
+      borderColor={palette.faint}
       paddingLeft={1}
       paddingRight={1}
       flexShrink={0}

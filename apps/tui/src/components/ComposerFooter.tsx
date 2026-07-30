@@ -39,7 +39,7 @@ function Chip({
 
 function FooterSeparator(): React.ReactNode {
   const palette = usePalette();
-  return <text fg={palette.dim}>{" │ "}</text>;
+  return <text fg={palette.faint}>{" │ "}</text>;
 }
 
 /** The model selector (web ProviderModelPicker), leading the footer. */

@@ -69,7 +69,7 @@ function ToolRow({
       ? STATUS_ICONS[status].glyph
       : null;
   const statusColor =
-    status === "success" ? ansi("green") : status === "failure" ? ansi("red") : palette.dim;
+    status === "success" ? ansi("green") : status === "failure" ? ansi("red") : palette.faint;
   const previewRoom = Math.max(8, width - label.length - 8);
   return (
     <text>
@@ -479,7 +479,7 @@ function ChangedFilesTree({
         return (
           <box key={`f:${row.path}`} {...(openThisFile ? { onMouseDown: openThisFile } : {})}>
             <text>
-              <span fg={typeColor ? ansi(typeColor) : palette.dim}>{`${indent}◦ `}</span>
+              <span fg={typeColor ? ansi(typeColor) : palette.faint}>{`${indent}◦ `}</span>
               <span fg={palette.text}>{clip(row.name, nameRoom)}</span>
               <span fg={ansi("green")}>{`  +${row.additions}`}</span>
               <span fg={ansi("red")}>{` -${row.deletions}`}</span>
@@ -627,9 +627,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
 
   const timeline = React.useMemo(
     () =>
-      detail
-        ? deriveTimelineEntries(detail.messages, detail.activities, detail.latestTurn)
-        : [],
+      detail ? deriveTimelineEntries(detail.messages, detail.activities, detail.latestTurn) : [],
     [detail],
   );
   React.useLayoutEffect(() => {
@@ -670,7 +668,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
         height={height}
         border
         borderStyle="rounded"
-        borderColor={palette.dim}
+        borderColor={palette.faint}
         paddingLeft={1}
         paddingRight={1}
       >
@@ -691,7 +689,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
       height={height}
       border
       borderStyle="rounded"
-      borderColor={palette.dim}
+      borderColor={palette.faint}
       paddingLeft={1}
       paddingRight={1}
       overflow="hidden"
