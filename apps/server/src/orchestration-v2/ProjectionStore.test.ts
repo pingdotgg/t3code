@@ -84,6 +84,75 @@ it("includes imported runless history when selecting fork context through a run"
 });
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect("does not treat visited or marked-unread state as thread activity", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const createdAt = yield* DateTime.now;
+      const visitedOccurredAt = DateTime.add(createdAt, { seconds: 1 });
+      const markedUnreadOccurredAt = DateTime.add(createdAt, { seconds: 2 });
+      const threadId = ThreadId.make("thread:projection-read-state");
+      const projectId = ProjectId.make("project:projection-read-state");
+      const thread = {
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId,
+        title: "Projection read state",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt,
+        updatedAt: createdAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-read-state:created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: createdAt,
+        payload: thread,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-read-state:visited"),
+        type: "thread.visited",
+        threadId,
+        occurredAt: visitedOccurredAt,
+        payload: { ...thread, lastVisitedAt: createdAt },
+      });
+
+      const visited = yield* projectionStore.getThreadProjection(threadId);
+      assert.deepEqual(visited.thread.lastVisitedAt, createdAt);
+      assert.deepEqual(visited.thread.updatedAt, createdAt);
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-read-state:marked-unread"),
+        type: "thread.marked-unread",
+        threadId,
+        occurredAt: markedUnreadOccurredAt,
+        payload: thread,
+      });
+
+      const markedUnread = yield* projectionStore.getThreadProjection(threadId);
+      assert.isNull(markedUnread.thread.lastVisitedAt);
+      assert.deepEqual(markedUnread.thread.updatedAt, createdAt);
+    }),
+  );
+
   it.effect("only exposes interruptible runs through the shell activeRunId", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;
