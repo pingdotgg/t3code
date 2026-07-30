@@ -20,6 +20,11 @@ export function enqueueThreadOutboxMessage(message: QueuedThreadMessage): Promis
   return threadOutboxManager.enqueue(message);
 }
 
+/** Waits for pending writes to settle; false if the message was rolled back. */
+export function confirmThreadOutboxMessageQueued(message: QueuedThreadMessage): Promise<boolean> {
+  return threadOutboxManager.confirmQueued(message);
+}
+
 /** Rewrite a queued message; no-op (false) if it was removed in the meantime. */
 export function updateThreadOutboxMessage(message: QueuedThreadMessage): Promise<boolean> {
   return threadOutboxManager.update(message);
