@@ -286,7 +286,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 );
 
 export const make = Effect.gen(function* () {
-  const github = yield* GitHubSourceControlProvider.make;
+  const github = yield* GitHubSourceControlProvider.makeProvider("github");
+  const githubEnterprise = yield* GitHubSourceControlProvider.makeProvider("github-enterprise");
   const gitlab = yield* GitLabSourceControlProvider.make;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
@@ -296,6 +297,11 @@ export const make = Effect.gen(function* () {
       kind: "github",
       provider: github,
       discovery: GitHubSourceControlProvider.discovery,
+    },
+    {
+      // Rows come from the `gh` spec's expandInstances; no spec of its own.
+      kind: "github-enterprise",
+      provider: githubEnterprise,
     },
     {
       kind: "gitlab",

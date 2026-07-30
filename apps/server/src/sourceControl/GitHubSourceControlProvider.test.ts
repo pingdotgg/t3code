@@ -1,4 +1,4 @@
-import { assert, describe, expect, it } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -29,6 +29,20 @@ function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
     Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
   );
 }
+
+const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
+
+const cliLayer = GitHubCli.layer.pipe(
+  Layer.provide(
+    Layer.mock(VcsProcess.VcsProcess)({
+      run: mockRun,
+    }),
+  ),
+);
+
+afterEach(() => {
+  mockRun.mockReset();
+});
 
 it.effect("maps GitHub PR summaries into provider-neutral change requests", () =>
   Effect.gen(function* () {
@@ -519,4 +533,38 @@ describe("refineUnknownGitHubRemote", () => {
       }),
     ).toBeNull();
   });
+});
+
+describe("makeProvider", () => {
+  it.effect("tags change requests and errors with the enterprise kind", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processResult(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 7,
+                title: "Add widget",
+                url: "https://git.corp.com/owner/repo/pull/7",
+                baseRefName: "main",
+                headRefName: "feature",
+                state: "OPEN",
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const provider = yield* GitHubSourceControlProvider.makeProvider("github-enterprise");
+      const requests = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        headSelector: "feature",
+        state: "open",
+      });
+
+      expect(provider.kind).toBe("github-enterprise");
+      expect(requests[0]!.provider).toBe("github-enterprise");
+    }).pipe(Effect.provide(cliLayer)),
+  );
 });
