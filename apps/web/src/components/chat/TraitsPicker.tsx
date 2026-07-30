@@ -476,7 +476,13 @@ export const TraitsPicker = memo(function TraitsPicker({
   });
   const fastModeIcon = showFastModeIcon ? (
     <>
-      <ComposerControlIcon icon={ZapIcon} className="text-foreground/80 opacity-100" />
+      <ComposerControlIcon
+        icon={ZapIcon}
+        className={cn(
+          "fill-current opacity-80",
+          provider === "claudeAgent" ? "text-[#d97757]" : "text-foreground",
+        )}
+      />
       <span className="sr-only">Fast mode on</span>
     </>
   ) : null;
