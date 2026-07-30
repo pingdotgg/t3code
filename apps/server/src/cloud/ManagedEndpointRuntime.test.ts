@@ -81,6 +81,14 @@ function makeHandle(input: {
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it.effect("does not launch a persisted tunnel before desired-link reconciliation", () =>
+    Effect.gen(function* () {
+      const spawn = vi.fn();
+      yield* buildCloudManagedEndpointRuntime(ChildProcessSpawner.make(spawn));
+      expect(spawn).not.toHaveBeenCalled();
+    }),
+  );
+
   it("classifies Cloudflare connection and warning output", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput(
@@ -353,10 +361,26 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
-  it.effect("reports a missing relay client executable without spawning", () =>
+  it.effect("installs a missing relay client before launching the managed tunnel", () =>
     Effect.gen(function* () {
       const spawn = vi.fn();
-      const spawner = ChildProcessSpawner.make(spawn);
+      const spawner = ChildProcessSpawner.make((command) => {
+        spawn(command);
+        return Effect.succeed(
+          makeHandle({
+            pid: 600,
+            onKill: () => undefined,
+          }),
+        );
+      });
+      const install = vi.fn(() =>
+        Effect.succeed({
+          status: "available" as const,
+          executablePath: "managed-cloudflared",
+          source: "managed" as const,
+          version: RelayClient.CLOUDFLARED_VERSION,
+        }),
+      );
       const runtime = yield* buildCloudManagedEndpointRuntime(
         spawner,
         Layer.succeed(
@@ -366,7 +390,7 @@ describe("CloudManagedEndpointRuntime", () => {
               status: "missing",
               version: RelayClient.CLOUDFLARED_VERSION,
             }),
-            install: Effect.die("unused"),
+            install: install(),
             installWithProgress: () => Effect.die("unused"),
           }),
         ),
@@ -377,12 +401,13 @@ describe("CloudManagedEndpointRuntime", () => {
         connectorToken: "token",
       });
 
-      expect(status).toEqual({
-        status: "failed",
+      expect(status).toMatchObject({
+        status: "running",
         providerKind: "cloudflare_tunnel",
-        reason: "The relay client is not installed.",
+        pid: 600,
       });
-      expect(spawn).not.toHaveBeenCalled();
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(spawn).toHaveBeenCalledTimes(1);
     }),
   );
 });

@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DEFAULT_MODEL, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Ref, Stream } from "effect";
+import { TestClock } from "effect/testing";
 
 import { ServerConfig } from "./config.ts";
 import {
@@ -16,6 +17,7 @@ import {
   makeCommandGate,
   resolveAutoBootstrapWelcomeTargets,
   resolveWelcomeBase,
+  retryConnectReconciliation,
   ServerRuntimeStartupError,
 } from "./serverRuntimeStartup.ts";
 
@@ -68,6 +70,54 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
       assert.equal(error.message, "startup failed");
     }),
   ),
+);
+
+it.effect("retryConnectReconciliation retries at one and three seconds before succeeding", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const attempts = yield* Ref.make(0);
+      const result = yield* retryConnectReconciliation(
+        Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+          Effect.flatMap((attempt) =>
+            attempt < 3 ? Effect.fail(`failure-${attempt}`) : Effect.succeed("connected"),
+          ),
+        ),
+      ).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      assert.equal(yield* Ref.get(attempts), 1);
+      yield* TestClock.adjust("1 second");
+      assert.equal(yield* Ref.get(attempts), 2);
+      yield* TestClock.adjust("3 seconds");
+      assert.equal(yield* Fiber.join(result), "connected");
+      assert.equal(yield* Ref.get(attempts), 3);
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("retryConnectReconciliation returns the third failure without another sleep", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const attempts = yield* Ref.make(0);
+      const result = yield* Effect.result(
+        retryConnectReconciliation(
+          Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+            Effect.flatMap((attempt) => Effect.fail(`failure-${attempt}`)),
+          ),
+        ),
+      ).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("3 seconds");
+      const exit = yield* Fiber.join(result);
+      assert.equal(yield* Ref.get(attempts), 3);
+      assert.deepInclude(exit, {
+        _tag: "Failure",
+        failure: "failure-3",
+      });
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect("launchStartupHeartbeat does not block the caller while counts are loading", () =>

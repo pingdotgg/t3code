@@ -245,6 +245,23 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   } as const;
 });
 
+const CONNECT_RECONCILIATION_RETRY_DELAYS = ["1 second", "3 seconds"] as const;
+
+export const retryConnectReconciliation = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+  let attempt = 0;
+  const run = (): Effect.Effect<A, E, R> =>
+    effect.pipe(
+      Effect.catch((error) => {
+        const delay = CONNECT_RECONCILIATION_RETRY_DELAYS[attempt];
+        attempt += 1;
+        return delay === undefined
+          ? Effect.fail(error)
+          : Effect.sleep(delay).pipe(Effect.andThen(run));
+      }),
+    );
+  return run();
+};
+
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const serverAuth = yield* ServerAuth;
@@ -287,26 +304,20 @@ const resolveListeningLocalOrigin = Effect.gen(function* () {
   return `http://localhost:${port}`;
 });
 
-const reconcileDesiredConnectLink = Effect.gen(function* () {
-  const desiredLink = yield* (
-    readCliDesiredCloudLink as Effect.Effect<boolean, unknown, never>
+export const reconcileDesiredConnectLink = Effect.gen(function* () {
+  yield* retryConnectReconciliation(
+    Effect.gen(function* () {
+      const desiredLink = yield* readCliDesiredCloudLink as Effect.Effect<boolean, unknown, never>;
+      if (!desiredLink) {
+        return;
+      }
+      const localOrigin = yield* resolveListeningLocalOrigin;
+      yield* reconcileDesiredCloudLink(localOrigin) as Effect.Effect<unknown, unknown, never>;
+    }),
   ).pipe(
     Effect.catch((cause) =>
-      Effect.logWarning("failed to read desired T3 Connect link state", { cause }).pipe(
-        Effect.as(false),
-      ),
-    ),
-  );
-  if (!desiredLink) {
-    return;
-  }
-
-  const localOrigin = yield* resolveListeningLocalOrigin;
-  yield* (reconcileDesiredCloudLink(localOrigin) as Effect.Effect<unknown, unknown, never>).pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("failed to reconcile desired T3 Connect link", {
+      Effect.logWarning("failed to reconcile desired T3 Connect link after bounded retries", {
         cause,
-        localOrigin,
       }),
     ),
   );

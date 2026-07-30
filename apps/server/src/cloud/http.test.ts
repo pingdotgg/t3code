@@ -2,9 +2,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpServerRequest } from "effect/unstable/http";
 
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
@@ -12,9 +16,21 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
-import { consumeCloudReplayGuards, reconcileDesiredCloudLink } from "./http.ts";
+import {
+  consumeCloudReplayGuards,
+  persistCloudRelayConfig,
+  reconcileDesiredCloudLink,
+  relayClientRequest,
+} from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
+import {
+  CLOUD_LINKED_USER_ID,
+  CLOUD_MINT_PUBLIC_KEY,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_ISSUER_SECRET,
+  RELAY_URL_SECRET,
+} from "./config.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
@@ -268,3 +284,151 @@ describe("reconcileDesiredCloudLink", () => {
     ),
   );
 });
+
+it.effect("rolls back incomplete relay configuration writes before exposing a linked user", () =>
+  Effect.gen(function* () {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const values = new Map<string, Uint8Array>([
+      [RELAY_URL_SECRET, encoder.encode("https://old-relay.example.test")],
+      [CLOUD_LINKED_USER_ID, encoder.encode("old-user")],
+    ]);
+    let failCredentialWrite = true;
+    const secrets = {
+      get: (name: string) =>
+        Effect.sync(() => {
+          const value = values.get(name);
+          return value === undefined ? Option.none<Uint8Array>() : Option.some(value);
+        }),
+      set: (name: string, value: Uint8Array) =>
+        Effect.suspend(() => {
+          if (name === RELAY_ENVIRONMENT_CREDENTIAL_SECRET && failCredentialWrite) {
+            failCredentialWrite = false;
+            return Effect.fail(new Error("disk unavailable"));
+          }
+          return Effect.sync(() => {
+            values.set(name, value);
+          });
+        }),
+      remove: (name: string) =>
+        Effect.sync(() => {
+          values.delete(name);
+        }),
+    } as ServerSecretStore.ServerSecretStore["Service"];
+
+    yield* Effect.flip(
+      persistCloudRelayConfig(secrets, {
+        relayUrl: "https://relay.example.test",
+        relayIssuer: "https://relay.example.test",
+        cloudUserId: "new-user",
+        environmentCredential: "environment-credential",
+        cloudMintPublicKey: "public-key",
+        endpointRuntimeJson: null,
+      }),
+    );
+
+    expect(decoder.decode(values.get(RELAY_URL_SECRET))).toBe("https://old-relay.example.test");
+    expect(decoder.decode(values.get(CLOUD_LINKED_USER_ID))).toBe("old-user");
+    expect(values.has(RELAY_ISSUER_SECRET)).toBe(false);
+    expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(false);
+    expect(values.has(CLOUD_MINT_PUBLIC_KEY)).toBe(false);
+  }),
+);
+
+it.effect("serializes relay configuration rollback with overlapping writes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const decoder = new TextDecoder();
+      const values = new Map<string, Uint8Array>();
+      const firstWriteStarted = yield* Deferred.make<void>();
+      const releaseFirstWrite = yield* Deferred.make<void>();
+      let failedFirstCredential = false;
+      const secrets = {
+        get: (name: string) =>
+          Effect.sync(() => {
+            const value = values.get(name);
+            return value === undefined ? Option.none<Uint8Array>() : Option.some(value);
+          }),
+        set: (name: string, value: Uint8Array) =>
+          Effect.gen(function* () {
+            const decoded = decoder.decode(value);
+            if (name === RELAY_URL_SECRET && decoded === "https://first.example.test") {
+              yield* Deferred.succeed(firstWriteStarted, void 0);
+              yield* Deferred.await(releaseFirstWrite);
+            }
+            if (
+              name === RELAY_ENVIRONMENT_CREDENTIAL_SECRET &&
+              decoded === "first-credential" &&
+              !failedFirstCredential
+            ) {
+              failedFirstCredential = true;
+              return yield* Effect.fail(new Error("first write failed"));
+            }
+            values.set(name, value);
+          }),
+        remove: (name: string) =>
+          Effect.sync(() => {
+            values.delete(name);
+          }),
+      } as ServerSecretStore.ServerSecretStore["Service"];
+
+      const first = yield* Effect.result(
+        persistCloudRelayConfig(secrets, {
+          relayUrl: "https://first.example.test",
+          relayIssuer: "https://first.example.test",
+          cloudUserId: "first-user",
+          environmentCredential: "first-credential",
+          cloudMintPublicKey: "first-key",
+          endpointRuntimeJson: null,
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(firstWriteStarted);
+      const second = yield* persistCloudRelayConfig(secrets, {
+        relayUrl: "https://second.example.test",
+        relayIssuer: "https://second.example.test",
+        cloudUserId: "second-user",
+        environmentCredential: "second-credential",
+        cloudMintPublicKey: "second-key",
+        endpointRuntimeJson: null,
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseFirstWrite, void 0);
+
+      expect((yield* Fiber.join(first))._tag).toBe("Failure");
+      yield* Fiber.join(second);
+      expect(decoder.decode(values.get(RELAY_URL_SECRET))).toBe("https://second.example.test");
+      expect(decoder.decode(values.get(CLOUD_LINKED_USER_ID))).toBe("second-user");
+      expect(decoder.decode(values.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET))).toBe(
+        "second-credential",
+      );
+    }),
+  ),
+);
+
+it.effect("times out stalled relay requests after fifteen seconds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const result = yield* Effect.result(
+        relayClientRequest({ httpClient: HttpClient.make(() => Effect.never) } as never, {
+          url: "https://relay.example.test/v1/client/environment-links",
+          token: "access-token",
+          payload: {},
+          schema: Schema.Unknown,
+        }),
+      ).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("15 seconds");
+      const exit = yield* Fiber.join(result);
+      expect(exit).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          _tag: "EnvironmentHttpInternalServerError",
+        },
+      });
+    }),
+  ).pipe(
+    Effect.provideService(RelayClientTracer, Option.none()),
+    Effect.provide(TestClock.layer()),
+  ),
+);
