@@ -124,6 +124,7 @@ function nextConfigBlobWithValue(
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<string>;
+  readonly customModelLabels?: Readonly<Record<string, string>>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -135,7 +136,7 @@ export function deriveProviderModelsForDisplay(input: {
     (slug) =>
       liveCustomModelsBySlug.get(slug) ?? {
         slug,
-        name: slug,
+        name: input.customModelLabels?.[slug]?.trim() || slug,
         isCustom: true,
         capabilities: null,
       },
@@ -463,6 +464,7 @@ export function ProviderInstanceCard({
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
+    customModelLabels,
   });
 
   const updateDisplayName = (value: string) => {
@@ -500,6 +502,12 @@ export function ProviderInstanceCard({
 
   const updateCustomModels = (next: ReadonlyArray<string>) => {
     const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
+    const { config: _omit, ...rest } = instance;
+    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+  };
+
+  const updateCustomModelLabels = (next: Readonly<Record<string, string>>) => {
+    const nextConfig = nextConfigBlobWithValue(instance.config, "customModelLabels", { ...next });
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
@@ -798,6 +806,7 @@ export function ProviderInstanceCard({
                 favoriteModels={favoriteModels}
                 modelOrder={modelOrder}
                 onChange={updateCustomModels}
+                onLabelChange={updateCustomModelLabels}
                 onHiddenModelsChange={onHiddenModelsChange}
                 onFavoriteModelsChange={onFavoriteModelsChange}
                 onModelOrderChange={onModelOrderChange}

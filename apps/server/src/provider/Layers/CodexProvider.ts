@@ -24,7 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, getCustomModelLabel } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
@@ -222,6 +222,7 @@ export function applyPreferredCodexDefaultModel(
 function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
+  customModelLabels: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<ServerProviderModel> {
   if (customModels.length === 0) {
     return models;
@@ -238,7 +239,7 @@ function appendCustomCodexModels(
     seen.add(slug);
     customEntries.push({
       slug,
-      name: slug,
+      name: getCustomModelLabel(customModelLabels, slug) ?? slug,
       isCustom: true,
       capabilities: fallbackCapabilities,
     });
@@ -319,6 +320,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly launchArgs?: string;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
+  readonly customModelLabels?: Readonly<Record<string, string>>;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
@@ -384,7 +386,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     return {
       account: accountResponse,
       version,
-      models: appendCustomCodexModels([], input.customModels ?? []),
+      models: appendCustomCodexModels([], input.customModels ?? [], input.customModelLabels ?? {}),
       skills: [],
     } satisfies CodexAppServerProviderSnapshot;
   }

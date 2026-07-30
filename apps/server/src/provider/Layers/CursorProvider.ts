@@ -572,9 +572,14 @@ export const discoverCursorModelsViaAcp = (
 ) => discoverCursorModelsViaListAvailableModels(cursorSettings, environment);
 
 export function getCursorFallbackModels(
-  cursorSettings: Pick<CursorSettings, "customModels">,
+  cursorSettings: Pick<CursorSettings, "customModels" | "customModelLabels">,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings([], cursorSettings.customModels, EMPTY_CAPABILITIES);
+  return providerModelsFromSettings(
+    [],
+    cursorSettings.customModels,
+    EMPTY_CAPABILITIES,
+    cursorSettings.customModelLabels ?? {},
+  );
 }
 
 /** Timeout for `agent about` — it's slower than a simple `--version` probe. */
@@ -638,6 +643,7 @@ export function buildCursorProviderSnapshot(input: {
       input.discoveredModels ?? [],
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
+      input.cursorSettings.customModelLabels ?? {},
     ),
     probe: {
       installed: true,

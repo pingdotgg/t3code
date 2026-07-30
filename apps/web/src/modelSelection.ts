@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   createModelSelection,
+  getCustomModelLabel,
   normalizeCustomModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -208,7 +209,7 @@ export function getAppModelOptions(
     seen.add(slug);
     options.push({
       slug,
-      name: labels[slug]?.trim() || slug,
+      name: getCustomModelLabel(labels, slug) ?? slug,
       isCustom: true,
     });
   }
@@ -250,7 +251,7 @@ export function getAppModelOptionsForInstance(
     }
 
     seen.add(slug);
-    options.push({ slug, name: labels[slug]?.trim() || slug, isCustom: true });
+    options.push({ slug, name: getCustomModelLabel(labels, slug) ?? slug, isCustom: true });
   }
 
   return applyInstanceModelPreferences(

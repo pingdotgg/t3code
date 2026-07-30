@@ -95,8 +95,14 @@ export function buildInitialGrokProviderSnapshot(
 function grokModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
+  customModelLabels: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
+  return providerModelsFromSettings(
+    builtInModels,
+    customModels ?? [],
+    EMPTY_CAPABILITIES,
+    customModelLabels,
+  );
 }
 
 function buildGrokDiscoveredModelsFromSessionModelState(

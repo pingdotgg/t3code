@@ -241,6 +241,7 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   },
   {
     order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
@@ -321,6 +322,7 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   },
   {
     order: ["binaryPath", "apiEndpoint"],
@@ -345,6 +347,7 @@ export const GrokSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   },
   {
     order: ["binaryPath"],
@@ -593,6 +596,7 @@ const CodexSettingsPatch = Schema.Struct({
   shadowHomePath: Schema.optionalKey(TrimmedString),
   launchArgs: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
 const ClaudeSettingsPatch = Schema.Struct({
@@ -609,12 +613,14 @@ const CursorSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   apiEndpoint: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
 const GrokSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
 const OpenCodeSettingsPatch = Schema.Struct({
@@ -623,6 +629,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
   serverUrl: Schema.optionalKey(TrimmedString),
   serverPassword: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  customModelLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 
 export const ServerSettingsPatch = Schema.Struct({

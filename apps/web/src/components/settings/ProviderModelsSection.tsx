@@ -69,6 +69,7 @@ interface ProviderModelsSectionProps {
    * `providerInstances[id].config`).
    */
   readonly onChange: (next: ReadonlyArray<string>) => void;
+  readonly onLabelChange: (next: Readonly<Record<string, string>>) => void;
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
@@ -95,6 +96,7 @@ export function ProviderModelsSection({
   favoriteModels,
   modelOrder,
   onChange,
+  onLabelChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,
   onModelOrderChange,
@@ -155,6 +157,11 @@ export function ProviderModelsSection({
     onChange(customModels.filter((model) => model !== slug));
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
+    if (customModelLabels[slug] !== undefined) {
+      const nextLabels = { ...customModelLabels };
+      delete nextLabels[slug];
+      onLabelChange(nextLabels);
+    }
     setError(null);
   };
 
@@ -234,6 +241,21 @@ export function ProviderModelsSection({
               )}
             >
               <div className="flex min-w-0 items-center gap-1">
+                {model.isCustom ? (
+                  <Input
+                    className="h-6 min-w-0 max-w-44 text-xs"
+                    defaultValue={customModelLabels[model.slug] ?? ""}
+                    placeholder="Display label (optional)"
+                    aria-label={`Display label for ${model.slug}`}
+                    onBlur={(event) => {
+                      const label = event.currentTarget.value.trim();
+                      const nextLabels = { ...customModelLabels };
+                      if (label) nextLabels[model.slug] = label;
+                      else delete nextLabels[model.slug];
+                      onLabelChange(nextLabels);
+                    }}
+                  />
+                ) : null}
                 <span
                   className={cn(
                     "min-w-0 truncate text-xs",
