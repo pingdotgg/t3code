@@ -1,4 +1,7 @@
 import { autoAnimate } from "@formkit/auto-animate";
+import { NewThreadIcon } from "./icons/custom";
+import { SIDEBAR_LIST_AUTO_ANIMATE_OPTIONS } from "../lib/motion";
+import { splitShortcutLabelIntoKeycaps } from "../lib/shortcutKeycaps";
 import { useAtomValue } from "@effect/atom-react";
 import {
   canSnooze,
@@ -31,7 +34,6 @@ import {
   PlusIcon,
   SearchIcon,
   ServerIcon,
-  SquarePenIcon,
   Trash2Icon,
   Undo2Icon,
 } from "lucide-react";
@@ -149,7 +151,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Kbd } from "./ui/kbd";
+import { Kbd, KbdGroup } from "./ui/kbd";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
@@ -196,7 +198,7 @@ function JumpHintBadge(props: { label: string }) {
   return (
     <span
       aria-hidden
-      className="pointer-events-none absolute right-1.5 top-1/2 z-10 inline-flex h-5 -translate-y-1/2 items-center rounded-full border border-border/80 bg-background/95 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
+      className="pointer-events-none absolute right-1.5 top-1/2 z-10 inline-flex h-5 -translate-y-1/2 items-center rounded-full border border-border/80 bg-background/95 px-1.5 font-mono text-code-compact font-medium tracking-tight text-foreground shadow-sm"
     >
       {props.label}
     </span>
@@ -349,7 +351,7 @@ function SnoozePopoverButton(props: {
             className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 hover:bg-accent hover:text-foreground"
           >
             <span className="flex-1">{preset.label}</span>
-            <span className="font-mono text-[10px] text-muted-foreground/60 tabular-nums">
+            <span className="font-mono text-ui-2xs text-muted-foreground/60 tabular-nums">
               {preset.whenLabel}
             </span>
           </button>
@@ -2198,7 +2200,7 @@ export default function SidebarV2() {
 
   const attachListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
     if (!node) return;
-    autoAnimate(node, { duration: 150, easing: "ease-out" });
+    autoAnimate(node, SIDEBAR_LIST_AUTO_ANIMATE_OPTIONS);
   }, []);
 
   // New thread defaults to the project you're in (active thread's project,
@@ -2241,17 +2243,19 @@ export default function SidebarV2() {
                     <SidebarMenuButton
                       type="button"
                       aria-label="Search threads and commands"
-                      className="focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                      className="h-9 gap-2 rounded-xl border border-sidebar-border bg-sidebar-control-surface px-2.5 py-1.5 shadow-sm/5 transition-colors focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       data-testid="command-palette-trigger"
                     />
                   }
                 >
-                  <SearchIcon />
-                  <div className="flex-1 truncate text-left">Search</div>
+                  <SearchIcon className="size-3.5" />
+                  <div className="flex-1 truncate text-left text-xs">Search</div>
                   {commandPaletteShortcutLabel ? (
-                    <Kbd className="mr-px h-4 min-w-0 rounded-sm bg-sidebar-control-surface px-1.5 text-[10px] text-sidebar-muted-foreground ring-1 ring-sidebar-border">
-                      {commandPaletteShortcutLabel}
-                    </Kbd>
+                    <KbdGroup className="pointer-events-none items-center gap-1">
+                      <Kbd className="mr-px h-5 min-w-0 rounded-md bg-sidebar-control-surface px-1.5 text-sidebar-muted-foreground text-ui-2xs ring-1 ring-sidebar-border shadow-none">
+                        {splitShortcutLabelIntoKeycaps(commandPaletteShortcutLabel).join(" ")}
+                      </Kbd>
+                    </KbdGroup>
                   ) : null}
                 </CommandDialogTrigger>
               </div>
@@ -2269,7 +2273,7 @@ export default function SidebarV2() {
                       />
                     }
                   >
-                    <SquarePenIcon />
+                    <NewThreadIcon />
                     <span
                       className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
                       aria-hidden="true"

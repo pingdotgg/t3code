@@ -1639,6 +1639,43 @@ label:has(> select#reasoning-effort) select {
   --app-ui-text-sm: 13.5px;
   --app-code-font-size: 12px;
   --app-code-font-size-compact: 11px;
+  /* Unified motion tokens (fork commit "add unified motion tokens").
+     Consumed by src/lib/motion.ts class-name constants and by inline
+     [transition-*:var(...)] arbitrary utilities across the shell. */
+  --motion-duration-micro: 120ms;
+  --motion-duration-ui: 200ms;
+  --motion-duration-modal: 260ms;
+  --motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-floating-positioner {
+    transition: none !important;
+    scale: 1 !important;
+    translate: 0 0 !important;
+    transform: none !important;
+  }
+
+  .motion-modal-popup,
+  .motion-floating-popup,
+  .motion-sheet-popup {
+    transition-property: opacity !important;
+    scale: 1 !important;
+    translate: 0 0 !important;
+    transform: none !important;
+  }
+
+  .motion-modal-popup[data-ending-style],
+  .motion-modal-popup[data-starting-style],
+  .motion-floating-popup[data-ending-style],
+  .motion-floating-popup[data-starting-style],
+  .motion-sheet-popup[data-ending-style],
+  .motion-sheet-popup[data-starting-style] {
+    scale: 1 !important;
+    translate: 0 0 !important;
+    transform: none !important;
+  }
 }
 
 html {
