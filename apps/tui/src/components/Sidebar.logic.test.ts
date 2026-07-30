@@ -187,4 +187,52 @@ describe("selection and variable-height windowing", () => {
     expect(result.rows.some((row) => row.id === "t2")).toBe(true);
     expect(result.moreAbove || result.moreBelow).toBe(true);
   });
+
+  it("Given the selection stays inside the viewport, then the scroll position does not move", () => {
+    const rows = [activeRow("t1"), activeRow("t2"), activeRow("t3"), activeRow("t4")];
+
+    const result = windowRows(rows, { kind: "thread", id: "t3" }, 4, 1);
+
+    expect(result.scrollTop).toBe(1);
+    expect(result.rows.map((row) => row.id)).toEqual(["t2", "t3"]);
+  });
+
+  it("Given the selection walks past the bottom edge, then the list scrolls by one row", () => {
+    const rows = [activeRow("t1"), activeRow("t2"), activeRow("t3"), activeRow("t4")];
+
+    const result = windowRows(rows, { kind: "thread", id: "t3" }, 4, 0);
+
+    expect(result.scrollTop).toBe(1);
+    expect(result.rows.map((row) => row.id)).toEqual(["t2", "t3"]);
+    expect(result.moreAbove).toBe(true);
+    expect(result.moreBelow).toBe(true);
+  });
+
+  it("Given the selection moves above the viewport, then the list scrolls up to it", () => {
+    const rows = [activeRow("t1"), activeRow("t2"), activeRow("t3"), activeRow("t4")];
+
+    const result = windowRows(rows, { kind: "thread", id: "t1" }, 4, 2);
+
+    expect(result.scrollTop).toBe(0);
+    expect(result.rows.map((row) => row.id)).toEqual(["t1", "t2"]);
+  });
+
+  it("Given the last page has spare height, then it backfills instead of leaving a gap", () => {
+    const rows = [activeRow("t1"), activeRow("t2"), activeRow("t3")];
+
+    const result = windowRows(rows, { kind: "thread", id: "t3" }, 4, 2);
+
+    expect(result.scrollTop).toBe(1);
+    expect(result.rows.map((row) => row.id)).toEqual(["t2", "t3"]);
+    expect(result.moreBelow).toBe(false);
+  });
+
+  it("Given rows shrink under the stored offset, then the offset clamps into range", () => {
+    const rows = [activeRow("t1"), activeRow("t2")];
+
+    const result = windowRows(rows, { kind: "thread", id: "t2" }, 4, 9);
+
+    expect(result.rows.map((row) => row.id)).toEqual(["t1", "t2"]);
+    expect(result.scrollTop).toBe(0);
+  });
 });
