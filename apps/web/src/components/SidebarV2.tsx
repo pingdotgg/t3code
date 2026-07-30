@@ -497,17 +497,19 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         })
       : null,
   );
+  // Keep this project-scoped so local threads share one cached refs query instead of
+  // launching a separate Git command group for every branch-backed row.
   const branchRefs = useEnvironmentQuery(
-    thread.branch !== null && gitCwd !== null
+    thread.branch !== null && thread.worktreePath === null && gitCwd !== null
       ? vcsEnvironment.listRefs({
           environmentId: thread.environmentId,
-          input: { cwd: gitCwd, query: thread.branch, limit: 10 },
+          input: { cwd: gitCwd, limit: 2 },
         })
       : null,
   );
-  const matchingBranchRef = branchRefs.data?.refs.find((refName) => refName.name === thread.branch);
+  const defaultBranchRef = branchRefs.data?.refs.find((refName) => refName.isDefault);
   const isDefaultBranch =
-    matchingBranchRef?.isDefault === true ||
+    defaultBranchRef?.name === thread.branch ||
     (gitStatus.data?.isDefaultRef === true && gitStatus.data.refName === thread.branch);
   const branchLabel =
     branchRefs.isPending && branchRefs.data === null
