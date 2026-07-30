@@ -196,6 +196,13 @@ private extension UIColor {
 public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
+  private static let bufferFeedChunkSize = 8 * 1024
+
+  private struct ActiveBufferFeed {
+    let surfaceGeneration: Int
+    let bufferRevision: Int
+    let bufferEpoch: Int
+  }
 
   private let terminalViewport = UIView()
   private let inputField = TerminalInputField()
@@ -204,7 +211,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastViewportSize: CGSize = .zero
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
-  private var lastAppliedBuffer = ""
+  private var appliedBufferEpoch: Int?
+  private var appliedBufferEnd = 0
+  private var bufferRevision = 0
+  private var surfaceGeneration = 0
+  private var activeBufferFeed: ActiveBufferFeed?
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
@@ -221,13 +232,28 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       accessibilityIdentifier = "t3-terminal-\(terminalKey)"
       if oldValue != terminalKey {
         resetSurface()
+        enqueueRemoteBufferApply()
       }
     }
   }
 
   var initialBuffer: String = "" {
     didSet {
-      applyRemoteBuffer(initialBuffer)
+      remoteBufferDidChange()
+    }
+  }
+
+  var bufferEpoch = 0 {
+    didSet {
+      guard oldValue != bufferEpoch else { return }
+      remoteBufferDidChange()
+    }
+  }
+
+  var bufferStart = 0 {
+    didSet {
+      guard oldValue != bufferStart else { return }
+      remoteBufferDidChange()
     }
   }
 
@@ -356,6 +382,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     let viewportSize = terminalViewport.bounds.size
     if surface == nil {
       createSurfaceIfPossible()
+      if surface != nil {
+        enqueueRemoteBufferApply()
+      }
     }
 
     guard viewportSize != lastViewportSize || contentScaleFactor != lastContentScale else {
@@ -499,12 +528,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     ghostty_surface_set_color_scheme(createdSurface, appearance.ghosttyColorScheme)
     setupWriteCallback()
     resizeSurface()
-    feedBuffer(initialBuffer)
   }
 
   private func resetSurface() {
+    surfaceGeneration += 1
     destroySurface()
-    lastAppliedBuffer = ""
+    activeBufferFeed = nil
+    appliedBufferEpoch = nil
+    appliedBufferEnd = 0
     lastViewportSize = .zero
     lastContentScale = 0
     lastReportedGrid = nil
@@ -515,6 +546,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private func refreshSurface() {
     resetSurface()
     createSurfaceIfPossible()
+    enqueueRemoteBufferApply()
   }
 
   private func destroySurface() {
@@ -529,40 +561,117 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     app = nil
   }
 
-  private func applyRemoteBuffer(_ buffer: String) {
-    guard surface != nil else {
+  private func remoteBufferDidChange() {
+    bufferRevision += 1
+    enqueueRemoteBufferApply()
+  }
+
+  private func enqueueRemoteBufferApply() {
+    let revision = bufferRevision
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.bufferRevision == revision else { return }
+      self.applyRemoteBuffer(revision: revision)
+    }
+  }
+
+  private func applyRemoteBuffer(revision: Int) {
+    if let activeBufferFeed {
+      if activeBufferFeed.bufferEpoch == bufferEpoch {
+        return
+      }
+      resetSurface()
+    }
+
+    if surface == nil {
       createSurfaceIfPossible()
+    }
+    guard surface != nil else { return }
+
+    let normalizedBufferStart = max(bufferStart, 0)
+    let buffer = initialBuffer as NSString
+    let bufferEnd = normalizedBufferStart + buffer.length
+    let canAppend =
+      appliedBufferEpoch == bufferEpoch &&
+      appliedBufferEnd >= normalizedBufferStart &&
+      appliedBufferEnd <= bufferEnd
+
+    let data: Data
+    if canAppend {
+      data = Data(buffer.substring(from: appliedBufferEnd - normalizedBufferStart).utf8)
+    } else {
+      if appliedBufferEpoch != nil {
+        resetSurface()
+        createSurfaceIfPossible()
+        guard surface != nil else { return }
+      }
+      data = Data(initialBuffer.utf8)
+    }
+
+    let targetSurfaceGeneration = surfaceGeneration
+    activeBufferFeed = ActiveBufferFeed(
+      surfaceGeneration: targetSurfaceGeneration,
+      bufferRevision: revision,
+      bufferEpoch: bufferEpoch
+    )
+    feedData(
+      data,
+      offset: 0,
+      surfaceGeneration: targetSurfaceGeneration
+    ) { [weak self] in
+      guard let self else { return }
+      guard
+        let activeBufferFeed = self.activeBufferFeed,
+        activeBufferFeed.surfaceGeneration == targetSurfaceGeneration,
+        activeBufferFeed.bufferRevision == revision
+      else {
+        return
+      }
+
+      self.activeBufferFeed = nil
+      self.appliedBufferEpoch = activeBufferFeed.bufferEpoch
+      self.appliedBufferEnd = bufferEnd
+      if self.bufferRevision != revision {
+        self.enqueueRemoteBufferApply()
+      }
+    }
+  }
+
+  private func feedData(
+    _ data: Data,
+    offset: Int,
+    surfaceGeneration targetSurfaceGeneration: Int,
+    completion: @escaping () -> Void
+  ) {
+    guard surfaceGeneration == targetSurfaceGeneration, let surface else { return }
+    guard offset < data.count else {
+      redrawSurface()
+      completion()
       return
     }
 
-    if buffer.hasPrefix(lastAppliedBuffer) {
-      let suffix = String(buffer.dropFirst(lastAppliedBuffer.count))
-      feedData(Data(suffix.utf8))
-      lastAppliedBuffer = buffer
-      return
-    }
-
-    resetSurface()
-    createSurfaceIfPossible()
-  }
-
-  private func feedBuffer(_ buffer: String) {
-    guard !buffer.isEmpty else { return }
-    feedData(Data(buffer.utf8))
-    lastAppliedBuffer = buffer
-  }
-
-  private func feedData(_ data: Data) {
-    guard let surface, !data.isEmpty else { return }
-
+    let chunkCount = min(Self.bufferFeedChunkSize, data.count - offset)
     data.withUnsafeBytes { buffer in
       guard let pointer = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
         return
       }
-      ghostty_surface_feed_data(surface, pointer, buffer.count)
+      ghostty_surface_feed_data(surface, pointer.advanced(by: offset), chunkCount)
     }
 
-    redrawSurface()
+    let nextOffset = offset + chunkCount
+    if nextOffset >= data.count {
+      redrawSurface()
+      completion()
+      return
+    }
+
+    DispatchQueue.main.async { [weak self] in
+      self?.feedData(
+        data,
+        offset: nextOffset,
+        surfaceGeneration: targetSurfaceGeneration,
+        completion: completion
+      )
+    }
   }
 
   private func setupWriteCallback() {

@@ -351,6 +351,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     replayKey: bufferReplayKey,
     readyReplayKey: readyBufferReplayKey,
   });
+  const isTerminalSurfaceBufferHidden = terminalSurfaceBuffer !== terminal.buffer;
+  const terminalSurfaceBufferEpoch = isTerminalSurfaceBufferHidden
+    ? terminal.bufferEpoch + 1
+    : terminal.bufferEpoch;
+  const terminalSurfaceBufferStart = isTerminalSurfaceBufferHidden ? 0 : terminal.bufferStart;
   const isRunning = terminal.status === "running" || terminal.status === "starting";
 
   // When the process ends while this screen is attached (e.g. typing `exit`),
@@ -1221,6 +1226,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               <TerminalSurface
                 autoFocus={!SHOWCASE_ENABLED}
                 buffer={terminalSurfaceBuffer}
+                bufferEpoch={terminalSurfaceBufferEpoch}
+                bufferStart={terminalSurfaceBufferStart}
                 fontSize={fontSize}
                 isRunning={isRunning}
                 keyboardFocusRequest={keyboardFocusRequest}

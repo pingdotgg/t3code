@@ -241,6 +241,8 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
       <TerminalSurface
         terminalKey={terminalKey}
         buffer={terminal.buffer}
+        bufferEpoch={terminal.bufferEpoch}
+        bufferStart={terminal.bufferStart}
         isRunning={isRunning}
         onInput={handleInput}
         onResize={handleResize}

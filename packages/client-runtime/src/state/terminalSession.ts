@@ -10,6 +10,9 @@ import type {
 export interface TerminalSessionState {
   readonly summary: TerminalSummary | null;
   readonly buffer: string;
+  readonly bufferEpoch: number;
+  readonly bufferStart: number;
+  readonly bufferEnd: number;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly hasRunningSubprocess: boolean;
@@ -19,11 +22,26 @@ export interface TerminalSessionState {
 
 export interface TerminalBufferState {
   readonly buffer: string;
+  readonly bufferEpoch: number;
+  readonly bufferStart: number;
+  readonly bufferEnd: number;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly updatedAt: string | null;
   readonly version: number;
 }
+
+export interface TerminalBufferWindow {
+  readonly buffer: string;
+  readonly bufferEpoch: number;
+  readonly bufferStart: number;
+  readonly bufferEnd: number;
+}
+
+export type TerminalBufferUpdate =
+  | { readonly type: "none" }
+  | { readonly type: "append"; readonly data: string }
+  | { readonly type: "replace"; readonly buffer: string };
 
 export interface KnownTerminalSessionTarget {
   readonly environmentId: EnvironmentId;
@@ -46,6 +64,9 @@ export function selectRunningSubprocessTerminalIds(
 
 export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   buffer: "",
+  bufferEpoch: 0,
+  bufferStart: 0,
+  bufferEnd: 0,
   status: "closed",
   error: null,
   updatedAt: null,
@@ -55,6 +76,9 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
 export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
   summary: null,
   buffer: "",
+  bufferEpoch: 0,
+  bufferStart: 0,
+  bufferEnd: 0,
   status: "closed",
   error: null,
   hasRunningSubprocess: false,
@@ -91,9 +115,14 @@ function trimBufferToBytes(buffer: string, maxBufferBytes: number): string {
 export function terminalBufferStateFromSnapshot(
   snapshot: TerminalSessionSnapshot,
   maxBufferBytes: number,
+  bufferEpoch = 1,
 ): TerminalBufferState {
+  const buffer = trimBufferToBytes(snapshot.history, maxBufferBytes);
   return {
-    buffer: trimBufferToBytes(snapshot.history, maxBufferBytes),
+    buffer,
+    bufferEpoch,
+    bufferStart: snapshot.history.length - buffer.length,
+    bufferEnd: snapshot.history.length,
     status: snapshot.status,
     error: null,
     updatedAt: snapshot.updatedAt,
@@ -114,6 +143,9 @@ export function combineTerminalSessionState(
   return {
     summary,
     buffer: buffer.buffer,
+    bufferEpoch: buffer.bufferEpoch,
+    bufferStart: buffer.bufferStart,
+    bufferEnd: buffer.bufferEnd,
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
     error: buffer.error,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
@@ -130,19 +162,31 @@ export function applyTerminalAttachStreamEvent(
   switch (event.type) {
     case "snapshot":
     case "restarted":
-      return terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes);
-    case "output":
+      return terminalBufferStateFromSnapshot(
+        event.snapshot,
+        maxBufferBytes,
+        current.bufferEpoch + 1,
+      );
+    case "output": {
+      const bufferEnd = current.bufferEnd + event.data.length;
+      const buffer = trimBufferToBytes(`${current.buffer}${event.data}`, maxBufferBytes);
       return {
         ...current,
-        buffer: trimBufferToBytes(`${current.buffer}${event.data}`, maxBufferBytes),
+        buffer,
+        bufferStart: bufferEnd - buffer.length,
+        bufferEnd,
         status: current.status === "closed" ? "running" : current.status,
         error: null,
         version: current.version + 1,
       };
+    }
     case "cleared":
       return {
         ...current,
         buffer: "",
+        bufferEpoch: current.bufferEpoch + 1,
+        bufferStart: 0,
+        bufferEnd: 0,
         error: null,
         version: current.version + 1,
       };
@@ -170,6 +214,28 @@ export function applyTerminalAttachStreamEvent(
     case "activity":
       return current;
   }
+}
+
+export function getTerminalBufferUpdate(
+  previous: TerminalBufferWindow,
+  current: TerminalBufferWindow,
+): TerminalBufferUpdate {
+  if (
+    previous.bufferEpoch !== current.bufferEpoch ||
+    previous.bufferEnd < current.bufferStart ||
+    previous.bufferEnd > current.bufferEnd
+  ) {
+    return { type: "replace", buffer: current.buffer };
+  }
+
+  if (previous.bufferEnd === current.bufferEnd) {
+    return { type: "none" };
+  }
+
+  return {
+    type: "append",
+    data: current.buffer.slice(previous.bufferEnd - current.bufferStart),
+  };
 }
 
 export function applyTerminalMetadataStreamEvent(

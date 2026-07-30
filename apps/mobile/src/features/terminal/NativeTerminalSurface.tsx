@@ -35,6 +35,8 @@ interface TerminalResizeEvent {
 interface TerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly buffer: string;
+  readonly bufferEpoch: number;
+  readonly bufferStart: number;
   readonly fontSize?: number;
   readonly isRunning: boolean;
   readonly autoFocus?: boolean;
@@ -186,9 +188,18 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
       // null = installed binary predates native hardware-key handling (rebuild needed).
       hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
       bufferLen: props.buffer.length,
+      bufferEpoch: props.bufferEpoch,
+      bufferStart: props.bufferStart,
       isRunning: props.isRunning,
     });
-  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
+  }, [
+    hasNativeSurface,
+    props.buffer.length,
+    props.bufferEpoch,
+    props.bufferStart,
+    props.isRunning,
+    props.terminalKey,
+  ]);
   const handleNativeInput = useCallback(
     (event: NativeSyntheticEvent<TerminalInputEvent>) => {
       if (!props.isRunning) {
@@ -223,6 +234,8 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
           mutedForegroundColor={theme.mutedForeground}
           terminalKey={props.terminalKey}
           initialBuffer={props.buffer}
+          bufferEpoch={props.bufferEpoch}
+          bufferStart={props.bufferStart}
           fontSize={fontSize}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}

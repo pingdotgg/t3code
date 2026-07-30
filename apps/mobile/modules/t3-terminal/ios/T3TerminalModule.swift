@@ -19,6 +19,14 @@ public class T3TerminalModule: Module {
         view.initialBuffer = initialBuffer
       }
 
+      Prop("bufferEpoch") { (view: T3TerminalView, bufferEpoch: Double) in
+        view.bufferEpoch = Int(bufferEpoch)
+      }
+
+      Prop("bufferStart") { (view: T3TerminalView, bufferStart: Double) in
+        view.bufferStart = Int(bufferStart)
+      }
+
       Prop("fontSize") { (view: T3TerminalView, fontSize: Double) in
         view.fontSize = CGFloat(fontSize)
       }

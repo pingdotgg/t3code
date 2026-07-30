@@ -7,6 +7,7 @@ import {
   applyTerminalMetadataStreamEvent,
   combineTerminalSessionState,
   EMPTY_TERMINAL_BUFFER_STATE,
+  getTerminalBufferUpdate,
   selectRunningSubprocessTerminalIds,
 } from "./terminalSession.ts";
 
@@ -127,6 +128,9 @@ describe("terminal session reducers", () => {
 
     expect(output).toMatchObject({
       buffer: "lo world",
+      bufferEpoch: 1,
+      bufferStart: 3,
+      bufferEnd: 11,
       status: "running",
       error: null,
       version: 2,
@@ -183,5 +187,77 @@ describe("terminal session reducers", () => {
     );
 
     expect(state.buffer).toBe("🙂");
+    expect(state).toMatchObject({
+      bufferStart: 2,
+      bufferEnd: 4,
+    });
+  });
+
+  it("keeps rollover output appendable with absolute buffer positions", () => {
+    const beforeRollover = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      {
+        type: "snapshot",
+        snapshot: { ...BASE_SNAPSHOT, history: "abcdefgh" },
+      },
+      8,
+    );
+    const afterRollover = applyTerminalAttachStreamEvent(
+      beforeRollover,
+      {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "ij",
+      },
+      8,
+    );
+
+    expect(afterRollover).toMatchObject({
+      buffer: "cdefghij",
+      bufferEpoch: beforeRollover.bufferEpoch,
+      bufferStart: 2,
+      bufferEnd: 10,
+    });
+    expect(getTerminalBufferUpdate(beforeRollover, afterRollover)).toEqual({
+      type: "append",
+      data: "ij",
+    });
+  });
+
+  it("replaces the rendered buffer after a reset or when a renderer falls behind", () => {
+    const initial = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      {
+        type: "snapshot",
+        snapshot: { ...BASE_SNAPSHOT, history: "abcdefgh" },
+      },
+      8,
+    );
+    const restarted = applyTerminalAttachStreamEvent(initial, {
+      type: "restarted",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      snapshot: { ...BASE_SNAPSHOT, history: "fresh" },
+    });
+    const beyondRetainedWindow = applyTerminalAttachStreamEvent(
+      initial,
+      {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "ijklmnop",
+      },
+      8,
+    );
+
+    expect(getTerminalBufferUpdate(initial, restarted)).toEqual({
+      type: "replace",
+      buffer: "fresh",
+    });
+    expect(getTerminalBufferUpdate(EMPTY_TERMINAL_BUFFER_STATE, beyondRetainedWindow)).toEqual({
+      type: "replace",
+      buffer: "ijklmnop",
+    });
   });
 });

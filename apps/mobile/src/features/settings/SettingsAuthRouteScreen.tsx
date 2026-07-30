@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { resolveSettingsAuthHeaderOptions } from "./SettingsAuthRouteScreen.logic";
 
 export function SettingsAuthRouteScreen() {
   const navigation = useNavigation();
@@ -21,16 +22,19 @@ export function SettingsAuthRouteScreen() {
 
 function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const navigation = useNavigation();
 
   return (
     <>
-      <NativeStackScreenOptions options={{ title: isSignedIn ? "Account" : "Sign in" }} />
+      <NativeStackScreenOptions
+        options={resolveSettingsAuthHeaderOptions({ isLoaded, isSignedIn })}
+      />
       <View collapsable={false} className="flex-1 overflow-hidden bg-sheet">
         {isLoaded ? (
           isSignedIn ? (
             <UserProfileView isDismissible={false} />
           ) : (
-            <AuthView isDismissible={false} />
+            <AuthView isDismissible onDismiss={() => navigation.goBack()} />
           )
         ) : null}
       </View>
