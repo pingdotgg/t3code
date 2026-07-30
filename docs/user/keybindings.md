@@ -69,6 +69,11 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
 
+The command palette searches active thread titles, projects, branches, user messages, and final
+agent responses across connected environments. Message matches show one labeled excerpt while
+keeping the thread's project, branch, and machine context visible. Message search begins after two
+characters and uses SQLite's ASCII case-insensitive matching.
+
 ### Key Syntax
 
 Supported modifiers:

@@ -13,8 +13,9 @@ The feature has three boundaries:
 ## Detection and Presentation
 
 `ExecutionEnvironmentDescriptor` includes the server version and an optional
-`capabilities.serverSelfUpdate` value. The client compares that version with `APP_VERSION` after
-loading server config.
+`capabilities.serverSelfUpdate` value. Progress-capable servers also advertise
+`capabilities.serverSelfUpdateProgress`. The client compares the server version with `APP_VERSION`
+after loading server config.
 
 The optional capability is intentionally backward compatible. An older server does not know about
 the field, so a missing value means the client must offer a manual relaunch instead of sending an
@@ -27,6 +28,10 @@ The shared `ServerUpdateAction` is rendered in both user-facing version-drift su
 
 Both surfaces target the client's exact version. When the reconnected server reports that version,
 the mismatch and action disappear.
+
+The operation state lives in `packages/client-runtime`, keyed by environment. Both web surfaces read
+the same `downloading`, `installing`, or `resuming` state, so route changes do not own or cancel the
+operation.
 
 ## Capability Selection
 
@@ -51,20 +56,25 @@ flowchart TD
     A[Client detects different versions] --> B{Advertised update path}
     B -->|desktop-managed| C[Update desktop app on server machine]
     B -->|missing| D[Copy exact manual relaunch command]
-    B -->|boot-service or respawn| E[server.updateServer]
-    E --> F[Install exact t3 version in pinned runtime]
-    F --> G[Run version preflight]
-    G -->|fails| H[Remove failed runtime and keep current server]
-    G -->|passes| I{Handoff method}
-    I -->|boot-service| J[Rewrite and restart T3 systemd unit]
-    I -->|respawn| K[Start delayed replacement and exit current process]
-    J --> L[Client reconnects]
-    K --> L
+    B -->|boot-service or respawn| E{Progress capability}
+    E -->|present| F[server.updateServerWithProgress]
+    E -->|missing| G[server.updateServer fallback]
+    F --> H[Download exact t3 version]
+    G --> H
+    H --> I[Install and run version preflight]
+    I -->|fails| J[Remove failed runtime and keep current server]
+    I -->|passes| K{Handoff method}
+    K -->|boot-service| L[Rewrite and restart T3 systemd unit]
+    K -->|respawn| M[Start delayed replacement and exit current process]
+    L --> N[Reconnect with fresh backoff]
+    M --> N
+    N --> O[Replacement publishes ready at target version]
 ```
 
-`server.updateServer` requires the environment's `orchestration:operate` authorization scope. Its
+Both update RPCs require the environment's `orchestration:operate` authorization scope. Their
 payload accepts only an exact npm version, including an exact prerelease version; dist-tags such as
-`latest` and `nightly` are rejected.
+`latest` and `nightly` are rejected. The unary `server.updateServer` method remains available so a
+new client can still repair skew with an older server.
 
 The update service permits one update at a time. It installs `t3@<version>` under
 `<baseDir>/runtime/versions/<version>` and writes an install-complete sentinel only after npm exits
@@ -89,20 +99,20 @@ authorization; it does not uninstall the host service.
 ## Process Handoff
 
 For `boot-service`, the server atomically rewrites the T3-managed user unit to point at the verified
-runtime, reloads systemd, and restarts the unit. Reload and restart failures restore the previous
-unit before returning an error.
+runtime and reloads systemd. It acknowledges the handoff, then restarts the unit after the same
+short grace period used by foreground respawn. A rejected deferred restart restores the previous
+unit and is logged by the still-running process.
 
 For `respawn`, the server starts a detached, delayed replacement that replays the original CLI
 arguments. It then acknowledges the request and schedules the current process to exit. The delays
 give the acknowledgement time to cross direct or relayed connections before the socket closes.
 
-There is no separate progress stream. The update request remains pending while npm installs and the
-client shows a disabled update action. A restart can interrupt the request normally; the connection
-runtime keeps the environment registered and reconnects through its usual retry path. After an
-acknowledged foreground handoff, the UI keeps the action pending until version sync removes it or a
-safety timeout releases it. If a boot-service restart closes the connection before acknowledgement,
-the UI releases the interrupted action without reporting a false update failure and lets reconnect
-and the next version check determine the result.
+Progress-capable servers emit `downloading` before installing the pinned runtime and `installing`
+before preflight and handoff. A terminal stream event acknowledges that restart is scheduled. The
+client then enters `resuming`, waits for the replacement lifecycle stream to publish `ready` with
+the target version, and only then completes the operation. It watches for the intentional
+disconnect's first backoff state and requests one fresh retry, which clears historical backoff debt
+without adding a separate reconnect loop.
 
 ## Release Invariant
 
