@@ -484,7 +484,7 @@ export const TraitsPicker = memo(function TraitsPicker({
             variant={triggerVariant ?? "ghost"}
             className={cn(
               isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap rounded-full before:rounded-[inherit] sm:max-w-48"
                 : "shrink-0 whitespace-nowrap",
               triggerClassName,
             )}
