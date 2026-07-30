@@ -167,13 +167,13 @@ it.effect("reports implemented tools separately from locally available executabl
     assert.ok(bitbucket);
     assert.strictEqual(bitbucket.executable, undefined);
 
-    // github is "available" with no expandInstances defined yet, so it takes the
-    // non-expanding success fallback; gitlab/azure-devops are "missing" (no executable).
-    // Both defaulting paths should stamp id = the spec's own kind and an absent host.
+    // github is "available", so expandGitHubInstances stamps the github.com host on it;
+    // gitlab/azure-devops are "missing" (no executable) and take the defaulting path,
+    // which stamps id = the spec's own kind and an absent host.
     const github = result.sourceControlProviders.find((item) => item.kind === "github");
     assert.ok(github);
     assert.strictEqual(github.id, "github");
-    assert.deepStrictEqual(github.host, Option.none());
+    assert.deepStrictEqual(github.host, Option.some("github.com"));
 
     const gitlab = result.sourceControlProviders.find((item) => item.kind === "gitlab");
     assert.ok(gitlab);
