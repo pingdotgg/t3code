@@ -1487,19 +1487,20 @@ export default function SidebarV2() {
     () => searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery),
     [searchableThreads, threadSearchQuery],
   );
+  const threadSearchResultOrderKey = threadSearchResults
+    .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
+    .join("\0");
 
   useEffect(() => {
-    setActiveSearchResultIndex((index) =>
-      Math.min(index, Math.max(0, threadSearchResults.length - 1)),
-    );
-  }, [threadSearchResults.length]);
+    setActiveSearchResultIndex(0);
+  }, [threadSearchResultOrderKey]);
 
   useEffect(() => {
     if (!isSearchingThreads) return;
     document
       .getElementById(`sidebar-thread-search-result-${activeSearchResultIndex}`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [activeSearchResultIndex, isSearchingThreads, threadSearchResults.length]);
+  }, [activeSearchResultIndex, isSearchingThreads, threadSearchResultOrderKey]);
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
   // moment a snooze expires instead of on the next minute tick. Sorted
