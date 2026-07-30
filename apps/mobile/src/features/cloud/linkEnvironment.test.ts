@@ -148,6 +148,17 @@ function validLinkChallengeResponse() {
   };
 }
 
+function validCloudLinkState() {
+  return {
+    linked: true,
+    cloudUserId: "user_123",
+    relayUrl: "https://relay.example.test",
+    relayIssuer: "https://relay.example.test",
+    managedTunnelActive: true,
+    publishAgentActivity: true,
+  };
+}
+
 function requestBodyText(body: BodyInit | null | undefined): string {
   return body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body ?? "");
 }
@@ -789,10 +800,14 @@ describe("mobile cloud link environment client", () => {
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).not.toContain(
+        "https://desktop.example.test/api/connect/preferences",
+      );
     }),
   );
 
-  it.effect("uses an explicit Live Activity preference when persisted state is unavailable", () =>
+  it.effect("enables environment activity publishing for explicit Live Activities", () =>
     Effect.gen(function* () {
       loadPreferences.mockReturnValueOnce(Effect.die("persisted preferences must not be read"));
       const bodies: Array<Record<string, unknown>> = [];
@@ -809,6 +824,9 @@ describe("mobile cloud link environment client", () => {
         }
         if (String(url).endsWith("/v1/client/environment-links")) {
           return Promise.resolve(Response.json(validLinkResponse()));
+        }
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(Response.json(validCloudLinkState()));
         }
         return Promise.resolve(
           Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
@@ -828,6 +846,16 @@ describe("mobile cloud link environment client", () => {
         expect.objectContaining({ liveActivitiesEnabled: true }),
         expect.objectContaining({ liveActivitiesEnabled: true }),
       ]);
+      expect(bodies.at(-1)).toEqual({ publishAgentActivity: true });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      expect(fetchMock.mock.calls.slice(-2).map(([url]) => String(url))).toEqual([
+        "https://desktop.example.test/api/connect/relay-config",
+        "https://desktop.example.test/api/connect/preferences",
+      ]);
+      const preferencesRequest = fetchMock.mock.calls.at(-1)?.[1];
+      expect(new Headers(preferencesRequest?.headers).get("authorization")).toBe(
+        "Bearer local-bearer",
+      );
     }),
   );
 

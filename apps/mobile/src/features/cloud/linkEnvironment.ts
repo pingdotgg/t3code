@@ -358,6 +358,19 @@ export function linkEnvironmentToCloudWithPreference(
       .pipe(
         Effect.mapError(cloudEnvironmentLinkError("Could not configure environment relay access.")),
       );
+
+    if (liveActivitiesEnabled) {
+      yield* environmentClient.connect
+        .preferences({
+          headers: { authorization: `Bearer ${localBearerToken}` },
+          payload: { publishAgentActivity: true },
+        })
+        .pipe(
+          Effect.mapError(
+            cloudEnvironmentLinkError("Could not enable environment agent activity publishing."),
+          ),
+        );
+    }
   });
 }
 
