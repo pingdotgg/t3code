@@ -9,14 +9,14 @@
 // restores the pristine one whenever the package is re-materialized.
 //
 // Runs as part of `prepare`, so it must only use node builtins.
-import { globSync, rmSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
-const backups = globSync(
+const backups = NodeFS.globSync(
   "node_modules/.pnpm/@typescript+native-preview-*/node_modules/@typescript/native-preview-*/lib/tsgo{,.exe}.original*",
 );
 
 for (const backup of backups) {
-  rmSync(backup, { force: true });
+  NodeFS.rmSync(backup, { force: true });
 }
 
 if (backups.length > 0) {
