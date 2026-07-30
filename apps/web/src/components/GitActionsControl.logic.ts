@@ -385,6 +385,24 @@ export function resolveThreadBranchMetadataPatch(
   return { branch, expectedBranch };
 }
 
+export interface PendingThreadBranchSync {
+  readonly threadId: string;
+  readonly expectedBranch: string | null;
+  readonly branch: string | null;
+}
+
+export function isDuplicatePendingThreadBranchSync(
+  pending: PendingThreadBranchSync | null,
+  input: PendingThreadBranchSync,
+): boolean {
+  return (
+    pending !== null &&
+    pending.threadId === input.threadId &&
+    pending.expectedBranch === input.expectedBranch &&
+    pending.branch === input.branch
+  );
+}
+
 export function resolveLiveThreadBranchUpdate(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;

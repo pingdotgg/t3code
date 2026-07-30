@@ -45,6 +45,8 @@ import { cn } from "~/lib/utils";
 import {
   buildMenuItems,
   formatGitActionElapsed,
+  isDuplicatePendingThreadBranchSync,
+  type PendingThreadBranchSync,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
   type GitActionProgressPresentation,
   type GitActionIconName,
@@ -582,6 +584,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const [publishResult, setPublishResult] = useState<SourceControlPublishRepositoryResult | null>(
     null,
   );
+  const pendingThreadBranchSyncRef = useRef<PendingThreadBranchSync | null>(null);
   const sourceControlScope = {
     environmentId: props.environmentId,
     cwd: props.gitCwd,
@@ -1122,15 +1125,31 @@ export default function GitActionsControl({
         !readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope) ||
         activeServerThread.branch === branch
       ) {
+        pendingThreadBranchSyncRef.current = null;
         return;
       }
 
+      const pendingSync = {
+        threadId: activeThreadRef.threadId,
+        expectedBranch: activeServerThread.branch,
+        branch,
+      };
+      if (isDuplicatePendingThreadBranchSync(pendingThreadBranchSyncRef.current, pendingSync))
+        return;
+      pendingThreadBranchSyncRef.current = pendingSync;
       void updateThreadMetadata({
         environmentId: activeThreadRef.environmentId,
         input: {
           threadId: activeThreadRef.threadId,
           ...resolveThreadBranchMetadataPatch(branch, activeServerThread.branch),
         },
+      }).then((result) => {
+        if (
+          result._tag === "Failure" &&
+          isDuplicatePendingThreadBranchSync(pendingThreadBranchSyncRef.current, pendingSync)
+        ) {
+          pendingThreadBranchSyncRef.current = null;
+        }
       });
 
       return;
@@ -1152,6 +1171,18 @@ export default function GitActionsControl({
   const persistLiveThreadBranch = useEffectEvent((branch: string | null) => {
     persistThreadBranchSync(branch);
   });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- release the metadata request latch when the projection catches up
+  useEffect(() => {
+    const pendingSync = pendingThreadBranchSyncRef.current;
+    if (
+      pendingSync !== null &&
+      (pendingSync.threadId !== activeThreadRef?.threadId ||
+        activeServerThread?.branch !== pendingSync.expectedBranch)
+    ) {
+      pendingThreadBranchSyncRef.current = null;
+    }
+  }, [activeServerThread?.branch, activeThreadRef?.threadId]);
 
   const syncThreadBranchAfterGitAction = (result: GitRunStackedActionResult) => {
     const branchUpdate = resolveThreadBranchUpdate(result);
