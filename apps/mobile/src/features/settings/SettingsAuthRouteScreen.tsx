@@ -29,14 +29,14 @@ function ConfiguredSettingsAuthRouteScreen() {
   }
 
   useEffect(() => {
-    if (hasBeenSignedIn.current && !isSignedIn) {
+    if (hasBeenSignedIn.current && isLoaded && isSignedIn === false) {
       if (navigation.canGoBack()) {
         navigation.goBack();
       } else {
         navigation.dispatch(StackActions.replace("Settings"));
       }
     }
-  }, [isSignedIn, navigation]);
+  }, [isLoaded, isSignedIn, navigation]);
 
   return (
     <>
