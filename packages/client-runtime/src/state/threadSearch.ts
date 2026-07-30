@@ -40,7 +40,7 @@ function parseThreadSearchKey(key: string) {
 export function threadSearchMatchKey(
   match: Pick<EnvironmentThreadSearchMatch, "environmentId" | "threadId">,
 ): string {
-  return `${match.environmentId}\u0000${match.threadId}`;
+  return JSON.stringify([match.environmentId, match.threadId]);
 }
 
 /**

@@ -23,6 +23,19 @@ it("creates stable keys regardless of environment order", () => {
   );
 });
 
+it("encodes scoped thread keys without delimiter collisions", () => {
+  const first = threadSearchMatchKey({
+    environmentId: EnvironmentId.make("env\u0000thread"),
+    threadId: ThreadId.make("id"),
+  });
+  const second = threadSearchMatchKey({
+    environmentId: EnvironmentId.make("env"),
+    threadId: ThreadId.make("thread\u0000id"),
+  });
+
+  expect(first).not.toBe(second);
+});
+
 it("merges successful environments and silently ignores failures", () => {
   const result: OrchestrationSearchThreadsResult = {
     matches: [
@@ -53,7 +66,7 @@ it("merges successful environments and silently ignores failures", () => {
     matches: [{ ...result.matches[0], environmentId: envA }],
     isLoading: false,
   });
-  expect(threadSearchMatchKey(state.matches[0]!)).toBe("env-a\u0000thread-a");
+  expect(threadSearchMatchKey(state.matches[0]!)).toBe('["env-a","thread-a"]');
 
   registry.dispose();
 });

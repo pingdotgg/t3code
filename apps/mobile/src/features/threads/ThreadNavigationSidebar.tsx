@@ -185,7 +185,7 @@ function ThreadNavigationSidebarPane(
   const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const projects = useProjects();
   const threads = useThreadShells();
-  const { state: catalogState } = useWorkspaceState();
+  const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [headerIsOverContent, setHeaderIsOverContent] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
@@ -217,9 +217,17 @@ function ThreadNavigationSidebarPane(
   const searchEnvironmentIds = useMemo(
     () =>
       options.selectedEnvironmentId === null
-        ? environments.map((environment) => environment.environmentId)
-        : [options.selectedEnvironmentId],
-    [environments, options.selectedEnvironmentId],
+        ? workspaceEnvironments
+            .filter((environment) => environment.connectionState === "connected")
+            .map((environment) => environment.environmentId)
+        : workspaceEnvironments.some(
+              (environment) =>
+                environment.environmentId === options.selectedEnvironmentId &&
+                environment.connectionState === "connected",
+            )
+          ? [options.selectedEnvironmentId]
+          : [],
+    [options.selectedEnvironmentId, workspaceEnvironments],
   );
   const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
   const threadSearchMatchByKey = useMemo(() => {
@@ -1031,13 +1039,15 @@ function ThreadNavigationSidebarPane(
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
-          ? snoozedCount > 0
-            ? // Snoozed matches passed this same search filter — "No
-              // matching threads" would misreport them as nonexistent.
-              snoozedCount === 1
-              ? "1 matching thread snoozed"
-              : "All matching threads snoozed"
-            : "No matching threads"
+          ? threadSearch.isPending && snoozedCount === 0
+            ? "Searching thread messages…"
+            : snoozedCount > 0
+              ? // Snoozed matches passed this same search filter — "No
+                // matching threads" would misreport them as nonexistent.
+                snoozedCount === 1
+                ? "1 matching thread snoozed"
+                : "All matching threads snoozed"
+              : "No matching threads"
           : snoozedCount > 0
             ? snoozedCount === 1
               ? "1 thread snoozed"

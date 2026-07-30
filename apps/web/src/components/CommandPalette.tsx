@@ -513,7 +513,10 @@ function OpenCommandPaletteDialog(props: {
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const environmentIds = useMemo(
-    () => environments.map((environment) => environment.environmentId),
+    () =>
+      environments
+        .filter((environment) => environment.connection.phase === "connected")
+        .map((environment) => environment.environmentId),
     [environments],
   );
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
@@ -2236,7 +2239,9 @@ function OpenCommandPaletteDialog(props: {
                         emptyStateMessage:
                           "Press Enter to create this folder and add it as a project.",
                       }
-                    : {})}
+                    : threadSearch.isPending
+                      ? { emptyStateMessage: "Searching thread messages…" }
+                      : {})}
           />
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">

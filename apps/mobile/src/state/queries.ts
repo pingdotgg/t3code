@@ -76,17 +76,19 @@ export function useThreadSearch(
 } {
   const normalizedQuery = query.trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
+  const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
+  const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
   const searchKey = useMemo(
-    () => (debouncedQuery.length >= 2 ? makeThreadSearchKey(environmentIds, debouncedQuery) : null),
-    [debouncedQuery, environmentIds],
+    () => (settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery)),
+    [environmentIds, settledQuery],
   );
   const result = useAtomValue(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
   );
-  const isDebouncing = normalizedQuery !== debouncedQuery;
+  const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
   return {
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
-    isPending: isDebouncing || result.isLoading,
+    isPending: canSearch && (isDebouncing || result.isLoading),
   };
 }
 

@@ -26,7 +26,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
-import type { WorkspaceState } from "../../state/workspaceModel";
+import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -77,7 +77,9 @@ interface HomeScreenProps {
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly catalogState: WorkspaceState;
   readonly savedConnectionsById: Readonly<Record<string, SavedRemoteConnection>>;
-  readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
+  readonly environments: ReadonlyArray<
+    HomeListFilterMenuEnvironment & Pick<WorkspaceEnvironment, "connectionState">
+  >;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
@@ -197,8 +199,16 @@ export function HomeScreen(props: HomeScreenProps) {
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
-        ? props.environments.map((environment) => environment.environmentId)
-        : [props.selectedEnvironmentId],
+        ? props.environments
+            .filter((environment) => environment.connectionState === "connected")
+            .map((environment) => environment.environmentId)
+        : props.environments.some(
+              (environment) =>
+                environment.environmentId === props.selectedEnvironmentId &&
+                environment.connectionState === "connected",
+            )
+          ? [props.selectedEnvironmentId]
+          : [],
     [props.environments, props.selectedEnvironmentId],
   );
   const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
@@ -913,7 +923,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = listHeader;
 
   const listEmpty = !hasResults ? (
-    hasSearchQuery ? (
+    hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
     ) : selectedProjectScope !== null ? (
       <EmptyState
@@ -936,31 +946,34 @@ export function HomeScreen(props: HomeScreenProps) {
   // threads yet" over an inbox that is merely all-snoozed reads as data
   // loss.
   const v2SnoozedCount = threadListV2Layout.snoozedCount;
-  const v2ListEmpty = hasSearchQuery ? (
-    v2SnoozedCount > 0 ? (
-      // The snoozed threads already passed this search filter: "No
-      // results" would claim nothing matched when matches are merely
-      // parked.
+  const v2ListEmpty =
+    hasSearchQuery && threadSearch.isPending && v2SnoozedCount === 0 ? null : hasSearchQuery ? (
+      v2SnoozedCount > 0 ? (
+        // The snoozed threads already passed this search filter: "No
+        // results" would claim nothing matched when matches are merely
+        // parked.
+        <EmptyState
+          title={
+            v2SnoozedCount === 1 ? "1 matching thread snoozed" : `All matching threads snoozed`
+          }
+          detail={`Threads matching "${props.searchQuery}" are snoozed and return when their wake time passes.`}
+        />
+      ) : (
+        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      )
+    ) : v2SnoozedCount > 0 ? (
       <EmptyState
-        title={v2SnoozedCount === 1 ? "1 matching thread snoozed" : `All matching threads snoozed`}
-        detail={`Threads matching "${props.searchQuery}" are snoozed and return when their wake time passes.`}
+        title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}
+        detail="Snoozed threads return when their wake time passes."
+      />
+    ) : v2ScopedProjectGroup !== null ? (
+      <EmptyState
+        title={`No threads in ${v2ScopedProjectGroup.title}`}
+        detail="Choose another project or create a new task."
       />
     ) : (
-      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-    )
-  ) : v2SnoozedCount > 0 ? (
-    <EmptyState
-      title={v2SnoozedCount === 1 ? "1 thread snoozed" : `${v2SnoozedCount} threads snoozed`}
-      detail="Snoozed threads return when their wake time passes."
-    />
-  ) : v2ScopedProjectGroup !== null ? (
-    <EmptyState
-      title={`No threads in ${v2ScopedProjectGroup.title}`}
-      detail="Choose another project or create a new task."
-    />
-  ) : (
-    listEmpty
-  );
+      listEmpty
+    );
 
   if (threadListV2Enabled) {
     return (
