@@ -38,7 +38,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
-    environmentIdentificationMode === "artwork",
+    variant === "v2" && environmentIdentificationMode === "artwork",
   );
   const identificationPillLabel =
     environmentIdentificationMode === "pill"

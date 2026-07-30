@@ -43,7 +43,37 @@ type LogicalSidebarProject = SidebarProject & {
   }[];
 };
 
+type ReorderableSidebarProject = {
+  projectKey: string;
+  memberProjects: readonly {
+    physicalProjectKey: string;
+  }[];
+};
+
 export type ThreadTraversalDirection = "previous" | "next";
+
+export function resolveSidebarProjectReorder(
+  projects: readonly ReorderableSidebarProject[],
+  activeProjectKey: string,
+  targetProjectKey: string,
+): {
+  currentProjectOrder: readonly string[];
+  draggedProjectKeys: readonly string[];
+  targetProjectKeys: readonly string[];
+} | null {
+  if (activeProjectKey === targetProjectKey) return null;
+  const activeProject = projects.find((project) => project.projectKey === activeProjectKey);
+  const targetProject = projects.find((project) => project.projectKey === targetProjectKey);
+  if (!activeProject || !targetProject) return null;
+
+  return {
+    currentProjectOrder: projects.flatMap((project) =>
+      project.memberProjects.map((member) => member.physicalProjectKey),
+    ),
+    draggedProjectKeys: activeProject.memberProjects.map((member) => member.physicalProjectKey),
+    targetProjectKeys: targetProject.memberProjects.map((member) => member.physicalProjectKey),
+  };
+}
 
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },

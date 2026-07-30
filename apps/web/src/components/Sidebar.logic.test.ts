@@ -14,6 +14,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarProjectReorder,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
@@ -45,6 +46,36 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarProjectReorder", () => {
+  const projects = [
+    {
+      projectKey: "logical-a",
+      memberProjects: [{ physicalProjectKey: "local:a" }, { physicalProjectKey: "remote:a" }],
+    },
+    {
+      projectKey: "logical-b",
+      memberProjects: [{ physicalProjectKey: "local:b" }],
+    },
+    {
+      projectKey: "logical-c",
+      memberProjects: [{ physicalProjectKey: "local:c" }],
+    },
+  ];
+
+  it("uses the displayed project order and moves grouped members together", () => {
+    expect(resolveSidebarProjectReorder(projects, "logical-a", "logical-c")).toEqual({
+      currentProjectOrder: ["local:a", "remote:a", "local:b", "local:c"],
+      draggedProjectKeys: ["local:a", "remote:a"],
+      targetProjectKeys: ["local:c"],
+    });
+  });
+
+  it("ignores invalid and unchanged drops", () => {
+    expect(resolveSidebarProjectReorder(projects, "logical-a", "logical-a")).toBeNull();
+    expect(resolveSidebarProjectReorder(projects, "missing", "logical-c")).toBeNull();
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];

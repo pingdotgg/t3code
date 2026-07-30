@@ -180,6 +180,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveSidebarProjectReorder,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -1073,7 +1074,7 @@ interface SidebarProjectItemProps {
   dragInProgressRef: React.RefObject<boolean>;
   suppressProjectClickAfterDragRef: React.RefObject<boolean>;
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
-  isManualProjectSorting: boolean;
+  isProjectReorderingEnabled: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
 }
 
@@ -1093,7 +1094,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     dragInProgressRef,
     suppressProjectClickAfterDragRef,
     suppressProjectClickForContextMenuRef,
-    isManualProjectSorting,
+    isProjectReorderingEnabled,
     dragHandleProps,
   } = props;
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
@@ -2310,13 +2311,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     <>
       <div className="group/project-header relative">
         <SidebarMenuButton
-          ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
+          ref={isProjectReorderingEnabled ? dragHandleProps?.setActivatorNodeRef : undefined}
           size="sm"
           className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-foreground ${
-            isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+            isProjectReorderingEnabled ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
           }`}
-          {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
-          {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
+          {...(isProjectReorderingEnabled && dragHandleProps ? dragHandleProps.attributes : {})}
+          {...(isProjectReorderingEnabled && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
           onClick={handleProjectButtonClick}
           onKeyDown={handleProjectButtonKeyDown}
@@ -2339,7 +2340,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                     }`}
                   />
                 </span>
-                {isManualProjectSorting ? (
+                {isProjectReorderingEnabled ? (
                   <SidebarGrabHandleIcon className="absolute inset-0 m-auto size-2 text-muted-foreground/70 opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-100" />
                 ) : (
                   <ChevronRightIcon className="absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 text-muted-foreground/70 opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-100" />
@@ -2352,9 +2353,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <ChevronRightIcon
                 className={`absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 text-muted-foreground/70 transition-[opacity,transform] [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] ${
                   projectExpanded ? "rotate-90" : ""
-                } ${isManualProjectSorting ? "group-hover/project-header:opacity-0" : ""}`}
+                } ${isProjectReorderingEnabled ? "group-hover/project-header:opacity-0" : ""}`}
               />
-              {isManualProjectSorting ? (
+              {isProjectReorderingEnabled ? (
                 <SidebarGrabHandleIcon className="absolute inset-0 m-auto size-2 text-muted-foreground/70 opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/project-header:opacity-100" />
               ) : null}
             </span>
@@ -2927,7 +2928,7 @@ interface SidebarProjectsContentProps {
   threadPreviewCount: SidebarThreadPreviewCount;
   updateSettings: ReturnType<typeof useUpdateClientSettings>;
   openAddProject: () => void;
-  isManualProjectSorting: boolean;
+  isProjectReorderingEnabled: boolean;
   projectDnDSensors: ReturnType<typeof useSensors>;
   projectCollisionDetection: CollisionDetection;
   handleProjectDragStart: (event: DragStartEvent) => void;
@@ -2967,7 +2968,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     threadPreviewCount,
     updateSettings,
     openAddProject,
-    isManualProjectSorting,
+    isProjectReorderingEnabled,
     projectDnDSensors,
     projectCollisionDetection,
     handleProjectDragStart,
@@ -3099,7 +3100,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </div>
         </div>
 
-        {isManualProjectSorting ? (
+        {isProjectReorderingEnabled ? (
           <DndContext
             sensors={projectDnDSensors}
             collisionDetection={projectCollisionDetection}
@@ -3135,7 +3136,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         suppressProjectClickForContextMenuRef={
                           suppressProjectClickForContextMenuRef
                         }
-                        isManualProjectSorting={isManualProjectSorting}
+                        isProjectReorderingEnabled={isProjectReorderingEnabled}
                         dragHandleProps={dragHandleProps}
                       />
                     )}
@@ -3165,7 +3166,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 dragInProgressRef={dragInProgressRef}
                 suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                isManualProjectSorting={isManualProjectSorting}
+                isProjectReorderingEnabled={isProjectReorderingEnabled}
                 dragHandleProps={null}
               />
             ))}
@@ -3401,42 +3402,6 @@ export default function Sidebar() {
     return closestCorners(args);
   }, []);
 
-  const handleProjectDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      if (sidebarProjectSortOrder !== "manual") {
-        dragInProgressRef.current = false;
-        return;
-      }
-      dragInProgressRef.current = false;
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      const activeProject = sidebarProjects.find((project) => project.projectKey === active.id);
-      const overProject = sidebarProjects.find((project) => project.projectKey === over.id);
-      if (!activeProject || !overProject) return;
-      const activeMemberKeys = activeProject.memberProjects.map(
-        (member) => member.physicalProjectKey,
-      );
-      const overMemberKeys = overProject.memberProjects.map((member) => member.physicalProjectKey);
-      reorderProjects(orderedProjects.map(getProjectOrderKey), activeMemberKeys, overMemberKeys);
-    },
-    [orderedProjects, sidebarProjectSortOrder, reorderProjects, sidebarProjects],
-  );
-
-  const handleProjectDragStart = useCallback(
-    (_event: DragStartEvent) => {
-      if (sidebarProjectSortOrder !== "manual") {
-        return;
-      }
-      dragInProgressRef.current = true;
-      suppressProjectClickAfterDragRef.current = true;
-    },
-    [sidebarProjectSortOrder],
-  );
-
-  const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
-    dragInProgressRef.current = false;
-  }, []);
-
   const animatedProjectListsRef = useRef(new WeakSet<HTMLElement>());
   const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
     if (!node || animatedProjectListsRef.current.has(node)) {
@@ -3490,7 +3455,39 @@ export default function Sidebar() {
     sidebarProjects,
     visibleThreads,
   ]);
-  const isManualProjectSorting = sidebarProjectSortOrder === "manual";
+  const handleProjectDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      dragInProgressRef.current = false;
+      const { active, over } = event;
+      if (!over) return;
+      const reorder = resolveSidebarProjectReorder(
+        sortedProjects,
+        String(active.id),
+        String(over.id),
+      );
+      if (!reorder) return;
+      reorderProjects(
+        reorder.currentProjectOrder,
+        reorder.draggedProjectKeys,
+        reorder.targetProjectKeys,
+      );
+      if (sidebarProjectSortOrder !== "manual") {
+        updateSettings({ sidebarProjectSortOrder: "manual" });
+      }
+    },
+    [reorderProjects, sidebarProjectSortOrder, sortedProjects, updateSettings],
+  );
+
+  const handleProjectDragStart = useCallback((_event: DragStartEvent) => {
+    dragInProgressRef.current = true;
+    suppressProjectClickAfterDragRef.current = true;
+  }, []);
+
+  const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
+    dragInProgressRef.current = false;
+  }, []);
+
+  const isProjectReorderingEnabled = sortedProjects.length > 1;
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
@@ -3805,7 +3802,7 @@ export default function Sidebar() {
             threadPreviewCount={sidebarThreadPreviewCount}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}
-            isManualProjectSorting={isManualProjectSorting}
+            isProjectReorderingEnabled={isProjectReorderingEnabled}
             projectDnDSensors={projectDnDSensors}
             projectCollisionDetection={projectCollisionDetection}
             handleProjectDragStart={handleProjectDragStart}

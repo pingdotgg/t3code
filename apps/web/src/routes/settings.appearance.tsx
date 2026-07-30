@@ -1,11 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-import { AppearanceSettingsPanel } from "../components/settings/SettingsPanels";
-
-function SettingsAppearanceRoute() {
-  return <AppearanceSettingsPanel />;
-}
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/settings/appearance")({
-  component: SettingsAppearanceRoute,
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/interface", replace: true });
+  },
 });

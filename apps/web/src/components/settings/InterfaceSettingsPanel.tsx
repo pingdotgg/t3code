@@ -1,9 +1,20 @@
 import { DEFAULT_APP_ICON_ID, type AppIconId } from "@t3tools/contracts";
-import { ContrastIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  IconCircleLefthalfFilledRighthalfStripedHorizontalInverse as ContrastIcon,
+  IconDisplay as DisplayIcon,
+  IconMoonFill as MoonIcon,
+  IconSunMaxFill as SunIcon,
+} from "symbols-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { APP_ICON_OPTIONS } from "../../appIcon";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdateClientSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
 import {
   DEFAULT_CODE_FONT_SIZE_PX,
@@ -39,12 +50,18 @@ const THEME_MODE_LABELS = {
   highContrast: "High Contrast",
 } as const;
 
+const TIMESTAMP_FORMAT_LABELS = {
+  locale: "System default",
+  "12-hour": "12-hour",
+  "24-hour": "24-hour",
+} as const;
+
 const THEME_MODE_ICONS = {
-  system: MonitorIcon,
+  system: DisplayIcon,
   light: SunIcon,
   dark: MoonIcon,
   highContrast: ContrastIcon,
-} as const satisfies Record<ThemeMode, typeof MonitorIcon>;
+} as const satisfies Record<ThemeMode, typeof DisplayIcon>;
 
 const THEME_MODES: readonly ThemeMode[] = ["system", "light", "dark", "highContrast"];
 
@@ -53,7 +70,7 @@ function ThemeModeOptionLabel({ mode }: { mode: ThemeMode }) {
 
   return (
     <span className="flex items-center gap-2">
-      <Icon className="size-3.5 shrink-0 opacity-40" />
+      <Icon className="size-3.5 shrink-0 fill-current opacity-40" />
       <span className="truncate">{THEME_MODE_LABELS[mode]}</span>
     </span>
   );
@@ -192,6 +209,8 @@ export function InterfaceSettingsPanel() {
   );
   const appIcon = useClientSettings((settings) => settings.appIcon);
   const updateClientSettings = useUpdateClientSettings();
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
   const isMacOs = typeof navigator !== "undefined" && isMacPlatform(navigator.platform);
 
   const updateAppearance = useCallback((next: Partial<InterfaceAppearanceSettings>) => {
@@ -354,6 +373,101 @@ export function InterfaceSettingsPanel() {
             }
           />
         ) : null}
+      </SettingsSection>
+
+      <SettingsSection title="Display">
+        <SettingsRow
+          title="Time format"
+          description="System default follows your browser or OS clock preference."
+          resetAction={
+            settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
+              <SettingResetButton
+                label="time format"
+                onClick={() =>
+                  updateSettings({
+                    timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.timestampFormat}
+              onValueChange={(value) => {
+                if (value === "locale" || value === "12-hour" || value === "24-hour") {
+                  updateSettings({ timestampFormat: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
+                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="locale">
+                  {TIMESTAMP_FORMAT_LABELS.locale}
+                </SelectItem>
+                <SelectItem hideIndicator value="12-hour">
+                  {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="24-hour">
+                  {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Word wrap"
+          description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
+          resetAction={
+            settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
+              <SettingResetButton
+                label="word wrapping"
+                onClick={() =>
+                  updateSettings({
+                    wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.wordWrap}
+              onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
+              aria-label="Wrap code, tables, diffs, and file previews by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Assistant output"
+          description="Show token-by-token output while a response is in progress."
+          resetAction={
+            settings.enableAssistantStreaming !==
+            DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
+              <SettingResetButton
+                label="assistant output"
+                onClick={() =>
+                  updateSettings({
+                    enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableAssistantStreaming}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableAssistantStreaming: Boolean(checked) })
+              }
+              aria-label="Stream assistant messages"
+            />
+          }
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );

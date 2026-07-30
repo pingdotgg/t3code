@@ -119,7 +119,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const pathname = useLocation({ select: (location) => location.pathname });
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const useSidebarV2 = sidebarV2Enabled && !isOnSettings;
-  const useSidebarV2Theme = useSidebarV2 || isOnSettings;
+  const useSidebarV2Theme = useSidebarV2;
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
