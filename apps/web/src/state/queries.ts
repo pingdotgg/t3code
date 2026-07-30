@@ -3,6 +3,11 @@ import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
 } from "@t3tools/client-runtime/state/threads";
+import {
+  createThreadSearchResultsAtomFamily,
+  makeThreadSearchKey,
+  type EnvironmentThreadSearchMatch,
+} from "@t3tools/client-runtime/state/thread-search";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
@@ -26,9 +31,24 @@ import { vcsEnvironment } from "./vcs";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
+const THREAD_SEARCH_DEBOUNCE_MS = 200;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
+const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
+const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
+  matches: EMPTY_THREAD_SEARCH_MATCHES,
+  isLoading: false,
+}).pipe(Atom.withLabel("web:thread-search:empty"));
+
+const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
+  getSearchAtom: (environmentId, query) =>
+    orchestrationEnvironment.threadSearch({
+      environmentId,
+      input: { query },
+    }),
+  labelPrefix: "web:thread-search",
+});
 
 export interface ThreadDetailView {
   readonly data: OrchestrationThread | null;
@@ -50,6 +70,31 @@ function useDebouncedValue<A>(value: A, delayMs: number): A {
   }, [delayMs, value]);
 
   return debounced;
+}
+
+export function useThreadSearch(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  query: string,
+): {
+  readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
+  readonly isPending: boolean;
+} {
+  const normalizedQuery = query.trim();
+  const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
+  const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
+  const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
+  const searchKey = useMemo(
+    () => (settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery)),
+    [environmentIds, settledQuery],
+  );
+  const result = useAtomValue(
+    searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
+  );
+  const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
+  return {
+    matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
+    isPending: canSearch && (isDebouncing || result.isLoading),
+  };
 }
 
 export function useThreadDetail(

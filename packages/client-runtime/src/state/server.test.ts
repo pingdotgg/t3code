@@ -6,11 +6,15 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { RpcClientError } from "effect/unstable/rpc";
+import * as Socket from "effect/unstable/socket/Socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -24,8 +28,12 @@ import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerConfigProjection,
   makeEnvironmentServerConfigState,
+  isLegacyUpdateHandoffLoss,
   projectServerWelcome,
   resolveServerConfigValue,
+  resolveServerUpdateProgressResult,
+  serverUpdateStateForProgressEvent,
+  serverUpdateStateForServerVersion,
 } from "./server.ts";
 
 const CONFIG = {
@@ -62,6 +70,109 @@ function session(client: WsRpcProtocolClient): RpcSession {
 }
 
 describe("server state projection", () => {
+  it("only treats a legacy transport interruption as an unacknowledged handoff", () => {
+    expect(isLegacyUpdateHandoffLoss(Cause.interrupt(1))).toBe(true);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
+            reason: new Socket.SocketCloseError({ code: 1006 }),
+          }),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
+            reason: new Socket.SocketOpenError({
+              kind: "Unknown",
+              cause: new Error("connection refused"),
+            }),
+          }),
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: "incompatible protocol",
+              cause: new Error("invalid response"),
+            }),
+          }),
+        ),
+      ),
+    ).toBe(false);
+    expect(isLegacyUpdateHandoffLoss(Cause.fail(new Error("Install failed.")))).toBe(false);
+  });
+
+  it.effect("resumes after the progress stream disconnects following completion", () => {
+    const result = {
+      targetVersion: "0.0.31",
+      method: "respawn" as const,
+    };
+    const disconnect = new RpcClientError.RpcClientError({
+      reason: new Socket.SocketCloseError({ code: 1006 }),
+    });
+
+    return Effect.gen(function* () {
+      const resumed = yield* resolveServerUpdateProgressResult(
+        result.targetVersion,
+        Option.some(result),
+        Exit.fail(disconnect),
+      );
+      expect(resumed).toEqual(result);
+    });
+  });
+
+  it("projects streamed update milestones into the shared operation state", () => {
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "progress",
+        stage: "installing",
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "installing",
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "complete",
+        result: { targetVersion: "0.0.31", method: "respawn" },
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "resuming",
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    });
+  });
+
+  it("keeps active update state and hides stale failures after a version change", () => {
+    const running = {
+      status: "running" as const,
+      stage: "resuming" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    };
+    const failed = {
+      status: "failed" as const,
+      stage: "installing" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+      message: "Install failed.",
+    };
+
+    expect(serverUpdateStateForServerVersion(running, "0.0.31")).toBe(running);
+    expect(serverUpdateStateForServerVersion(failed, "0.0.30")).toBe(failed);
+    expect(serverUpdateStateForServerVersion(failed, null)).toBe(failed);
+    expect(serverUpdateStateForServerVersion(failed, "0.0.31")).toEqual({ status: "idle" });
+  });
+
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,
@@ -100,9 +211,16 @@ describe("server state projection", () => {
   });
 
   it("prefers an active session config over cache until a live event arrives", () => {
-    const cached = { ...CONFIG, settings: { source: "cache" } } as unknown as ServerConfig;
-    const initial = { ...CONFIG, settings: { source: "session" } } as unknown as ServerConfig;
-    const live = { ...CONFIG, settings: { source: "live" } } as unknown as ServerConfig;
+    const config = (source: string, serverVersion: string) =>
+      ({
+        ...CONFIG,
+        environment: { serverVersion },
+        settings: { source },
+      }) as unknown as ServerConfig;
+    const cached = config("cache", "0.0.29");
+    const staleLive = config("stale-live", "0.0.29");
+    const initial = config("session", "0.0.30");
+    const live = config("live", "0.0.30");
 
     expect(
       resolveServerConfigValue(
@@ -110,6 +228,16 @@ describe("server state projection", () => {
           config: cached,
           latestEvent: snapshotEvent(cached),
           source: "cache",
+        },
+        initial,
+      ),
+    ).toBe(initial);
+    expect(
+      resolveServerConfigValue(
+        {
+          config: staleLive,
+          latestEvent: snapshotEvent(staleLive),
+          source: "live",
         },
         initial,
       ),
