@@ -2,6 +2,7 @@ import {
   createAtomCommandScheduler,
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import {
@@ -9,6 +10,7 @@ import {
   type CloudLinkMode,
   type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
+  unlinkRelayEnvironmentFromCloud,
   updatePrimaryCloudPreferences,
 } from "./linkEnvironment";
 
@@ -35,6 +37,17 @@ export const unlinkPrimaryEnvironment = createRuntimeCommand(connectionAtomRunti
   concurrency: cloudLinkConcurrency,
   execute: (input: { readonly target: CloudLinkTarget; readonly clerkToken: string | null }) =>
     unlinkPrimaryEnvironmentFromCloud(input),
+});
+
+export const unlinkRelayEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:cloud:unlink-relay-environment",
+  scheduler: cloudLinkScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly environmentId: EnvironmentId }) => input.environmentId,
+  },
+  execute: (input: { readonly environmentId: EnvironmentId; readonly clerkToken: string }) =>
+    unlinkRelayEnvironmentFromCloud(input),
 });
 
 export const updatePrimaryEnvironmentPreferences = createRuntimeCommand(connectionAtomRuntime, {

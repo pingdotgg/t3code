@@ -385,6 +385,17 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
   }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
 }
 
+export function unlinkRelayEnvironmentFromCloud(input: {
+  readonly environmentId: EnvironmentId;
+  readonly clerkToken: string;
+}): Effect.Effect<void, CloudEnvironmentLinkError, ManagedRelay.ManagedRelayClient> {
+  return ManagedRelay.ManagedRelayClient.pipe(
+    Effect.flatMap((client) => client.unlinkEnvironment(input)),
+    Effect.mapError(decodedRelayClientError("Could not unlink the T3 Connect environment.")),
+    Effect.asVoid,
+  );
+}
+
 // "publish_only" links the environment to the relay for agent-activity
 // publishing alone: no managed tunnel is provisioned, so it can be toggled
 // independently of T3 Connect while clients reach the environment out of band.

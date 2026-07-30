@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -14,6 +15,8 @@ import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
+import { readManagedRelayClerkToken } from "~/cloud/managedAuth";
+import { unlinkRelayEnvironment } from "~/cloud/linkEnvironmentAtoms";
 import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useRelayEnvironmentDiscovery } from "~/state/environments";
@@ -21,6 +24,15 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Button } from "../ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
@@ -69,6 +81,9 @@ export function CloudEnvironmentConnectRows({
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
+  const unlinkEnvironment = useAtomCommand(unlinkRelayEnvironment, {
+    reportFailure: false,
+  });
   const connectRelayEnvironment = useCallback(
     (environment: RelayClientEnvironmentRecord) =>
       registerEnvironment(
@@ -84,6 +99,8 @@ export function CloudEnvironmentConnectRows({
   const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
+  const [removingEnvironmentId, setRemovingEnvironmentId] = useState<EnvironmentId | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<RelayClientEnvironmentRecord | null>(null);
   const savedById = new Map(
     savedEnvironments.map((environment) => [environment.environmentId, environment]),
   );
@@ -115,6 +132,60 @@ export function CloudEnvironmentConnectRows({
     toastManager.add({
       type: "error",
       title: "Could not connect environment",
+      description: message,
+      data: traceId
+        ? {
+            secondaryActionProps: {
+              children: "Copy trace ID",
+              onClick: () => void navigator.clipboard?.writeText(traceId),
+            },
+          }
+        : undefined,
+    });
+  };
+
+  const removeEnvironment = async () => {
+    if (!pendingRemoval) return;
+    const environment = pendingRemoval;
+    setRemovingEnvironmentId(environment.environmentId);
+    const tokenResult = await settlePromise(readManagedRelayClerkToken);
+    if (tokenResult._tag === "Failure" || !tokenResult.value) {
+      const cause =
+        tokenResult._tag === "Failure"
+          ? squashAtomCommandFailure(tokenResult)
+          : new Error("Sign in to T3 Connect before removing an environment.");
+      reportRemovalFailure(cause);
+      setRemovingEnvironmentId(null);
+      return;
+    }
+    const result = await unlinkEnvironment({
+      environmentId: environment.environmentId,
+      clerkToken: tokenResult.value,
+    });
+    setRemovingEnvironmentId(null);
+    if (result._tag === "Success") {
+      setPendingRemoval(null);
+      await refreshRelayEnvironments();
+      toastManager.add({
+        type: "success",
+        title: "Environment removed",
+        description: `${environment.label} is no longer linked to T3 Connect.`,
+      });
+      return;
+    }
+    if (!isAtomCommandInterrupted(result)) {
+      reportRemovalFailure(squashAtomCommandFailure(result));
+    }
+  };
+
+  const reportRemovalFailure = (cause: unknown) => {
+    const message =
+      cause instanceof Error ? cause.message : "Could not remove the T3 Connect environment.";
+    const traceId = findErrorTraceId(cause);
+    console.error("[t3-connect] Could not remove environment", { message, traceId, cause });
+    toastManager.add({
+      type: "error",
+      title: "Could not remove environment",
       description: message,
       data: traceId
         ? {
@@ -171,90 +242,142 @@ export function CloudEnvironmentConnectRows({
     return empty;
   }
 
-  return visibleEnvironments.map(({ environment, availability, error }) => {
-    const savedEnvironment = savedById.get(environment.environmentId);
-    const savedConnection = savedEnvironment
-      ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
-      : null;
-    const dotClassName = savedConnection
-      ? savedConnection.tone === "connected"
-        ? "bg-success"
-        : savedConnection.tone === "connecting"
-          ? "bg-warning"
-          : savedConnection.tone === "error"
-            ? "bg-destructive"
-            : "bg-muted-foreground/35"
-      : availability === "online"
-        ? "bg-success"
-        : availability === "error"
-          ? "bg-destructive"
-          : availability === "checking"
-            ? "bg-warning"
-            : "bg-muted-foreground/35";
-    const statusText = savedConnection
-      ? savedConnection.statusText
-      : availability === "online"
-        ? "Available · Relay online"
-        : availability === "offline"
-          ? "Available · Relay offline"
-          : availability === "checking"
-            ? "Available · Checking relay status…"
-            : (Option.getOrNull(error)?.message ?? "Available · Relay status unavailable");
-    return (
-      <div key={environment.environmentId} className={ITEM_ROW_CLASSNAME}>
-        <div className={ITEM_ROW_INNER_CLASSNAME}>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <ConnectionStatusDot
-                dotClassName={dotClassName}
-                pingClassName={
-                  savedConnection?.tone === "connecting" ||
-                  (savedConnection === null && availability === "checking")
-                    ? "bg-warning/60 duration-2000"
-                    : null
-                }
-                tooltipText={
-                  savedConnection
-                    ? savedConnection.statusText
-                    : availability === "online"
-                      ? "Relay online"
-                      : availability === "offline"
-                        ? "Relay offline"
-                        : availability === "checking"
-                          ? "Checking relay status"
-                          : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
-                }
-              />
-              <p className="truncate text-sm font-medium">{environment.label}</p>
-            </div>
-            <p
-              className={cn(
-                "mt-1 truncate text-xs",
-                savedConnection?.tone === "error" ||
-                  (savedConnection?.tone === "connecting" && savedEnvironment?.connection.error) ||
-                  (savedConnection === null && availability === "error")
-                  ? "text-destructive"
-                  : "text-muted-foreground",
+  return (
+    <>
+      {visibleEnvironments.map(({ environment, availability, error }) => {
+        const savedEnvironment = savedById.get(environment.environmentId);
+        const savedConnection = savedEnvironment
+          ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
+          : null;
+        const dotClassName = savedConnection
+          ? savedConnection.tone === "connected"
+            ? "bg-success"
+            : savedConnection.tone === "connecting"
+              ? "bg-warning"
+              : savedConnection.tone === "error"
+                ? "bg-destructive"
+                : "bg-muted-foreground/35"
+          : availability === "online"
+            ? "bg-success"
+            : availability === "error"
+              ? "bg-destructive"
+              : availability === "checking"
+                ? "bg-warning"
+                : "bg-muted-foreground/35";
+        const statusText = savedConnection
+          ? savedConnection.statusText
+          : availability === "online"
+            ? "Available · Relay online"
+            : availability === "offline"
+              ? "Available · Relay offline"
+              : availability === "checking"
+                ? "Available · Checking relay status…"
+                : (Option.getOrNull(error)?.message ?? "Available · Relay status unavailable");
+        return (
+          <div key={environment.environmentId} className={ITEM_ROW_CLASSNAME}>
+            <div className={ITEM_ROW_INNER_CLASSNAME}>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <ConnectionStatusDot
+                    dotClassName={dotClassName}
+                    pingClassName={
+                      savedConnection?.tone === "connecting" ||
+                      (savedConnection === null && availability === "checking")
+                        ? "bg-warning/60 duration-2000"
+                        : null
+                    }
+                    tooltipText={
+                      savedConnection
+                        ? savedConnection.statusText
+                        : availability === "online"
+                          ? "Relay online"
+                          : availability === "offline"
+                            ? "Relay offline"
+                            : availability === "checking"
+                              ? "Checking relay status"
+                              : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                    }
+                  />
+                  <p className="truncate text-sm font-medium">{environment.label}</p>
+                </div>
+                <p
+                  className={cn(
+                    "mt-1 truncate text-xs",
+                    savedConnection?.tone === "error" ||
+                      (savedConnection?.tone === "connecting" &&
+                        savedEnvironment?.connection.error) ||
+                      (savedConnection === null && availability === "error")
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {statusText}
+                </p>
+              </div>
+              {savedConnection ? (
+                <Button size="sm" variant="outline" disabled>
+                  {savedConnection.buttonLabel}
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="destructive-outline"
+                    disabled={connectingEnvironmentId !== null || removingEnvironmentId !== null}
+                    onClick={() => setPendingRemoval(environment)}
+                  >
+                    Remove
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={connectingEnvironmentId !== null || removingEnvironmentId !== null}
+                    onClick={() => void connectEnvironment(environment)}
+                  >
+                    {connectingEnvironmentId === environment.environmentId
+                      ? "Connecting…"
+                      : "Connect"}
+                  </Button>
+                </div>
               )}
-            >
-              {statusText}
-            </p>
+            </div>
           </div>
-          {savedConnection ? (
-            <Button size="sm" variant="outline" disabled>
-              {savedConnection.buttonLabel}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              disabled={connectingEnvironmentId !== null}
-              onClick={() => void connectEnvironment(environment)}
+        );
+      })}
+      <AlertDialog
+        open={pendingRemoval !== null}
+        onOpenChange={(open) => {
+          if (!open && removingEnvironmentId === null) setPendingRemoval(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove T3 Connect environment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRemoval ? (
+                <>
+                  <span className="font-medium text-foreground">{pendingRemoval.label}</span> (
+                  <code>{pendingRemoval.environmentId}</code>) will be unlinked from your account.
+                  You will need access to that environment to link it again.
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose
+              render={<Button variant="outline" disabled={removingEnvironmentId !== null} />}
             >
-              {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
+              Cancel
+            </AlertDialogClose>
+            <Button
+              variant="destructive"
+              disabled={removingEnvironmentId !== null}
+              onClick={() => void removeEnvironment()}
+            >
+              {removingEnvironmentId !== null ? "Removing…" : "Remove environment"}
             </Button>
-          )}
-        </div>
-      </div>
-    );
-  });
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
+  );
 }
