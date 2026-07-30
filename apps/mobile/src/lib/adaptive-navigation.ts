@@ -1,13 +1,18 @@
 export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
-export type WorkspaceDetailInvalidationAction =
+export type WorkspaceDetailInvalidationAction<
+  Route extends { readonly key: string; readonly name: string } = {
+    readonly key: string;
+    readonly name: string;
+  },
+> =
   | {
       readonly type: "pop";
       readonly count: number;
       readonly source: string;
     }
   | {
-      readonly type: "replace";
-      readonly source: string;
+      readonly type: "reset";
+      readonly routes: ReadonlyArray<Route | { readonly name: "Home" }>;
     };
 
 const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
@@ -68,13 +73,12 @@ export function shouldInvalidateSelectedThreadDetail(input: {
   );
 }
 
-export function resolveWorkspaceDetailInvalidationAction(input: {
-  readonly routes: ReadonlyArray<{
-    readonly key: string;
-    readonly name: string;
-  }>;
+export function resolveWorkspaceDetailInvalidationAction<
+  Route extends { readonly key: string; readonly name: string },
+>(input: {
+  readonly routes: ReadonlyArray<Route>;
   readonly overlayRouteNames: ReadonlySet<string>;
-}): WorkspaceDetailInvalidationAction | null {
+}): WorkspaceDetailInvalidationAction<Route> | null {
   let workspaceRouteIndex = -1;
   for (let index = input.routes.length - 1; index >= 0; index -= 1) {
     const route = input.routes[index];
@@ -100,7 +104,10 @@ export function resolveWorkspaceDetailInvalidationAction(input: {
     }
   }
   if (homeRouteIndex === -1) {
-    return { type: "replace", source: workspaceRoute.key };
+    return {
+      type: "reset",
+      routes: [{ name: "Home" }, ...input.routes.slice(workspaceRouteIndex + 1)],
+    };
   }
 
   return {

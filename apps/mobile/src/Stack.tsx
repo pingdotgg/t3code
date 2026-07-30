@@ -1,4 +1,5 @@
 import {
+  CommonActions,
   createPathConfigForStaticNavigation,
   getPathFromState,
   NavigationState,
@@ -334,13 +335,29 @@ function RootStackLayout(props: {
     if (invalidation === null) {
       return;
     }
-    const action =
-      invalidation.type === "pop"
-        ? StackActions.pop(invalidation.count)
-        : StackActions.replace("Home");
+    if (invalidation.type === "pop") {
+      navigation.dispatch({
+        ...StackActions.pop(invalidation.count),
+        source: invalidation.source,
+        target: state.key,
+      });
+      return;
+    }
     navigation.dispatch({
-      ...action,
-      source: invalidation.source,
+      ...CommonActions.reset({
+        index: invalidation.routes.length - 1,
+        routes: invalidation.routes.map((route) =>
+          "key" in route
+            ? {
+                key: route.key,
+                name: route.name,
+                params: route.params,
+                path: route.path,
+              }
+            : route,
+        ),
+        stale: true,
+      }),
       target: state.key,
     });
   }, [navigation]);
