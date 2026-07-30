@@ -4,9 +4,7 @@ import {
   IconChevronLeft as ChevronLeftIcon,
 } from "symbols-react";
 
-import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
-import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 
@@ -176,10 +174,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
-  const environmentIdentificationMode = useEnvironmentIdentificationMode();
-  const stageBackdropVariant = useSidebarStageBackdropVariant(
-    environmentIdentificationMode === "artwork",
-  );
 
   if (pendingAction) {
     return (
@@ -296,29 +290,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     hasSendableContent,
   });
   const canInterrupt = action.kind === "interrupt";
-  const showStageBackdrop = Boolean(stageBackdropVariant && !canInterrupt && !action.disabled);
 
   return (
     <Button
       type={canInterrupt ? "button" : "submit"}
       size="icon"
       variant={canInterrupt ? "destructive-outline" : "default"}
-      className={cn(
-        "rounded-full",
-        showStageBackdrop &&
-          "isolate overflow-hidden border-transparent bg-transparent text-primary-foreground shadow-black/24 hover:bg-transparent hover:brightness-110",
-      )}
+      className="rounded-full"
       {...pointerFocusProps}
       disabled={action.disabled}
       aria-label={action.label}
       title={action.label}
       onClick={canInterrupt ? onInterrupt : undefined}
     >
-      {showStageBackdrop && stageBackdropVariant ? (
-        <span className="absolute inset-0 -z-10" aria-hidden="true">
-          <StageBackdropButtonArt variant={stageBackdropVariant} />
-        </span>
-      ) : null}
       {action.kind === "busy" ? (
         <ComposerSpinnerIcon />
       ) : canInterrupt ? (
