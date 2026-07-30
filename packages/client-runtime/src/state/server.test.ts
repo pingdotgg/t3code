@@ -85,6 +85,18 @@ describe("server state projection", () => {
       isLegacyUpdateHandoffLoss(
         Cause.fail(
           new RpcClientError.RpcClientError({
+            reason: new Socket.SocketOpenError({
+              kind: "Unknown",
+              cause: new Error("connection refused"),
+            }),
+          }),
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isLegacyUpdateHandoffLoss(
+        Cause.fail(
+          new RpcClientError.RpcClientError({
             reason: new RpcClientError.RpcClientDefect({
               message: "incompatible protocol",
               cause: new Error("invalid response"),

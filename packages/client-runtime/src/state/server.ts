@@ -129,7 +129,6 @@ function isRpcSocketError(error: unknown): boolean {
   switch (error.reason._tag) {
     case "SocketReadError":
     case "SocketWriteError":
-    case "SocketOpenError":
     case "SocketCloseError":
       return true;
     default:
