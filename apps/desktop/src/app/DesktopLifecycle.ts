@@ -14,6 +14,8 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { resolveDesktopRelaunchPlan } from "./resolveDesktopRelaunchOptions.ts";
+import { scheduleAppImageRelaunch } from "./scheduleAppImageRelaunch.ts";
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<DesktopLifecycleRelaunchError>()(
   "DesktopLifecycleRelaunchError",
@@ -26,6 +28,8 @@ export class DesktopLifecycleRelaunchError extends Schema.TaggedErrorClass<Deskt
     return `Desktop relaunch failed for reason "${this.reason}".`;
   }
 }
+
+export { resolveDesktopRelaunchPlan } from "./resolveDesktopRelaunchOptions.ts";
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
@@ -154,16 +158,65 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
-      yield* electronApp.relaunch({
+      const relaunchPlan = resolveDesktopRelaunchPlan({
+        // AppImage runtime injects APPIMAGE; see resolveDesktopRelaunchPlan.
+        appImagePath: process.env.APPIMAGE,
         execPath: process.execPath,
-        args: process.argv.slice(1),
+        argv: process.argv,
       });
+      yield* logLifecycleInfo("desktop relaunch exec", {
+        reason,
+        kind: relaunchPlan.kind,
+        execPath:
+          relaunchPlan.kind === "appimage-delayed"
+            ? relaunchPlan.appImagePath
+            : relaunchPlan.execPath,
+        argumentCount: relaunchPlan.args.length,
+        ...(relaunchPlan.kind === "appimage-delayed" ? { delayMs: relaunchPlan.delayMs } : {}),
+      });
+      if (relaunchPlan.kind === "appimage-delayed") {
+        // Delayed shell re-exec avoids racing the AppImage FUSE unmount, which
+        // otherwise surfaces "Cannot mount AppImage, please check your FUSE setup."
+        // Await the spawn: a failure here must not fall through to exit(0), or
+        // the app just disappears and never comes back.
+        yield* Effect.tryPromise({
+          try: () =>
+            scheduleAppImageRelaunch(
+              relaunchPlan,
+              process.env,
+              // The re-exec fires after we are gone, so its own failures can
+              // only surface here.
+              environment.path.join(environment.logDir, "relaunch.log"),
+            ),
+          catch: (cause) => new DesktopLifecycleRelaunchError({ reason, cause }),
+        });
+      } else {
+        yield* electronApp.relaunch({
+          execPath: relaunchPlan.execPath,
+          args: relaunchPlan.args,
+        });
+      }
+      // Only give up the lock once the relaunch is committed. Neither path has
+      // started the next process yet (app.relaunch defers its spawn to exit,
+      // the AppImage helper sleeps first), so releasing here still beats the
+      // successor's requestSingleInstanceLock().
+      yield* electronApp.releaseSingleInstanceLock;
       yield* electronApp.exit(0);
     }).pipe(
-      Effect.catchCause((cause) => {
-        const error = new DesktopLifecycleRelaunchError({ reason, cause });
-        return logLifecycleError(error.message, { error });
-      }),
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          const error = new DesktopLifecycleRelaunchError({ reason, cause });
+          yield* logLifecycleError(error.message, { error });
+          // By this point `quitting` is set and requestDesktopShutdownAndWait
+          // has already torn the backend down, so there is no working app left
+          // to return to. Staying alive would just hold the single-instance
+          // lock on a dead instance, and every later launch would focus *this*
+          // window instead of starting a usable one. Hand the lock back and
+          // exit non-zero so the next launch comes up clean.
+          yield* electronApp.releaseSingleInstanceLock.pipe(Effect.ignore);
+          yield* electronApp.exit(1);
+        }),
+      ),
       Effect.forkDetach,
       Effect.asVoid,
     );
