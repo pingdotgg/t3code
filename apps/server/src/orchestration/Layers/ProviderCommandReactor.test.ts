@@ -147,7 +147,7 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
-    readonly titleRegenerationBeforeStart?: boolean;
+    readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -443,12 +443,37 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    if (input?.titleRegenerationBeforeStart === true) {
+    if (input?.titleRegenerationBeforeStart === "two") {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-2"),
+          threadId: ThreadId.make("thread-2"),
+          projectId: asProjectId("project-1"),
+          title: "Thread 2",
+          modelSelection: modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+    }
+    const titleRegenerationThreadIds =
+      input?.titleRegenerationBeforeStart === "two"
+        ? [ThreadId.make("thread-1"), ThreadId.make("thread-2")]
+        : input?.titleRegenerationBeforeStart === "one"
+          ? [ThreadId.make("thread-1")]
+          : [];
+    for (const [index, threadId] of titleRegenerationThreadIds.entries()) {
       await Effect.runPromise(
         engine.dispatch({
           type: "thread.meta.update",
-          commandId: CommandId.make("cmd-thread-title-regeneration-before-reactor-start"),
-          threadId: ThreadId.make("thread-1"),
+          commandId: CommandId.make(
+            `cmd-thread-title-regeneration-before-reactor-start-${index + 1}`,
+          ),
+          threadId,
           regenerateTitle: true,
         }),
       );
@@ -762,7 +787,7 @@ describe("ProviderCommandReactor", () => {
 
   it("clears title regeneration state left pending across reactor startup", async () => {
     const harness = await createHarness({
-      titleRegenerationBeforeStart: true,
+      titleRegenerationBeforeStart: "one",
     });
 
     expect(harness.generateThreadTitle).not.toHaveBeenCalled();
@@ -771,6 +796,23 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Thread");
     expect(thread?.titleRegeneration).toBeNull();
+  });
+
+  it("continues clearing startup title regeneration state after one completion fails", async () => {
+    const harness = await createHarness({
+      titleRegenerationBeforeStart: "two",
+      titleRegenerationCompletionDispatchFailures: 1,
+    });
+
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    expect(harness.titleRegenerationCompletionDispatchAttempts).toBe(2);
+    const readModel = await harness.readModel();
+    expect(
+      readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.titleRegeneration,
+    ).not.toBeNull();
+    expect(
+      readModel.threads.find((entry) => entry.id === ThreadId.make("thread-2"))?.titleRegeneration,
+    ).toBeNull();
   });
 
   it("keeps the current title when regeneration returns the fallback", async () => {
@@ -2751,7 +2793,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await harness.runEffect(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.stop",
         commandId: CommandId.make("cmd-session-stop"),
