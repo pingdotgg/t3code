@@ -127,7 +127,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   onRemoveAttachment,
   onPasteImage,
 }: {
-  readonly mode: "compose" | "rename" | "filter" | "commit" | "project";
+  readonly mode: "compose" | "rename" | "filter" | "commit";
   readonly reply: string;
   /** Value for the single-line rename/filter inputs. */
   readonly auxValue: string;
@@ -177,31 +177,20 @@ export const ChatComposer = React.memo(function ChatComposer({
     // Mount/focus/epoch only; not on every keystroke.
   }, [composerEpoch, inputFocused]);
 
-  if (mode === "rename" || mode === "filter" || mode === "commit" || mode === "project") {
-    const label =
-      mode === "rename"
-        ? "rename ▸ "
-        : mode === "commit"
-          ? "commit ▸ "
-          : mode === "project"
-            ? "project ▸ "
-            : "find ▸ ";
+  if (mode === "rename" || mode === "filter" || mode === "commit") {
+    const label = mode === "rename" ? "rename ▸ " : mode === "commit" ? "commit ▸ " : "find ▸ ";
     const hint =
       mode === "rename"
         ? "Enter rename · Esc cancel"
         : mode === "commit"
           ? "Enter commit · Esc cancel"
-          : mode === "project"
-            ? "Enter add project · Esc cancel"
-            : "Enter keep · Esc clear";
+          : "Enter keep · Esc clear";
     const inputPlaceholder =
       mode === "rename"
         ? "New thread title…"
         : mode === "commit"
           ? "Commit message…"
-          : mode === "project"
-            ? "Project directory, for example ~/Development/my-app"
-            : "Filter by title…";
+          : "Filter by title…";
     return (
       <box
         flexDirection="column"

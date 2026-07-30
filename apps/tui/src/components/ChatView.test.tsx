@@ -107,6 +107,18 @@ function fakeClient({
   shellSnapshot = shell(),
   sendReply = () => Promise.resolve(),
   respondUserInput = () => Promise.resolve(),
+  browseFilesystem = async (partialPath) => ({ parentPath: partialPath, entries: [] }) as never,
+  discoverSourceControl = async () =>
+    ({ versionControlSystems: [], sourceControlProviders: [] }) as never,
+  lookupRepository = async (_provider, repository) =>
+    ({
+      provider: "github",
+      nameWithOwner: repository,
+      url: `https://github.com/${repository}`,
+      sshUrl: `git@github.com:${repository}.git`,
+    }) as never,
+  cloneRepository = async (remoteUrl, destinationPath) =>
+    ({ cwd: destinationPath, remoteUrl, repository: null }) as never,
   createProject = async () => "p-new" as never,
   createThread = async () => "t-new" as never,
   terminalClear = async () => {},
@@ -150,6 +162,10 @@ function fakeClient({
   readonly shellSnapshot?: OrchestrationShellSnapshot;
   readonly sendReply?: TuiClient["sendReply"];
   readonly respondUserInput?: TuiClient["respondUserInput"];
+  readonly browseFilesystem?: TuiClient["browseFilesystem"];
+  readonly discoverSourceControl?: TuiClient["discoverSourceControl"];
+  readonly lookupRepository?: TuiClient["lookupRepository"];
+  readonly cloneRepository?: TuiClient["cloneRepository"];
   readonly createProject?: TuiClient["createProject"];
   readonly createThread?: TuiClient["createThread"];
   readonly terminalClear?: TuiClient["terminalClear"];
@@ -177,6 +193,10 @@ function fakeClient({
   const subscribedThreadIds: string[] = [];
   const client = {
     hostPlatform: "linux",
+    browseFilesystem,
+    discoverSourceControl,
+    lookupRepository,
+    cloneRepository,
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
       shellSubscriber = onSnapshot;
       return () => {
@@ -398,6 +418,11 @@ describe("ChatView responsive shell", () => {
             addProjectBaseDirectory: "/workspace/",
           },
         }) as never,
+      browseFilesystem: async () =>
+        ({
+          parentPath: "/workspace",
+          entries: [{ name: "existing", fullPath: "/workspace/existing" }],
+        }) as never,
       createProject: async (workspaceRoot) => {
         projectPaths.push(workspaceRoot);
         return "p-created" as never;
@@ -420,12 +445,23 @@ describe("ChatView responsive shell", () => {
       await setup.mockMouse.click(column, row);
       await setup.flush();
     });
-    await setup.waitForFrame((frame) => frame.includes("project ▸"));
+    await setup.waitForFrame(
+      (frame) => frame.includes("New project · Source") && frame.includes("Local folder"),
+    );
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("New project · Local folder") && frame.includes("/workspace/"),
+    );
     await React.act(async () => {
       await setup.mockInput.typeText("new-project");
       await setup.renderOnce();
     });
-    await setup.waitForFrame((frame) => frame.includes("/workspace/new-project"));
+    await setup.waitForFrame(
+      (frame) => frame.includes("/workspace/new-project") && frame.includes("Create & Add"),
+    );
     await React.act(async () => {
       setup.mockInput.pressEnter();
       await setup.renderOnce();
@@ -440,6 +476,190 @@ describe("ChatView responsive shell", () => {
       await setup.flush();
     });
     await setup.waitForFrame((frame) => frame.includes("What should we build in new-project?"));
+    setup.renderer.destroy();
+  });
+
+  it("Given the web-style project palette, cloning a Git URL browses a destination before registering it", async () => {
+    const clones: Array<{ remoteUrl: string; destinationPath: string }> = [];
+    const projectPaths: string[] = [];
+    const fake = fakeClient({
+      detail: thread(),
+      getServerConfig: async () =>
+        ({
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            addProjectBaseDirectory: "/workspace/",
+          },
+        }) as never,
+      browseFilesystem: async () =>
+        ({
+          parentPath: "/workspace",
+          entries: [{ name: "existing", fullPath: "/workspace/existing" }],
+        }) as never,
+      cloneRepository: async (remoteUrl, destinationPath) => {
+        clones.push({ remoteUrl, destinationPath });
+        return { cwd: destinationPath, remoteUrl, repository: null } as never;
+      },
+      createProject: async (workspaceRoot) => {
+        projectPaths.push(workspaceRoot);
+        return "p-cloned" as never;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+
+    const lines = setup.captureCharFrame().split("\n");
+    const row = lines.findIndex(
+      (line) => line.includes("Project All projects") && line.includes("+"),
+    );
+    const column = row < 0 ? -1 : (lines[row]?.lastIndexOf("+") ?? -1);
+    await React.act(async () => {
+      await setup.mockMouse.click(column, row);
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => frame.includes("New project · Source"));
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+      await setup.flush();
+    });
+    await setup.waitForFrame((frame) => frame.includes("▸ Git URL"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("New project · Git URL") && frame.includes("Enter Git clone URL"),
+    );
+    await React.act(async () => {
+      await setup.mockInput.typeText("git@example.com:team/repo.git");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("New project · Clone destination") &&
+        frame.includes("git@example.com:team/repo.git") &&
+        frame.includes("/workspace/"),
+    );
+    await React.act(async () => {
+      await setup.mockInput.typeText("repo");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      await Promise.resolve();
+    });
+    await setup.waitFor(() => projectPaths.length === 1);
+    expect(clones).toEqual([
+      {
+        remoteUrl: "git@example.com:team/repo.git",
+        destinationPath: "/workspace/repo",
+      },
+    ]);
+    expect(projectPaths).toEqual(["/workspace/repo"]);
+    setup.renderer.destroy();
+  });
+
+  it("Given an authenticated source provider, searching it resolves the repository before choosing a clone destination", async () => {
+    const lookups: Array<{ provider: string; repository: string }> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      getServerConfig: async () =>
+        ({
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            addProjectBaseDirectory: "/workspace/",
+          },
+        }) as never,
+      discoverSourceControl: async () =>
+        ({
+          versionControlSystems: [],
+          sourceControlProviders: [
+            {
+              kind: "github",
+              label: "GitHub",
+              status: "available",
+              version: { _tag: "Some", value: "1.0" },
+              installHint: "Install GitHub CLI",
+              detail: { _tag: "None" },
+              auth: {
+                status: "authenticated",
+                account: { _tag: "Some", value: "octocat" },
+                host: { _tag: "Some", value: "github.com" },
+                detail: { _tag: "None" },
+              },
+            },
+          ],
+        }) as never,
+      lookupRepository: async (provider, repository) => {
+        lookups.push({ provider, repository });
+        return {
+          provider,
+          nameWithOwner: repository,
+          url: `https://github.com/${repository}`,
+          sshUrl: `git@github.com:${repository}.git`,
+        } as never;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+    await selectThread(setup, fake.connect);
+
+    const lines = setup.captureCharFrame().split("\n");
+    const row = lines.findIndex(
+      (line) => line.includes("Project All projects") && line.includes("+"),
+    );
+    const column = row < 0 ? -1 : (lines[row]?.lastIndexOf("+") ?? -1);
+    await React.act(async () => {
+      await setup.mockMouse.click(column, row);
+      await setup.flush();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("GitHub repository") && !frame.includes("GitHub repository  setup"),
+    );
+    await React.act(async () => {
+      setup.mockInput.pressTab();
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      await setup.mockInput.typeText("GitHub");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("New project · GitHub") && frame.includes("Enter GitHub owner/repository"),
+    );
+    await React.act(async () => {
+      await setup.mockInput.typeText("team/repo");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      await Promise.resolve();
+    });
+    await setup.waitFor(() => lookups.length === 1);
+    expect(lookups).toEqual([{ provider: "github", repository: "team/repo" }]);
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("New project · Clone destination") &&
+        frame.includes("team/repo") &&
+        frame.includes("https://github.com/team/repo"),
+    );
     setup.renderer.destroy();
   });
 

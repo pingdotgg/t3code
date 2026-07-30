@@ -106,8 +106,11 @@ export interface KeyBindingActions {
   readonly onCancelFilter: () => void;
   readonly onSubmitCommit: () => void;
   readonly onCancelCommit: () => void;
-  readonly onSubmitProject: () => void;
-  readonly onCancelProject: () => void;
+  readonly onProjectPrev: () => void;
+  readonly onProjectNext: () => void;
+  readonly onProjectActivate: (forceAction: boolean) => void;
+  readonly onProjectToggleFocus: () => void;
+  readonly onProjectBack: () => void;
   // Compose mode
   /** True when unmodified ↑/↓ should choose between multiple pending approvals. */
   readonly approvalNavigation: boolean;
@@ -261,8 +264,13 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       return;
     }
     if (actions.mode === "project") {
-      if (key.name === "return" || key.name === "enter") return actions.onSubmitProject();
-      if (key.name === "escape") return actions.onCancelProject();
+      if (key.name === "up") return actions.onProjectPrev();
+      if (key.name === "down") return actions.onProjectNext();
+      if (key.name === "tab") return actions.onProjectToggleFocus();
+      if (key.name === "return" || key.name === "enter") {
+        return actions.onProjectActivate(key.ctrl);
+      }
+      if (key.name === "escape") return actions.onProjectBack();
       return;
     }
 

@@ -21,6 +21,7 @@ function fakeRuntime() {
       forks += 1;
       return { id: forks };
     },
+    runSync: () => "linux",
     runPromise: async () => undefined,
     dispose: async () => {},
   } as unknown as TuiRuntime;

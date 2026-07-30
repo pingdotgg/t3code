@@ -22,6 +22,11 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type GitStackedAction,
+  type FilesystemBrowseResult,
+  type SourceControlCloneRepositoryResult,
+  type SourceControlDiscoveryResult,
+  type SourceControlProviderKind,
+  type SourceControlRepositoryInfo,
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
   type TerminalRestartInput,
@@ -426,6 +431,16 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 
 export interface TuiClient {
   readonly hostPlatform: NodeJS.Platform;
+  readonly browseFilesystem: (partialPath: string, cwd?: string) => Promise<FilesystemBrowseResult>;
+  readonly discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
+  readonly lookupRepository: (
+    provider: SourceControlProviderKind,
+    repository: string,
+  ) => Promise<SourceControlRepositoryInfo>;
+  readonly cloneRepository: (
+    remoteUrl: string,
+    destinationPath: string,
+  ) => Promise<SourceControlCloneRepositoryResult>;
   /** Live list of every project + thread. Returns an unsubscribe fn. */
   readonly subscribeShell: (
     onSnapshot: (snapshot: OrchestrationShellSnapshot) => void,
@@ -721,6 +736,29 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
 
   return {
     hostPlatform,
+    browseFilesystem: (partialPath, cwd) =>
+      runtime.runPromise(
+        request(WS_METHODS.filesystemBrowse, {
+          partialPath: TrimmedNonEmptyString.make(partialPath),
+          ...(cwd ? { cwd: TrimmedNonEmptyString.make(cwd) } : {}),
+        }),
+      ),
+    discoverSourceControl: () =>
+      runtime.runPromise(request(WS_METHODS.serverDiscoverSourceControl, {})),
+    lookupRepository: (provider, repository) =>
+      runtime.runPromise(
+        request(WS_METHODS.sourceControlLookupRepository, {
+          provider,
+          repository: TrimmedNonEmptyString.make(repository),
+        }),
+      ),
+    cloneRepository: (remoteUrl, destinationPath) =>
+      runtime.runPromise(
+        request(WS_METHODS.sourceControlCloneRepository, {
+          remoteUrl: TrimmedNonEmptyString.make(remoteUrl),
+          destinationPath: TrimmedNonEmptyString.make(destinationPath),
+        }),
+      ),
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarm(makeEnvironmentShellState());
       return followWarm(shellWarm, (state) => {

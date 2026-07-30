@@ -68,26 +68,6 @@ const CLIENT_UI_GAPS = [
     ],
   },
   {
-    id: "project-onboarding",
-    area: "Project onboarding",
-    serverCapabilities: [
-      "filesystem.browse",
-      "sourceControl.lookupRepository",
-      "sourceControl.cloneRepository",
-      "project.create",
-    ],
-    serverSources: ["apps/server/src/ws.ts", "apps/server/src/orchestration/decider.ts"],
-    clientSources: [
-      { client: "web", path: "apps/web/src/components/CommandPalette.tsx" },
-      { client: "mobile", path: "apps/mobile/src/features/projects/AddProjectScreen.tsx" },
-    ],
-    scenarios: [
-      "Given the user wants to browse for a local workspace, when project onboarding opens, then the TUI can navigate the filesystem and choose a directory without manually entering its path.",
-      "Given the user supplies a supported repository URL, when the remote is resolved, then the TUI previews its identity and clones it into the selected destination.",
-      "Given a repository is already registered, when the user confirms remote onboarding, then the TUI prevents a duplicate and selects the existing project.",
-    ],
-  },
-  {
     id: "project-lifecycle",
     area: "Project lifecycle",
     serverCapabilities: ["project.meta.update", "project.delete"],

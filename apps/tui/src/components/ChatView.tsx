@@ -7,16 +7,30 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type SourceControlDiscoveryResult,
+  type SourceControlRepositoryInfo,
   type VcsRef,
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getKittyClipboardManager, getKittyImageManager } from "@t3tools/opentui-image";
 import {
+  addProjectRemoteSourceLabel,
+  buildAddProjectRemoteSourceReadiness,
   getAddProjectInitialQuery,
   resolveAddProjectPath,
+  sortAddProjectProviderSources,
+  type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
-import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
+import {
+  filterFilesystemBrowseEntries,
+  getFilesystemBrowsePath,
+} from "@t3tools/client-runtime/state/filesystem";
+import {
+  appendBrowsePathSegment,
+  findProjectByPath,
+  hasTrailingPathSeparator,
+} from "@t3tools/client-runtime/state/projects";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -69,6 +83,11 @@ import {
   resolveSidebarListViewport,
 } from "./ChatView.layout.ts";
 import { type DiffStatus, type DiffView, DiffViewer } from "./DiffViewer.tsx";
+import {
+  AddProjectOverlay,
+  type AddProjectRow,
+  type AddProjectStatus,
+} from "./AddProjectOverlay.tsx";
 import { type Command, filterCommands } from "../commands.ts";
 import { buildFileTree, flattenFileTree } from "../fileTree.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
@@ -111,13 +130,22 @@ const MAX_TERMINALS_PER_THREAD = 6;
 const IMAGE_ONLY_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 
-function expandLocalHomePath(value: string): string {
-  if (value === "~") return NodeOS.homedir();
-  if (value.startsWith("~/") || value.startsWith("~\\")) {
-    return NodePath.join(NodeOS.homedir(), value.slice(2));
-  }
-  return value;
-}
+type AddProjectFlow =
+  | { readonly step: "source" }
+  | { readonly step: "local" }
+  | { readonly step: "repository"; readonly source: AddProjectRemoteSource }
+  | {
+      readonly step: "destination";
+      readonly source: AddProjectRemoteSource;
+      readonly repositoryInput: string;
+      readonly repository: SourceControlRepositoryInfo | null;
+      readonly remoteUrl: string;
+    };
+
+type AddProjectPaletteRow =
+  | (AddProjectRow & { readonly kind: "source"; readonly source: "local" | AddProjectRemoteSource })
+  | (AddProjectRow & { readonly kind: "up"; readonly path: string })
+  | (AddProjectRow & { readonly kind: "directory"; readonly name: string });
 
 function branchPickerOptions(refs: ReadonlyArray<VcsRef>): ReadonlyArray<SelectOption> {
   return refs.map((ref) => {
@@ -193,9 +221,9 @@ export function ChatView({
     };
   }, [client]);
 
-  const [focus, setFocus] = React.useState<
-    "compose" | "new" | "rename" | "filter" | "commit" | "project"
-  >("compose");
+  const [focus, setFocus] = React.useState<"compose" | "new" | "rename" | "filter" | "commit">(
+    "compose",
+  );
   // Transient key-driven overlay over the composer (thread actions / delete confirm / revert).
   const [overlay, setOverlay] = React.useState<"none" | "command" | "confirmDelete" | "revert">(
     "none",
@@ -279,7 +307,18 @@ export function ChatView({
   const [composerEpoch, setComposerEpoch] = React.useState(0);
   const [draft, setDraft] = React.useState("");
   const [renameDraft, setRenameDraft] = React.useState("");
+  const [projectFlow, setProjectFlow] = React.useState<AddProjectFlow | null>(null);
   const [projectDraft, setProjectDraft] = React.useState("");
+  const [projectRowIndex, setProjectRowIndex] = React.useState(0);
+  const [projectListFocused, setProjectListFocused] = React.useState(true);
+  const [projectBrowse, setProjectBrowse] = React.useState<{
+    readonly status: AddProjectStatus;
+    readonly result: Awaited<ReturnType<TuiClient["browseFilesystem"]>> | null;
+  }>({ status: "empty", result: null });
+  const projectBrowseGenerationRef = React.useRef(0);
+  const [projectDiscovery, setProjectDiscovery] =
+    React.useState<SourceControlDiscoveryResult | null>(null);
+  const projectDiscoveryGenerationRef = React.useRef(0);
   const projectSubmissionPendingRef = React.useRef(false);
   const [projectSubmissionPending, setProjectSubmissionPending] = React.useState(false);
   const pendingCreatedProjectIdRef = React.useRef<string | null>(null);
@@ -360,6 +399,7 @@ export function ChatView({
       setProjectIndex(nextProjectIndex);
       store.setProjectScope(projectId);
       store.select({ kind: "project", id: projectId });
+      setProjectFlow(null);
       setProjectDraft("");
       setFocus("compose");
       store.setStatus("Project added. What should we build?", "success");
@@ -718,6 +758,126 @@ export function ChatView({
     }
   };
 
+  const currentProjectCwd =
+    projects.find((project) => project.id === selectedProjectId)?.workspaceRoot ?? null;
+  const projectIsBrowseStep = projectFlow?.step === "local" || projectFlow?.step === "destination";
+  const projectBrowsePath = getFilesystemBrowsePath(
+    projectDraft,
+    client.hostPlatform,
+    projectIsBrowseStep,
+  );
+  const projectBrowseEntries = projectBrowse.result?.entries ?? [];
+  const { visibleEntries: visibleProjectBrowseEntries, exactEntry: exactProjectBrowseEntry } =
+    filterFilesystemBrowseEntries(projectBrowseEntries, projectBrowsePath.filterQuery);
+  const sourceReadiness = buildAddProjectRemoteSourceReadiness(projectDiscovery);
+  const projectSourceRows: ReadonlyArray<AddProjectPaletteRow> = (
+    [
+      {
+        id: "source:local",
+        kind: "source",
+        source: "local",
+        title: "Local folder",
+        description: "Browse a folder on disk",
+      },
+      {
+        id: "source:url",
+        kind: "source",
+        source: "url",
+        title: "Git URL",
+        description: "Clone from a remote URL",
+      },
+      ...sortAddProjectProviderSources(sourceReadiness).map(
+        (source): AddProjectPaletteRow => ({
+          id: `source:${source}`,
+          kind: "source",
+          source,
+          title: `${addProjectRemoteSourceLabel(source)} repository`,
+          description: sourceReadiness[source].ready
+            ? `Clone ${addProjectRemoteSourceLabel(source)} owner/repository`
+            : (sourceReadiness[source].hint ?? "Provider setup required"),
+          disabled: !sourceReadiness[source].ready,
+        }),
+      ),
+    ] satisfies ReadonlyArray<AddProjectPaletteRow>
+  ).filter((row) => {
+    const query = projectDraft.trim().toLowerCase();
+    return (
+      query.length === 0 ||
+      row.title.toLowerCase().includes(query) ||
+      row.description?.toLowerCase().includes(query)
+    );
+  });
+  const projectBrowseRows: ReadonlyArray<AddProjectPaletteRow> = [
+    ...(projectBrowsePath.canBrowseUp && projectBrowsePath.parentPath
+      ? [
+          {
+            id: "browse:up",
+            kind: "up" as const,
+            path: projectBrowsePath.parentPath,
+            title: "..",
+          },
+        ]
+      : []),
+    ...visibleProjectBrowseEntries.map(
+      (entry): AddProjectPaletteRow => ({
+        id: `browse:${entry.fullPath}`,
+        kind: "directory",
+        name: entry.name,
+        title: entry.name,
+        description: entry.fullPath,
+      }),
+    ),
+  ];
+  const projectRows =
+    projectFlow?.step === "source"
+      ? projectSourceRows
+      : projectFlow?.step === "local" || projectFlow?.step === "destination"
+        ? projectBrowseRows
+        : [];
+  const safeProjectRowIndex =
+    projectRows.length === 0 ? -1 : Math.min(Math.max(-1, projectRowIndex), projectRows.length - 1);
+  const resolvedProjectPath = hasTrailingPathSeparator(projectDraft)
+    ? (projectBrowse.result?.parentPath ?? projectDraft.trim())
+    : (exactProjectBrowseEntry?.fullPath ?? projectDraft.trim());
+
+  React.useEffect(() => {
+    if (!projectIsBrowseStep || projectBrowsePath.directoryPath.length === 0) {
+      projectBrowseGenerationRef.current += 1;
+      setProjectBrowse({ status: "empty", result: null });
+      return;
+    }
+
+    const generation = ++projectBrowseGenerationRef.current;
+    setProjectBrowse({ status: "loading", result: null });
+    void client
+      .browseFilesystem(projectBrowsePath.directoryPath, currentProjectCwd ?? undefined)
+      .then(
+        (result) => {
+          if (projectBrowseGenerationRef.current !== generation) return;
+          setProjectBrowse({
+            status: result.entries.length > 0 ? "ready" : "empty",
+            result,
+          });
+        },
+        (error) => {
+          if (projectBrowseGenerationRef.current !== generation) return;
+          setProjectBrowse({ status: "error", result: null });
+          store.setStatus(`browse failed: ${String(error)}`, "error");
+        },
+      );
+  }, [client, currentProjectCwd, projectBrowsePath.directoryPath, projectIsBrowseStep, store]);
+
+  const closeAddProject = () => {
+    projectBrowseGenerationRef.current += 1;
+    projectDiscoveryGenerationRef.current += 1;
+    setProjectFlow(null);
+    setProjectDraft("");
+    setProjectRowIndex(0);
+    setProjectListFocused(true);
+    setProjectBrowse({ status: "empty", result: null });
+    setFocus("compose");
+  };
+
   const openAddProject = () => {
     setTerminalFocused(false);
     setRightPanelFocused(false);
@@ -726,16 +886,28 @@ export function ChatView({
     setDiffOpen(false);
     setFilesOpen(false);
     setSettingsOpen(false);
-    setProjectDraft(getAddProjectInitialQuery(newThreadSettings.addProjectBaseDirectory));
-    setFocus("project");
+    setProjectFlow({ step: "source" });
+    setProjectDraft("");
+    setProjectRowIndex(0);
+    setProjectListFocused(true);
+    setProjectDiscovery(null);
+    const discoveryGeneration = ++projectDiscoveryGenerationRef.current;
+    void client.discoverSourceControl().then(
+      (discovery) => {
+        if (projectDiscoveryGenerationRef.current === discoveryGeneration) {
+          setProjectDiscovery(discovery);
+        }
+      },
+      () => {
+        // Local folders and raw Git URLs remain available without provider discovery.
+      },
+    );
   };
 
-  const submitProject = () => {
+  const registerProjectPath = (rawPath: string) => {
     if (projectSubmissionPendingRef.current) return;
-    const currentProjectCwd =
-      projects.find((project) => project.id === selectedProjectId)?.workspaceRoot ?? null;
     const resolution = resolveAddProjectPath({
-      rawPath: projectDraft,
+      rawPath,
       currentProjectCwd,
       platform: client.hostPlatform,
     });
@@ -743,7 +915,7 @@ export function ChatView({
       store.setStatus(resolution.error, "error");
       return;
     }
-    const workspaceRoot = expandLocalHomePath(resolution.path);
+    const workspaceRoot = resolution.path;
     const existingProject = findProjectByPath(projects, workspaceRoot);
     if (existingProject) {
       activateCreatedProject(existingProject.id as string);
@@ -760,6 +932,7 @@ export function ChatView({
         setProjectSubmissionPending(false);
         if (!activateCreatedProject(projectId as string)) {
           pendingCreatedProjectIdRef.current = projectId as string;
+          setProjectFlow(null);
           setFocus("compose");
           store.setStatus("Project added. Waiting for it to appear…", "busy");
         }
@@ -770,6 +943,149 @@ export function ChatView({
         store.setStatus(`add project failed: ${String(error)}`, "error");
       },
     );
+  };
+
+  const submitProjectRepository = () => {
+    if (projectFlow?.step !== "repository" || projectSubmissionPendingRef.current) return;
+    const repositoryInput = projectDraft.trim();
+    if (repositoryInput.length === 0) {
+      store.setStatus("Enter a repository or Git URL.", "error");
+      return;
+    }
+
+    if (projectFlow.source === "url") {
+      setProjectFlow({
+        step: "destination",
+        source: "url",
+        repositoryInput,
+        repository: null,
+        remoteUrl: repositoryInput,
+      });
+      setProjectDraft(getAddProjectInitialQuery(newThreadSettings.addProjectBaseDirectory));
+      setProjectRowIndex(-1);
+      setProjectListFocused(false);
+      return;
+    }
+
+    projectSubmissionPendingRef.current = true;
+    setProjectSubmissionPending(true);
+    store.setStatus("Looking up repository…", "busy");
+    void client.lookupRepository(projectFlow.source, repositoryInput).then(
+      (repository) => {
+        projectSubmissionPendingRef.current = false;
+        setProjectSubmissionPending(false);
+        setProjectFlow({
+          step: "destination",
+          source: projectFlow.source,
+          repositoryInput,
+          repository,
+          remoteUrl: repository.sshUrl,
+        });
+        setProjectDraft(getAddProjectInitialQuery(newThreadSettings.addProjectBaseDirectory));
+        setProjectRowIndex(-1);
+        setProjectListFocused(false);
+        store.setStatus("Choose where to clone the repository.", "info");
+      },
+      (error) => {
+        projectSubmissionPendingRef.current = false;
+        setProjectSubmissionPending(false);
+        store.setStatus(`repository lookup failed: ${String(error)}`, "error");
+      },
+    );
+  };
+
+  const submitProjectDestination = () => {
+    if (projectFlow?.step !== "destination" || projectSubmissionPendingRef.current) return;
+    const resolution = resolveAddProjectPath({
+      rawPath: resolvedProjectPath,
+      currentProjectCwd,
+      platform: client.hostPlatform,
+    });
+    if (!resolution.ok) {
+      store.setStatus(resolution.error, "error");
+      return;
+    }
+
+    projectSubmissionPendingRef.current = true;
+    setProjectSubmissionPending(true);
+    store.setStatus("Cloning repository…", "busy");
+    void client.cloneRepository(projectFlow.remoteUrl, resolution.path).then(
+      (result) => {
+        projectSubmissionPendingRef.current = false;
+        setProjectSubmissionPending(false);
+        registerProjectPath(result.cwd);
+      },
+      (error) => {
+        projectSubmissionPendingRef.current = false;
+        setProjectSubmissionPending(false);
+        store.setStatus(`clone failed: ${String(error)}`, "error");
+      },
+    );
+  };
+
+  const chooseProjectSource = (row: Extract<AddProjectPaletteRow, { kind: "source" }>) => {
+    if (row.disabled) {
+      if (row.description) store.setStatus(row.description, "error");
+      return;
+    }
+    if (row.source === "local") {
+      setProjectFlow({ step: "local" });
+      setProjectDraft(getAddProjectInitialQuery(newThreadSettings.addProjectBaseDirectory));
+      setProjectRowIndex(-1);
+      setProjectListFocused(false);
+    } else {
+      setProjectFlow({ step: "repository", source: row.source });
+      setProjectDraft("");
+      setProjectRowIndex(-1);
+      setProjectListFocused(false);
+    }
+  };
+
+  const activateProjectRow = (forceAction = false) => {
+    if (!projectFlow || projectSubmissionPendingRef.current) return;
+    const row = projectRows[safeProjectRowIndex];
+    if (projectFlow.step === "source") {
+      if (row?.kind === "source") chooseProjectSource(row);
+      return;
+    }
+    if (projectFlow.step === "repository") {
+      submitProjectRepository();
+      return;
+    }
+    if (!forceAction && row) {
+      if (row.kind === "up") {
+        setProjectDraft(row.path);
+      } else if (row.kind === "directory") {
+        setProjectDraft(appendBrowsePathSegment(projectDraft, row.name));
+      }
+      setProjectRowIndex(0);
+      setProjectListFocused(true);
+      return;
+    }
+    if (projectFlow.step === "destination") {
+      submitProjectDestination();
+    } else {
+      registerProjectPath(resolvedProjectPath);
+    }
+  };
+
+  const backAddProject = () => {
+    if (!projectFlow || projectSubmissionPendingRef.current) return;
+    if (projectFlow.step === "source") {
+      closeAddProject();
+      return;
+    }
+    if (projectFlow.step === "destination") {
+      setProjectFlow({ step: "repository", source: projectFlow.source });
+      setProjectDraft(projectFlow.repositoryInput);
+      setProjectRowIndex(-1);
+      setProjectListFocused(false);
+    } else {
+      setProjectFlow({ step: "source" });
+      setProjectDraft("");
+      setProjectRowIndex(0);
+      setProjectListFocused(true);
+    }
   };
 
   const openNewThread = React.useCallback(() => {
@@ -1252,7 +1568,11 @@ export function ChatView({
   // which stays visible (unfocused, compact) below — mirroring the web, where a
   // dropdown opens over the still-present composer rather than replacing it.
   const popoverOpen =
-    !!picker || overlay === "command" || overlay === "revert" || overlay === "confirmDelete";
+    projectFlow !== null ||
+    !!picker ||
+    overlay === "command" ||
+    overlay === "revert" ||
+    overlay === "confirmDelete";
   const composerThreadId = detail?.id ?? null;
   const composerInputFocused =
     !terminalFocused &&
@@ -1284,17 +1604,13 @@ export function ChatView({
   const attachmentPreviewHeight =
     activeComposerImages.length === 0 ? 0 : inlineImagesSupported ? 4 : 1;
   const compactComposerFooter =
-    focus !== "rename" &&
-    focus !== "filter" &&
-    focus !== "commit" &&
-    focus !== "project" &&
-    composerSurfaceWidth < 64;
+    focus !== "rename" && focus !== "filter" && focus !== "commit" && composerSurfaceWidth < 64;
+  const projectWanted = projectFlow ? Math.floor(height * 0.55) : 0;
   const pickerWanted = picker ? Math.max(picker.options.length, 1) * 2 + 3 : 0;
   const commandWanted = overlay === "command" ? Math.floor(height * 0.5) : 0;
   const revertWanted = overlay === "revert" ? Math.min(checkpoints.length, 8) + 3 : 0;
   const confirmWanted = overlay === "confirmDelete" ? 4 : 0;
-  const specialComposer =
-    focus === "rename" || focus === "filter" || focus === "commit" || focus === "project";
+  const specialComposer = focus === "rename" || focus === "filter" || focus === "commit";
   const desiredPromptLines = specialComposer || popoverOpen ? 1 : (promptHeight ?? autoPromptLines);
   // OpenTUI measures four non-editor rows for the composer borders, footer, and dock spacing.
   const composerChromeRows =
@@ -1309,7 +1625,7 @@ export function ChatView({
     composerChromeRows,
     terminalOpen: activeTerminal !== null,
     preferredTerminalRows: terminalHeight ?? Math.floor(height * 0.4),
-    wantedPopoverRows: pickerWanted + commandWanted + revertWanted + confirmWanted,
+    wantedPopoverRows: projectWanted + pickerWanted + commandWanted + revertWanted + confirmWanted,
   });
   const promptLines = verticalLayout.editorRows;
   const terminalDrawerHeight = verticalLayout.terminalRows;
@@ -1320,6 +1636,70 @@ export function ChatView({
   const termCols = Math.max(2, mainWidth - 4);
   // header + tab bar + frame + border(2) = frame rows + 4.
   const termRows = Math.max(2, terminalDrawerHeight - 4);
+  const projectWillCreatePath =
+    projectIsBrowseStep &&
+    projectBrowse.status !== "loading" &&
+    projectDraft.trim().length > 0 &&
+    (hasTrailingPathSeparator(projectDraft)
+      ? projectBrowse.result === null
+      : exactProjectBrowseEntry === null);
+  const projectOverlayTitle =
+    projectFlow?.step === "source"
+      ? "New project · Source"
+      : projectFlow?.step === "local"
+        ? "New project · Local folder"
+        : projectFlow?.step === "repository"
+          ? `New project · ${addProjectRemoteSourceLabel(projectFlow.source)}`
+          : "New project · Clone destination";
+  const projectOverlayPlaceholder =
+    projectFlow?.step === "source"
+      ? "Search project sources…"
+      : projectFlow?.step === "local"
+        ? "Enter or browse a project directory"
+        : projectFlow?.step === "repository"
+          ? projectFlow.source === "url"
+            ? "Enter Git clone URL"
+            : `Enter ${addProjectRemoteSourceLabel(projectFlow.source)} owner/repository`
+          : "Enter or browse the clone destination";
+  const projectOverlayAction =
+    projectFlow?.step === "source"
+      ? "Select"
+      : projectFlow?.step === "repository"
+        ? projectFlow.source === "url"
+          ? "Continue"
+          : "Lookup"
+        : projectFlow?.step === "destination"
+          ? projectWillCreatePath
+            ? "Create & Clone"
+            : "Clone"
+          : projectWillCreatePath
+            ? "Create & Add"
+            : "Add";
+  const projectOverlayStatus: AddProjectStatus =
+    projectFlow?.step === "source"
+      ? projectRows.length > 0
+        ? "ready"
+        : "empty"
+      : projectFlow?.step === "repository"
+        ? "empty"
+        : projectBrowse.status;
+  const projectOverlayEmptyMessage =
+    projectFlow?.step === "source"
+      ? "No matching project source."
+      : projectFlow?.step === "repository"
+        ? projectFlow.source === "url"
+          ? "Enter a Git clone URL and press Enter to continue."
+          : "Enter a repository path and press Enter to look it up."
+        : projectWillCreatePath
+          ? "Press Enter to create this folder and continue."
+          : "No matching folders.";
+  const projectOverlayContext =
+    projectFlow?.step === "destination"
+      ? {
+          title: projectFlow.repository?.nameWithOwner ?? projectFlow.repositoryInput,
+          description: projectFlow.repository?.url ?? projectFlow.remoteUrl,
+        }
+      : null;
 
   // Active cards use two terminal rows while shelf rows use one. Window by
   // rendered height so selection never disappears or overflows the pane.
@@ -1873,7 +2253,7 @@ export function ChatView({
   };
 
   const focusComposer = () => {
-    if (focus === "project") setProjectDraft("");
+    if (projectFlow) closeAddProject();
     setTerminalFocused(false);
     setRightPanelFocused(false);
     setPicker(null);
@@ -2218,22 +2598,22 @@ export function ChatView({
           ? "files"
           : diffOpen
             ? "diff"
-            : picker
-              ? "select"
-              : overlay === "command"
-                ? "command"
-                : overlay === "confirmDelete"
-                  ? "confirmDelete"
-                  : overlay === "revert"
-                    ? "revert"
-                    : focus === "rename"
-                      ? "rename"
-                      : focus === "filter"
-                        ? "filter"
-                        : focus === "commit"
-                          ? "commit"
-                          : focus === "project"
-                            ? "project"
+            : projectFlow
+              ? "project"
+              : picker
+                ? "select"
+                : overlay === "command"
+                  ? "command"
+                  : overlay === "confirmDelete"
+                    ? "confirmDelete"
+                    : overlay === "revert"
+                      ? "revert"
+                      : focus === "rename"
+                        ? "rename"
+                        : focus === "filter"
+                          ? "filter"
+                          : focus === "commit"
+                            ? "commit"
                             : rightPanelVisible && rightPanelFocused
                               ? "panel"
                               : composerUserInputActive
@@ -2445,11 +2825,36 @@ export function ChatView({
       setPendingCommitAction(null);
       setFocus("compose");
     },
-    onSubmitProject: submitProject,
-    onCancelProject: () => {
-      setProjectDraft("");
-      setFocus("compose");
+    onProjectPrev: () =>
+      projectListFocused
+        ? setProjectRowIndex((index) =>
+            projectRows.length === 0
+              ? 0
+              : index < 0
+                ? projectRows.length - 1
+                : (index - 1 + projectRows.length) % projectRows.length,
+          )
+        : undefined,
+    onProjectNext: () =>
+      projectListFocused
+        ? setProjectRowIndex((index) =>
+            projectRows.length === 0 ? 0 : index < 0 ? 0 : (index + 1) % projectRows.length,
+          )
+        : undefined,
+    onProjectActivate: activateProjectRow,
+    onProjectToggleFocus: () => {
+      if (
+        projectFlow?.step !== "source" &&
+        projectFlow?.step !== "local" &&
+        projectFlow?.step !== "destination"
+      ) {
+        return;
+      }
+      const nextListFocused = !projectListFocused;
+      setProjectListFocused(nextListFocused);
+      setProjectRowIndex(nextListFocused && projectRows.length > 0 ? 0 : -1);
     },
+    onProjectBack: backAddProject,
     onInterrupt: stopTurn,
     onApprove: () => {
       const approval = approvals[activeApprovalIndex];
@@ -2522,8 +2927,8 @@ export function ChatView({
   ].join(" · ");
   const hint = expandedImage
     ? "image preview · Esc or click to close · ^C quit"
-    : focus === "project"
-      ? "Enter add project · Esc cancel · ^C quit"
+    : projectFlow
+      ? "↑/↓ navigate · Enter select · Ctrl+Enter action · Esc back · ^C quit"
       : focus !== "new" && pendingUserInput && userInputDeferred
         ? "⚠ question pending — ^U to answer · ^C quit"
         : activeTerminal
@@ -2650,7 +3055,46 @@ export function ChatView({
 
           {/* Popovers float ABOVE the still-present composer (mirroring the web's
             dropdowns), rather than replacing it. */}
-          {picker ? (
+          {projectFlow ? (
+            <AddProjectOverlay
+              title={projectOverlayTitle}
+              query={projectDraft}
+              placeholder={projectOverlayPlaceholder}
+              inputFocused={!projectListFocused}
+              rows={projectRows}
+              selectedIndex={safeProjectRowIndex}
+              status={projectOverlayStatus}
+              width={Math.max(1, mainWidth - 4)}
+              maxRows={Math.max(4, pickerContentRows)}
+              context={projectOverlayContext}
+              actionLabel={projectOverlayAction}
+              emptyMessage={projectOverlayEmptyMessage}
+              onInput={(value) => {
+                setProjectDraft(value);
+                setProjectRowIndex(projectFlow.step === "source" ? 0 : -1);
+              }}
+              onFocusInput={() => {
+                setProjectListFocused(false);
+                setProjectRowIndex(projectFlow.step === "source" ? 0 : -1);
+              }}
+              onAction={() => activateProjectRow(true)}
+              onActivate={(index) => {
+                setProjectRowIndex(index);
+                const row = projectRows[index];
+                if (projectFlow.step === "source" && row?.kind === "source") {
+                  chooseProjectSource(row);
+                  return;
+                }
+                if (row?.kind === "up") {
+                  setProjectDraft(row.path);
+                } else if (row?.kind === "directory") {
+                  setProjectDraft(appendBrowsePathSegment(projectDraft, row.name));
+                }
+                setProjectRowIndex(0);
+                setProjectListFocused(true);
+              }}
+            />
+          ) : picker ? (
             <SelectOverlay
               title={picker.title}
               status={picker.status}
@@ -2693,15 +3137,7 @@ export function ChatView({
               // Search/filter now lives in the sidebar; the composer never owns it.
               mode={focus === "filter" || focus === "new" ? "compose" : focus}
               reply={composerText}
-              auxValue={
-                focus === "rename"
-                  ? renameDraft
-                  : focus === "commit"
-                    ? commitDraft
-                    : focus === "project"
-                      ? projectDraft
-                      : ""
-              }
+              auxValue={focus === "rename" ? renameDraft : focus === "commit" ? commitDraft : ""}
               placeholder={placeholder}
               editorRows={promptLines}
               inputFocused={composerInputFocused}
@@ -2720,13 +3156,7 @@ export function ChatView({
               onFocusInput={focusComposer}
               onReplyInput={focus === "new" ? setDraft : setReply}
               onReplySubmit={focus === "new" ? submitNewThread : sendReply}
-              onAuxInput={
-                focus === "commit"
-                  ? setCommitDraft
-                  : focus === "project"
-                    ? setProjectDraft
-                    : setRenameDraft
-              }
+              onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}
               onTogglePlan={togglePlanMode}
               onOpenAccess={openRuntimePicker}
               onOpenModel={openModelPicker}
