@@ -48,6 +48,7 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
+import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import { useCreateProjectThread } from "./use-project-actions";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 
@@ -862,11 +863,16 @@ export function NewTaskDraftScreen(props: {
       threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
       projectTitle: selectedProject.title,
     });
+    const creationBranch = resolveProjectThreadCreationBranch({
+      workspaceMode,
+      selectedBranch: selectedBranchName,
+      currentCheckoutBranch: flow.currentCheckoutBranchName,
+    });
     const result = await createProjectThread({
       project: selectedProject,
       modelSelection,
       envMode: workspaceMode,
-      branch: selectedBranchName,
+      branch: creationBranch,
       worktreePath: workspaceMode === "worktree" ? null : selectedWorktreePath,
       startFromOrigin,
       runtimeMode,
