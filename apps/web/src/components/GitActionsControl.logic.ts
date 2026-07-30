@@ -1,9 +1,12 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  SourceControlProviderDiscoveryItem,
+  SourceControlProviderKind,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import * as Option from "effect/Option";
 import {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
   getChangeRequestTerminology,
@@ -411,6 +414,46 @@ export function resolveLiveThreadBranchUpdate(input: {
   return {
     branch: input.gitStatus.refName,
   };
+}
+
+export interface PublishProviderReadiness {
+  readonly ready: boolean;
+  readonly hint: string | null;
+}
+
+/**
+ * Resolves publish readiness from the discovery row backing a provider card.
+ * `host` disambiguates kinds that discovery reports once per host, so an
+ * enterprise card answers for its own connection rather than any enterprise one.
+ */
+export function getPublishProviderReadiness(input: {
+  provider: SourceControlProviderKind;
+  host?: string | null;
+  sourceControlProviders: ReadonlyArray<SourceControlProviderDiscoveryItem>;
+}): PublishProviderReadiness {
+  const discovered = input.sourceControlProviders.find(
+    (provider) =>
+      provider.kind === input.provider &&
+      (input.host == null || Option.getOrNull(provider.host) === input.host),
+  );
+  if (!discovered) {
+    return {
+      ready: false,
+      hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
+    };
+  }
+  if (discovered.status !== "available") {
+    return { ready: false, hint: discovered.installHint };
+  }
+  if (discovered.auth.status === "unauthenticated") {
+    return {
+      ready: false,
+      hint:
+        Option.getOrNull(discovered.auth.detail) ??
+        `${discovered.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
+    };
+  }
+  return { ready: true, hint: null };
 }
 
 export function resolveSelectedEnterpriseHost(input: {

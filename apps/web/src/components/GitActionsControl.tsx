@@ -9,7 +9,6 @@ import type {
   GitRunStackedActionResult,
   GitStackedAction,
   SourceControlCloneProtocol,
-  SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryVisibility,
@@ -42,6 +41,7 @@ import {
   type GitActionMenuItem,
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
+  getPublishProviderReadiness,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
@@ -211,33 +211,6 @@ function isPublishProviderKind(
   provider: SourceControlProviderKind,
 ): provider is StaticPublishProviderKind {
   return PUBLISH_PROVIDER_OPTIONS.some((option) => option.value === provider);
-}
-
-function getPublishProviderReadiness(input: {
-  provider: PublishProviderKind;
-  sourceControlProviders: ReadonlyArray<SourceControlProviderDiscoveryItem>;
-}): { readonly ready: boolean; readonly hint: string | null } {
-  const discovered = input.sourceControlProviders.find(
-    (provider) => provider.kind === input.provider,
-  );
-  if (!discovered) {
-    return {
-      ready: false,
-      hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
-    };
-  }
-  if (discovered.status !== "available") {
-    return { ready: false, hint: discovered.installHint };
-  }
-  if (discovered.auth.status === "unauthenticated") {
-    return {
-      ready: false,
-      hint:
-        Option.getOrNull(discovered.auth.detail) ??
-        `${discovered.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
-    };
-  }
-  return { ready: true, hint: null };
 }
 
 function formatElapsedDescription(startedAtMs: number | null): string | undefined {
@@ -458,11 +431,11 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
     return new Map(
       publishProviderOptions.map((option) => {
-        const value = option.value;
-        const readiness =
-          value === "github-enterprise"
-            ? { ready: true, hint: null }
-            : getPublishProviderReadiness({ provider: value, sourceControlProviders });
+        const readiness = getPublishProviderReadiness({
+          provider: option.value,
+          ...(option.value === "github-enterprise" ? { host: option.host } : {}),
+          sourceControlProviders,
+        });
         return [option.id, readiness] as const;
       }),
     );
