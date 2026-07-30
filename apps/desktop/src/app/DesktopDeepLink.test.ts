@@ -1,6 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { findDesktopDeepLink, parseDesktopDeepLink } from "./DesktopDeepLink.ts";
+import {
+  createDesktopOpenUrlBuffer,
+  filterDesktopDeepLinkArguments,
+  findDesktopDeepLink,
+  parseDesktopDeepLink,
+} from "./DesktopDeepLink.ts";
 
 describe("DesktopDeepLink", () => {
   it("parses a production thread deep link", () => {
@@ -62,6 +67,40 @@ describe("DesktopDeepLink", () => {
         environmentId: "env",
         threadId: "t1",
       },
+    );
+  });
+
+  it("buffers the latest macOS URL until the lifecycle subscribes", () => {
+    const buffer = createDesktopOpenUrlBuffer();
+    const received: string[] = [];
+    let prevented = 0;
+    const event = { preventDefault: () => (prevented += 1) };
+
+    buffer.handle(event, "t3code://threads/environment-1/thread-1");
+    buffer.handle(event, "t3code://threads/environment-2/thread-2");
+    const unsubscribe = buffer.subscribe((url) => received.push(url));
+    buffer.handle(event, "t3code://threads/environment-3/thread-3");
+    unsubscribe();
+
+    assert.equal(prevented, 3);
+    assert.deepEqual(received, [
+      "t3code://threads/environment-2/thread-2",
+      "t3code://threads/environment-3/thread-3",
+    ]);
+  });
+
+  it("removes only valid deep links from relaunch arguments", () => {
+    assert.deepEqual(
+      filterDesktopDeepLinkArguments(
+        [
+          "--flag",
+          "t3code://threads/environment-1/thread-1",
+          "t3code-dev://threads/environment-2/thread-2",
+          "t3code://threads/malformed",
+        ],
+        "t3code",
+      ),
+      ["--flag", "t3code-dev://threads/environment-2/thread-2", "t3code://threads/malformed"],
     );
   });
 });

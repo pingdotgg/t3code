@@ -1,5 +1,38 @@
 import { DesktopDeepLinkTarget, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
+type DesktopOpenUrlEvent = {
+  readonly preventDefault: () => void;
+};
+
+export function createDesktopOpenUrlBuffer() {
+  let pendingUrl: string | null = null;
+  let listener: ((url: string) => void) | null = null;
+
+  return {
+    handle(event: DesktopOpenUrlEvent, url: string) {
+      event.preventDefault();
+      if (listener === null) {
+        pendingUrl = url;
+        return;
+      }
+      listener(url);
+    },
+    subscribe(next: (url: string) => void) {
+      listener = next;
+      if (pendingUrl !== null) {
+        const url = pendingUrl;
+        pendingUrl = null;
+        next(url);
+      }
+      return () => {
+        if (listener === next) listener = null;
+      };
+    },
+  };
+}
+
+export const desktopOpenUrlBuffer = createDesktopOpenUrlBuffer();
+
 export function parseDesktopDeepLink(
   value: string,
   expectedScheme: string,
@@ -59,4 +92,11 @@ export function findDesktopDeepLink(
     if (target !== null) return target;
   }
   return null;
+}
+
+export function filterDesktopDeepLinkArguments(
+  values: ReadonlyArray<string>,
+  expectedScheme: string,
+): string[] {
+  return values.filter((value) => parseDesktopDeepLink(value, expectedScheme) === null);
 }

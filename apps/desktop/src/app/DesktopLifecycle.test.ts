@@ -9,6 +9,7 @@ import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { desktopOpenUrlBuffer } from "./DesktopDeepLink.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -205,18 +206,19 @@ describe("DesktopLifecycle", () => {
 
     return Effect.scoped(
       Effect.gen(function* () {
-        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-        yield* lifecycle.register;
-
         let prevented = false;
-        appListeners.get("open-url")?.(
+        desktopOpenUrlBuffer.handle(
           {
             preventDefault: () => {
               prevented = true;
             },
-          } as Electron.Event,
+          },
           "t3code://threads/environment-open-url/thread-open-url",
         );
+
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* lifecycle.register;
+
         appListeners.get("second-instance")?.({} as Electron.Event, [
           "T3 Code",
           "t3code://threads/environment-second/thread-second",

@@ -12,7 +12,12 @@ import type { DesktopDeepLinkTarget } from "@t3tools/contracts";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import { findDesktopDeepLink, parseDesktopDeepLink } from "./DesktopDeepLink.ts";
+import {
+  desktopOpenUrlBuffer,
+  filterDesktopDeepLinkArguments,
+  findDesktopDeepLink,
+  parseDesktopDeepLink,
+} from "./DesktopDeepLink.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -161,7 +166,10 @@ export const make = DesktopLifecycle.of({
       }
       yield* electronApp.relaunch({
         execPath: process.execPath,
-        args: process.argv.slice(1),
+        args: filterDesktopDeepLinkArguments(
+          process.argv.slice(1),
+          ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+        ),
       });
       yield* electronApp.exit(0);
     }).pipe(
@@ -207,10 +215,10 @@ export const make = DesktopLifecycle.of({
     }
 
     if (environment.platform === "darwin") {
-      yield* electronApp.on("open-url", (event: Electron.Event, url: string) => {
-        event.preventDefault();
-        dispatchDeepLinkUrl(url);
-      });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => desktopOpenUrlBuffer.subscribe(dispatchDeepLinkUrl)),
+        (unsubscribe) => Effect.sync(unsubscribe),
+      ).pipe(Effect.asVoid);
     }
     yield* electronApp.on(
       "second-instance",
