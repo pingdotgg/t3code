@@ -114,7 +114,10 @@ export function serverUpdateStateForServerVersion(
   state: ServerUpdateState,
   serverVersion: string | null,
 ): ServerUpdateState {
-  return state.status === "idle" || serverVersion === null || state.fromVersion === serverVersion
+  return state.status === "idle" ||
+    state.status === "running" ||
+    serverVersion === null ||
+    state.fromVersion === serverVersion
     ? state
     : IDLE_SERVER_UPDATE_STATE;
 }

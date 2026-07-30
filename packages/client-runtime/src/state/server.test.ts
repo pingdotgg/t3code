@@ -152,7 +152,13 @@ describe("server state projection", () => {
     });
   });
 
-  it("hides update state after the server version changes outside the operation", () => {
+  it("keeps active update state and hides stale failures after a version change", () => {
+    const running = {
+      status: "running" as const,
+      stage: "resuming" as const,
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+    };
     const failed = {
       status: "failed" as const,
       stage: "installing" as const,
@@ -161,6 +167,7 @@ describe("server state projection", () => {
       message: "Install failed.",
     };
 
+    expect(serverUpdateStateForServerVersion(running, "0.0.31")).toBe(running);
     expect(serverUpdateStateForServerVersion(failed, "0.0.30")).toBe(failed);
     expect(serverUpdateStateForServerVersion(failed, null)).toBe(failed);
     expect(serverUpdateStateForServerVersion(failed, "0.0.31")).toEqual({ status: "idle" });
