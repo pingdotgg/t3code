@@ -1430,10 +1430,10 @@ function SavedBackendListRow({
           {metadataBits.length > 0 ? (
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
           ) : null}
-          {versionMismatch && serverUpdateState.status !== "idle" ? (
+          {serverUpdateState.status !== "idle" ? (
             <div className="max-w-md">
               <ServerUpdateProgress
-                fromVersion={versionMismatch.serverVersion}
+                fromVersion={serverUpdateState.fromVersion}
                 serverLabel={`${environment.label} server`}
                 state={serverUpdateState}
               />
@@ -2998,7 +2998,7 @@ export function ConnectionsSettings() {
       {canManageLocalBackend ? (
         <>
           <SettingsSection title="This environment">
-            {primaryVersionMismatch ? (
+            {primaryVersionMismatch || primaryServerUpdateState.status !== "idle" ? (
               <SettingsRow
                 title={
                   primaryServerUpdateState.status === "failed"
@@ -3008,23 +3008,25 @@ export function ConnectionsSettings() {
                       : "Version drift"
                 }
                 description={
-                  primaryServerUpdateState.status === "idle" ? (
+                  primaryServerUpdateState.status !== "idle" ? (
+                    <ServerUpdateProgress
+                      fromVersion={primaryServerUpdateState.fromVersion}
+                      serverLabel={primaryEnvironment?.label ?? "this server"}
+                      state={primaryServerUpdateState}
+                    />
+                  ) : primaryVersionMismatch ? (
                     <span className="flex items-center gap-1 text-warning">
                       <TriangleAlertIcon className="size-3.5 shrink-0" />
                       Client {primaryVersionMismatch.clientVersion}, server{" "}
                       {primaryVersionMismatch.serverVersion}. Sync them if RPC calls or reconnects
                       fail.
                     </span>
-                  ) : (
-                    <ServerUpdateProgress
-                      fromVersion={primaryVersionMismatch.serverVersion}
-                      serverLabel={primaryEnvironment?.label ?? "this server"}
-                      state={primaryServerUpdateState}
-                    />
-                  )
+                  ) : null
                 }
                 control={
-                  primaryEnvironmentId !== null && primaryServerUpdateState.status !== "running" ? (
+                  primaryVersionMismatch &&
+                  primaryEnvironmentId !== null &&
+                  primaryServerUpdateState.status !== "running" ? (
                     <ServerUpdateAction
                       environmentId={primaryEnvironmentId}
                       serverLabel={primaryEnvironment?.label ?? "this server"}

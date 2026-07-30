@@ -1876,11 +1876,10 @@ function ChatViewContent(props: ChatViewProps) {
     hasMultipleRegisteredEnvironments && activeThread
       ? `${environmentById.get(activeThread.environmentId)?.label ?? serverConfig?.environment.label ?? activeThread.environmentId} server`
       : "server";
-  const versionMismatchEnvironmentId =
-    versionMismatch && activeThread ? activeThread.environmentId : null;
+  const serverUpdateEnvironmentId = activeThread?.environmentId ?? null;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const serverUpdateState = useAtomValue(
-    serverEnvironment.updateStateAtom(versionMismatchEnvironmentId),
+    serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
   );
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
@@ -1923,15 +1922,14 @@ function ChatViewContent(props: ChatViewProps) {
       });
     }
     if (
-      (showVersionMismatchBanner || serverUpdateState.status !== "idle") &&
-      versionMismatch &&
-      versionMismatchDismissKey &&
-      versionMismatchEnvironmentId
+      serverUpdateEnvironmentId &&
+      (serverUpdateState.status !== "idle" ||
+        (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey))
     ) {
       const updateInProgress = serverUpdateState.status === "running";
       const updateFailed = serverUpdateState.status === "failed";
       items.push({
-        id: `version-mismatch:${versionMismatchDismissKey}`,
+        id: `server-version:${serverUpdateEnvironmentId}`,
         variant: updateFailed ? "error" : "warning",
         icon: <TriangleAlertIcon />,
         title:
@@ -1941,30 +1939,32 @@ function ChatViewContent(props: ChatViewProps) {
         description:
           updateInProgress || updateFailed ? (
             <ServerUpdateProgress
-              fromVersion={versionMismatch.serverVersion}
+              fromVersion={serverUpdateState.fromVersion}
               serverLabel={versionMismatchServerLabel}
               state={serverUpdateState}
             />
-          ) : (
+          ) : versionMismatch ? (
             <>
               Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
               {versionMismatch.serverVersion}.{" "}
               {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
             </>
-          ),
+          ) : null,
         // The desktop-managed guidance is already the description; the action
         // slot would only repeat it.
         actions:
-          updateInProgress || versionMismatchSelfUpdate === "desktop-managed" ? undefined : (
+          updateInProgress ||
+          !versionMismatch ||
+          versionMismatchSelfUpdate === "desktop-managed" ? undefined : (
             <ServerUpdateAction
-              environmentId={versionMismatchEnvironmentId}
+              environmentId={serverUpdateEnvironmentId}
               serverLabel={versionMismatchServerLabel}
               selfUpdate={versionMismatchSelfUpdate}
               targetVersion={versionMismatch.clientVersion}
               {...(updateFailed ? { label: "Retry update" } : {})}
             />
           ),
-        ...(updateInProgress || updateFailed
+        ...(updateInProgress || updateFailed || !versionMismatchDismissKey
           ? {}
           : {
               dismissLabel: "Dismiss version mismatch warning",
@@ -1985,7 +1985,7 @@ function ChatViewContent(props: ChatViewProps) {
     serverUpdateState,
     versionMismatch,
     versionMismatchDismissKey,
-    versionMismatchEnvironmentId,
+    serverUpdateEnvironmentId,
     versionMismatchSelfUpdate,
     versionMismatchServerLabel,
   ]);
