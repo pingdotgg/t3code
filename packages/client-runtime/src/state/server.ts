@@ -506,13 +506,20 @@ export function createServerEnvironmentAtoms<R, E>(
         atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
         return result;
       }).pipe(
-        Effect.tapError((error) =>
+        Effect.onExit((exit) =>
           Effect.sync(() => {
+            if (Exit.isSuccess(exit)) {
+              return;
+            }
+            if (Cause.hasInterruptsOnly(exit.cause)) {
+              atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
+              return;
+            }
             atomRegistry.set(stateAtom, {
               status: "failed",
               stage: currentStage,
               targetVersion,
-              message: serverUpdateFailureMessage(error),
+              message: serverUpdateFailureMessage(Cause.squash(exit.cause)),
             });
           }),
         ),

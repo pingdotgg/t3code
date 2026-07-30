@@ -19,6 +19,7 @@ const UPDATE_STEPS = [
   { stage: "installing", label: "Install" },
   { stage: "resuming", label: "Resume" },
 ] as const;
+const pendingUpdateEnvironmentIds = new Set<EnvironmentId>();
 
 function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
@@ -160,26 +161,34 @@ export function ServerUpdateAction({
   });
 
   const handleUpdate = async () => {
-    const result = await updateServer({
-      environmentId,
-      input: { targetVersion },
-    });
-    if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) {
+    if (pendingUpdateEnvironmentIds.has(environmentId)) {
+      return;
+    }
+    pendingUpdateEnvironmentIds.add(environmentId);
+    try {
+      const result = await updateServer({
+        environmentId,
+        input: { targetVersion },
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
+          return;
+        }
+        toastManager.add({
+          type: "error",
+          title: "Server update failed",
+          description: updateFailureMessage(squashAtomCommandFailure(result)),
+        });
         return;
       }
       toastManager.add({
-        type: "error",
-        title: "Server update failed",
-        description: updateFailureMessage(squashAtomCommandFailure(result)),
+        type: "success",
+        title: `${serverLabel} updated`,
+        description: `Reconnected on t3@${result.value.targetVersion}.`,
       });
-      return;
+    } finally {
+      pendingUpdateEnvironmentIds.delete(environmentId);
     }
-    toastManager.add({
-      type: "success",
-      title: `${serverLabel} updated`,
-      description: `Reconnected on t3@${result.value.targetVersion}.`,
-    });
   };
 
   if (selfUpdate === "desktop-managed") {

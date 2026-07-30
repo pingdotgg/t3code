@@ -68,6 +68,28 @@ describe("ServerUpdateAction", () => {
     });
   });
 
+  it("reports one result when the update action is double-clicked", async () => {
+    let finishUpdate: (() => void) | undefined;
+    testState.updateServer.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpdate = () =>
+            resolve(
+              AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+            );
+        }),
+    );
+
+    const action = renderAction();
+    action.props.onClick?.();
+    action.props.onClick?.();
+
+    expect(testState.updateServer).toHaveBeenCalledTimes(1);
+    finishUpdate?.();
+    await flushPromises();
+    expect(testState.toast).toHaveBeenCalledTimes(1);
+  });
+
   it("quietly releases the action when the operation is interrupted", async () => {
     testState.updateServer.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
 
