@@ -58,4 +58,20 @@ describe("searchSettings", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("routes appearance settings to their current section", () => {
+    expect(searchSettings("theme")[0]).toMatchObject({
+      id: "theme",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("word wrap")[0]).toMatchObject({
+      id: "word-wrap",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("environment identification")[0]).toMatchObject({
+      id: "environment-identification",
+      to: "/settings/appearance",
+      targetId: "appearance",
+    });
+  });
 });

@@ -1,5 +1,6 @@
 export type SettingsPath =
   | "/settings/general"
+  | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
@@ -16,6 +17,7 @@ export interface SettingsSearchItem {
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
+  "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
@@ -28,13 +30,25 @@ export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
     id: "theme",
     title: "Theme",
-    to: "/settings/general",
+    to: "/settings/appearance",
   },
   {
     // Prefixed because the slider control already owns the `glass-opacity` id.
     id: "setting-glass-opacity",
     title: "Glass opacity",
-    to: "/settings/general",
+    to: "/settings/appearance",
+  },
+  {
+    id: "environment-identification",
+    title: "Environment identification",
+    to: "/settings/appearance",
+    // The setting is stage-dependent, so its parent section is the stable destination.
+    targetId: "appearance",
+  },
+  {
+    id: "word-wrap",
+    title: "Word wrap",
+    to: "/settings/appearance",
   },
   {
     id: "project-grouping",
@@ -44,11 +58,6 @@ export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
     id: "time-format",
     title: "Time format",
-    to: "/settings/general",
-  },
-  {
-    id: "word-wrap",
-    title: "Word wrap",
     to: "/settings/general",
   },
   {

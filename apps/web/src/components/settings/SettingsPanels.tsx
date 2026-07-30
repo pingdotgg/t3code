@@ -963,8 +963,9 @@ export function AppearanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Appearance">
+      <SettingsSection id="appearance" title="Appearance">
         <SettingsRow
+          id="theme"
           title="Theme"
           description="Choose how T3 Code looks across the app."
           resetAction={
@@ -998,6 +999,7 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
+          id="setting-glass-opacity"
           title="Glass opacity"
           description="Control how transparent glass surfaces are. Higher values make menus, dialogs, and the composer more solid."
           resetAction={
@@ -1045,6 +1047,7 @@ export function AppearanceSettingsPanel() {
 
         {showEnvironmentIdentification ? (
           <SettingsRow
+            id="environment-identification"
             title="Environment identification"
             description="Choose how Dev and Nightly environments are identified."
             resetAction={
@@ -1086,6 +1089,7 @@ export function AppearanceSettingsPanel() {
         ) : null}
 
         <SettingsRow
+          id="word-wrap"
           title="Word wrap"
           description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
           resetAction={
@@ -1170,6 +1174,7 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection title="General">
         <SettingsRow
+          id="project-grouping"
           title="Project Grouping"
           description="Combine matching repositories across environments."
           resetAction={
@@ -1206,6 +1211,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="time-format"
           title="Time format"
           description="System default follows your browser or OS clock preference."
           resetAction={
@@ -1248,6 +1254,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="hide-whitespace-changes"
           title="Hide whitespace changes"
           description="Set whether the diff panel ignores whitespace-only edits by default."
           resetAction={
@@ -1274,6 +1281,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="assistant-output"
           title="Assistant output"
           description="Show token-by-token output while a response is in progress."
           resetAction={
@@ -1301,6 +1309,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="provider-update-checks"
           title="Provider update checks"
           description="Check installed provider CLIs for newer available versions."
           resetAction={
@@ -1410,6 +1419,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="auto-open-task-panel"
           title="Auto-open task panel"
           description="Open the right-side plan and task panel automatically when steps appear."
           resetAction={
@@ -1436,6 +1446,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="new-threads"
           title="New threads"
           description="Pick the default workspace mode for newly created draft threads."
           resetAction={
@@ -1512,6 +1523,7 @@ export function GeneralSettingsPanel() {
         ) : null}
 
         <SettingsRow
+          id="add-project-starts-in"
           title="Add project starts in"
           description='Leave empty to use "~/" when the Add Project browser opens.'
           resetAction={
@@ -1540,6 +1552,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="archive-confirmation"
           title="Archive confirmation"
           description="Require a second click on the inline archive action before a thread is archived."
           resetAction={
@@ -1566,6 +1579,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="delete-confirmation"
           title="Delete confirmation"
           description="Ask before deleting a thread and its chat history."
           resetAction={
@@ -1592,6 +1606,7 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          id="text-generation-model"
           title="Text generation model"
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
           resetAction={
@@ -1676,6 +1691,7 @@ export function GeneralSettingsPanel() {
           />
         )}
         <SettingsRow
+          id="diagnostics"
           title="Diagnostics"
           description={diagnosticsDescription}
           control={
@@ -1991,6 +2007,7 @@ export function ProviderSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
+        id="providers"
         title="Providers"
         headerAction={
           <div className="flex items-center gap-1.5">
@@ -2320,7 +2337,7 @@ export function ArchivedThreadsPanel() {
   return (
     <SettingsPageContainer>
       {archivedGroups.length === 0 ? (
-        <SettingsSection title="Archived threads">
+        <SettingsSection id="archive" title="Archived threads">
           <SettingsRow
             title={
               <span className="inline-flex items-center gap-2">
@@ -2344,9 +2361,10 @@ export function ArchivedThreadsPanel() {
           />
         </SettingsSection>
       ) : (
-        archivedGroups.map(({ project, threads: projectThreads }) => (
+        archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
             key={project.id}
+            id={index === 0 ? "archive" : undefined}
             title={project.name}
             icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
           >

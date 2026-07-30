@@ -40,12 +40,19 @@ export function SettingsSearchTargetProvider({
 }
 
 function scrollAndFocusSettingsTarget(target: HTMLElement): void {
-  target.scrollIntoView({
-    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const scrollTarget =
+    target.tagName === "SECTION" && target.firstElementChild
+      ? (target.firstElementChild as HTMLElement)
+      : target;
+
+  scrollTarget.scrollIntoView({
+    behavior: prefersReducedMotion ? "auto" : "smooth",
     block: "center",
   });
   target.focus({ preventScroll: true });
   target.classList.remove("settings-search-target-pulse");
+  if (prefersReducedMotion) return;
   void target.offsetWidth;
   target.classList.add("settings-search-target-pulse");
 }
