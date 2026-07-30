@@ -29,6 +29,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortSidebarV2ProjectGroups,
+  resolveThreadLastVisitedAt,
   sortSettledThreadsForSidebarV2,
   sortThreadsForSidebarV2,
   sortProjectsForSidebar,
@@ -1611,5 +1612,29 @@ describe("sortSidebarV2ProjectGroups", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("resolveThreadLastVisitedAt", () => {
+  it("uses the local watermark when the server does not track visits", () => {
+    expect(resolveThreadLastVisitedAt(undefined, "2026-07-30T10:00:00.000Z")).toBe(
+      "2026-07-30T10:00:00.000Z",
+    );
+    expect(resolveThreadLastVisitedAt(undefined, undefined)).toBeUndefined();
+  });
+
+  it("keeps the server watermark authoritative when visited tracking exists", () => {
+    // A rewound server value (mark-unread) must win even over a newer local
+    // watermark left behind by earlier viewing on this device.
+    expect(resolveThreadLastVisitedAt("2026-07-30T10:00:00.000Z", "2026-07-30T10:00:05.000Z")).toBe(
+      "2026-07-30T10:00:00.000Z",
+    );
+    expect(resolveThreadLastVisitedAt("2026-07-30T10:00:00.000Z", undefined)).toBe(
+      "2026-07-30T10:00:00.000Z",
+    );
+  });
+
+  it("treats an explicit server-side null as never visited", () => {
+    expect(resolveThreadLastVisitedAt(null, "2026-07-30T10:00:00.000Z")).toBeUndefined();
   });
 });

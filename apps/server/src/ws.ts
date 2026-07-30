@@ -68,11 +68,12 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
-  archivedShellStreamItemFromSnapshot,
+  archivedShellStreamItemFromThreadShell,
   coalesceShellApplicationEvents,
+  coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   shellStreamItemFromEnrichmentRefresh,
-  shellStreamItemFromSnapshot,
+  shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
 } from "./orchestration-v2/ShellStream.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -700,46 +701,24 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
             ),
           );
 
-          const live = applicationEvents
-            .streamApplicationEvents({ afterSequence: snapshot.snapshotSequence })
-            .pipe(
-              Stream.mapEffect((stored) =>
+          // Coalescing makes each per-thread shell read represent every event
+          // for that thread in the current window; reading only the affected
+          // threads keeps the cost of a busy stream independent of how many
+          // threads exist overall.
+          const projectShellItems = Effect.fn("ws.orchestrationV2.projectShellItems")(function* (
+            events: ReadonlyArray<ApplicationStoredEvent>,
+          ) {
+            return yield* Effect.forEach(
+              coalesceShellApplicationEvents(events),
+              (stored) =>
                 Effect.gen(function* () {
                   if ("aggregateKind" in stored) {
-                    if (stored.type === "project.deleted") {
-                      return {
-                        kind: "project.removed" as const,
-                        sequence: stored.sequence,
-                        projectId: stored.payload.projectId,
-                      };
-                    }
-                    const project = yield* projectionSnapshotQuery.getProjectShellById(
-                      stored.payload.projectId,
-                    );
-                    return Option.match(project, {
-                      onNone: () => ({
-                        kind: "project.removed" as const,
-                        sequence: stored.sequence,
-                        projectId: stored.payload.projectId,
-                      }),
-                      onSome: (value) => ({
-                        kind: "project.updated" as const,
-                        sequence: stored.sequence,
-                        project: value,
-                      }),
-                    });
+                    return yield* projectItem(stored);
                   }
-                  const nextSnapshot = yield* threadManagement.getShellSnapshot();
-                  return shellStreamItemFromSnapshot({ stored, snapshot: nextSnapshot });
+                  const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
+                  return shellStreamItemFromThreadShell({ stored, shell });
                 }),
-              ),
-              Stream.mapError(
-                (cause) =>
-                  new OrchestrationV2GetShellSnapshotError({
-                    message: "Failed while streaming the application shell",
-                    cause,
-                  }),
-              ),
+              { concurrency: 8 },
             );
 
           const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
@@ -882,20 +861,22 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         const live = threadManagement
           .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
           .pipe(
-            Stream.mapEffect((stored) =>
-              threadManagement.getShellSnapshot().pipe(
-                Effect.map((nextSnapshot) =>
-                  archivedShellStreamItemFromSnapshot({ stored, snapshot: nextSnapshot }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetShellSnapshotError({
-                      message: "Failed while streaming archived threads",
-                      cause,
-                    }),
-                ),
+            Stream.groupedWithin(512, Duration.millis(50)),
+            Stream.mapEffect((events) =>
+              Effect.forEach(
+                coalesceStoredThreadEvents(Array.from(events)),
+                (stored) =>
+                  threadManagement
+                    .getThreadShell(stored.event.threadId)
+                    .pipe(
+                      Effect.map((shell) =>
+                        archivedShellStreamItemFromThreadShell({ stored, shell }),
+                      ),
+                    ),
+                { concurrency: 8 },
               ),
             ),
+            Stream.flatMap(Stream.fromIterable),
             Stream.filterMap((item) => (item === null ? Result.failVoid : Result.succeed(item))),
             Stream.mapError(
               (cause) =>

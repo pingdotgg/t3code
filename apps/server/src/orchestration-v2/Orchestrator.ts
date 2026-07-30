@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2Subagent,
@@ -160,6 +161,9 @@ export interface OrchestratorV2Shape {
     OrchestrationV2ThreadShellSnapshot,
     OrchestratorV2Error
   >;
+  readonly getThreadShell: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2ThreadShell | null, OrchestratorV2Error>;
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
@@ -5933,6 +5937,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       ),
+    getThreadShell: (threadId) =>
+      projectionStore
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getThreadEventSequence: (threadId) =>
       eventSink
         .latestSequence({ threadId })
@@ -6019,6 +6027,13 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
       Effect.fail(
         new OrchestratorProjectionError({
           threadId: ThreadId.make("thread:shell"),
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    getThreadShell: (threadId) =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId,
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),
