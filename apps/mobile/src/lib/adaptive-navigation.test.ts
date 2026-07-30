@@ -188,13 +188,36 @@ describe("resolveWorkspaceDetailInvalidationAction", () => {
         routes: [
           { key: "thread", name: "Thread" },
           { key: "files", name: "ThreadFiles" },
-          { key: "settings", name: "SettingsSheet" },
+          {
+            key: "settings",
+            name: "SettingsSheet",
+            state: {
+              index: 1,
+              routes: [
+                { key: "settings-home", name: "SettingsHome" },
+                { key: "settings-environments", name: "SettingsEnvironments" },
+              ],
+            },
+          },
         ],
         overlayRouteNames: overlays,
       }),
     ).toEqual({
       type: "reset",
-      routes: [{ name: "Home" }, { key: "settings", name: "SettingsSheet" }],
+      routes: [
+        { name: "Home" },
+        {
+          key: "settings",
+          name: "SettingsSheet",
+          state: {
+            index: 1,
+            routes: [
+              { key: "settings-home", name: "SettingsHome" },
+              { key: "settings-environments", name: "SettingsEnvironments" },
+            ],
+          },
+        },
+      ],
     });
   });
 

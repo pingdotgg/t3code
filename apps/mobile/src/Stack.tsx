@@ -5,6 +5,7 @@ import {
   NavigationState,
   StackActions,
   useNavigation,
+  type PartialState,
 } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
@@ -417,6 +418,7 @@ function RootStackLayout(props: {
                 name: route.name,
                 params: route.params,
                 path: route.path,
+                state: route.state as PartialState<NavigationState> | undefined,
               }
             : route,
         ),
