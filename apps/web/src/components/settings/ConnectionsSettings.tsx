@@ -1468,7 +1468,7 @@ function SavedBackendListRow({
               serverLabel={`${environment.label} server`}
               selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
               targetVersion={versionMismatch.clientVersion}
-              label={serverUpdateState.status === "failed" ? "Retry update" : undefined}
+              label={serverUpdateState.status === "failed" ? "Retry update" : "Update server"}
             />
           ) : null}
           {isWslEnvironment ? (
