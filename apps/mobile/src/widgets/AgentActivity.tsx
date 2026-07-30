@@ -539,8 +539,8 @@ export function AgentActivity(
     ),
     // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family).
     // Its own hierarchy avoids squeezing the full Lock Screen banner into the
-    // narrow family. A solid canvas also prevents the next translucent Smart
-    // Stack card from visually bleeding through this activity.
+    // narrow family. Keep the system material so semantic foreground colors
+    // remain legible in both light and dark environments.
     bannerSmall: (
       <VStack
         alignment="leading"
@@ -548,7 +548,6 @@ export function AgentActivity(
         modifiers={[
           padding({ all: 10 }),
           frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: "topLeading" }),
-          background("#111214"),
         ]}
       >
         {[
@@ -642,7 +641,7 @@ export function AgentActivity(
             : [padding({ vertical: 2, horizontal: 8 })]
         }
       >
-        {renderCards(4)}
+        {[...renderCards(4)]}
       </VStack>
     ),
   };

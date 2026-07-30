@@ -175,7 +175,7 @@ describe("AgentActivity widget layout", () => {
     expect(watch).toContain("T3 Code");
     expect(watch).toContain("Approval");
     expect(watch).toContain("+2 more");
-    expect(watch).toContain("#111214");
+    expect(watch).not.toContain("#111214");
   });
 
   it("uses the attention tint for the compact presentations when a row needs input", () => {

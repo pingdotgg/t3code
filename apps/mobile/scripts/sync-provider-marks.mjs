@@ -60,7 +60,7 @@ function pathTags(block) {
 }
 
 function pathData(attributes, name) {
-  const match = /d="([^"]+)"/s.exec(attributes);
+  const match = /(?:^|\s)d="([^"]+)"/s.exec(attributes);
   if (!match) throw new Error(`${name} has a <path> without a d attribute`);
   return match[1];
 }
