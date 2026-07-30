@@ -14,6 +14,7 @@ import {
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { T3ConnectSidebarControl } from "../clerk/T3ConnectSidebarSignIn";
 import {
   SidebarFooter,
   SidebarHeader,
@@ -142,6 +143,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-2">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
+      <T3ConnectSidebarControl />
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton className="gap-2 px-2 py-1.5" onClick={handleSettingsClick}>

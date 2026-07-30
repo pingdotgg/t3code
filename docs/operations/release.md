@@ -66,6 +66,19 @@ Required `production` environment variables:
 - `APNS_KEY_ID`
 - `APNS_BUNDLE_ID`
 
+The release workflow projects the relay and Clerk values into the four canonical public build
+variables:
+
+- `T3CODE_RELAY_URL`
+- `T3CODE_CLERK_PUBLISHABLE_KEY`
+- `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`
+- `T3CODE_CLERK_JWT_TEMPLATE`
+
+All four are required for packaged Forma builds. The CLI uses the relay URL, publishable key, and
+OAuth client ID; web and desktop sign-in additionally use the JWT-template name. Desktop artifact
+packaging validates the complete set so a release cannot ship with working CLI linking but hidden
+Connect account UI.
+
 Optional `production` environment variables:
 
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain

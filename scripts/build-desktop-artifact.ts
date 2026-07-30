@@ -17,7 +17,11 @@ import {
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
-import { loadRepoEnv } from "./lib/public-config.ts";
+import {
+  assertCompleteT3ConnectPublicConfig,
+  loadRepoEnv,
+  resolvePublicConfig,
+} from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -1724,6 +1728,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const workspaceOverrides = workspaceConfig.overrides ?? {};
   const workspacePatchedDependencies = workspaceConfig.patchedDependencies ?? {};
   const workspaceAllowBuilds = workspaceConfig.allowBuilds ?? {};
+  yield* Effect.sync(() => {
+    assertCompleteT3ConnectPublicConfig(resolvePublicConfig(loadRepoEnv({ repoRoot })));
+  });
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {

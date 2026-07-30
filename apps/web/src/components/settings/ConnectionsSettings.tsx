@@ -110,7 +110,7 @@ import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
 } from "~/versionSkew";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { hasCloudPublicConfig, resolveCloudPublicConfigState } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
@@ -1670,7 +1670,24 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 }
 
 function CloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
-  return hasCloudPublicConfig() ? <ConfiguredCloudLinkRow canManageRelay={canManageRelay} /> : null;
+  const configState = resolveCloudPublicConfigState();
+  if (configState.configured) {
+    return <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />;
+  }
+  const missingConfiguration = `Missing ${configState.missingKeys.join(", ")}`;
+  return (
+    <SettingsRow
+      title={
+        <span className="inline-flex items-center gap-1.5">
+          <TriangleAlertIcon className="size-3.5 text-amber-500" />
+          T3 Connect unavailable
+        </span>
+      }
+      description="This build does not include the complete public configuration required for T3 Connect."
+      status={missingConfiguration}
+      control={<CloudLinkSwitch checked={false} disabled disabledReason={missingConfiguration} />}
+    />
+  );
 }
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {

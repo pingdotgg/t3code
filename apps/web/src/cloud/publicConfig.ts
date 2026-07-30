@@ -16,12 +16,24 @@ export class CloudPublicConfigMissingError extends Schema.TaggedErrorClass<Cloud
 export interface CloudPublicConfig {
   readonly clerkPublishableKey: string | null;
   readonly clerkJwtTemplate: string | null;
+  readonly clerkCliOAuthClientId: string | null;
   readonly relayUrl: string | null;
   readonly relayTracing: {
     readonly tracesUrl: string | null;
     readonly tracesDataset: string | null;
     readonly tracesToken: string | null;
   };
+}
+
+export type CloudPublicConfigKey =
+  | "T3CODE_CLERK_PUBLISHABLE_KEY"
+  | "T3CODE_CLERK_JWT_TEMPLATE"
+  | "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID"
+  | "T3CODE_RELAY_URL";
+
+export interface CloudPublicConfigState {
+  readonly configured: boolean;
+  readonly missingKeys: readonly CloudPublicConfigKey[];
 }
 
 export function trimNonEmpty(value: string | undefined): string | null {
@@ -43,6 +55,9 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
       import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined,
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
+    clerkCliOAuthClientId: trimNonEmpty(
+      import.meta.env.VITE_CLERK_CLI_OAUTH_CLIENT_ID as string | undefined,
+    ),
     relayUrl: normalizeSecureRelayUrl(
       (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
     ),
@@ -70,8 +85,29 @@ export function resolveRelayTracingConfig() {
 }
 
 export function hasCloudPublicConfig(): boolean {
-  const config = resolveCloudPublicConfig();
-  return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
+  return resolveCloudPublicConfigState().configured;
+}
+
+export function resolveCloudPublicConfigState(
+  config: CloudPublicConfig = resolveCloudPublicConfig(),
+): CloudPublicConfigState {
+  const missingKeys: CloudPublicConfigKey[] = [];
+  if (!config.clerkPublishableKey) {
+    missingKeys.push("T3CODE_CLERK_PUBLISHABLE_KEY");
+  }
+  if (!config.clerkJwtTemplate) {
+    missingKeys.push("T3CODE_CLERK_JWT_TEMPLATE");
+  }
+  if (!config.clerkCliOAuthClientId) {
+    missingKeys.push("T3CODE_CLERK_CLI_OAUTH_CLIENT_ID");
+  }
+  if (!config.relayUrl) {
+    missingKeys.push("T3CODE_RELAY_URL");
+  }
+  return {
+    configured: missingKeys.length === 0,
+    missingKeys,
+  };
 }
 
 export function resolveRelayClerkTokenOptions() {
