@@ -49,7 +49,7 @@ export const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities
 
 export const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Delegate one task to a T3-owned child agent/subagent of THIS thread and run it with only the supplied task prompt, without copying parent conversation history. Use this whenever the user asks for an agent, subagent, worker, delegated task, or parallel help—including cross-provider work. The childThreadId is backing storage, not an ordinary top-level thread. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. Prefer mode='async' for long work; mode='wait' blocks until completion or timeout. An async child's completion wakes this thread with a continuation message naming the task (queued behind any turn in progress), so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn.",
+    "Delegate one task to a T3-owned child agent/subagent of THIS thread and run it with only the supplied task prompt, without copying parent conversation history. Use this whenever the user asks for an agent, subagent, worker, delegated task, or parallel help—including cross-provider work. The childThreadId is backing storage, not an ordinary top-level thread. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. Prefer mode='async' for long work; mode='wait' blocks on the original delegated run until completion or timeout. An async child's completion wakes this thread with a continuation message naming the task (queued behind any turn in progress), so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -62,7 +62,7 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
 
 export const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Read the latest durable state and final summary for a T3-owned delegated task created by this parent thread. Reading a terminal result acknowledges its automatic parent delivery.",
+    "Read a T3-owned delegated task created by this parent thread. The primary status, childRunId, summary, and resultContextTransferId stay tied to the original delegated run. hasPendingChildRuns reports whether later work is still queued or executing, while latestTerminal* exposes the newest terminal child run that began execution. Reading a terminal result acknowledges its automatic parent delivery.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
