@@ -198,10 +198,25 @@ export function resolveTextScaleVariables(baseFontSize: number): Record<string, 
 
   for (const [name, role] of Object.entries(TEXT_SCALE_VARIABLE_ROLES)) {
     variables[name] = Math.max(8, Math.round(role.fontSize * scale));
-    variables[`${name}--line-height`] = Math.max(10, Math.round(role.lineHeight * scale));
+    variables[`${name}--line-height`] = scaledTypographyLineHeight(role, baseFontSize);
   }
 
   return variables;
+}
+
+/**
+ * The line height a MOBILE_TYPOGRAPHY role renders at under the given base
+ * font size — the same value resolveTextScaleVariables injects for the role's
+ * `--text-*--line-height` variable. For layout code that must predict
+ * text-driven heights (e.g. the thread feed's fixed item sizes) instead of
+ * measuring them.
+ */
+export function scaledTypographyLineHeight(
+  role: { readonly lineHeight: number },
+  baseFontSize: number,
+): number {
+  const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
+  return Math.max(10, Math.round(role.lineHeight * scale));
 }
 
 export function resolveNativeMarkdownTypography(baseFontSize: number): NativeMarkdownTypography {
