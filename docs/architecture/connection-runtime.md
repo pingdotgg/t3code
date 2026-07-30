@@ -40,6 +40,9 @@ The supervisor is the only retry owner.
    seconds.
 5. Connectivity changes, application activation, credential changes, and
    explicit user retry interrupt the current wait and trigger a fresh attempt.
+   Application activation also resets the backoff ladder. Mobile briefly probes
+   a session after short interruptions and replaces it immediately after a
+   meaningful background suspension.
 6. Authentication or configuration failures remain blocked until an external
    wakeup changes the relevant input.
 7. An involuntary session close keeps the registration and cache, then retries.
