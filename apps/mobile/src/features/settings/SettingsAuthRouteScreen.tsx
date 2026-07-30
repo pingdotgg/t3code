@@ -23,10 +23,6 @@ function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const navigation = useNavigation();
 
-  // Clerk's UserProfileView crashes on Android if it's abruptly replaced by AuthView
-  // while its internal sign-out dialog is closing. To prevent this, once this screen
-  // renders UserProfileView, it never switches back to AuthView. Instead, we detect
-  // the sign-out and pop the screen.
   const hasBeenSignedIn = useRef(isSignedIn);
   if (isSignedIn) {
     hasBeenSignedIn.current = true;
