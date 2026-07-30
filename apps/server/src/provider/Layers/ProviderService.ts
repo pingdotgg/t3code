@@ -1243,13 +1243,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         if (effectiveCwd !== undefined) {
           // Fail fast with an actionable error when the workspace folder is
-          // gone (e.g. moved or deleted). Otherwise every adapter surfaces
-          // this as a misleading "failed to spawn <binary>" process error.
-          // Stat failures other than "missing" fall through to the adapter.
-          const workspaceExists = yield* fileSystem
-            .exists(effectiveCwd)
-            .pipe(Effect.orElseSucceed(() => true));
-          if (!workspaceExists) {
+          // gone (e.g. moved, deleted, or replaced by a plain file).
+          // Otherwise every adapter surfaces this as a misleading "failed to
+          // spawn <binary>" process error. Stat failures other than "missing"
+          // fall through to the adapter.
+          const workspaceIsDirectory = yield* fileSystem.stat(effectiveCwd).pipe(
+            Effect.map((workspaceStat) => workspaceStat.type === "Directory"),
+            Effect.catch((statError) => Effect.succeed(statError.reason._tag !== "NotFound")),
+          );
+          if (!workspaceIsDirectory) {
             return yield* new ProviderWorkspaceMissingError({ threadId, cwd: effectiveCwd });
           }
         }
