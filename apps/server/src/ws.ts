@@ -192,6 +192,15 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         normalizedCwd: error.cwd,
         detail: error.reason,
       };
+    // Protected paths behave as hidden: report the workspace root as not
+    // found instead of widening the `ProjectEntriesFailure` wire union, which
+    // older clients could not decode.
+    case "WorkspaceEntriesProtectedPathError":
+      return {
+        failure: "workspace_root_not_found",
+        normalizedCwd: error.path,
+        detail: "Path is protected by Forma safety settings.",
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -209,6 +218,10 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
       return { failure: "current_project_required" };
     case "WorkspaceEntriesReadDirectoryError":
       return { failure: "read_directory_failed", parentPath: error.parentPath };
+    // Reported as a read failure to avoid widening the wire union; the
+    // parent path names the protected location.
+    case "WorkspaceEntriesProtectedPathError":
+      return { failure: "read_directory_failed", parentPath: error.path };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -245,6 +258,10 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    // Reported as a generic operation failure to avoid widening the
+    // `ProjectFileFailure` wire union that older clients decode.
+    case "WorkspaceProtectedPathError":
+      return { failure: "operation_failed", resolvedPath: error.resolvedPath };
     default:
       return unexpectedCompatibilityError(error);
   }

@@ -155,6 +155,10 @@
       "types": "./src/path.ts",
       "import": "./src/path.ts"
     },
+    "./protectedPaths": {
+      "types": "./src/protectedPaths.ts",
+      "import": "./src/protectedPaths.ts"
+    },
     "./keybindings": {
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"

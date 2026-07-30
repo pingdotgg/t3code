@@ -20,6 +20,7 @@ import type {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 
+import * as WorkspaceProtectedPaths from "./WorkspaceProtectedPaths.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -63,10 +64,29 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedErrorClass<
   }
 }
 
+/**
+ * Raised when a requested path falls under a protected filesystem location
+ * (OS-sensitive folders such as `~/Documents` or `~/Library/Mail`) while the
+ * Forma "Protected paths" safety setting is enabled.
+ */
+export class WorkspaceEntriesProtectedPathError extends Schema.TaggedErrorClass<WorkspaceEntriesProtectedPathError>()(
+  "WorkspaceEntriesProtectedPathError",
+  {
+    path: Schema.String,
+    cwd: Schema.optional(Schema.String),
+    partialPath: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Path '${this.path}' is protected by Forma safety settings.`;
+  }
+}
+
 export const WorkspaceEntriesBrowseError = Schema.Union([
   WorkspaceEntriesWindowsPathUnsupportedError,
   WorkspaceEntriesCurrentProjectRequiredError,
   WorkspaceEntriesReadDirectoryError,
+  WorkspaceEntriesProtectedPathError,
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
 
@@ -78,6 +98,7 @@ export const WorkspaceEntriesError = Schema.Union([
   WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut,
   WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed,
+  WorkspaceEntriesProtectedPathError,
 ]);
 export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
@@ -136,6 +157,35 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
+  const protectedPaths = yield* WorkspaceProtectedPaths.makeProtectedPathsGuard;
+
+  const failIfWorkspaceRootBlocked = Effect.fn("WorkspaceEntries.failIfWorkspaceRootBlocked")(
+    function* (normalizedCwd: string, requestedCwd: string) {
+      if (yield* protectedPaths.isPathBlocked(normalizedCwd)) {
+        return yield* new WorkspaceEntriesProtectedPathError({
+          path: normalizedCwd,
+          cwd: requestedCwd,
+        });
+      }
+    },
+  );
+
+  const withoutProtectedEntries = Effect.fn("WorkspaceEntries.withoutProtectedEntries")(function* <
+    Result extends ProjectListEntriesResult | ProjectSearchEntriesResult,
+  >(normalizedCwd: string, result: Result): Effect.fn.Return<Result> {
+    if (!protectedPaths.hasProtectedDescendants(normalizedCwd)) {
+      return result;
+    }
+    if (!(yield* protectedPaths.isEnabled)) {
+      return result;
+    }
+    return {
+      ...result,
+      entries: result.entries.filter(
+        (entry) => !protectedPaths.isPathProtected(path.join(normalizedCwd, entry.path)),
+      ),
+    };
+  });
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -185,6 +235,14 @@ export const make = Effect.gen(function* () {
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
+      if (yield* protectedPaths.isPathBlocked(parentPath)) {
+        return yield* new WorkspaceEntriesProtectedPathError({
+          path: parentPath,
+          cwd: input.cwd,
+          partialPath: input.partialPath,
+        });
+      }
+
       const dirents = yield* Effect.tryPromise({
         try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
         catch: (cause) =>
@@ -206,12 +264,21 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
+      const protectedPathsEnabled = yield* protectedPaths.isEnabled;
+      const protectedDirectoryNames = protectedPathsEnabled
+        ? protectedPaths.protectedDirectoryNames(parentPath, (value) => path.resolve(value))
+        : new Set<string>();
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
           dirent.isDirectory() &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+          (showHidden || !dirent.name.startsWith(".")) &&
+          !protectedDirectoryNames.has(dirent.name) &&
+          !(
+            protectedPathsEnabled &&
+            protectedPaths.isPathProtected(path.join(parentPath, dirent.name))
+          )
         ) {
           entries.push({
             name: dirent.name,
@@ -230,24 +297,28 @@ export const make = Effect.gen(function* () {
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      yield* failIfWorkspaceRootBlocked(normalizedCwd, input.cwd);
       const normalizedQuery = input.query
         .trim()
         .toLowerCase()
         .replace(/^[@./]+/, "");
-      return yield* Effect.gen(function* () {
+      const result = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit);
       }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
+      return yield* withoutProtectedEntries(normalizedCwd, result);
     },
   );
 
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-      return yield* Effect.gen(function* () {
+      yield* failIfWorkspaceRootBlocked(normalizedCwd, input.cwd);
+      const result = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
       }).pipe(Effect.provide(workspaceSearchIndexes.get(normalizedCwd)));
+      return yield* withoutProtectedEntries(normalizedCwd, result);
     },
   );
 

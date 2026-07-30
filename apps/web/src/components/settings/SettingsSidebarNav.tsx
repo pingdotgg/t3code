@@ -7,10 +7,13 @@ import {
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
+  MessagesSquareIcon,
   PaletteIcon,
   Settings2Icon,
+  ShieldIcon,
   SwatchBookIcon,
 } from "lucide-react";
+import { AdvancedSettingsIcon, NotificationsSettingsIcon } from "../icons/custom";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
 import {
@@ -28,11 +31,15 @@ export type SettingsSectionPath =
   | "/settings/general"
   | "/settings/interface"
   | "/settings/appearance"
+  | "/settings/threads"
+  | "/settings/notifications"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/safety"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/beta"
+  | "/settings/advanced"
   | "/settings/archived";
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
@@ -43,11 +50,15 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Interface", to: "/settings/interface", icon: SwatchBookIcon },
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
+  { label: "Threads", to: "/settings/threads", icon: MessagesSquareIcon },
+  { label: "Notifications", to: "/settings/notifications", icon: NotificationsSettingsIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
+  { label: "Safety", to: "/settings/safety", icon: ShieldIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Beta", to: "/settings/beta", icon: FlaskConicalIcon },
+  { label: "Advanced", to: "/settings/advanced", icon: AdvancedSettingsIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 

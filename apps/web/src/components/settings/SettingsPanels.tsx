@@ -345,7 +345,7 @@ function AboutVersionTitle() {
   );
 }
 
-function AboutVersionSection() {
+export function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
 

@@ -24,6 +24,7 @@ import * as Schema from "effect/Schema";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceProtectedPaths from "./WorkspaceProtectedPaths.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -92,11 +93,29 @@ export class WorkspaceBinaryFileError extends Schema.TaggedErrorClass<WorkspaceB
   }
 }
 
+/**
+ * Raised when a file operation targets a path under a protected filesystem
+ * location while the Forma "Protected paths" safety setting is enabled.
+ */
+export class WorkspaceProtectedPathError extends Schema.TaggedErrorClass<WorkspaceProtectedPathError>()(
+  "WorkspaceProtectedPathError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Workspace path '${this.relativePath}' in '${this.workspaceRoot}' is protected by Forma safety settings.`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspaceProtectedPathError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -131,6 +150,20 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const protectedPaths = yield* WorkspaceProtectedPaths.makeProtectedPathsGuard;
+
+  const failIfTargetBlocked = Effect.fn("WorkspaceFileSystem.failIfTargetBlocked")(function* (
+    input: { readonly cwd: string; readonly relativePath: string },
+    absolutePath: string,
+  ) {
+    if (yield* protectedPaths.isPathBlocked(absolutePath)) {
+      return yield* new WorkspaceProtectedPathError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: absolutePath,
+      });
+    }
+  });
 
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
@@ -139,6 +172,7 @@ export const make = Effect.gen(function* () {
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
     });
+    yield* failIfTargetBlocked(input, target.absolutePath);
 
     const realWorkspaceRoot = yield* Effect.tryPromise({
       try: () => NodeFSP.realpath(input.cwd),
@@ -177,6 +211,9 @@ export const make = Effect.gen(function* () {
         resolvedPath: realTargetPath,
       });
     }
+    // Re-check after symlink resolution so links inside the workspace cannot
+    // escape into protected locations.
+    yield* failIfTargetBlocked(input, realTargetPath);
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -266,6 +303,7 @@ export const make = Effect.gen(function* () {
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
     });
+    yield* failIfTargetBlocked(input, target.absolutePath);
 
     yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
       Effect.mapError(

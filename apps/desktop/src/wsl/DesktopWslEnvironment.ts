@@ -220,7 +220,7 @@ const NODE_PTY_PREBUILD_MISSING_EXIT_CODE = 4;
 
 export const formatNodePtyProbeFailureReason = (exitCode: number): string | null =>
   exitCode === NODE_PTY_PREBUILD_MISSING_EXIT_CODE
-    ? "WSL support is missing from this T3 Code build: the packaged Linux node-pty binary was not included. Rebuild the Windows artifact with `--wsl-prebuild <path-to-linux-pty.node>` or install a build that includes WSL support."
+    ? "WSL support is missing from this Forma build: the packaged Linux node-pty binary was not included. Rebuild the Windows artifact with `--wsl-prebuild <path-to-linux-pty.node>` or install a build that includes WSL support."
     : null;
 
 const NODE_PTY_PROBE_SCRIPT = (
