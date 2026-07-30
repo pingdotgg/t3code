@@ -423,6 +423,26 @@ it.effect("ProviderServiceLive rejects new sessions when the workspace folder is
     assert.include(failure.message, "workspace folder no longer exists");
     assert.include(failure.message, missingCwd);
     assert.equal(codex.startSession.mock.calls.length, 0);
+
+    // A path that exists but is a regular file is just as unusable as a cwd.
+    const fileCwd = NodePath.join(fixtureCwdRoot, "workspace-replaced-by-file");
+    NodeFS.writeFileSync(fileCwd, "not a directory");
+
+    const fileFailure = yield* Effect.flip(
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        return yield* provider.startSession(asThreadId("thread-file-workspace"), {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("thread-file-workspace"),
+          runtimeMode: "full-access",
+          cwd: fileCwd,
+        });
+      }).pipe(Effect.provide(providerLayer)),
+    );
+
+    assert.instanceOf(fileFailure, ProviderWorkspaceMissingError);
+    assert.equal(codex.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
