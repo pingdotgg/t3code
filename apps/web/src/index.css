@@ -1581,6 +1581,7 @@ label:has(> select#reasoning-effort) select {
 }
 
 .ultrathink-chroma {
+  color: #d97757;
   animation: ultrathink-chroma-shift 10s linear infinite;
 }
 
