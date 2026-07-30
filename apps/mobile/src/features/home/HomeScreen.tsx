@@ -18,11 +18,13 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Platform, Pressable, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+
+import { HeaderHeightContext } from "@react-navigation/elements";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -67,6 +69,7 @@ import {
 } from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
+import { WorkspaceStatusBar } from "./WorkspaceStatusBar";
 import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
@@ -187,6 +190,7 @@ function HomeTopContentSpacer() {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
+  const navigationHeaderHeight = useContext(HeaderHeightContext) ?? 0;
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
@@ -867,16 +871,6 @@ export function HomeScreen(props: HomeScreenProps) {
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
-  const connectionStatus =
-    shouldShowConnectionStatus && Platform.OS !== "ios" ? (
-      <View
-        className="absolute left-0 right-0 items-center"
-        style={{ bottom: Math.max(insets.bottom, 18) + 76 }}
-      >
-        <WorkspaceConnectionStatus state={props.catalogState} onPress={props.onOpenEnvironments} />
-      </View>
-    ) : null;
-
   if (!hasAnyThreads) {
     return (
       <View
@@ -899,7 +893,10 @@ export function HomeScreen(props: HomeScreenProps) {
               <ActivityIndicator color={accentColor} />
             </View>
           ) : null}
-          {shouldShowConnectionStatus && Platform.OS === "ios" ? (
+          {/* Kept inline here rather than pinned: with no threads on screen
+              this is the only thing explaining why the page is blank, and
+              there are no rows below it to reflow. */}
+          {shouldShowConnectionStatus ? (
             <View className="mt-4">
               <WorkspaceConnectionStatus
                 state={props.catalogState}
@@ -909,25 +906,27 @@ export function HomeScreen(props: HomeScreenProps) {
             </View>
           ) : null}
         </View>
-        {connectionStatus}
       </View>
     );
   }
 
-  const listHeader = (
-    <>
-      {Platform.OS === "ios" ? null : <HomeTopContentSpacer />}
+  // Status lives in the pinned WorkspaceStatusBar below, not in here: as row 0
+  // it mounted and unmounted on every flip of the (inherently bouncy) sync
+  // signal, flashing the status and shoving every row under it down and back.
+  const listHeader = <>{Platform.OS === "ios" ? null : <HomeTopContentSpacer />}</>;
 
-      {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-        <View className="pb-4">
-          <WorkspaceConnectionStatus
-            state={props.catalogState}
-            onPress={props.onOpenEnvironments}
-            variant="sidebar"
-          />
-        </View>
-      ) : null}
-    </>
+  // Pinned above the list and always mounted, so state changes swap text in
+  // place instead of moving rows. On iOS the list is what normally sits under
+  // the transparent nav bar, so the bar has to clear it explicitly; Android's
+  // header is already an in-flow sibling and needs no offset.
+  const statusBar = (
+    <View style={{ paddingTop: Platform.OS === "ios" ? navigationHeaderHeight : 0 }}>
+      <WorkspaceStatusBar
+        state={props.catalogState}
+        onPress={props.onOpenEnvironments}
+        className="px-4 pt-1 pb-2"
+      />
+    </View>
   );
 
   // Project scoping lives in the header filter menu (no inline chip row on
@@ -990,6 +989,7 @@ export function HomeScreen(props: HomeScreenProps) {
   if (threadListV2Enabled) {
     return (
       <View className="flex-1 bg-screen">
+        {statusBar}
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <FlatList
             data={threadListV2Items}
@@ -1029,13 +1029,13 @@ export function HomeScreen(props: HomeScreenProps) {
             }}
           />
         </SwipeableScrollGateProvider>
-        {connectionStatus}
       </View>
     );
   }
 
   return (
     <View className="flex-1 bg-screen">
+      {statusBar}
       {/* Sticky headers are deliberately not wired up: LegendList's JS sticky
           implementation mispositions pinned headers at mount under iOS
           automatic content insets (headers render one nav-inset too low until
@@ -1084,7 +1084,6 @@ export function HomeScreen(props: HomeScreenProps) {
           }
         />
       </SwipeableScrollGateProvider>
-      {connectionStatus}
     </View>
   );
 }

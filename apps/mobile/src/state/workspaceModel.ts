@@ -21,6 +21,12 @@ export interface WorkspaceState {
   readonly hasLoadedShellSnapshot: boolean;
   readonly hasPendingShellSnapshot: boolean;
   readonly hasReadyEnvironment: boolean;
+  /**
+   * How many environments are connected right now. The status bar reports this
+   * at rest ("Synced 2 environments at 3:41 PM"), which a boolean can't carry.
+   * Zero while offline, so it stays consistent with hasReadyEnvironment.
+   */
+  readonly readyEnvironmentCount: number;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: ReadonlyArray<WorkspaceEnvironment>;
   readonly connectionState: EnvironmentConnectionPhase;
@@ -83,15 +89,19 @@ export function projectWorkspaceState(input: {
       environment.connectionState === "connecting" ||
       environment.connectionState === "reconnecting",
   );
+  const readyEnvironmentCount =
+    input.networkStatus === "offline"
+      ? 0
+      : input.environments.filter((environment) => environment.connectionState === "connected")
+          .length;
 
   return {
     isLoadingConnections: !input.isReady,
     hasConnections: input.environments.length > 0,
     hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
     hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
-    hasReadyEnvironment:
-      input.networkStatus !== "offline" &&
-      input.environments.some((environment) => environment.connectionState === "connected"),
+    hasReadyEnvironment: readyEnvironmentCount > 0,
+    readyEnvironmentCount,
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
     connectionState: overallConnectionState(input.environments, input.networkStatus),
