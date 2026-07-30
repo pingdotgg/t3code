@@ -358,7 +358,7 @@ layer("ThreadColdStorage", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const threadId = ThreadId.make("thread-cold");
-      const attachmentName = "thread-cold-00000000-0000-4000-8000-000000000001.png";
+      const attachmentName = "thread-cold-00000000-0000-4000-8000-000000000001.webp";
 
       yield* sql`
         INSERT INTO projection_threads (
@@ -377,7 +377,7 @@ layer("ThreadColdStorage", (it) => {
           is_streaming, created_at, updated_at
         ) VALUES (
           'message-1', ${threadId}, NULL, 'user', 'keep this conversation',
-          '[{"type":"image","id":"thread-cold-00000000-0000-4000-8000-000000000001","name":"image.png","mimeType":"image/png"}]',
+          '[{"type":"image","id":"thread-cold-00000000-0000-4000-8000-000000000001","name":"image.webp","mimeType":"image/webp"}]',
           0, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
         )
       `;
