@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatPendingPrimaryActionLabel,
   resolveComposerPrimaryAction,
+  shouldBlockComposerSubmit,
 } from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
@@ -166,5 +167,34 @@ describe("resolveComposerPrimaryAction", () => {
       label: "Messages loading",
       disabled: true,
     });
+  });
+});
+
+describe("shouldBlockComposerSubmit", () => {
+  it("does not apply ordinary send gates while advancing pending questions", () => {
+    expect(
+      shouldBlockComposerSubmit({
+        hasPendingAction: true,
+        noProviderAvailable: true,
+        isSendDisabled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps provider and loading gates for ordinary messages", () => {
+    expect(
+      shouldBlockComposerSubmit({
+        hasPendingAction: false,
+        noProviderAvailable: true,
+        isSendDisabled: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldBlockComposerSubmit({
+        hasPendingAction: false,
+        noProviderAvailable: false,
+        isSendDisabled: true,
+      }),
+    ).toBe(true);
   });
 });

@@ -100,7 +100,7 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerPrimaryActions, shouldBlockComposerSubmit } from "./ComposerPrimaryActions";
 import { ComposerQueuedTurnsPanel } from "./ComposerQueuedTurnsPanel";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -1738,7 +1738,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (
+        shouldBlockComposerSubmit({
+          hasPendingAction: activePendingProgress !== null,
+          noProviderAvailable,
+          isSendDisabled,
+        })
+      ) {
         event?.preventDefault();
         return;
       }
@@ -1749,6 +1755,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       blurMobileComposerAfterSend,
+      activePendingProgress,
       isSendDisabled,
       noProviderAvailable,
       onSend,

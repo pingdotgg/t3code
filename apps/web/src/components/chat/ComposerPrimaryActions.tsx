@@ -55,6 +55,17 @@ export type ComposerPrimaryActionState = {
   disabled: boolean;
 };
 
+export function shouldBlockComposerSubmit(input: {
+  hasPendingAction: boolean;
+  noProviderAvailable: boolean;
+  isSendDisabled: boolean;
+}): boolean {
+  if (input.hasPendingAction) {
+    return false;
+  }
+  return input.noProviderAvailable || input.isSendDisabled;
+}
+
 export function resolveComposerPrimaryAction(input: {
   isRunning: boolean;
   queueStatus: ComposerQueueStatus;
