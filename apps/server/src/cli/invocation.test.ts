@@ -18,8 +18,20 @@ it("detects package runners from their cache entry paths", () => {
     detectCliRunner("/home/theo/.local/share/pnpm/.pnpm/dlx/abc/node_modules/t3/dist/bin.mjs"),
     "pnpm dlx",
   );
+  assert.equal(
+    detectCliRunner(
+      "C:\\Users\\theo\\AppData\\Local\\pnpm-cache\\dlx\\abc\\node_modules\\t3\\dist\\bin.mjs",
+    ),
+    "pnpm dlx",
+  );
   assert.equal(detectCliRunner("/home/theo/.bun/install/cache/t3@0.0.31/dist/bin.mjs"), "bunx");
   assert.equal(detectCliRunner("/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs"), "bunx");
+  assert.equal(
+    detectCliRunner(
+      "C:\\Users\\theo\\AppData\\Local\\Temp\\bunx-0-t3@latest\\node_modules\\t3\\dist\\bin.mjs",
+    ),
+    "bunx",
+  );
 });
 
 it("treats stable installs as direct invocations", () => {

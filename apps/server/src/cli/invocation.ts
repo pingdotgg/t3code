@@ -11,24 +11,26 @@ export type CliRunner = "npx" | "pnpm dlx" | "bunx";
  * package runner executes out of a distinctive cache/temp layout:
  *
  *   npx      ~/.npm/_npx/<hash>/node_modules/...
- *   pnpm dlx ~/.cache/pnpm/dlx/... or $PNPM_HOME/.pnpm/dlx/...
+ *   pnpm dlx ~/.cache/pnpm/dlx/..., $PNPM_HOME/.pnpm/dlx/...,
+ *            or %LOCALAPPDATA%/pnpm-cache/dlx/... on Windows
  *   bunx     ~/.bun/install/cache/... or $TMPDIR/bunx-<uid>-<spec>/...
  *
  * Global installs and repo checkouts match none of these and return null.
  * Detection is best-effort; callers must fail closed to a plain `t3` command.
  */
 export function detectCliRunner(entryPath: string): CliRunner | null {
-  if (entryPath.includes("/_npx/") || entryPath.includes("\\_npx\\")) {
+  const path = entryPath.replaceAll("\\", "/");
+  if (path.includes("/_npx/")) {
     return "npx";
   }
-  if (entryPath.includes("/pnpm/dlx/") || entryPath.includes("/.pnpm/dlx/")) {
+  if (
+    path.includes("/pnpm/dlx/") ||
+    path.includes("/.pnpm/dlx/") ||
+    path.includes("/pnpm-cache/dlx/")
+  ) {
     return "pnpm dlx";
   }
-  if (
-    entryPath.includes("/.bun/install/cache/") ||
-    entryPath.includes("/bunx-") ||
-    entryPath.includes("\\bunx-")
-  ) {
+  if (path.includes("/.bun/install/cache/") || path.includes("/bunx-")) {
     return "bunx";
   }
   return null;
