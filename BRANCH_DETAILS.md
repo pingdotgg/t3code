@@ -17,7 +17,7 @@ Expected behavior:
 - Archived conversations can be deleted directly from the Archive panel without unarchiving first. Web delete actions respect the shared `confirmThreadDelete` client setting, while native keeps its standard guarded delete flow.
 - Project group context menus expose `unarchive all` and `delete all` actions. While search is active, those bulk actions apply to the visible matching archived conversations and use matching-specific menu labels; otherwise they apply to all archived conversations in the project. Delete confirmations respect `confirmThreadDelete` on web and remain explicitly guarded on native; unarchive bulk actions remain guarded on both surfaces, and partial failures surface as not-fully-completed feedback instead of implying every archived thread failed.
 - Archive grouping, search ranking, sort state, and project bulk-action concurrency live in `apps/web/src/components/settings/SettingsPanels.logic.ts` on web and `apps/mobile/src/features/archive/archivedThreadList.ts` on native so the dense Archive behavior stays covered without growing the React components. Project groups expose and reuse collision-safe keys so project ids containing separator characters do not collapse expansion state or React row identity. Bulk actions stop scheduling new work after thrown failures, wait for active workers to settle, preserve the completed success/failure/skipped outcome counts, show incomplete-operation feedback, and surface the underlying exception messages instead of only a generic aggregate error. The Archive surfaces refresh archived threads after bulk unarchive/delete attempts even when the action runner throws.
-- The user guide documents Archive as a reversible thread-lifecycle action, covers the web, desktop, and mobile controls and safeguards, and explains that search scopes project bulk actions to visible matches. The documentation index links the guide, and the encyclopedia defines the Archive term separately from permanent deletion.
+- The user guide documents Archive as a reversible thread-lifecycle action, covers the web, desktop, and mobile controls and safeguards, and explains that search scopes project bulk actions to visible matches. The documentation index links the guide, and the internal glossary defines the Archive term separately from permanent deletion.
 
 Primary files:
 
@@ -32,7 +32,7 @@ Primary files:
 - `apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx`
 - `apps/mobile/src/features/archive/archivedThreadList.ts`
 - `docs/user/archive.md`
-- `docs/reference/encyclopedia.md`
+- `docs/internals/glossary.md`
 - `docs/README.md`
 
 ## Development Ports
