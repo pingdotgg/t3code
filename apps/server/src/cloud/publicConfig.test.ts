@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
 import {
+  hostedAppUrlConfig,
   makeCloudCliOAuthConfig,
   makeRelayUrlConfig,
   resolveRelayClientTracingConfig,
@@ -87,6 +88,36 @@ it.effect("requires Clerk OAuth config when the server bundle has no injected va
     clerkPublishableKeyFallback: "",
     clerkCliOAuthClientIdFallback: "",
   }).pipe(provideEnv({}), Effect.flip),
+);
+
+it.effect("accepts custom HTTPS and loopback hosted app origins", () =>
+  Effect.gen(function* () {
+    assert.equal(
+      yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: "https://connect.example.test" }),
+      ),
+      "https://connect.example.test",
+    );
+    assert.equal(
+      yield* hostedAppUrlConfig.pipe(
+        provideEnv({ T3CODE_HOSTED_APP_URL: "http://127.0.0.1:5733" }),
+      ),
+      "http://127.0.0.1:5733",
+    );
+  }),
+);
+
+it.effect("rejects insecure and non-origin hosted app URLs", () =>
+  Effect.forEach(
+    [
+      "http://connect.example.test",
+      "https://connect.example.test/path",
+      "https://connect.example.test?query=1",
+      "https://connect.example.test#fragment",
+    ],
+    (value) => hostedAppUrlConfig.pipe(provideEnv({ T3CODE_HOSTED_APP_URL: value }), Effect.flip),
+    { discard: true },
+  ),
 );
 
 it.effect("reports malformed Clerk publishable keys as typed configuration failures", () =>

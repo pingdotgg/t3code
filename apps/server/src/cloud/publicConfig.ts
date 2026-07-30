@@ -1,5 +1,6 @@
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { CONNECT_OAUTH_SCOPES, DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -15,7 +16,7 @@ declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: string | undefi
 declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: string | undefined;
 
 const CLOUD_CLI_OAUTH_REDIRECT_URI = "http://127.0.0.1:34338/callback";
-const CLOUD_CLI_OAUTH_SCOPES = ["openid", "profile", "email"] as const;
+const CLOUD_CLI_OAUTH_SCOPES = CONNECT_OAUTH_SCOPES;
 
 function validateRelayUrl(value: string) {
   const relayUrl = normalizeSecureRelayUrl(value);
@@ -100,6 +101,39 @@ export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
 
 export const relayUrlConfig = makeRelayUrlConfig();
 
+export const hostedAppUrlConfig = makePublicValueConfig(
+  "T3CODE_HOSTED_APP_URL",
+  DEFAULT_HOSTED_APP_URL,
+).pipe(
+  Config.mapOrFail((value) => {
+    try {
+      const url = new URL(value);
+      const isLoopbackHttp =
+        url.protocol === "http:" &&
+        (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+      if (
+        (url.protocol !== "https:" && !isLoopbackHttp) ||
+        url.pathname !== "/" ||
+        url.search !== "" ||
+        url.hash !== ""
+      ) {
+        throw new Error("invalid hosted app origin");
+      }
+      return Effect.succeed(url.origin);
+    } catch {
+      return Effect.fail(
+        new Config.ConfigError(
+          new Schema.SchemaError(
+            new SchemaIssue.InvalidValue(Option.some(value), {
+              message: "Hosted app URL must be an absolute HTTPS origin (or HTTP loopback origin).",
+            }),
+          ),
+        ),
+      );
+    }
+  }),
+);
+
 function makePublicValueConfig(name: string, fallback: string) {
   const runtimeConfig = Config.nonEmptyString(name);
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
@@ -160,8 +194,12 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
-export const hasCloudPublicConfig = Boolean(
-  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
+export const hasCloudCliOAuthConfig = Boolean(
   (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
   (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
+);
+
+export const hasCloudPublicConfig = Boolean(
+  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
+  hasCloudCliOAuthConfig,
 );

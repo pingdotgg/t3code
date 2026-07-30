@@ -144,6 +144,10 @@
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"
     },
+    "./connectAuth": {
+      "types": "./src/connectAuth.ts",
+      "import": "./src/connectAuth.ts"
+    },
     "./relaySigning": {
       "types": "./src/relaySigning.ts",
       "import": "./src/relaySigning.ts"

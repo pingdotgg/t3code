@@ -20,6 +20,8 @@ describe("loadRepoEnv", () => {
 
     expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
+    expect(env.T3CODE_HOSTED_APP_URL).toBeUndefined();
+    expect(env.VITE_HOSTED_APP_URL).toBeUndefined();
     expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.T3CODE_CLERK_JWT_TEMPLATE).toBeUndefined();
@@ -61,6 +63,7 @@ describe("loadRepoEnv", () => {
           T3CODE_CLERK_PUBLISHABLE_KEY: "pk_ci",
           T3CODE_CLERK_JWT_TEMPLATE: "template_ci",
           T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
+          T3CODE_HOSTED_APP_URL: "https://custom.example.test",
           T3CODE_RELAY_URL: "https://ci.example.test",
         },
         repoRoot,
@@ -68,6 +71,8 @@ describe("loadRepoEnv", () => {
     ).toMatchObject({
       T3CODE_CLERK_PUBLISHABLE_KEY: "pk_ci",
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
+      T3CODE_HOSTED_APP_URL: "https://custom.example.test",
+      VITE_HOSTED_APP_URL: "https://custom.example.test",
       VITE_CLERK_PUBLISHABLE_KEY: "pk_ci",
       EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_ci",
       T3CODE_CLERK_JWT_TEMPLATE: "template_ci",
@@ -84,6 +89,7 @@ describe("loadRepoEnv", () => {
         VITE_CLERK_PUBLISHABLE_KEY: "pk_legacy",
         VITE_CLERK_JWT_TEMPLATE: "template_legacy",
         T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_canonical",
+        VITE_HOSTED_APP_URL: "https://legacy-hosted.example.test",
         VITE_T3CODE_RELAY_URL: "https://legacy.example.test",
         EXPO_PUBLIC_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
         EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
@@ -93,6 +99,7 @@ describe("loadRepoEnv", () => {
       clerkPublishableKey: "pk_legacy",
       clerkJwtTemplate: "template_legacy",
       clerkCliOAuthClientId: "oauth_canonical",
+      hostedAppUrl: "https://legacy-hosted.example.test",
       relayUrl: "https://legacy.example.test",
       mobileOtlpTracesUrl: "https://api.axiom.co/v1/traces",
       mobileOtlpTracesDataset: "mobile-traces",

@@ -66,7 +66,10 @@ import {
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
+    if (location.pathname === "/connect" || location.pathname === "/connect/callback") {
+      return { authGateState: { status: "authenticated" as const } };
+    }
     const [, authGateState] = await Promise.all([
       ensurePrimaryEnvironmentReady(),
       resolveInitialServerAuthGateState(),
@@ -96,7 +99,7 @@ function RootRouteView() {
     };
   }, [pathname]);
 
-  if (pathname === "/pair") {
+  if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect/callback") {
     return <Outlet />;
   }
 

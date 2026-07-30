@@ -21,9 +21,19 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import {
+  buildConnectAuthorizeRequestUrl,
+  buildConnectClerkAuthorizeUrl,
+  checkConnectAuthCode,
+  connectCallbackUrl,
+} from "@t3tools/shared/connectAuth";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { cloudCliOAuthConfig, type CloudCliOAuthConfig } from "./publicConfig.ts";
+import {
+  cloudCliOAuthConfig,
+  hostedAppUrlConfig,
+  type CloudCliOAuthConfig,
+} from "./publicConfig.ts";
 
 const CLOUD_CLI_OAUTH_TOKEN_SECRET = "cloud-cli-oauth-token";
 const CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT = Duration.minutes(10);
@@ -33,8 +43,9 @@ const PersistedToken = Schema.Struct({
   accessToken: Schema.String,
   refreshToken: Schema.String,
   expiresAtEpochMs: Schema.Number,
+  identity: Schema.optional(Schema.String),
 });
-type PersistedToken = typeof PersistedToken.Type;
+export type PersistedToken = typeof PersistedToken.Type;
 
 const PersistedTokenJson = Schema.fromJsonString(PersistedToken);
 const decodePersistedToken = Schema.decodeUnknownEffect(PersistedTokenJson);
@@ -43,8 +54,55 @@ const encodePersistedToken = Schema.encodeEffect(PersistedTokenJson);
 const OAuthTokenResponse = Schema.Struct({
   access_token: Schema.String,
   refresh_token: Schema.optional(Schema.String),
+  id_token: Schema.optional(Schema.String),
   expires_in: Schema.Number,
   token_type: Schema.String,
+});
+
+const OidcIdentityClaimsJson = Schema.fromJsonString(
+  Schema.Struct({
+    email: Schema.optional(Schema.String),
+    preferred_username: Schema.optional(Schema.String),
+    sub: Schema.optional(Schema.String),
+  }),
+);
+const decodeOidcIdentityClaims = Schema.decodeUnknownOption(OidcIdentityClaimsJson);
+
+function idTokenIdentity(idToken: string | undefined): string | null {
+  const payload = idToken?.split(".")[1];
+  if (!payload) return null;
+  const decoded = Encoding.decodeBase64UrlString(payload);
+  if (decoded._tag !== "Success") return null;
+  const claims = decodeOidcIdentityClaims(decoded.success);
+  if (Option.isNone(claims)) return null;
+  return (
+    [claims.value.email, claims.value.preferred_username, claims.value.sub].find(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    ) ?? null
+  );
+}
+
+const exchangeOAuthToken = Effect.fn("cloud.cli_token.exchange")(function* (
+  metadata: CloudCliOAuthConfig,
+  params: Record<string, string>,
+) {
+  const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const response = yield* HttpClientRequest.post(metadata.tokenEndpoint).pipe(
+    HttpClientRequest.bodyUrlParams(params),
+    httpClient.execute,
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(OAuthTokenResponse)),
+  );
+  const now = yield* Clock.currentTimeMillis;
+  const identity = idTokenIdentity(response.id_token);
+  return {
+    token: {
+      accessToken: response.access_token,
+      refreshToken: response.refresh_token ?? params.refresh_token ?? "",
+      expiresAtEpochMs: now + response.expires_in * 1_000,
+      ...(identity === null ? {} : { identity }),
+    } satisfies PersistedToken,
+    identity,
+  };
 });
 
 export class CloudCliCredentialRemovalError extends Schema.TaggedErrorClass<CloudCliCredentialRemovalError>()(
@@ -107,6 +165,7 @@ export class CloudCliTokenManager extends Context.Service<
     readonly get: Effect.Effect<PersistedToken, CloudCliTokenManagerError>;
     readonly getExisting: Effect.Effect<Option.Option<PersistedToken>, CloudCliTokenManagerError>;
     readonly hasCredential: Effect.Effect<boolean, CloudCliTokenManagerError>;
+    readonly store: (token: PersistedToken) => Effect.Effect<void, CloudCliTokenManagerError>;
     readonly clear: Effect.Effect<void, CloudCliTokenManagerError>;
   }
 >()("t3/cloud/CliTokenManager/CloudCliTokenManager") {}
@@ -126,7 +185,6 @@ function bytesToString(value: Uint8Array): string {
 
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
-  const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const semaphore = yield* Semaphore.make(1);
   const persist = Effect.fn("cloud.cli_token.persist")(function* (token: PersistedToken) {
@@ -145,30 +203,16 @@ export const make = Effect.gen(function* () {
     return Option.some(yield* decodePersistedToken(bytesToString(encoded.value)));
   });
 
-  const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
-    metadata: CloudCliOAuthConfig,
-    params: Record<string, string>,
-  ) {
-    const response = yield* HttpClientRequest.post(metadata.tokenEndpoint).pipe(
-      HttpClientRequest.bodyUrlParams(params),
-      httpClient.execute,
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(OAuthTokenResponse)),
-    );
-    const now = yield* Clock.currentTimeMillis;
-    return {
-      accessToken: response.access_token,
-      refreshToken: response.refresh_token ?? params.refresh_token ?? "",
-      expiresAtEpochMs: now + response.expires_in * 1_000,
-    } satisfies PersistedToken;
-  });
-
   const refresh = Effect.fn("cloud.cli_token.refresh")(function* (token: PersistedToken) {
     const metadata = yield* cloudCliOAuthConfig;
-    return yield* exchangeToken(metadata, {
+    const { token: refreshed } = yield* exchangeOAuthToken(metadata, {
       grant_type: "refresh_token",
       refresh_token: token.refreshToken,
       client_id: metadata.clientId,
     });
+    return refreshed.identity === undefined && token.identity !== undefined
+      ? { ...refreshed, identity: token.identity }
+      : refreshed;
   });
 
   const login = Effect.fn("cloud.cli_token.login")(function* () {
@@ -177,7 +221,7 @@ export const make = Effect.gen(function* () {
     const challenge = Encoding.encodeBase64Url(
       yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
     );
-    const state = yield* crypto.randomUUIDv4;
+    const state = Encoding.encodeBase64Url(yield* crypto.randomBytes(16));
     const callback = yield* Deferred.make<string>();
     const callbackRoute = HttpRouter.add(
       "GET",
@@ -215,15 +259,15 @@ export const make = Effect.gen(function* () {
       ),
       Layer.build,
     );
-    const authorizationUrl = new URL(metadata.authorizationEndpoint);
-    authorizationUrl.searchParams.set("client_id", metadata.clientId);
-    authorizationUrl.searchParams.set("redirect_uri", metadata.redirectUri);
-    authorizationUrl.searchParams.set("response_type", "code");
-    authorizationUrl.searchParams.set("scope", metadata.scopes.join(" "));
-    authorizationUrl.searchParams.set("state", state);
-    authorizationUrl.searchParams.set("code_challenge", challenge);
-    authorizationUrl.searchParams.set("code_challenge_method", "S256");
-    yield* Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl.toString()}\n`);
+    const authorizationUrl = buildConnectClerkAuthorizeUrl({
+      authorizationEndpoint: metadata.authorizationEndpoint,
+      clientId: metadata.clientId,
+      redirectUri: metadata.redirectUri,
+      scopes: metadata.scopes,
+      state,
+      challenge,
+    });
+    yield* Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl}\n`);
     const code = yield* Deferred.await(callback).pipe(
       Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
       Effect.catchTag("TimeoutError", (cause) =>
@@ -234,13 +278,13 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-    return yield* exchangeToken(metadata, {
+    return (yield* exchangeOAuthToken(metadata, {
       grant_type: "authorization_code",
       code,
       redirect_uri: metadata.redirectUri,
       client_id: metadata.clientId,
       code_verifier: verifier,
-    });
+    })).token;
   });
 
   const getExistingNoLock = Effect.fn("cloud.cli_token.get_existing_no_lock")(function* () {
@@ -264,14 +308,58 @@ export const make = Effect.gen(function* () {
   );
   const get = semaphore.withPermits(1)(
     Effect.gen(function* () {
-      const token = yield* getExistingNoLock();
+      const token = yield* getExistingNoLock().pipe(Effect.orElseSucceed(() => Option.none()));
       return Option.isSome(token)
         ? token.value
         : yield* Effect.scoped(login()).pipe(Effect.flatMap(persist));
     }).pipe(wrapError((cause) => new CloudCliAuthorizationError({ cause }))),
   );
+  const store = (token: PersistedToken) =>
+    semaphore.withPermits(1)(
+      persist(token).pipe(
+        Effect.asVoid,
+        wrapError((cause) => new CloudCliAuthorizationError({ cause })),
+      ),
+    );
 
-  return CloudCliTokenManager.of({ get, getExisting, hasCredential, clear });
+  return CloudCliTokenManager.of({ get, getExisting, hasCredential, store, clear });
 });
 
 export const layer = Layer.effect(CloudCliTokenManager, make);
+
+export interface OutOfBandOAuthPromptInput {
+  readonly authorizeUrl: string;
+  readonly validate: (value: string) => Effect.Effect<string, string>;
+}
+
+export const outOfBandOAuthLogin = Effect.fn("cloud.cli_token.out_of_band_oauth_login")(function* <
+  E,
+  R,
+>(promptForCode: (input: OutOfBandOAuthPromptInput) => Effect.Effect<string, E, R>) {
+  const crypto = yield* Crypto.Crypto;
+  const metadata = yield* cloudCliOAuthConfig;
+  const hostedAppUrl = yield* hostedAppUrlConfig;
+  const verifier = Encoding.encodeBase64Url(yield* crypto.randomBytes(32));
+  const challenge = Encoding.encodeBase64Url(
+    yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
+  );
+  const state = Encoding.encodeBase64Url(yield* crypto.randomBytes(16));
+  const value = yield* promptForCode({
+    authorizeUrl: buildConnectAuthorizeRequestUrl({ hostedAppUrl, state, challenge }),
+    validate: (candidate) => {
+      const checked = checkConnectAuthCode(candidate, state);
+      return typeof checked === "string" ? Effect.fail(checked) : Effect.succeed(candidate);
+    },
+  });
+  const checked = checkConnectAuthCode(value, state);
+  if (typeof checked === "string") {
+    return yield* Effect.fail(new CloudCliAuthorizationError({ cause: checked }));
+  }
+  return yield* exchangeOAuthToken(metadata, {
+    grant_type: "authorization_code",
+    code: checked.code,
+    redirect_uri: connectCallbackUrl(hostedAppUrl),
+    client_id: metadata.clientId,
+    code_verifier: verifier,
+  });
+});
