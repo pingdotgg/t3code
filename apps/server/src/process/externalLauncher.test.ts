@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -173,6 +174,36 @@ it.effect("caches editor discovery per service instance", () =>
       yield* fileSystem.remove(codePath);
       const second = yield* launcher.resolveAvailableEditors();
       assert.deepEqual(second, first);
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps discovery usable after a caller gives up", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "code.CMD"), "@echo off\r\n");
+
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+      // Mirrors ws.ts timing discovery out: the first caller is interrupted
+      // mid-scan. That must not memoize the interruption for later callers.
+      const abandoned = yield* Effect.forkChild(launcher.resolveAvailableEditors(), {
+        startImmediately: true,
+      });
+      yield* Fiber.interrupt(abandoned);
+
+      const editors = yield* launcher.resolveAvailableEditors();
+      assert.equal(editors.includes("vscode"), true);
     }).pipe(
       Effect.provide(
         testLayer({

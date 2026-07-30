@@ -23,6 +23,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -435,15 +436,18 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  // Discovery probes every editor command across PATH, which can take seconds
-  // on hosts with long PATHs. Cache the result so only the first caller pays;
-  // the installed-editor set only changes across server restarts.
-  const cachedAvailableEditors = yield* Effect.cached(
-    provideCommandResolutionServices(resolveAvailableEditors()),
+  // Discovery probes every editor command across PATH, which can take seconds on
+  // hosts with long PATHs. Run it once in a detached fiber and let callers join:
+  // a caller that gives up (ws.ts times discovery out) then cancels only its own
+  // wait, leaving the scan to finish and serve everyone who asks afterwards.
+  const editorDiscovery = yield* Effect.cached(
+    Effect.uninterruptible(
+      Effect.forkDetach(provideCommandResolutionServices(resolveAvailableEditors())),
+    ),
   );
 
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => cachedAvailableEditors,
+    resolveAvailableEditors: () => Effect.flatMap(editorDiscovery, Fiber.join),
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
