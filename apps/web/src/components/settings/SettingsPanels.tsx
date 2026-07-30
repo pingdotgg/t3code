@@ -569,6 +569,10 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(settings.chatAutoScroll !== DEFAULT_UNIFIED_SETTINGS.chatAutoScroll
+        ? ["Follow agent output"]
+        : []),
+      ...(settings.reduceMotion !== DEFAULT_UNIFIED_SETTINGS.reduceMotion ? ["Reduce motion"] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
@@ -621,6 +625,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
       settings.autoOpenPlanSidebar,
+      settings.chatAutoScroll,
+      settings.reduceMotion,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -651,6 +657,8 @@ export function useSettingsRestore(onRestored?: () => void) {
 
     setTheme("system");
     updateSettings({
+      chatAutoScroll: DEFAULT_UNIFIED_SETTINGS.chatAutoScroll,
+      reduceMotion: DEFAULT_UNIFIED_SETTINGS.reduceMotion,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -994,6 +1002,50 @@ export function AppearanceSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Follow agent output"
+          description="Scroll the transcript automatically while an agent streams. Off keeps the view still; the scroll-to-end button jumps when you want it."
+          resetAction={
+            settings.chatAutoScroll !== DEFAULT_UNIFIED_SETTINGS.chatAutoScroll ? (
+              <SettingResetButton
+                label="follow agent output"
+                onClick={() =>
+                  updateSettings({ chatAutoScroll: DEFAULT_UNIFIED_SETTINGS.chatAutoScroll })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.chatAutoScroll}
+              onCheckedChange={(checked) => updateSettings({ chatAutoScroll: Boolean(checked) })}
+              aria-label="Follow agent output while it streams"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Reduce motion"
+          description="Stop looping indicator animations and make every scroll instant instead of animated."
+          resetAction={
+            settings.reduceMotion !== DEFAULT_UNIFIED_SETTINGS.reduceMotion ? (
+              <SettingResetButton
+                label="reduce motion"
+                onClick={() =>
+                  updateSettings({ reduceMotion: DEFAULT_UNIFIED_SETTINGS.reduceMotion })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.reduceMotion}
+              onCheckedChange={(checked) => updateSettings({ reduceMotion: Boolean(checked) })}
+              aria-label="Reduce motion"
+            />
           }
         />
 

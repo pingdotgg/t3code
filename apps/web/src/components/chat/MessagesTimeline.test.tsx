@@ -414,14 +414,27 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show full message");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
-    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');
+  });
+
+  it("only lets the list re-pin itself to the end when auto-scroll is on", () => {
+    const timelineEntries = [buildUserTimelineEntry("Short prompt.")];
+
+    const following = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} autoScrollEnabled />,
+    );
+    expect(following).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(following).toContain('data-maintain-scroll-at-end-animated="false"');
+    expect(following).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(following).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(following).toContain('data-maintain-scroll-at-end-layout="true"');
+
+    const still = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+    expect(still).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
   it("does not render collapse controls for short user messages", () => {

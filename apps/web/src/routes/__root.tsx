@@ -28,6 +28,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { useClientSettings } from "../hooks/useSettings";
+import { syncReducedMotionAttribute } from "../reducedMotion";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -144,10 +145,15 @@ function RootRouteView() {
 
 function GlassAppearanceSync() {
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
+  const reduceMotion = useClientSettings((settings) => settings.reduceMotion);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);
   }, [glassOpacity]);
+
+  useEffect(() => {
+    syncReducedMotionAttribute(reduceMotion);
+  }, [reduceMotion]);
 
   return null;
 }
