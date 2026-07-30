@@ -55,12 +55,22 @@ const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
   "interrupted",
 ]);
 
+/**
+ * The subset of a projection run that handoff rows read. Kept minimal so the
+ * timeline can hold a content-stable snapshot: run status/timestamps churn on
+ * every stream event, but these fields only change when a run is added.
+ */
+export type HandoffTimelineRun = Pick<
+  OrchestrationV2Run,
+  "id" | "ordinal" | "providerInstanceId" | "modelSelection"
+>;
+
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly createdAt: string;
   readonly timestampFormat: TimestampFormat;
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
-  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
   const { item } = props;
@@ -301,11 +311,11 @@ function subagentDisplayTitle(title: string): string {
  * covered runs are still in the projection.
  */
 function latestRunModelBefore(
-  runs: ReadonlyArray<OrchestrationV2Run>,
+  runs: ReadonlyArray<HandoffTimelineRun>,
   instanceId: ProviderInstanceId,
   beforeOrdinal: number | undefined,
 ): string | undefined {
-  let latest: OrchestrationV2Run | undefined;
+  let latest: HandoffTimelineRun | undefined;
   for (const run of runs) {
     if (run.providerInstanceId !== instanceId) continue;
     if (beforeOrdinal !== undefined && run.ordinal >= beforeOrdinal) continue;
