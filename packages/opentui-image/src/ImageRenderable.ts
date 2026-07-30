@@ -19,8 +19,6 @@ import {
 
 const DEFAULT_CELL_WIDTH = 18;
 const DEFAULT_CELL_HEIGHT = 35;
-const SCROLL_PLACEHOLDER = "[ image paused while scrolling ]";
-const SCROLL_PLACEHOLDER_COLOR = RGBA.fromInts(128, 128, 128, 255);
 
 export interface ImageOptions extends Omit<
   RenderableOptions<ImageRenderable>,
@@ -136,13 +134,9 @@ export class ImageRenderable extends Renderable {
     assertRgbaImage(this.#data, this.#imageWidth, this.#imageHeight);
     const visible = this.#visibleImageRect();
     if (!visible) return;
-    if (this.#manager.isScrollPaused) {
-      const label = SCROLL_PLACEHOLDER.slice(0, visible.columns);
-      const x = visible.x + Math.max(0, Math.floor((visible.columns - label.length) / 2));
-      const y = visible.y + Math.floor((visible.rows - 1) / 2);
-      buffer.drawText(label, x, y, SCROLL_PLACEHOLDER_COLOR);
-      return;
-    }
+    // While placements are paused for scrolling the reserved area stays blank;
+    // the surrounding layout (e.g. the message bubble) already frames it.
+    if (this.#manager.isScrollPaused) return;
     const submission = this.#manager.submit({
       key: this.num,
       revision: this.#revision,

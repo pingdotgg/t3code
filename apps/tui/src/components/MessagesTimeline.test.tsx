@@ -270,7 +270,7 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
-  it("Given an inline image, when the timeline scrolls, then it uses a placeholder until scrolling settles", async () => {
+  it("Given an inline image, when the timeline scrolls, then it pauses blank until scrolling settles", async () => {
     const full = {
       ...detail("default"),
       messages: [
@@ -335,9 +335,8 @@ describe("MessagesTimeline body", () => {
 
     expect(manager.isScrollPaused).toBe(true);
     expect(writes.at(-1)).toContain("a=d");
-    // The web-parity preview size (~206px ≈ a dozen columns) is narrower than
-    // the full placeholder caption, which clips to the image width.
-    expect(t.captureCharFrame()).toContain("[ image");
+    // The paused image leaves its bubble-framed area blank — no caption.
+    expect(t.captureCharFrame()).not.toContain("[ image");
 
     manager.resumeAfterScroll();
     await t.renderOnce();

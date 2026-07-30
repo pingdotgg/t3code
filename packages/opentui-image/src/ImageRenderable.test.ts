@@ -147,7 +147,7 @@ describe("ImageRenderable", () => {
     t.renderer.destroy();
   });
 
-  it("renders an in-buffer placeholder while Kitty placements are paused for scrolling", async () => {
+  it("leaves the image area blank while Kitty placements are paused for scrolling", async () => {
     const t = await createTestRenderer({ width: 40, height: 8 });
     const writes: string[] = [];
     const manager = installKittyImageExtension(t.renderer, {
@@ -168,7 +168,7 @@ describe("ImageRenderable", () => {
     manager.pauseForScroll(10_000);
     await t.renderOnce();
 
-    expect(t.captureCharFrame()).toContain("[ image paused while scrolling ]");
+    expect(t.captureCharFrame()).not.toContain("[ image");
     expect(writes.at(-1)).toContain("a=d");
     manager.resumeAfterScroll();
     t.renderer.destroy();
