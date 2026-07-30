@@ -887,7 +887,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           ).pipe(Scope.provide(scope));
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
+            assert.deepStrictEqual(yield* registry.getProviders, [
+              { ...initialProvider, supportedInteractionModes: ["default", "ask", "plan"] },
+            ]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
           }).pipe(Effect.provide(runtimeServices));
         }),
@@ -1069,6 +1071,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(cachedProvider, {
               ...refreshedProvider,
               models: [...initialProvider.models],
+              supportedInteractionModes: ["default", "ask", "plan"],
             });
           }).pipe(Effect.provide(runtimeServices));
         }),
@@ -1281,10 +1284,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
 
-            assert.deepStrictEqual(yield* registry.getProviders, [cachedProvider]);
-            assert.deepStrictEqual(yield* registry.refresh(codexDriver), [cachedProvider]);
+            const expectedCachedProvider = {
+              ...cachedProvider,
+              supportedInteractionModes: ["default", "ask", "plan"],
+            };
+            assert.deepStrictEqual(yield* registry.getProviders, [expectedCachedProvider]);
+            assert.deepStrictEqual(yield* registry.refresh(codexDriver), [expectedCachedProvider]);
             assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
-              cachedProvider,
+              expectedCachedProvider,
             ]);
           }).pipe(Effect.provide(runtimeServices));
         }),
@@ -1388,7 +1395,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            assert.deepStrictEqual(yield* registry.getProviders, [codexProvider]);
+            assert.deepStrictEqual(yield* registry.getProviders, [
+              { ...codexProvider, supportedInteractionModes: ["default", "ask", "plan"] },
+            ]);
 
             yield* Ref.set(failNextList, true);
             yield* PubSub.publish(changes, undefined);

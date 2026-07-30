@@ -225,6 +225,59 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  /**
+   * Resolve the real (symlink-free) path of a target, verify it stays inside
+   * the workspace root, and re-check protected-path blocking on the resolved
+   * location. Mirrors the readFile containment checks for destructive
+   * operations (rename/delete) where a symlink escape has a large blast radius.
+   */
+  const resolveRealTargetWithinRoot = Effect.fn("WorkspaceFileSystem.resolveRealTargetWithinRoot")(
+    function* (
+      input: { readonly cwd: string; readonly relativePath: string },
+      absolutePath: string,
+    ) {
+      const realWorkspaceRoot = yield* Effect.tryPromise({
+        try: () => NodeFSP.realpath(input.cwd),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: absolutePath,
+            operationPath: input.cwd,
+            operation: "realpath-workspace-root",
+            cause,
+          }),
+      });
+      const realTargetPath = yield* Effect.tryPromise({
+        try: () => NodeFSP.realpath(absolutePath),
+        catch: (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: absolutePath,
+            operationPath: absolutePath,
+            operation: "realpath-target",
+            cause,
+          }),
+      });
+      const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
+      if (
+        relativeRealPath.startsWith(`..${path.sep}`) ||
+        relativeRealPath === ".." ||
+        path.isAbsolute(relativeRealPath)
+      ) {
+        return yield* new WorkspaceFilePathEscapeError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedWorkspaceRoot: realWorkspaceRoot,
+          resolvedPath: realTargetPath,
+        });
+      }
+      yield* failIfTargetBlocked(input, realTargetPath);
+      return realTargetPath;
+    },
+  );
+
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
@@ -572,6 +625,29 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
+    const mapRenameGuardError = (cause: { readonly message: string }) =>
+      new ProjectRenameEntryError({
+        cwd: input.cwd,
+        fromRelativePath: source.relativePath,
+        toRelativePath: destination.relativePath,
+        message: cause.message,
+        cause,
+      });
+    // Symlink-escape re-check + protected re-check on the resolved source.
+    const realSourcePath = yield* resolveRealTargetWithinRoot(
+      { cwd: input.cwd, relativePath: input.fromRelativePath },
+      source.absolutePath,
+    ).pipe(Effect.mapError(mapRenameGuardError));
+    // Renaming an unprotected ancestor must not relocate protected locations
+    // nested underneath it.
+    if (sourceStat.isDirectory() && (yield* protectedPaths.hasBlockedDescendants(realSourcePath))) {
+      return yield* new ProjectRenameEntryError({
+        cwd: input.cwd,
+        fromRelativePath: source.relativePath,
+        toRelativePath: destination.relativePath,
+        message: `Workspace path contains protected locations and cannot be renamed: ${source.relativePath}`,
+      });
+    }
     yield* Effect.tryPromise({
       try: async () => {
         try {
@@ -664,6 +740,27 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         relativePath: target.relativePath,
         message: `Workspace directory delete requires recursive=true: ${target.relativePath}`,
+      });
+    }
+    // Symlink-escape re-check + protected re-check on the resolved location.
+    const realTargetPath = yield* resolveRealTargetWithinRoot(input, target.absolutePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectDeleteEntryError({
+            cwd: input.cwd,
+            relativePath: target.relativePath,
+            message: cause.message,
+            cause,
+          }),
+      ),
+    );
+    // Recursive delete of an unprotected ancestor must not wipe protected
+    // locations nested underneath it (e.g. a workspace above the home dir).
+    if (stat.isDirectory() && (yield* protectedPaths.hasBlockedDescendants(realTargetPath))) {
+      return yield* new ProjectDeleteEntryError({
+        cwd: input.cwd,
+        relativePath: target.relativePath,
+        message: `Workspace path contains protected locations and cannot be deleted: ${target.relativePath}`,
       });
     }
     yield* Effect.tryPromise({

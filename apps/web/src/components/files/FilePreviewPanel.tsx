@@ -297,7 +297,9 @@ interface EditableFileSurfaceProps {
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
-  version: ProjectFileVersion;
+  // Absent when the environment server predates versioned project files
+  // (genuine upstream servers) — saves then degrade to unversioned writes.
+  version: ProjectFileVersion | undefined;
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
   wordWrap: boolean;

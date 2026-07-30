@@ -1120,12 +1120,23 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               if (normalizedCommand.type === "thread.turn.start") {
-                yield* threadExtensions.setInteractionMode(
-                  normalizedCommand.threadId,
-                  normalizedCommand.askOverride === true
-                    ? "ask"
-                    : normalizedCommand.interactionMode,
-                );
+                // Best-effort fork bookkeeping: interaction-mode extension state must never
+                // fail an upstream turn dispatch (official mobile clients don't know about it).
+                yield* threadExtensions
+                  .setInteractionMode(
+                    normalizedCommand.threadId,
+                    normalizedCommand.askOverride === true
+                      ? "ask"
+                      : normalizedCommand.interactionMode,
+                  )
+                  .pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("failed to record thread interaction mode extension", {
+                        threadId: normalizedCommand.threadId,
+                        cause,
+                      }),
+                    ),
+                  );
               }
               const shouldStopSessionAfterArchive =
                 normalizedCommand.type === "thread.archive"

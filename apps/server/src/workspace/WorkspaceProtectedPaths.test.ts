@@ -67,6 +67,35 @@ describe("WorkspaceProtectedPaths", () => {
     ),
   );
 
+  it.effect("hasBlockedDescendants honors the safety toggle", () =>
+    withDarwinPlatform(
+      Effect.gen(function* () {
+        const guard = yield* WorkspaceProtectedPaths.makeProtectedPathsGuard;
+        expect(yield* guard.hasBlockedDescendants(homeDir)).toBe(true);
+        expect(yield* guard.hasBlockedDescendants(NodePath.join(homeDir, "code"))).toBe(false);
+      }).pipe(
+        Effect.provide(
+          serverSettingsLayerTest({ safety: { protectedFilesystemPathsEnabled: true } }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("hasBlockedDescendants is false when the safety setting is disabled", () =>
+    withDarwinPlatform(
+      Effect.gen(function* () {
+        const guard = yield* WorkspaceProtectedPaths.makeProtectedPathsGuard;
+        expect(yield* guard.hasBlockedDescendants(homeDir)).toBe(false);
+        // The raw descendant check ignores the toggle.
+        expect(guard.hasProtectedDescendants(homeDir)).toBe(true);
+      }).pipe(
+        Effect.provide(
+          serverSettingsLayerTest({ safety: { protectedFilesystemPathsEnabled: false } }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("exposes protected directory names only for the home directory", () =>
     withDarwinPlatform(
       Effect.gen(function* () {

@@ -436,7 +436,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
-    expect(markup).toContain("rounded-2xl bg-accent p-3");
+    // Forma user-message card styling.
+    expect(markup).toContain("rounded-xl border border-border/80 bg-secondary/95 px-4 py-3");
   });
 
   it("renders inline terminal labels with the composer chip UI", () => {

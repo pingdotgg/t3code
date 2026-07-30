@@ -463,5 +463,51 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         );
       }),
     );
+
+    it.effect("rejects deleting through a directory symlink that escapes the root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        yield* writeTextFile(outsideDir, "keep/precious.txt", "outside\n");
+        yield* fileSystem.symlink(path.join(outsideDir, "keep"), path.join(cwd, "linked-dir"));
+
+        const error = yield* workspaceFileSystem
+          .deleteEntry({ cwd, relativePath: "linked-dir", recursive: true })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("ProjectDeleteEntryError");
+
+        // The outside target must be untouched.
+        expect(
+          yield* fileSystem
+            .readFileString(path.join(outsideDir, "keep", "precious.txt"))
+            .pipe(Effect.orDie),
+        ).toBe("outside\n");
+      }),
+    );
+
+    it.effect("rejects renaming through a directory symlink that escapes the root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        yield* writeTextFile(outsideDir, "keep/precious.txt", "outside\n");
+        yield* fileSystem.symlink(path.join(outsideDir, "keep"), path.join(cwd, "linked-dir"));
+
+        const error = yield* workspaceFileSystem
+          .renameEntry({ cwd, fromRelativePath: "linked-dir", toRelativePath: "renamed-dir" })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("ProjectRenameEntryError");
+        expect(
+          yield* fileSystem
+            .readFileString(path.join(outsideDir, "keep", "precious.txt"))
+            .pipe(Effect.orDie),
+        ).toBe("outside\n");
+      }),
+    );
   });
 });

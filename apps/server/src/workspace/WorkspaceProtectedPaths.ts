@@ -43,6 +43,12 @@ export interface ProtectedPathsGuard {
    */
   readonly hasProtectedDescendants: (cwd: string) => boolean;
   /**
+   * `true` when the setting is enabled and at least one protected location is
+   * equal to or inside `absolutePath`. Guards recursive/destructive operations
+   * (delete, rename) on ancestors of protected locations.
+   */
+  readonly hasBlockedDescendants: (absolutePath: string) => Effect.Effect<boolean>;
+  /**
    * Protected child directory names when `parentPath` is the home directory
    * (used to hide entries such as `Documents` from home-directory listings).
    */
@@ -82,6 +88,9 @@ export const makeProtectedPathsGuard: Effect.Effect<ProtectedPathsGuard> = Effec
     );
   };
 
+  const hasBlockedDescendants = (absolutePath: string): Effect.Effect<boolean> =>
+    Effect.map(isEnabled, (enabled) => enabled && hasProtectedDescendants(absolutePath));
+
   const protectedDirectoryNames = (
     parentPath: string,
     resolvePath: (value: string) => string,
@@ -97,6 +106,7 @@ export const makeProtectedPathsGuard: Effect.Effect<ProtectedPathsGuard> = Effec
     isPathProtected,
     isPathBlocked,
     hasProtectedDescendants,
+    hasBlockedDescendants,
     protectedDirectoryNames,
   };
 });

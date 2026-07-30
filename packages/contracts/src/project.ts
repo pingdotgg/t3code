@@ -140,7 +140,9 @@ export const ProjectReadFileResult = Schema.Struct({
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
-  version: ProjectFileVersion,
+  // Optional so fork clients can decode responses from genuine upstream servers
+  // (feature-gated by the versionedProjectFiles capability).
+  version: Schema.optional(ProjectFileVersion),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -211,7 +213,8 @@ export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
-  version: ProjectFileVersion,
+  // Optional so fork clients can decode responses from genuine upstream servers.
+  version: Schema.optional(ProjectFileVersion),
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
