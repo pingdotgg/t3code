@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 it.effect("backfills the V2 event driver from payload before the legacy provider column", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 36 });
+    yield* runMigrations({ toMigrationInclusive: 37 });
 
     yield* sql`
       INSERT INTO orchestration_v2_events (
@@ -37,7 +37,7 @@ it.effect("backfills the V2 event driver from payload before the legacy provider
         )
     `;
 
-    yield* runMigrations({ toMigrationInclusive: 37 });
+    yield* runMigrations({ toMigrationInclusive: 38 });
 
     const events = yield* sql<{
       readonly event_id: string;
