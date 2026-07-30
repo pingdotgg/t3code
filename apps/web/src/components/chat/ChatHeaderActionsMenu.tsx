@@ -6,6 +6,7 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
+import { FileDownIcon, FolderClosedIcon, GitForkIcon, HashIcon, Trash2Icon } from "lucide-react";
 import type { RefObject } from "react";
 import { IconEllipsis as EllipsisIcon } from "symbols-react";
 
@@ -14,6 +15,7 @@ import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 
 import GitActionsControl, { type GitActionsControlHandle } from "../GitActionsControl";
 import { HeaderIconActionButton } from "../HeaderIconActionButton";
+import { MessageCopyIcon, SidebarArchiveIcon } from "../icons/custom";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -185,27 +187,46 @@ export function ChatHeaderActionsMenu({
           <MenuGroup>
             <MenuGroupLabel>Thread</MenuGroupLabel>
             {routeKind === "server" && onExportThread ? (
-              <MenuItem onClick={onExportThread}>Export as Markdown</MenuItem>
+              <MenuItem onClick={onExportThread}>
+                <FileDownIcon />
+                Export as Markdown
+              </MenuItem>
             ) : null}
             {routeKind === "server" && onCopyThreadAsMarkdown ? (
-              <MenuItem onClick={onCopyThreadAsMarkdown}>Copy thread as Markdown</MenuItem>
+              <MenuItem onClick={onCopyThreadAsMarkdown}>
+                <MessageCopyIcon />
+                Copy thread as Markdown
+              </MenuItem>
             ) : null}
             {workspaceRoot && onCopyWorkspacePath ? (
-              <MenuItem onClick={onCopyWorkspacePath}>Copy workspace path</MenuItem>
+              <MenuItem onClick={onCopyWorkspacePath}>
+                <FolderClosedIcon />
+                Copy workspace path
+              </MenuItem>
             ) : null}
             {routeKind === "server" && onCopyThreadId ? (
-              <MenuItem onClick={onCopyThreadId}>Copy thread ID</MenuItem>
+              <MenuItem onClick={onCopyThreadId}>
+                <HashIcon />
+                Copy thread ID
+              </MenuItem>
             ) : null}
             {routeKind === "server" && onForkThread ? (
-              <MenuItem onClick={onForkThread}>Fork thread</MenuItem>
+              <MenuItem onClick={onForkThread}>
+                <GitForkIcon />
+                Fork thread
+              </MenuItem>
             ) : null}
             {routeKind === "server" && onArchiveThread ? (
-              <MenuItem onClick={onArchiveThread}>Archive</MenuItem>
+              <MenuItem onClick={onArchiveThread}>
+                <SidebarArchiveIcon />
+                Archive
+              </MenuItem>
             ) : null}
             {routeKind === "server" && onDeleteThread ? (
               <>
                 <MenuSeparator />
                 <MenuItem variant="destructive" onClick={onDeleteThread}>
+                  <Trash2Icon />
                   Delete
                 </MenuItem>
               </>
