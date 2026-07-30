@@ -932,9 +932,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   the hidden state out of flow lets the project label reclaim
                   space without either state overlapping it. */}
               <span className="group/v2-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
+                {/* pointer-events-none: while hovered this label is absolute
+                    + opacity-0, which paints it ABOVE the in-flow settle/snooze
+                    buttons; without it the invisible label eats their clicks. */}
                 <span
                   className={cn(
-                    "self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
+                    "pointer-events-none self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
                     snoozeMenuOpen && "absolute right-0 opacity-0",
                   )}
                 >
