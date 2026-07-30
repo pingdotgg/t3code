@@ -2,11 +2,13 @@ import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
+import * as ServerConfig from "../../../config.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -16,9 +18,16 @@ import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+
+const TestServerConfigLive = Layer.unwrap(
+  Effect.map(HostProcessWorkingDirectory, (cwd) =>
+    ServerConfig.layerTest(cwd, { prefix: "t3-worktree-registration-" }),
+  ),
+);
 
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
@@ -29,6 +38,8 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
+  TestServerConfigLive,
+  Layer.mock(WorkspacePaths.WorkspacePaths)({}),
 );
 
 it.effect("production mcp layer lists worktree tools over http", () =>

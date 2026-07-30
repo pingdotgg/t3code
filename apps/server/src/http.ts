@@ -270,12 +270,21 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
+    const assetHeaders = {
+      "Cache-Control": "private, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+    };
+    if (asset.kind === "open-file") {
+      return HttpServerResponse.raw(asset.stream, {
+        status: 200,
+        contentLength: asset.size,
+        contentType: Mime.getType(asset.path) ?? "application/octet-stream",
+        headers: assetHeaders,
+      });
+    }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
-      headers: {
-        "Cache-Control": "private, max-age=3600",
-        "X-Content-Type-Options": "nosniff",
-      },
+      headers: assetHeaders,
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );

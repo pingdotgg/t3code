@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, TurnItemId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -14,6 +14,14 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+
+async function readStream(stream: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
 
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
@@ -101,6 +109,83 @@ describe("AssetAccess", () => {
         },
       });
       expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues exact-file workspace URLs for video files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-video-",
+      });
+      const videoPath = path.join(root, "recordings", "demo.webm");
+      yield* fileSystem.makeDirectory(path.join(root, "recordings"), { recursive: true });
+      yield* fileSystem.writeFileString(videoPath, "webm-bytes");
+      const canonicalVideoPath = yield* fileSystem.realPath(videoPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: "recordings/demo.webm",
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      expect(yield* resolveAsset(token, "demo.webm")).toEqual({
+        kind: "file",
+        path: canonicalVideoPath,
+      });
+      expect(yield* resolveAsset(token, "other.webm")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues browser artifact URLs by media file name only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const artifactPath = path.join(
+        config.stateDir,
+        "browser-artifacts",
+        "browser-recording-demo.webm",
+      );
+      yield* fileSystem.writeFileString(artifactPath, "webm-bytes");
+      const canonicalArtifactPath = yield* fileSystem.realPath(artifactPath);
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "browser-artifact", fileName: "browser-recording-demo.webm" },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      const resolved = yield* resolveAsset(token, "browser-recording-demo.webm");
+      expect(resolved).toMatchObject({
+        kind: "open-file",
+        path: canonicalArtifactPath,
+      });
+      if (!resolved || resolved.kind !== "open-file") return;
+      expect(
+        Buffer.from(yield* Effect.promise(() => readStream(resolved.stream))).toString("utf8"),
+      ).toBe("webm-bytes");
+
+      const traversal = yield* issueAssetUrl({
+        resource: { _tag: "browser-artifact", fileName: "../state.sqlite" },
+      }).pipe(Effect.flip);
+      expect(traversal._tag).toBe("AssetBrowserArtifactNotFoundError");
+
+      const symlinkPath = path.join(
+        config.stateDir,
+        "browser-artifacts",
+        "browser-recording-link.webm",
+      );
+      yield* fileSystem.symlink(artifactPath, symlinkPath);
+      const symlink = yield* issueAssetUrl({
+        resource: { _tag: "browser-artifact", fileName: "browser-recording-link.webm" },
+      }).pipe(Effect.flip);
+      expect(symlink._tag).toBe("AssetBrowserArtifactNotFoundError");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -203,6 +288,105 @@ describe("AssetAccess", () => {
         kind: "file",
         path: attachmentPath,
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues exact capabilities for relative V2 image turn items inside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-image-view-",
+      });
+      const imageDirectory = path.join(workspaceRoot, "images");
+      yield* fileSystem.makeDirectory(imageDirectory);
+      const imagePath = path.join(imageDirectory, "tool-output.png");
+      yield* fileSystem.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
+      const canonicalImagePath = yield* fileSystem.realPath(imagePath);
+      const resource = {
+        _tag: "thread-image" as const,
+        threadId: ThreadId.make("thread-1"),
+        turnItemId: TurnItemId.make("image-item-1"),
+      };
+
+      const result = yield* issueAssetUrl({
+        resource,
+        threadImagePath: path.join("images", "tool-output.png"),
+        workspaceRoot,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      const resolved = yield* resolveAsset(token, "tool-output.png");
+      expect(resolved).toMatchObject({
+        kind: "open-file",
+        path: canonicalImagePath,
+      });
+      if (!resolved || resolved.kind !== "open-file") return;
+      expect(Array.from(yield* Effect.promise(() => readStream(resolved.stream)))).toEqual([
+        137, 80, 78, 71,
+      ]);
+      expect(yield* resolveAsset(token, "other.png")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects non-image and post-issuance symlink targets for V2 image items", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-image-view-invalid-",
+      });
+      const outsideRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-image-view-outside-",
+      });
+      const textPath = path.join(workspaceRoot, "notes.txt");
+      yield* fileSystem.writeFileString(textPath, "not an image");
+      const resource = {
+        _tag: "thread-image" as const,
+        threadId: ThreadId.make("thread-1"),
+        turnItemId: TurnItemId.make("image-item-1"),
+      };
+
+      const unsupportedError = yield* issueAssetUrl({
+        resource,
+        threadImagePath: textPath,
+        workspaceRoot,
+      }).pipe(Effect.flip);
+      expect(unsupportedError._tag).toBe("AssetThreadImageNotFoundError");
+
+      const outsidePath = path.join(outsideRoot, "outside.png");
+      yield* fileSystem.writeFile(outsidePath, new Uint8Array([137, 80, 78, 71]));
+      const outsideError = yield* issueAssetUrl({
+        resource,
+        threadImagePath: outsidePath,
+        workspaceRoot,
+      }).pipe(Effect.flip);
+      expect(outsideError._tag).toBe("AssetThreadImageNotFoundError");
+
+      const outsideLinkPath = path.join(workspaceRoot, "outside-link.png");
+      yield* fileSystem.symlink(outsidePath, outsideLinkPath);
+      const outsideLinkError = yield* issueAssetUrl({
+        resource,
+        threadImagePath: outsideLinkPath,
+        workspaceRoot,
+      }).pipe(Effect.flip);
+      expect(outsideLinkError._tag).toBe("AssetThreadImageNotFoundError");
+
+      const imagePath = path.join(workspaceRoot, "tool-output.png");
+      const otherPath = path.join(workspaceRoot, "other.png");
+      yield* fileSystem.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
+      yield* fileSystem.writeFile(otherPath, new Uint8Array([1, 2, 3]));
+      const result = yield* issueAssetUrl({
+        resource,
+        threadImagePath: imagePath,
+        workspaceRoot,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      yield* fileSystem.remove(imagePath);
+      yield* fileSystem.symlink(otherPath, imagePath);
+      expect(yield* resolveAsset(token, "tool-output.png")).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 

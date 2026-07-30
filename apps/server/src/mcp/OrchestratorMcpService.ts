@@ -566,6 +566,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return jsonText({ pattern: item.pattern, results: item.results });
     case "web_search":
       return jsonText({ patterns: item.patterns, results: item.results });
+    case "image_view":
+      return item.path;
     case "approval_request":
       return item.prompt ?? item.requestKind;
     case "checkpoint":

@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export interface NativeMarkdownTextStyle {
   readonly color: string;
   readonly strongColor: string;
@@ -36,6 +38,14 @@ export interface SelectableMarkdownSkill {
   readonly displayName?: string | null;
 }
 
+export interface MarkdownImagePresentation {
+  readonly href: string;
+  readonly alt?: string;
+  readonly title?: string;
+}
+
+export type MarkdownImageRenderer = (image: MarkdownImagePresentation) => ReactNode;
+
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
@@ -43,6 +53,7 @@ export interface SelectableMarkdownTextProps {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
+  readonly renderImage?: MarkdownImageRenderer;
   readonly marginTop?: number;
   readonly marginBottom?: number;
 }

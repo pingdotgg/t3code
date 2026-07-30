@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -11,6 +11,15 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
+  /** A file in the server's browser-artifacts directory (screenshots/recordings). */
+  Schema.TaggedStruct("browser-artifact", {
+    fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
+  /** An image path owned by a durable orchestration V2 turn item. */
+  Schema.TaggedStruct("thread-image", {
+    threadId: ThreadId,
+    turnItemId: TurnItemId,
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -83,7 +92,7 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedErrorClass<Ass
   },
 ) {
   override get message(): string {
-    return "Only browser documents and images can be previewed.";
+    return "Only browser documents, images, and videos can be previewed.";
   }
 }
 
@@ -130,6 +139,40 @@ export class AssetAttachmentNotFoundError extends Schema.TaggedErrorClass<AssetA
 ) {
   override get message(): string {
     return "Attachment was not found.";
+  }
+}
+
+export class AssetBrowserArtifactNotFoundError extends Schema.TaggedErrorClass<AssetBrowserArtifactNotFoundError>()(
+  "AssetBrowserArtifactNotFoundError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "Browser artifact was not found.";
+  }
+}
+
+export class AssetThreadImageNotFoundError extends Schema.TaggedErrorClass<AssetThreadImageNotFoundError>()(
+  "AssetThreadImageNotFoundError",
+  {
+    resource: AssetResource,
+  },
+) {
+  override get message(): string {
+    return "Image view asset was not found.";
+  }
+}
+
+export class AssetThreadImageResolutionError extends Schema.TaggedErrorClass<AssetThreadImageResolutionError>()(
+  "AssetThreadImageResolutionError",
+  {
+    resource: AssetResource,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to resolve image view asset.";
   }
 }
 
@@ -190,6 +233,9 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceResolutionError,
   AssetAttachmentNotFoundError,
+  AssetBrowserArtifactNotFoundError,
+  AssetThreadImageNotFoundError,
+  AssetThreadImageResolutionError,
   AssetProjectFaviconResolutionError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,

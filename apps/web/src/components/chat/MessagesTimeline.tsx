@@ -12,6 +12,7 @@ import {
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { markdownMediaFileName } from "@t3tools/shared/filePreview";
 import {
   createContext,
   Fragment,
@@ -106,6 +107,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
@@ -918,6 +920,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // they sit closer to the work that follows them.
         (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
           row.kind === "work" ||
+          row.kind === "image-output" ||
           row.kind === "event" ||
           row.kind === "attempt-fold"
           ? "pb-2"
@@ -930,6 +933,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
+      {row.kind === "image-output" ? <ImageOutputTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
@@ -942,6 +946,54 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+
+function ImageOutputTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "image-output" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const assetUrl = useAssetUrlState(ctx.activeThreadEnvironmentId, {
+    _tag: "thread-image",
+    threadId: row.projectedItem.item.threadId,
+    turnItemId: row.projectedItem.item.id,
+  });
+  const name = markdownMediaFileName(row.imagePath) || "Image";
+
+  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+    return (
+      <div className="flex h-32 w-48 items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-3 text-center text-xs text-muted-foreground">
+        Image no longer available
+      </div>
+    );
+  }
+  if (assetUrl._tag === "Loading") {
+    return (
+      <div
+        className="h-32 w-48 animate-pulse rounded-xl border border-border/50 bg-muted/35"
+        aria-label={`Loading ${name}`}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="block max-w-full cursor-zoom-in overflow-hidden rounded-xl border border-border/70 bg-muted/20 p-1 transition-colors hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+      aria-label={`Preview ${name}`}
+      onClick={() =>
+        ctx.onImageExpand({
+          images: [{ src: assetUrl.url, name }],
+          index: 0,
+        })
+      }
+    >
+      <img
+        src={assetUrl.url}
+        alt={name}
+        className="block max-h-72 max-w-full rounded-md object-contain"
+        onError={() => setFailedUrl(assetUrl.url)}
+      />
+    </button>
+  );
+}
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);

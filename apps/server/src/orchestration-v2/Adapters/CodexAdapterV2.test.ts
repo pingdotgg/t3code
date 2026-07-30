@@ -57,6 +57,7 @@ import {
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
   projectCodexDynamicToolItem,
+  projectCodexImageItem,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
@@ -606,6 +607,47 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
       output: [{ type: "inputText", text: "inspection failed" }],
       status: "failed",
     });
+  });
+});
+
+describe("CodexAdapterV2 image projection", () => {
+  it("projects image-view paths into durable media items", () => {
+    assert.deepEqual(
+      projectCodexImageItem({
+        id: "image-view-1",
+        type: "imageView",
+        path: "/workspace/evidence.png",
+      }),
+      {
+        source: "image_view",
+        path: "/workspace/evidence.png",
+      },
+    );
+  });
+
+  it("projects saved image-generation paths and ignores unsaved results", () => {
+    assert.deepEqual(
+      projectCodexImageItem({
+        id: "image-generation-1",
+        type: "imageGeneration",
+        result: "generated",
+        savedPath: "/workspace/generated.png",
+        status: "completed",
+      }),
+      {
+        source: "image_generation",
+        path: "/workspace/generated.png",
+      },
+    );
+    assert.isNull(
+      projectCodexImageItem({
+        id: "image-generation-2",
+        type: "imageGeneration",
+        result: "generated",
+        savedPath: null,
+        status: "completed",
+      }),
+    );
   });
 });
 

@@ -150,6 +150,13 @@ export type MessagesTimelineRow =
       groupedEntries: WorkLogEntry[];
     }
   | {
+      kind: "image-output";
+      id: string;
+      createdAt: string;
+      imagePath: string;
+      projectedItem: OrchestrationV2ProjectedTurnItem;
+    }
+  | {
       kind: "turn-fold";
       id: string;
       createdAt: string;
@@ -590,6 +597,17 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "image-output") {
+      nextRows.push({
+        kind: "image-output",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        imagePath: timelineEntry.imagePath,
+        projectedItem: timelineEntry.projectedItem,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "proposed-plan") {
       nextRows.push({
         kind: "proposed-plan",
@@ -703,6 +721,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "event":
       return a.projectedItem === (b as typeof a).projectedItem;
+
+    case "image-output": {
+      const bi = b as typeof a;
+      return a.imagePath === bi.imagePath && a.projectedItem === bi.projectedItem;
+    }
 
     case "work":
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);

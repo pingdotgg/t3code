@@ -11,6 +11,7 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { markdownMediaFileName } from "@t3tools/shared/filePreview";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
@@ -68,6 +69,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
+  type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
@@ -112,8 +114,9 @@ import {
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
+import { MarkdownMedia } from "./MarkdownMedia";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
-import { useAssetUrl } from "../../state/assets";
+import { useAssetUrl, useAssetUrlState } from "../../state/assets";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -347,6 +350,7 @@ interface MarkdownStyleSet {
   readonly theme: PartialMarkdownTheme;
   readonly styles: NodeStyleOverrides;
   readonly renderers: CustomRenderers;
+  readonly renderImage: MarkdownImageRenderer;
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
@@ -549,7 +553,12 @@ function useReviewCommentColors(): ReviewCommentColors {
   );
 }
 
-function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
+function useMarkdownStyles(
+  onLinkPress: (href: string) => void,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  onPressImage: (uri: string) => void,
+): MarkdownStyleSets {
   const colorScheme = useColorScheme();
   const { appearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(
@@ -678,7 +687,14 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       copyTintColor: ColorValue,
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
+      renderImage: MarkdownImageRenderer,
     ): CustomRenderers => ({
+      image: ({ url = "", alt, title }) =>
+        renderImage({
+          href: url,
+          ...(alt ? { alt } : {}),
+          ...(title ? { title } : {}),
+        }),
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
@@ -792,6 +808,22 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         />
       ),
     });
+    const createMediaRenderer =
+      (backgroundColor: ColorValue, mutedColor: ColorValue): MarkdownImageRenderer =>
+      ({ href, alt, title }) => (
+        <MarkdownMedia
+          environmentId={environmentId}
+          threadId={threadId}
+          src={href}
+          {...(alt ? { alt } : {})}
+          {...(title ? { title } : {})}
+          backgroundColor={backgroundColor}
+          mutedColor={mutedColor}
+          onPressImage={onPressImage}
+        />
+      );
+    const userMediaRenderer = createMediaRenderer(markdownUserCodeBg, markdownUserBodyColor);
+    const assistantMediaRenderer = createMediaRenderer(markdownCodeBg, iconSubtleColor);
 
     const userTheme: PartialMarkdownTheme = {
       ...baseTheme,
@@ -850,7 +882,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           userBubbleForegroundMuted,
           true,
           false,
+          userMediaRenderer,
         ),
+        renderImage: userMediaRenderer,
         nativeTextStyle: {
           color: markdownUserBodyColor,
           strongColor: markdownUserBodyColor,
@@ -883,7 +917,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           iconSubtleColor,
           false,
           true,
+          assistantMediaRenderer,
         ),
+        renderImage: assistantMediaRenderer,
         nativeTextStyle: {
           color: markdownBodyColor,
           strongColor: markdownStrongColor,
@@ -909,15 +945,73 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
   }, [
     boldFontFamily,
     colors,
+    environmentId,
     iconSubtleColor,
     inlineSkillForeground,
     markdownFontSizes,
     nativeMarkdownTypography,
     onLinkPress,
+    onPressImage,
     regularFontFamily,
     themeMode,
+    threadId,
     userBubbleForegroundMuted,
   ]);
+}
+
+function ThreadImageOutput(props: {
+  readonly entry: Extract<ThreadFeedEntry, { readonly type: "image-output" }>;
+  readonly environmentId: EnvironmentId;
+  readonly mutedColor: ColorValue;
+  readonly onPressImage: (uri: string) => void;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const assetUrl = useAssetUrlState(props.environmentId, {
+    _tag: "thread-image",
+    threadId: props.entry.projectedItem.item.threadId,
+    turnItemId: props.entry.projectedItem.item.id,
+  });
+  const name = markdownMediaFileName(props.entry.imagePath) || "Image";
+
+  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+    return (
+      <View className="mb-4 h-32 items-center justify-center rounded-xl border border-border px-4">
+        <Text className="text-center text-xs" style={{ color: props.mutedColor }}>
+          Image no longer available
+        </Text>
+      </View>
+    );
+  }
+  if (assetUrl._tag === "Loading") {
+    return (
+      <View className="mb-4 h-40 items-center justify-center rounded-xl bg-black/5 dark:bg-white/5">
+        <ActivityIndicator color={props.mutedColor} />
+      </View>
+    );
+  }
+
+  return (
+    <View className="mb-4 gap-1.5 px-1">
+      <Pressable
+        accessibilityLabel={`Expand image ${name}`}
+        accessibilityRole="button"
+        className="w-full overflow-hidden rounded-xl bg-black/5 active:opacity-80 dark:bg-white/5"
+        onPress={() => props.onPressImage(assetUrl.url)}
+        style={{ aspectRatio: 4 / 3 }}
+      >
+        <Image
+          accessibilityLabel={name}
+          onError={() => setFailedUrl(assetUrl.url)}
+          resizeMode="contain"
+          source={{ uri: assetUrl.url }}
+          style={{ height: "100%", width: "100%" }}
+        />
+      </Pressable>
+      <Text className="px-1 text-xs" numberOfLines={1} style={{ color: props.mutedColor }}>
+        {name}
+      </Text>
+    </View>
+  );
 }
 
 function renderFeedEntry(
@@ -980,6 +1074,17 @@ function renderFeedEntry(
         iconSubtleColor={iconSubtleColor}
         onlyToolActivities={entry.onlyToolActivities}
         onToggle={() => props.onToggleWorkGroup(entry.groupId)}
+      />
+    );
+  }
+
+  if (entry.type === "image-output") {
+    return (
+      <ThreadImageOutput
+        entry={entry}
+        environmentId={props.environmentId}
+        mutedColor={iconSubtleColor}
+        onPressImage={props.onPressImage}
       />
     );
   }
@@ -1104,6 +1209,7 @@ function renderFeedEntry(
               skills={props.skills}
               textStyle={styles.nativeTextStyle}
               onLinkPress={props.onMarkdownLinkPress}
+              renderImage={styles.renderImage}
             />
           ) : (
             <Markdown
@@ -1212,6 +1318,7 @@ function UserMessageContent(props: {
           textStyle={props.markdownStyles.nativeTextStyle}
           preserveSoftBreaks
           onLinkPress={props.onLinkPress}
+          renderImage={props.markdownStyles.renderImage}
         />
       );
     }
@@ -1253,6 +1360,7 @@ function UserMessageContent(props: {
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
             onLinkPress={props.onLinkPress}
+            renderImage={props.markdownStyles.renderImage}
           />
         ) : (
           <Markdown
@@ -1492,6 +1600,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     uri: string;
     headers?: Record<string, string>;
   } | null>(null);
+  const onPressImage = useCallback((uri: string, headers?: Record<string, string>) => {
+    setExpandedImage({ uri, headers });
+  }, []);
   const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
   const contentHorizontalPadding = deriveCenteredContentHorizontalPadding({
     viewportWidth,
@@ -1546,7 +1657,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [props.environmentId, props.threadId, props.workspaceRoot, navigation],
   );
-  const markdownStyles = useMarkdownStyles(onMarkdownLinkPress);
+  const markdownStyles = useMarkdownStyles(
+    onMarkdownLinkPress,
+    props.environmentId,
+    props.threadId,
+    onPressImage,
+  );
   const reviewCommentColors = useReviewCommentColors();
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Keep row-local interaction props in extraData so disclosures and copy feedback repaint.
@@ -1824,10 +1940,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [suspendEndScrollMaintenanceForDisclosure],
   );
-
-  const onPressImage = useCallback((uri: string, headers?: Record<string, string>) => {
-    setExpandedImage({ uri, headers });
-  }, []);
 
   // Rows whose height is known before they ever render. Without this, every
   // row above the viewport is assumed to be estimatedItemSize tall, and

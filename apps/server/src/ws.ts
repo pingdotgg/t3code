@@ -48,6 +48,8 @@ import {
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  AssetThreadImageNotFoundError,
+  AssetThreadImageResolutionError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   ChatAttachmentId,
@@ -101,6 +103,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { resolveThreadImagePath } from "./assets/ThreadImagePath.ts";
 import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -1564,6 +1567,45 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              if (input.resource._tag === "thread-image") {
+                const resource = input.resource;
+                const projection = yield* threadManagement
+                  .getThreadProjection(resource.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetThreadImageResolutionError({
+                          resource,
+                          cause,
+                        }),
+                    ),
+                  );
+                const threadImagePath = resolveThreadImagePath(projection, resource.turnItemId);
+                if (threadImagePath === null) {
+                  return yield* new AssetThreadImageNotFoundError({
+                    resource,
+                  });
+                }
+                const project = yield* projectService.getById(projection.thread.projectId).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetThreadImageResolutionError({
+                        resource,
+                        cause,
+                      }),
+                  ),
+                );
+                if (Option.isNone(project)) {
+                  return yield* new AssetThreadImageNotFoundError({
+                    resource,
+                  });
+                }
+                return yield* issueAssetUrl({
+                  resource,
+                  threadImagePath,
+                  workspaceRoot: projection.thread.worktreePath ?? project.value.workspaceRoot,
+                });
+              }
               if (input.resource._tag !== "workspace-file") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }

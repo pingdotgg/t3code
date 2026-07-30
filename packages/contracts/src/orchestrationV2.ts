@@ -880,6 +880,12 @@ export const OrchestrationV2TurnItem = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("image_view"),
+    source: Schema.Literals(["image_view", "image_generation"]),
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("approval_request"),
     requestId: RuntimeRequestId,
     requestKind: ProviderRequestKind,
@@ -1531,6 +1537,12 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("web_search"),
     patterns: Schema.optional(Schema.Array(Schema.String)),
     results: Schema.optional(Schema.Array(OrchestrationV2WebSearchResult)),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("image_view"),
+    source: Schema.Literals(["image_view", "image_generation"]),
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

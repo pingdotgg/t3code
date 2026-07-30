@@ -38,6 +38,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { MarkdownMedia } from "./chat/MarkdownMedia";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -140,10 +141,12 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
 }
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), "video"],
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    video: ["src", "controls", "muted", "loop", "playsInline", "poster", "preload"],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -166,8 +169,36 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
+interface HastNodeLike {
+  readonly type: string;
+  readonly tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNodeLike[];
+}
+
+const WINDOWS_DRIVE_SRC_PATTERN = /^[A-Za-z]:[\\/]/;
+
+function rehypeEscapeWindowsDriveMediaSrc() {
+  const escapeNode = (node: HastNodeLike): void => {
+    if (
+      node.type === "element" &&
+      (node.tagName === "img" || node.tagName === "video") &&
+      node.properties &&
+      typeof node.properties.src === "string" &&
+      WINDOWS_DRIVE_SRC_PATTERN.test(node.properties.src)
+    ) {
+      node.properties.src = `/${node.properties.src}`;
+    }
+    for (const child of node.children ?? []) {
+      escapeNode(child);
+    }
+  };
+  return escapeNode;
+}
+
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
+  rehypeEscapeWindowsDriveMediaSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -1540,6 +1571,24 @@ function ChatMarkdown({
           <code {...props} className={className}>
             {children}
           </code>
+        );
+      },
+      img({ node: _node, src, alt }) {
+        return (
+          <MarkdownMedia
+            src={typeof src === "string" ? src : undefined}
+            alt={alt}
+            threadRef={threadRef}
+          />
+        );
+      },
+      video({ node: _node, src }) {
+        return (
+          <MarkdownMedia
+            src={typeof src === "string" ? src : undefined}
+            threadRef={threadRef}
+            kind="video"
+          />
         );
       },
       table({ node: _node, ...props }) {

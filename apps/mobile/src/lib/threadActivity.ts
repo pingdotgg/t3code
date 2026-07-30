@@ -87,6 +87,13 @@ type RawThreadFeedEntry =
       readonly message: ThreadFeedMessage;
     }
   | {
+      readonly type: "image-output";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly imagePath: string;
+      readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+    }
+  | {
       readonly type: "activity";
       readonly id: string;
       readonly createdAt: string;
@@ -96,6 +103,7 @@ type RawThreadFeedEntry =
 
 export type ThreadFeedEntry =
   | Extract<RawThreadFeedEntry, { type: "message" }>
+  | Extract<RawThreadFeedEntry, { type: "image-output" }>
   | {
       readonly type: "working";
       readonly id: string;
@@ -172,6 +180,7 @@ function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
     item.type === "file_change" ||
     item.type === "file_search" ||
     item.type === "web_search" ||
+    item.type === "image_view" ||
     item.type === "approval_request" ||
     item.type === "user_input_request" ||
     item.type === "dynamic_tool" ||
@@ -202,6 +211,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "eye";
     case "web_search":
       return "globe";
+    case "image_view":
+      return "eye";
     case "approval_request":
     case "user_input_request":
     case "user_message":
@@ -252,6 +263,8 @@ function itemSummary(
       return "Searched files";
     case "web_search":
       return "Searched the web";
+    case "image_view":
+      return "Image";
     case "approval_request":
       return "Approval requested";
     case "user_input_request":
@@ -299,6 +312,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
       return item.pattern ?? null;
     case "web_search":
       return item.patterns?.join(", ") ?? null;
+    case "image_view":
+      return item.path;
     case "approval_request":
       return item.prompt ?? null;
     case "user_input_request":
@@ -712,6 +727,18 @@ export function buildThreadFeed(
         },
       });
       continue;
+    }
+    if (item.type === "image_view") {
+      if (item.status === "completed") {
+        entries.push({
+          type: "image-output",
+          id: item.id,
+          createdAt,
+          imagePath: item.path,
+          projectedItem: row,
+        });
+        continue;
+      }
     }
     const activity = toFeedActivity(row);
     entries.push({

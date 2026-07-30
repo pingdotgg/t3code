@@ -909,6 +909,25 @@ type CodexWebSearchItem = {
     | null;
 };
 
+export type CodexImageItem = Extract<
+  | CodexSchema.V2ItemStartedNotification__ThreadItem
+  | CodexSchema.V2ItemCompletedNotification__ThreadItem,
+  { readonly type: "imageView" | "imageGeneration" }
+>;
+
+export function projectCodexImageItem(
+  item: CodexImageItem,
+): { readonly source: "image_view" | "image_generation"; readonly path: string } | null {
+  const rawPath = item.type === "imageView" ? item.path : item.savedPath;
+  if (typeof rawPath !== "string") return null;
+  const path = rawPath.trim();
+  if (path.length === 0) return null;
+  return {
+    source: item.type === "imageView" ? "image_view" : "image_generation",
+    path,
+  };
+}
+
 export type CodexDynamicToolItem = Extract<
   | CodexSchema.V2ItemStartedNotification__ThreadItem
   | CodexSchema.V2ItemCompletedNotification__ThreadItem,
@@ -2698,6 +2717,66 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             return { node, turnItem };
           });
 
+        const buildImageArtifacts = (
+          context: ActiveCodexTurnContext,
+          item: CodexImageItem,
+          completed: boolean,
+        ) =>
+          Effect.gen(function* () {
+            const projection = projectCodexImageItem(item);
+            if (projection === null) return null;
+
+            const updatedAt = yield* DateTime.now;
+            const completedAt = completed ? updatedAt : null;
+            const status = completed ? "completed" : "running";
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const ordinal = yield* resolveItemOrdinal(context, item.id);
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "tool_call",
+              status,
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              parentItemId: null,
+              ordinal,
+              status,
+              title: null,
+              startedAt: context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "image_view",
+              source: projection.source,
+              path: projection.path,
+            };
+            return { node, turnItem };
+          });
+
         const buildDynamicToolArtifacts = (
           context: ActiveCodexTurnContext,
           item: CodexDynamicToolItem,
@@ -3333,6 +3412,22 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return;
             }
 
+            if (payload.item.type === "imageView" || payload.item.type === "imageGeneration") {
+              const artifacts = yield* buildImageArtifacts(context, payload.item, false);
+              if (artifacts === null) return;
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+              return;
+            }
+
             if (payload.item.type !== "webSearch") {
               return;
             }
@@ -3444,6 +3539,22 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
             if (payload.item.type === "mcpToolCall" || payload.item.type === "dynamicToolCall") {
               const artifacts = yield* buildDynamicToolArtifacts(context, payload.item);
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+              return;
+            }
+
+            if (payload.item.type === "imageView" || payload.item.type === "imageGeneration") {
+              const artifacts = yield* buildImageArtifacts(context, payload.item, true);
+              if (artifacts === null) return;
               yield* emitProviderEvent({
                 type: "node.updated",
                 driver: CODEX_PROVIDER,

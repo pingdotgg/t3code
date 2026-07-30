@@ -363,6 +363,72 @@ describe("V2 session presentation", () => {
     }
   });
 
+  it("projects completed V2 image items as image output entries", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const threadId = ThreadId.make("thread-image-output");
+    const item = {
+      id: TurnItemId.make("item-image-output"),
+      threadId,
+      runId: RunId.make("run-image-output"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "image_view" as const,
+      source: "image_generation" as const,
+      path: "/tmp/generated-preview.png",
+    } satisfies OrchestrationV2TurnItem;
+    const projectedItem = {
+      position: 0,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+      item,
+    };
+
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [projectedItem],
+        optimisticMessages: [],
+      }),
+    ).toEqual([
+      {
+        id: item.id,
+        kind: "image-output",
+        createdAt: "2026-06-20T00:00:00.000Z",
+        imagePath: item.path,
+        projectedItem,
+      },
+    ]);
+
+    const failedEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          ...projectedItem,
+          item: { ...item, status: "failed" },
+        },
+      ],
+      optimisticMessages: [],
+    });
+    expect(failedEntries).toHaveLength(1);
+    expect(failedEntries[0]).toMatchObject({
+      id: item.id,
+      kind: "work",
+      entry: {
+        itemType: "image_view",
+        tone: "error",
+        toolLifecycleStatus: "failed",
+      },
+    });
+  });
+
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {
     const projection = makeThreadProjectionFixture();
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
