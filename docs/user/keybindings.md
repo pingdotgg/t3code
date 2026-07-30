@@ -67,6 +67,11 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `editor.openFavorite`: open current project/worktree in the last-used editor
+- `git.init`: initialize Git through the visible source-control action
+- `git.commit`: open the current commit action
+- `git.push`: push through the current source-control action
+- `git.publish`: publish the current branch
+- `git.pr`: open or create the current provider change request
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
 
 ### Key Syntax

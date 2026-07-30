@@ -35,7 +35,11 @@ import {
   type ProjectFileFailure,
   type ProjectFileOperation,
   ProjectListEntriesError,
+  ProjectCreateDirectoryError,
+  ProjectDeleteEntryError,
+  ProjectFileVersionConflictError,
   ProjectReadFileError,
+  ProjectRenameEntryError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   RelayClientInstallFailedError,
@@ -47,6 +51,7 @@ import {
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
+  ThreadExtensionError,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
@@ -83,6 +88,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as ComponentPreviewManager from "./componentPreview/Services/ComponentPreviewManager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -93,6 +99,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import { ProjectAgentInventory } from "./project/Services/ProjectAgentInventory.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -100,6 +107,7 @@ import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import { ThreadExtensionService } from "./threadExtensions/ThreadExtensionService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -117,6 +125,10 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isProjectFileVersionConflictError = Schema.is(ProjectFileVersionConflictError);
+const isProjectCreateDirectoryError = Schema.is(ProjectCreateDirectoryError);
+const isProjectRenameEntryError = Schema.is(ProjectRenameEntryError);
+const isProjectDeleteEntryError = Schema.is(ProjectDeleteEntryError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -362,6 +374,7 @@ const makeWsRpcLayer = (
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const threadExtensions = yield* ThreadExtensionService;
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
@@ -370,6 +383,7 @@ const makeWsRpcLayer = (
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
+      const componentPreviewManager = yield* ComponentPreviewManager.ComponentPreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
@@ -380,6 +394,7 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const projectAgentInventory = yield* ProjectAgentInventory;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -1024,11 +1039,94 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [WS_METHODS.threadExtensionsGet]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.threadExtensionsGet,
+            threadExtensions.getState(input.threadId),
+          ),
+        [WS_METHODS.threadExtensionsSetInteractionMode]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.threadExtensionsSetInteractionMode,
+            threadExtensions.setInteractionMode(input.threadId, input.mode),
+          ),
+        [WS_METHODS.threadExtensionsEnqueueTurn]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.threadExtensionsEnqueueTurn,
+            Effect.gen(function* () {
+              const normalized = yield* normalizeDispatchCommand({
+                type: "thread.turn.start",
+                commandId: CommandId.make(`extension:enqueue:${yield* crypto.randomUUIDv4}`),
+                threadId: input.threadId,
+                message: {
+                  messageId: input.message.messageId,
+                  role: "user",
+                  text: input.message.text,
+                  attachments: input.message.attachments,
+                },
+                ...(input.modelSelection === undefined
+                  ? {}
+                  : { modelSelection: input.modelSelection }),
+                ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+                runtimeMode: input.runtimeMode,
+                interactionMode: input.interactionMode,
+                ...(input.askOverride === undefined ? {} : { askOverride: input.askOverride }),
+                ...(input.sourceProposedPlan === undefined
+                  ? {}
+                  : { sourceProposedPlan: input.sourceProposedPlan }),
+                createdAt: input.createdAt,
+              });
+              if (normalized.type !== "thread.turn.start") {
+                return yield* new ThreadExtensionError({
+                  threadId: input.threadId,
+                  message: "The queued turn could not be normalized.",
+                });
+              }
+              return yield* threadExtensions.enqueueNormalizedTurn(input, normalized);
+            }).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(ThreadExtensionError)(cause)
+                  ? cause
+                  : new ThreadExtensionError({
+                      threadId: input.threadId,
+                      message: "Failed to enqueue the turn.",
+                      cause,
+                    }),
+              ),
+            ),
+          ),
+        [WS_METHODS.threadExtensionsRemoveQueuedTurn]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.threadExtensionsRemoveQueuedTurn,
+            threadExtensions.removeQueuedTurn(input.threadId, input.messageId),
+          ),
+        [WS_METHODS.threadExtensionsResumeQueue]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.threadExtensionsResumeQueue,
+            threadExtensions.resumeQueue(input.threadId),
+          ),
+        [WS_METHODS.threadExtensionsFork]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.threadExtensionsFork,
+            threadExtensions.forkThread(input.sourceThreadId),
+          ),
+        [WS_METHODS.subscribeThreadExtensions]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.subscribeThreadExtensions,
+            Effect.succeed(threadExtensions.subscribe(input.threadId)),
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
+              if (normalizedCommand.type === "thread.turn.start") {
+                yield* threadExtensions.setInteractionMode(
+                  normalizedCommand.threadId,
+                  normalizedCommand.askOverride === true
+                    ? "ask"
+                    : normalizedCommand.interactionMode,
+                );
+              }
               const shouldStopSessionAfterArchive =
                 normalizedCommand.type === "thread.archive"
                   ? yield* projectionSnapshotQuery
@@ -1604,15 +1702,78 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
             workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectWriteFileError({
-                    cwd: input.cwd,
-                    relativePath: input.relativePath,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
+              Effect.mapError((cause) => {
+                if (isProjectFileVersionConflictError(cause)) {
+                  return cause;
+                }
+                return new ProjectWriteFileError({
+                  cwd: input.cwd,
+                  relativePath: input.relativePath,
+                  ...projectFileFailureContext(cause),
+                  cause,
+                });
+              }),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsLocalAgentInventory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsLocalAgentInventory,
+            projectAgentInventory.getInventory(input.cwd),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsCreateDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsCreateDirectory,
+            workspaceFileSystem.createDirectory(input).pipe(
+              Effect.mapError((cause) =>
+                isProjectCreateDirectoryError(cause)
+                  ? cause
+                  : new ProjectCreateDirectoryError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      message: `Failed to create workspace directory '${input.relativePath}'.`,
+                      cause,
+                    }),
               ),
+              Effect.tap(() => projectAgentInventory.invalidate(input.cwd)),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsRenameEntry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsRenameEntry,
+            workspaceFileSystem.renameEntry(input).pipe(
+              Effect.mapError((cause) =>
+                isProjectRenameEntryError(cause)
+                  ? cause
+                  : new ProjectRenameEntryError({
+                      cwd: input.cwd,
+                      fromRelativePath: input.fromRelativePath,
+                      toRelativePath: input.toRelativePath,
+                      message: `Failed to rename workspace entry '${input.fromRelativePath}'.`,
+                      cause,
+                    }),
+              ),
+              Effect.tap(() => projectAgentInventory.invalidate(input.cwd)),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDeleteEntry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDeleteEntry,
+            workspaceFileSystem.deleteEntry(input).pipe(
+              Effect.mapError((cause) =>
+                isProjectDeleteEntryError(cause)
+                  ? cause
+                  : new ProjectDeleteEntryError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      message: `Failed to delete workspace entry '${input.relativePath}'.`,
+                      cause,
+                    }),
+              ),
+              Effect.tap(() => projectAgentInventory.invalidate(input.cwd)),
             ),
             { "rpc.aggregate": "workspace" },
           ),
@@ -1897,6 +2058,66 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.componentPreviewInspectProject]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewInspectProject,
+            componentPreviewManager.inspectProject(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewSearchComponents]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewSearchComponents,
+            componentPreviewManager.searchComponents(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewResolveTarget]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewResolveTarget,
+            componentPreviewManager.resolveTarget(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewPrepareBootstrapThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewPrepareBootstrapThread,
+            componentPreviewManager.prepareBootstrapThread(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewPrepareGenerationTurn]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewPrepareGenerationTurn,
+            componentPreviewManager.prepareGenerationTurn(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewPrepareRepairTurn]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewPrepareRepairTurn,
+            componentPreviewManager.prepareRepairTurn(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewEnsureRuntime]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewEnsureRuntime,
+            componentPreviewManager.ensureRuntime(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewIssueAccessToken]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewIssueAccessToken,
+            componentPreviewManager.issueAccessToken(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.componentPreviewStopRuntime]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.componentPreviewStopRuntime,
+            componentPreviewManager.stopRuntime(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
+        [WS_METHODS.subscribeComponentPreviewProject]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeComponentPreviewProject,
+            componentPreviewManager.streamProject(input),
+            { "rpc.aggregate": "component-preview" },
+          ),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeDiscoveredLocalServers,

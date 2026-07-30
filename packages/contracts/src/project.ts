@@ -1,9 +1,14 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ServerLocalAgentInventory } from "./localAgents.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_ENTRY_PATH_MAX_LENGTH = 512;
+
+export const ProjectFileVersion = TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+export type ProjectFileVersion = typeof ProjectFileVersion.Type;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -36,6 +41,14 @@ export const ProjectListEntriesResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
+
+export const ProjectLocalAgentInventoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type ProjectLocalAgentInventoryInput = typeof ProjectLocalAgentInventoryInput.Type;
+
+export const ProjectLocalAgentInventoryResult = ServerLocalAgentInventory;
+export type ProjectLocalAgentInventoryResult = typeof ProjectLocalAgentInventoryResult.Type;
 
 export const ProjectEntriesFailure = Schema.Literals([
   "workspace_root_not_found",
@@ -127,6 +140,7 @@ export const ProjectReadFileResult = Schema.Struct({
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
+  version: ProjectFileVersion,
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -191,13 +205,57 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  expectedVersion: Schema.optional(Schema.NullOr(ProjectFileVersion)),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
+  version: ProjectFileVersion,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+const ProjectMutationRelativePath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROJECT_ENTRY_PATH_MAX_LENGTH),
+);
+
+export const ProjectCreateDirectoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: ProjectMutationRelativePath,
+});
+export type ProjectCreateDirectoryInput = typeof ProjectCreateDirectoryInput.Type;
+
+export const ProjectCreateDirectoryResult = Schema.Struct({
+  relativePath: ProjectMutationRelativePath,
+});
+export type ProjectCreateDirectoryResult = typeof ProjectCreateDirectoryResult.Type;
+
+export const ProjectRenameEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  fromRelativePath: ProjectMutationRelativePath,
+  toRelativePath: ProjectMutationRelativePath,
+});
+export type ProjectRenameEntryInput = typeof ProjectRenameEntryInput.Type;
+
+export const ProjectRenameEntryResult = Schema.Struct({
+  fromRelativePath: ProjectMutationRelativePath,
+  toRelativePath: ProjectMutationRelativePath,
+  kind: ProjectEntryKind,
+});
+export type ProjectRenameEntryResult = typeof ProjectRenameEntryResult.Type;
+
+export const ProjectDeleteEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: ProjectMutationRelativePath,
+  recursive: Schema.Boolean,
+});
+export type ProjectDeleteEntryInput = typeof ProjectDeleteEntryInput.Type;
+
+export const ProjectDeleteEntryResult = Schema.Struct({
+  relativePath: ProjectMutationRelativePath,
+  kind: ProjectEntryKind,
+});
+export type ProjectDeleteEntryResult = typeof ProjectDeleteEntryResult.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteFileError>()(
   "ProjectWriteFileError",
@@ -223,3 +281,49 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     } as any);
   }
 }
+
+export class ProjectFileVersionConflictError extends Schema.TaggedErrorClass<ProjectFileVersionConflictError>()(
+  "ProjectFileVersionConflictError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativePath: TrimmedNonEmptyString,
+    expectedVersion: Schema.NullOr(ProjectFileVersion),
+    actualVersion: Schema.NullOr(ProjectFileVersion),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class ProjectLocalAgentInventoryError extends Schema.TaggedErrorClass<ProjectLocalAgentInventoryError>()(
+  "ProjectLocalAgentInventoryError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+const ProjectMutationErrorFields = {
+  cwd: Schema.optional(TrimmedNonEmptyString),
+  relativePath: Schema.optional(TrimmedNonEmptyString),
+  message: TrimmedNonEmptyString,
+  cause: Schema.optional(Schema.Defect()),
+};
+
+export class ProjectCreateDirectoryError extends Schema.TaggedErrorClass<ProjectCreateDirectoryError>()(
+  "ProjectCreateDirectoryError",
+  ProjectMutationErrorFields,
+) {}
+
+export class ProjectRenameEntryError extends Schema.TaggedErrorClass<ProjectRenameEntryError>()(
+  "ProjectRenameEntryError",
+  {
+    ...ProjectMutationErrorFields,
+    fromRelativePath: Schema.optional(TrimmedNonEmptyString),
+    toRelativePath: Schema.optional(TrimmedNonEmptyString),
+  },
+) {}
+
+export class ProjectDeleteEntryError extends Schema.TaggedErrorClass<ProjectDeleteEntryError>()(
+  "ProjectDeleteEntryError",
+  ProjectMutationErrorFields,
+) {}

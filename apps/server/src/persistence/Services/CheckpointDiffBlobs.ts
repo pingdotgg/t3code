@@ -26,6 +26,13 @@ export const DeleteCheckpointDiffBlobsByThreadIdInput = Schema.Struct({
 export type DeleteCheckpointDiffBlobsByThreadIdInput =
   typeof DeleteCheckpointDiffBlobsByThreadIdInput.Type;
 
+export const DeleteCheckpointDiffBlobsAfterTurnInput = Schema.Struct({
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+});
+export type DeleteCheckpointDiffBlobsAfterTurnInput =
+  typeof DeleteCheckpointDiffBlobsAfterTurnInput.Type;
+
 export interface CheckpointDiffBlobRepositoryShape {
   readonly upsert: (row: CheckpointDiffBlob) => Effect.Effect<void, ProjectionRepositoryError>;
   readonly get: (
@@ -33,6 +40,9 @@ export interface CheckpointDiffBlobRepositoryShape {
   ) => Effect.Effect<Option.Option<CheckpointDiffBlob>, ProjectionRepositoryError>;
   readonly deleteByThreadId: (
     input: DeleteCheckpointDiffBlobsByThreadIdInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+  readonly deleteAfterTurn: (
+    input: DeleteCheckpointDiffBlobsAfterTurnInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 

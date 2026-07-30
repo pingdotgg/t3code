@@ -7,6 +7,7 @@ import {
   CheckpointDiffBlob,
   CheckpointDiffBlobRepository,
   type CheckpointDiffBlobRepositoryShape,
+  DeleteCheckpointDiffBlobsAfterTurnInput,
   DeleteCheckpointDiffBlobsByThreadIdInput,
   GetCheckpointDiffBlobInput,
 } from "../Services/CheckpointDiffBlobs.ts";
@@ -66,6 +67,16 @@ const makeCheckpointDiffBlobRepository = Effect.gen(function* () {
       `,
   });
 
+  const deleteCheckpointDiffBlobsAfterTurn = SqlSchema.void({
+    Request: DeleteCheckpointDiffBlobsAfterTurnInput,
+    execute: ({ threadId, turnCount }) =>
+      sql`
+        DELETE FROM checkpoint_diff_blobs
+        WHERE thread_id = ${threadId}
+          AND (from_turn_count >= ${turnCount} OR to_turn_count > ${turnCount})
+      `,
+  });
+
   const upsert: CheckpointDiffBlobRepositoryShape["upsert"] = (row) =>
     upsertCheckpointDiffBlob(row).pipe(
       Effect.mapError(toPersistenceSqlError("CheckpointDiffBlobRepository.upsert:query")),
@@ -81,10 +92,16 @@ const makeCheckpointDiffBlobRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("CheckpointDiffBlobRepository.deleteByThreadId:query")),
     );
 
+  const deleteAfterTurn: CheckpointDiffBlobRepositoryShape["deleteAfterTurn"] = (input) =>
+    deleteCheckpointDiffBlobsAfterTurn(input).pipe(
+      Effect.mapError(toPersistenceSqlError("CheckpointDiffBlobRepository.deleteAfterTurn:query")),
+    );
+
   return {
     upsert,
     get,
     deleteByThreadId,
+    deleteAfterTurn,
   } satisfies CheckpointDiffBlobRepositoryShape;
 });
 

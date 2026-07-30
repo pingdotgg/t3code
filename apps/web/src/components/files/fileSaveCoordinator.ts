@@ -4,7 +4,10 @@ export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
   readonly persist: (contents: string) => Promise<AtomCommandResult<A, E>>;
   readonly onPendingChange: (pending: boolean) => void;
-  readonly onConfirmed: (contents: string) => void;
+  readonly onConfirmed: (contents: string, value: A) => void;
+  readonly onFailed?: (result: Extract<AtomCommandResult<A, E>, { readonly _tag: "Failure" }>) => {
+    readonly pause: boolean;
+  };
 }
 
 export class FileSaveCoordinator<A = unknown, E = unknown> {
@@ -14,6 +17,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private lastChangeAt = 0;
   private saving = false;
   private disposed = false;
+  private paused = false;
 
   constructor(private readonly options: FileSaveCoordinatorOptions<A, E>) {}
 
@@ -22,7 +26,20 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     this.latestRevision += 1;
     this.lastChangeAt = Date.now();
     this.options.onPendingChange(true);
-    this.schedule(this.options.debounceMs);
+    if (!this.paused) this.schedule(this.options.debounceMs);
+  }
+
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    if (this.latestRevision > 0) this.schedule(0);
+  }
+
+  reset(): void {
+    this.clearTimer();
+    this.latestRevision = 0;
+    this.paused = false;
+    this.options.onPendingChange(false);
   }
 
   dispose(): void {
@@ -53,12 +70,14 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     const revision = this.latestRevision;
     const result = await this.options.persist(contents);
     const succeeded = result._tag === "Success";
-    if (succeeded) {
-      this.options.onConfirmed(contents);
+    if (result._tag === "Success") {
+      this.options.onConfirmed(contents, result.value);
+    } else if (result._tag === "Failure") {
+      this.paused = this.options.onFailed?.(result).pause ?? false;
     }
 
     this.saving = false;
-    if (revision === this.latestRevision) {
+    if (revision === this.latestRevision || this.paused) {
       if (succeeded) this.options.onPendingChange(false);
       return;
     }

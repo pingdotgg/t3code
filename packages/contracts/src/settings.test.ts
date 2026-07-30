@@ -67,6 +67,27 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
+describe("ClientSettings app icon", () => {
+  it("defaults to the build-specific icon", () => {
+    expect(decodeClientSettings({}).appIcon).toBe("default");
+  });
+
+  it.each(["forma-arc", "forma-fluted", "forma-foil", "forma-blueprint"] as const)(
+    "accepts %s",
+    (appIcon) => {
+      expect(decodeClientSettings({ appIcon }).appIcon).toBe(appIcon);
+      expect(decodeClientSettingsPatch({ appIcon }).appIcon).toBe(appIcon);
+    },
+  );
+
+  it.each(["forma-prod", "forma-dev", "forma-nightly"] as const)(
+    "normalizes the legacy %s build icon to default",
+    (appIcon) => {
+      expect(decodeClientSettings({ appIcon }).appIcon).toBe("default");
+    },
+  );
+});
+
 describe("ClientSettings sidebar v2", () => {
   it("defaults the beta off with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});

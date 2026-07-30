@@ -330,6 +330,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const rows = useStableRows(rawRows);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const stickyUserMessageIndices = useMemo(
+    () =>
+      rows.flatMap((row, index) =>
+        row.kind === "message" && row.message.role === "user" ? [index] : [],
+      ),
+    [rows],
+  );
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -465,7 +472,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className={cn(
+          "mx-auto w-full min-w-0 max-w-3xl overflow-x-clip",
+          item.kind === "message" &&
+            item.message.role === "user" &&
+            "bg-background/96 py-2 shadow-[0_16px_24px_-22px_color-mix(in_srgb,var(--foreground)_35%,transparent)] backdrop-blur-md",
+        )}
+        data-sticky-user-message={
+          item.kind === "message" && item.message.role === "user" ? "true" : undefined
+        }
+        data-timeline-root="true"
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
@@ -495,6 +513,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             keyExtractor={keyExtractor}
             getItemType={getItemType}
             renderItem={renderItem}
+            stickyHeaderIndices={stickyUserMessageIndices}
+            stickyHeaderConfig={{ offset: 0 }}
             estimatedItemSize={90}
             initialScrollAtEnd
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
@@ -895,8 +915,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
-    <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-accent p-3">
+    <div className="group flex flex-col items-end gap-1 px-0.5">
+      <div
+        className="relative w-full rounded-xl border border-border/80 bg-secondary/95 px-4 py-3 shadow-sm"
+        data-user-message-card="true"
+      >
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
@@ -955,7 +978,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+      <div className="flex w-full items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>

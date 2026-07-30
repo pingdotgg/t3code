@@ -5,7 +5,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import ChatMarkdown from "./ChatMarkdown";
@@ -28,6 +27,11 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+import { SidebarPlanReadyIcon } from "./icons/custom";
+import {
+  ThreadBreadcrumbProjectChipContent,
+  THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
+} from "./ThreadBreadcrumb";
 import { projectEnvironment } from "~/state/projects";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -88,6 +92,7 @@ const PlanSidebar = memo(function PlanSidebar({
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
+  const planHeaderLabel = planTitle ?? label;
 
   const handleCopyPlan = useCallback(() => {
     if (!planMarkdown) return;
@@ -138,22 +143,32 @@ const PlanSidebar = memo(function PlanSidebar({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col bg-card/50",
+        "flex min-h-0 flex-col",
         mode === "sidebar"
-          ? "h-full w-[340px] shrink-0 border-l border-border/70"
-          : "h-full w-full",
+          ? "m-3 w-[420px] shrink-0 self-stretch overflow-hidden rounded-3xl border border-border/70 bg-card shadow-lg shadow-black/5 dark:shadow-black/25"
+          : "h-full w-full bg-card/50",
       )}
     >
       {/* Header */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
         <div className="flex items-center gap-2">
-          <Badge
-            variant="info"
-            size="sm"
-            className="rounded-md px-1.5 py-0 font-semibold tracking-wide uppercase"
+          <span
+            className={cn(
+              THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
+              "h-6 max-w-[15.5rem] text-sm text-violet-600 dark:text-violet-300/90",
+            )}
+            title={planHeaderLabel}
           >
-            {label}
-          </Badge>
+            <ThreadBreadcrumbProjectChipContent
+              icon={
+                <SidebarPlanReadyIcon
+                  aria-hidden
+                  className="size-3 shrink-0 fill-current opacity-70"
+                />
+              }
+              label={planHeaderLabel}
+            />
+          </span>
           {activePlan ? (
             <span className="text-[11px] text-muted-foreground/60 tabular-nums">
               {formatTimestamp(activePlan.createdAt, timestampFormat)}
@@ -173,7 +188,7 @@ const PlanSidebar = memo(function PlanSidebar({
                   />
                 }
               >
-                <EllipsisIcon className="size-3.5" />
+                <EllipsisIcon className="size-3.5 rotate-90" />
               </MenuTrigger>
               <MenuPopup align="end">
                 <MenuItem onClick={handleCopyPlan}>

@@ -25,3 +25,15 @@ export const APP_DISPLAY_NAME =
   injectedDesktopAppBranding?.displayName ??
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
+
+export type BuildDefaultAppIconId = "forma-prod" | "forma-nightly" | "forma-dev";
+
+export function resolveDefaultBuildAppIconId(
+  stageLabel: string = APP_STAGE_LABEL,
+): BuildDefaultAppIconId {
+  if (stageLabel === "Dev") return "forma-dev";
+  if (stageLabel === "Nightly") return "forma-nightly";
+  return "forma-prod";
+}
+
+export const APP_DEFAULT_ICON_ID = resolveDefaultBuildAppIconId();

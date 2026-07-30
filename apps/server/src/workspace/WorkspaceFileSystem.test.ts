@@ -69,6 +69,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: "export const answer = 42;\n",
           byteLength: 26,
           truncated: false,
+          version: "a2098bd92b10bf8b816d24b7556b1ce8c49a879d130489065ef1051c17e042f6",
         });
       }),
     );
@@ -207,7 +208,10 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .readFileString(path.join(cwd, "plans/effect-rpc.md"))
           .pipe(Effect.orDie);
 
-        expect(result).toEqual({ relativePath: "plans/effect-rpc.md" });
+        expect(result).toEqual({
+          relativePath: "plans/effect-rpc.md",
+          version: "c3964bb3b70a957ec9b233c7dd3653f6ba17701ab00facf88ae1393dc6155577",
+        });
         expect(saved).toBe("# Plan\n");
       }),
     );
@@ -262,6 +266,201 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .stat(escapedPath)
           .pipe(Effect.orElseSucceed(() => null));
         expect(escapedStat).toBeNull();
+      }),
+    );
+
+    it.effect("guards writes with a matching version token", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/editor.ts", "export const v = 1;\n");
+
+        const existing = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/editor.ts",
+        });
+        const result = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/editor.ts",
+          contents: "export const v = 2;\n",
+          expectedVersion: existing.version,
+        });
+
+        expect(result).toEqual({
+          relativePath: "src/editor.ts",
+          version: "ed14c3d0ad306e24dd26b814baef3ae6c1becec47adee3abc3b8346aa3640f5e",
+        });
+      }),
+    );
+
+    it.effect("rejects stale version-token writes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/editor.ts", "export const v = 1;\n");
+
+        const existing = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/editor.ts",
+        });
+        yield* writeTextFile(cwd, "src/editor.ts", "export const v = 3;\n");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "src/editor.ts",
+            contents: "export const v = 2;\n",
+            expectedVersion: existing.version,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "ProjectFileVersionConflictError",
+          expectedVersion: existing.version,
+          actualVersion: "05b93dbb8fc304ef407235fcfbb11aa85b50eeabe856fcbd02aca34e195b75d3",
+        });
+      }),
+    );
+
+    it.effect("rejects create-only writes when the file already exists", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/new-file.ts", "export const v = 1;\n");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "src/new-file.ts",
+            contents: "export const v = 2;\n",
+            expectedVersion: null,
+          })
+          .pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "ProjectFileVersionConflictError",
+          expectedVersion: null,
+        });
+      }),
+    );
+  });
+
+  describe("directory and entry mutations", () => {
+    it.effect("creates and renames workspace entries", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+
+        const created = yield* workspaceFileSystem.createDirectory({
+          cwd,
+          relativePath: "src/components",
+        });
+        expect(created).toEqual({ relativePath: "src/components" });
+
+        yield* writeTextFile(cwd, "src/components/a.ts", "export const a = true;\n");
+        const renamed = yield* workspaceFileSystem.renameEntry({
+          cwd,
+          fromRelativePath: "src/components/a.ts",
+          toRelativePath: "src/components/b.ts",
+        });
+        expect(renamed).toEqual({
+          fromRelativePath: "src/components/a.ts",
+          toRelativePath: "src/components/b.ts",
+          kind: "file",
+        });
+        expect(
+          yield* fileSystem
+            .readFileString(path.join(cwd, "src", "components", "b.ts"))
+            .pipe(Effect.orDie),
+        ).toBe("export const a = true;\n");
+      }),
+    );
+
+    it.effect("rejects rename destination conflicts", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/a.ts", "export const a = true;\n");
+        yield* writeTextFile(cwd, "src/b.ts", "export const b = true;\n");
+
+        const error = yield* workspaceFileSystem
+          .renameEntry({
+            cwd,
+            fromRelativePath: "src/a.ts",
+            toRelativePath: "src/b.ts",
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("ProjectRenameEntryError");
+      }),
+    );
+
+    it.effect("deletes files and directories", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/components/button.tsx", "export const Button = true;\n");
+
+        const deletedFile = yield* workspaceFileSystem.deleteEntry({
+          cwd,
+          relativePath: "src/components/button.tsx",
+          recursive: false,
+        });
+        expect(deletedFile).toEqual({
+          relativePath: "src/components/button.tsx",
+          kind: "file",
+        });
+
+        const deletedDirectory = yield* workspaceFileSystem.deleteEntry({
+          cwd,
+          relativePath: "src/components",
+          recursive: true,
+        });
+        expect(deletedDirectory).toEqual({
+          relativePath: "src/components",
+          kind: "directory",
+        });
+        expect(
+          yield* fileSystem
+            .stat(path.join(cwd, "src", "components"))
+            .pipe(Effect.orElseSucceed(() => null)),
+        ).toBeNull();
+      }),
+    );
+
+    it.effect("rejects mutation paths outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const createError = yield* workspaceFileSystem
+          .createDirectory({ cwd, relativePath: "../escape" })
+          .pipe(Effect.flip);
+        expect(createError.message).toContain(
+          "Workspace file path must be relative to the project root",
+        );
+
+        const renameError = yield* workspaceFileSystem
+          .renameEntry({
+            cwd,
+            fromRelativePath: "../escape",
+            toRelativePath: "src/ok",
+          })
+          .pipe(Effect.flip);
+        expect(renameError.message).toContain(
+          "Workspace file path must be relative to the project root",
+        );
+
+        const deleteError = yield* workspaceFileSystem
+          .deleteEntry({ cwd, relativePath: "../escape", recursive: true })
+          .pipe(Effect.flip);
+        expect(deleteError.message).toContain(
+          "Workspace file path must be relative to the project root",
+        );
       }),
     );
   });

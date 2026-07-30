@@ -47,6 +47,13 @@ import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
+// Fork: component preview harness projections.
+import Migration0035 from "./Migrations/035_ProjectionProjectComponentPreviewConfig.ts";
+import Migration0036 from "./Migrations/036_ProjectionProjectComponentPreviewWorkspaceRecords.ts";
+import Migration0037 from "./Migrations/037_ResetProjectComponentPreviewState.ts";
+import Migration0038 from "./Migrations/038_ReconcileLegacyForkMigrationHistory.ts";
+import Migration0039 from "./Migrations/039_ThreadExtensionQueue.ts";
+import Migration0040 from "./Migrations/040_ProjectionThreadsForkLineage.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -93,6 +100,13 @@ export const migrationEntries = [
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
   [34, "ProjectionThreadsSnoozed", Migration0034],
+  // Fork: component preview harness projections.
+  [35, "ProjectionProjectComponentPreviewConfig", Migration0035],
+  [36, "ProjectionProjectComponentPreviewWorkspaceRecords", Migration0036],
+  [37, "ResetProjectComponentPreviewState", Migration0037],
+  [38, "ReconcileLegacyForkMigrationHistory", Migration0038],
+  [39, "ThreadExtensionQueue", Migration0039],
+  [40, "ProjectionThreadsForkLineage", Migration0040],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

@@ -6,6 +6,7 @@ This is a living glossary for Forma. It explains what common terms mean in this 
 
 - [Project and workspace](#project-and-workspace)
 - [Thread timeline](#thread-timeline)
+- [Forma extensions](#forma-extensions)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
@@ -35,6 +36,28 @@ The main durable unit of conversation and workspace history. In [the orchestrati
 #### Turn
 
 A single user-to-assistant work cycle inside a thread. It starts with user input and ends when follow-up work like checkpointing settles. See [the contracts][1], [ProviderRuntimeIngestion.ts][5], and [CheckpointReactor.ts][6].
+
+### Forma extensions
+
+#### Thread extension state
+
+Server-authoritative, Forma-only state associated with a thread. It contains
+the Ask override and persistent turn-queue status, but is intentionally absent
+from the required upstream thread snapshot. Forma web and desktop read it
+through extension RPCs; the official mobile client continues to decode an
+ordinary v0.0.31 thread.
+
+#### Turn queue
+
+A persistent FIFO of prompts waiting for a thread to settle. Promotion happens
+only after provider, checkpoint, diff, and settlement barriers are complete.
+Queue state is not streamed through the standard thread subscription.
+
+#### Component preview
+
+A project component harness, such as Storybook, managed by Forma’s component
+preview runtime. It is separate from Browser Preview: each has its own
+right-panel surface, RPC namespace, lifecycle, and project-scoped state.
 
 #### Activity
 

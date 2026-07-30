@@ -68,12 +68,25 @@ import {
   RelayClientStatusSchema,
 } from "./relayClient.ts";
 import {
+  ProjectCreateDirectoryError,
+  ProjectCreateDirectoryInput,
+  ProjectCreateDirectoryResult,
+  ProjectDeleteEntryError,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
+  ProjectFileVersionConflictError,
   ProjectListEntriesError,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
+  ProjectLocalAgentInventoryError,
+  ProjectLocalAgentInventoryInput,
+  ProjectLocalAgentInventoryResult,
   ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectRenameEntryError,
+  ProjectRenameEntryInput,
+  ProjectRenameEntryResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -109,6 +122,29 @@ import {
   PreviewResizeInput,
   PreviewSessionSnapshot,
 } from "./preview.ts";
+// Fork: component preview harness (Forma feature, distinct from webview preview)
+import {
+  ComponentPreviewEnsureRuntimeInput,
+  ComponentPreviewEnsureRuntimeResult,
+  ComponentPreviewInspectProjectInput,
+  ComponentPreviewIssueAccessTokenInput,
+  ComponentPreviewIssueAccessTokenResult,
+  ComponentPreviewPrepareBootstrapThreadInput,
+  ComponentPreviewPrepareBootstrapThreadResult,
+  ComponentPreviewPrepareGenerationTurnInput,
+  ComponentPreviewPrepareGenerationTurnResult,
+  ComponentPreviewPrepareRepairTurnInput,
+  ComponentPreviewPrepareRepairTurnResult,
+  ComponentPreviewProjectEvent,
+  ComponentPreviewProjectInspectionResult,
+  ComponentPreviewResolveTargetInput,
+  ComponentPreviewResolveTargetResult,
+  ComponentPreviewRpcError,
+  ComponentPreviewSearchComponentsInput,
+  ComponentPreviewSearchComponentsResult,
+  ComponentPreviewStopRuntimeInput,
+  ComponentPreviewSubscribeProjectInput,
+} from "./componentPreview.ts";
 import {
   PreviewAutomationError,
   PreviewAutomationHost,
@@ -155,6 +191,17 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  ThreadExtensionEnqueueTurnInput,
+  ThreadExtensionError,
+  ThreadExtensionGetInput,
+  ThreadExtensionRemoveQueuedTurnInput,
+  ThreadExtensionResumeQueueInput,
+  ThreadExtensionSetInteractionModeInput,
+  ThreadExtensionState,
+  ThreadForkInput,
+  ThreadForkResult,
+} from "./threadExtensions.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -165,6 +212,19 @@ export const WS_METHODS = {
   projectsReadFile: "projects.readFile",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsLocalAgentInventory: "projects.localAgentInventory",
+  projectsCreateDirectory: "projects.createDirectory",
+  projectsRenameEntry: "projects.renameEntry",
+  projectsDeleteEntry: "projects.deleteEntry",
+
+  // Forma thread extensions. These are additive and intentionally separate
+  // from the upstream orchestration snapshot protocol.
+  threadExtensionsGet: "threadExtensions.get",
+  threadExtensionsSetInteractionMode: "threadExtensions.setInteractionMode",
+  threadExtensionsEnqueueTurn: "threadExtensions.enqueueTurn",
+  threadExtensionsRemoveQueuedTurn: "threadExtensions.removeQueuedTurn",
+  threadExtensionsResumeQueue: "threadExtensions.resumeQueue",
+  threadExtensionsFork: "threadExtensions.fork",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -212,6 +272,17 @@ export const WS_METHODS = {
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
 
+  // Fork: component preview harness methods
+  componentPreviewInspectProject: "componentPreview.inspectProject",
+  componentPreviewSearchComponents: "componentPreview.searchComponents",
+  componentPreviewResolveTarget: "componentPreview.resolveTarget",
+  componentPreviewPrepareBootstrapThread: "componentPreview.prepareBootstrapThread",
+  componentPreviewPrepareGenerationTurn: "componentPreview.prepareGenerationTurn",
+  componentPreviewPrepareRepairTurn: "componentPreview.prepareRepairTurn",
+  componentPreviewEnsureRuntime: "componentPreview.ensureRuntime",
+  componentPreviewIssueAccessToken: "componentPreview.issueAccessToken",
+  componentPreviewStopRuntime: "componentPreview.stopRuntime",
+
   // Server meta
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -247,6 +318,9 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
+  // Fork: component preview harness project events
+  subscribeComponentPreviewProject: "subscribeComponentPreviewProject",
+  subscribeThreadExtensions: "subscribeThreadExtensions",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
@@ -439,7 +513,35 @@ export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
-  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ProjectFileVersionConflictError,
+    ProjectWriteFileError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsProjectsLocalAgentInventoryRpc = Rpc.make(WS_METHODS.projectsLocalAgentInventory, {
+  payload: ProjectLocalAgentInventoryInput,
+  success: ProjectLocalAgentInventoryResult,
+  error: Schema.Union([ProjectLocalAgentInventoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsCreateDirectoryRpc = Rpc.make(WS_METHODS.projectsCreateDirectory, {
+  payload: ProjectCreateDirectoryInput,
+  success: ProjectCreateDirectoryResult,
+  error: Schema.Union([ProjectCreateDirectoryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsRenameEntryRpc = Rpc.make(WS_METHODS.projectsRenameEntry, {
+  payload: ProjectRenameEntryInput,
+  success: ProjectRenameEntryResult,
+  error: Schema.Union([ProjectRenameEntryError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsDeleteEntryRpc = Rpc.make(WS_METHODS.projectsDeleteEntry, {
+  payload: ProjectDeleteEntryInput,
+  success: ProjectDeleteEntryResult,
+  error: Schema.Union([ProjectDeleteEntryError, EnvironmentAuthorizationError]),
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -644,6 +746,95 @@ export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewE
   stream: true,
 });
 
+// Fork: component preview harness RPCs. Additive — old clients that never
+// call these methods are unaffected.
+export const WsComponentPreviewInspectProjectRpc = Rpc.make(
+  WS_METHODS.componentPreviewInspectProject,
+  {
+    payload: ComponentPreviewInspectProjectInput,
+    success: ComponentPreviewProjectInspectionResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewSearchComponentsRpc = Rpc.make(
+  WS_METHODS.componentPreviewSearchComponents,
+  {
+    payload: ComponentPreviewSearchComponentsInput,
+    success: ComponentPreviewSearchComponentsResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewResolveTargetRpc = Rpc.make(
+  WS_METHODS.componentPreviewResolveTarget,
+  {
+    payload: ComponentPreviewResolveTargetInput,
+    success: ComponentPreviewResolveTargetResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewPrepareBootstrapThreadRpc = Rpc.make(
+  WS_METHODS.componentPreviewPrepareBootstrapThread,
+  {
+    payload: ComponentPreviewPrepareBootstrapThreadInput,
+    success: ComponentPreviewPrepareBootstrapThreadResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewPrepareGenerationTurnRpc = Rpc.make(
+  WS_METHODS.componentPreviewPrepareGenerationTurn,
+  {
+    payload: ComponentPreviewPrepareGenerationTurnInput,
+    success: ComponentPreviewPrepareGenerationTurnResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewPrepareRepairTurnRpc = Rpc.make(
+  WS_METHODS.componentPreviewPrepareRepairTurn,
+  {
+    payload: ComponentPreviewPrepareRepairTurnInput,
+    success: ComponentPreviewPrepareRepairTurnResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewEnsureRuntimeRpc = Rpc.make(
+  WS_METHODS.componentPreviewEnsureRuntime,
+  {
+    payload: ComponentPreviewEnsureRuntimeInput,
+    success: ComponentPreviewEnsureRuntimeResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewIssueAccessTokenRpc = Rpc.make(
+  WS_METHODS.componentPreviewIssueAccessToken,
+  {
+    payload: ComponentPreviewIssueAccessTokenInput,
+    success: ComponentPreviewIssueAccessTokenResult,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsComponentPreviewStopRuntimeRpc = Rpc.make(WS_METHODS.componentPreviewStopRuntime, {
+  payload: ComponentPreviewStopRuntimeInput,
+  error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsSubscribeComponentPreviewProjectRpc = Rpc.make(
+  WS_METHODS.subscribeComponentPreviewProject,
+  {
+    payload: ComponentPreviewSubscribeProjectInput,
+    success: ComponentPreviewProjectEvent,
+    error: Schema.Union([ComponentPreviewRpcError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
   WS_METHODS.subscribeDiscoveredLocalServers,
   {
@@ -653,6 +844,55 @@ export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
     stream: true,
   },
 );
+
+export const WsThreadExtensionsGetRpc = Rpc.make(WS_METHODS.threadExtensionsGet, {
+  payload: ThreadExtensionGetInput,
+  success: ThreadExtensionState,
+  error: Schema.Union([ThreadExtensionError, EnvironmentAuthorizationError]),
+});
+
+export const WsThreadExtensionsSetInteractionModeRpc = Rpc.make(
+  WS_METHODS.threadExtensionsSetInteractionMode,
+  {
+    payload: ThreadExtensionSetInteractionModeInput,
+    success: ThreadExtensionState,
+    error: Schema.Union([ThreadExtensionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsThreadExtensionsEnqueueTurnRpc = Rpc.make(WS_METHODS.threadExtensionsEnqueueTurn, {
+  payload: ThreadExtensionEnqueueTurnInput,
+  success: ThreadExtensionState,
+  error: Schema.Union([ThreadExtensionError, EnvironmentAuthorizationError]),
+});
+
+export const WsThreadExtensionsRemoveQueuedTurnRpc = Rpc.make(
+  WS_METHODS.threadExtensionsRemoveQueuedTurn,
+  {
+    payload: ThreadExtensionRemoveQueuedTurnInput,
+    success: ThreadExtensionState,
+    error: Schema.Union([ThreadExtensionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsThreadExtensionsResumeQueueRpc = Rpc.make(WS_METHODS.threadExtensionsResumeQueue, {
+  payload: ThreadExtensionResumeQueueInput,
+  success: ThreadExtensionState,
+  error: Schema.Union([ThreadExtensionError, EnvironmentAuthorizationError]),
+});
+
+export const WsThreadExtensionsForkRpc = Rpc.make(WS_METHODS.threadExtensionsFork, {
+  payload: ThreadForkInput,
+  success: ThreadForkResult,
+  error: Schema.Union([ThreadExtensionError, EnvironmentAuthorizationError]),
+});
+
+export const WsSubscribeThreadExtensionsRpc = Rpc.make(WS_METHODS.subscribeThreadExtensions, {
+  payload: ThreadExtensionGetInput,
+  success: ThreadExtensionState,
+  error: Schema.Union([ThreadExtensionError, EnvironmentAuthorizationError]),
+  stream: true,
+});
 
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -782,6 +1022,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsReadFileRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsLocalAgentInventoryRpc,
+  WsProjectsCreateDirectoryRpc,
+  WsProjectsRenameEntryRpc,
+  WsProjectsDeleteEntryRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
@@ -818,7 +1062,24 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
+  WsComponentPreviewInspectProjectRpc,
+  WsComponentPreviewSearchComponentsRpc,
+  WsComponentPreviewResolveTargetRpc,
+  WsComponentPreviewPrepareBootstrapThreadRpc,
+  WsComponentPreviewPrepareGenerationTurnRpc,
+  WsComponentPreviewPrepareRepairTurnRpc,
+  WsComponentPreviewEnsureRuntimeRpc,
+  WsComponentPreviewIssueAccessTokenRpc,
+  WsComponentPreviewStopRuntimeRpc,
+  WsSubscribeComponentPreviewProjectRpc,
   WsSubscribeDiscoveredLocalServersRpc,
+  WsThreadExtensionsGetRpc,
+  WsThreadExtensionsSetInteractionModeRpc,
+  WsThreadExtensionsEnqueueTurnRpc,
+  WsThreadExtensionsRemoveQueuedTurnRpc,
+  WsThreadExtensionsResumeQueueRpc,
+  WsThreadExtensionsForkRpc,
+  WsSubscribeThreadExtensionsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

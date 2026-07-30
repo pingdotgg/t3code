@@ -35,6 +35,7 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import { CheckpointDiffBlobRepository } from "../../persistence/Services/CheckpointDiffBlobs.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -82,6 +83,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const checkpointDiffBlobs = yield* CheckpointDiffBlobRepository;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -256,7 +258,7 @@ const make = Effect.gen(function* () {
     // reflects files created or deleted during this turn.
     yield* workspaceEntries.refresh(input.cwd);
 
-    const files = yield* checkpointStore
+    const diff = yield* checkpointStore
       .diffCheckpoints({
         cwd: input.cwd,
         fromCheckpointRef,
@@ -265,14 +267,6 @@ const make = Effect.gen(function* () {
         ignoreWhitespace: false,
       })
       .pipe(
-        Effect.map((diff) =>
-          parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-            path: file.path,
-            kind: "modified" as const,
-            additions: file.additions,
-            deletions: file.deletions,
-          })),
-        ),
         Effect.tapError((error) =>
           appendCaptureFailureActivity({
             threadId: input.threadId,
@@ -287,9 +281,39 @@ const make = Effect.gen(function* () {
             turnId: input.turnId,
             turnCount: input.turnCount,
             detail: error.message,
-          }).pipe(Effect.as([])),
+          }).pipe(Effect.as(null)),
         ),
       );
+    if (diff !== null) {
+      yield* checkpointDiffBlobs
+        .upsert({
+          threadId: input.threadId,
+          fromTurnCount,
+          toTurnCount: input.turnCount,
+          diff,
+          createdAt: input.createdAt,
+        })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("failed to persist checkpoint diff", {
+              threadId: input.threadId,
+              turnId: input.turnId,
+              fromTurnCount,
+              toTurnCount: input.turnCount,
+              detail: error.message,
+            }),
+          ),
+        );
+    }
+    const files =
+      diff === null
+        ? []
+        : parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
+            path: file.path,
+            kind: "modified" as const,
+            additions: file.additions,
+            deletions: file.deletions,
+          }));
 
     const assistantMessageId =
       input.assistantMessageId ??
@@ -715,6 +739,20 @@ const make = Effect.gen(function* () {
         checkpointRefs: staleCheckpointRefs,
       });
     }
+    yield* checkpointDiffBlobs
+      .deleteAfterTurn({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to remove reverted checkpoint diffs", {
+            threadId: event.payload.threadId,
+            turnCount: event.payload.turnCount,
+            detail: error.message,
+          }),
+        ),
+      );
 
     yield* orchestrationEngine
       .dispatch({

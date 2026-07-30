@@ -4,6 +4,7 @@
 - Architecture
   - [Overview](./architecture/overview.md)
   - [Connection runtime](./architecture/connection-runtime.md)
+  - [Mobile-safe Forma extensions](./architecture/mobile-safe-extensions.md)
   - [Remote environments](./architecture/remote.md)
   - [Server updates](./architecture/server-updates.md)
 - User guides
@@ -11,6 +12,7 @@
   - [Remote access](./user/remote-access.md)
   - [Keeping T3 Code in sync](./user/server-updates.md)
   - [Keybindings](./user/keybindings.md)
+  - [Forma workflows](./user/forma-workflows.md)
 - [T3 Connect](./cloud/t3-connect-clerk.md)
 - [Integrations](./integrations/source-control-providers.md)
 - [Mobile](./mobile/app.md)

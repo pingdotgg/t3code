@@ -76,6 +76,7 @@ const makeAssetsLayer = (png: Option.Option<string>) =>
       png,
     }),
     resolveResourcePath: () => Effect.succeed(Option.none()),
+    resolveAppIconPath: () => Effect.succeed(png),
   } satisfies DesktopAssets.DesktopAssets["Service"]);
 
 const makeEnvironmentLayer = (overrides: TestEnvironmentInput = {}) => {

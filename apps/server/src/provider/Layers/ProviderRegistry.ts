@@ -181,7 +181,16 @@ const correlateSnapshotWithSource = (
       ),
     );
   }
-  return Effect.succeed(snapshot);
+  const supportedInteractionModes =
+    source.driverKind === ProviderDriverKind.make("codex") ||
+    source.driverKind === ProviderDriverKind.make("claude") ||
+    source.driverKind === ProviderDriverKind.make("cursor")
+      ? (["default", "ask", "plan"] as const)
+      : (["default", "plan"] as const);
+  return Effect.succeed({
+    ...snapshot,
+    supportedInteractionModes,
+  });
 };
 
 /**

@@ -12,6 +12,7 @@ import {
   ThreadDeletionReactor,
   type ThreadDeletionReactorShape,
 } from "../Services/ThreadDeletionReactor.ts";
+import { CheckpointDiffBlobRepository } from "../../persistence/Services/CheckpointDiffBlobs.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
 
@@ -40,6 +41,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  const checkpointDiffBlobs = yield* CheckpointDiffBlobRepository;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -55,12 +57,20 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  const deleteCheckpointDiffs = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: checkpointDiffBlobs.deleteByThreadId({ threadId }),
+      message: "thread deletion cleanup skipped checkpoint diff delete",
+      threadId,
+    });
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* deleteCheckpointDiffs(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

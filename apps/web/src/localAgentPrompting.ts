@@ -43,11 +43,20 @@ function parseStandaloneLocalCommandInvocation(
 }
 
 async function readProjectFile(
-  api: EnvironmentApi,
+  input: {
+    readonly api?: EnvironmentApi;
+    readonly readFileContents?: (relativePath: string) => Promise<string>;
+  },
   cwd: string,
   relativePath: string,
 ): Promise<string> {
-  const file = await api.projects.readFile({
+  if (input.readFileContents) {
+    return input.readFileContents(relativePath);
+  }
+  if (!input.api) {
+    throw new Error("Project-local prompt expansion requires a workspace file reader.");
+  }
+  const file = await input.api.projects.readFile({
     cwd,
     relativePath,
   });
@@ -77,7 +86,8 @@ function buildLocalSkillContextBlock(input: {
 }
 
 async function expandLocalCommandPrompt(input: {
-  api: EnvironmentApi;
+  api?: EnvironmentApi;
+  readFileContents?: (relativePath: string) => Promise<string>;
   cwd: string;
   prompt: string;
   inventory: ServerLocalAgentInventory;
@@ -87,7 +97,7 @@ async function expandLocalCommandPrompt(input: {
     return input.prompt;
   }
 
-  const contents = await readProjectFile(input.api, input.cwd, invocation.command.path);
+  const contents = await readProjectFile(input, input.cwd, invocation.command.path);
   const parsed = invocation.command.path.endsWith("/command.json")
     ? parseLocalAgentCommandJsonDocument({
         contents,
@@ -112,7 +122,8 @@ async function expandLocalCommandPrompt(input: {
 }
 
 async function expandLocalSkillPrompt(input: {
-  api: EnvironmentApi;
+  api?: EnvironmentApi;
+  readFileContents?: (relativePath: string) => Promise<string>;
   cwd: string;
   prompt: string;
   inventory: ServerLocalAgentInventory;
@@ -143,7 +154,7 @@ async function expandLocalSkillPrompt(input: {
   const skillDocuments = await Promise.all(
     orderedLocalSkillNames.map(async (skillName) => {
       const skill = localSkillByName.get(skillName)!;
-      const contents = await readProjectFile(input.api, input.cwd, skill.path);
+      const contents = await readProjectFile(input, input.cwd, skill.path);
       const parsed = parseLocalAgentSkillDocument({
         contents,
         defaultName: skill.name,
@@ -167,7 +178,8 @@ async function expandLocalSkillPrompt(input: {
 }
 
 export async function expandProjectLocalAgentsPrompt(input: {
-  api: EnvironmentApi;
+  api?: EnvironmentApi;
+  readFileContents?: (relativePath: string) => Promise<string>;
   cwd: string;
   prompt: string;
   inventory: ServerLocalAgentInventory;

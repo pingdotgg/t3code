@@ -142,6 +142,12 @@ export const make = Effect.gen(function* () {
       connectionProbe: true,
       threadSettlement: true,
       threadSnooze: true,
+      componentPreview: true,
+      customAppIcons: true,
+      projectLocalAgents: true,
+      versionedProjectFiles: true,
+      projectEntryMutations: true,
+      threadExtensions: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
     },
   };

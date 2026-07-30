@@ -32,6 +32,7 @@ import {
 import type { CheckpointServiceError } from "./Errors.ts";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import { CheckpointDiffBlobRepository } from "../persistence/Services/CheckpointDiffBlobs.ts";
 
 /** Service tag for checkpoint diff queries. */
 export class CheckpointDiffQuery extends Context.Service<
@@ -78,6 +79,7 @@ function buildTurnDiffResult(
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const checkpointDiffBlobs = yield* CheckpointDiffBlobRepository;
 
   const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -164,15 +166,36 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const diff = yield* checkpointStore
-        .diffCheckpoints({
-          cwd: workspaceCwd,
-          fromCheckpointRef,
-          toCheckpointRef,
-          fallbackFromToHead: false,
-          ignoreWhitespace,
-        })
-        .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+      const persistedDiff =
+        ignoreWhitespace === false
+          ? yield* checkpointDiffBlobs
+              .get({
+                threadId: input.threadId,
+                fromTurnCount: input.fromTurnCount,
+                toTurnCount: input.toTurnCount,
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("failed to read persisted checkpoint diff", {
+                    threadId: input.threadId,
+                    fromTurnCount: input.fromTurnCount,
+                    toTurnCount: input.toTurnCount,
+                    detail: error.message,
+                  }).pipe(Effect.as(Option.none())),
+                ),
+              )
+          : Option.none();
+      const diff = Option.isSome(persistedDiff)
+        ? persistedDiff.value.diff
+        : yield* checkpointStore
+            .diffCheckpoints({
+              cwd: workspaceCwd,
+              fromCheckpointRef,
+              toCheckpointRef,
+              fallbackFromToHead: false,
+              ignoreWhitespace,
+            })
+            .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {
@@ -254,15 +277,27 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const diff = yield* checkpointStore
-      .diffCheckpoints({
-        cwd: workspaceCwd,
-        fromCheckpointRef: checkpointRefForThreadTurn(input.threadId, 0),
-        toCheckpointRef: threadContext.value.toCheckpointRef as CheckpointRef,
-        fallbackFromToHead: false,
-        ignoreWhitespace,
-      })
-      .pipe(Effect.withSpan("checkpoint.fullThread.diffCheckpoints"));
+    const persistedDiff =
+      ignoreWhitespace === false
+        ? yield* checkpointDiffBlobs
+            .get({
+              threadId: input.threadId,
+              fromTurnCount: 0,
+              toTurnCount: input.toTurnCount,
+            })
+            .pipe(Effect.catch(() => Effect.succeed(Option.none())))
+        : Option.none();
+    const diff = Option.isSome(persistedDiff)
+      ? persistedDiff.value.diff
+      : yield* checkpointStore
+          .diffCheckpoints({
+            cwd: workspaceCwd,
+            fromCheckpointRef: checkpointRefForThreadTurn(input.threadId, 0),
+            toCheckpointRef: threadContext.value.toCheckpointRef as CheckpointRef,
+            fallbackFromToHead: false,
+            ignoreWhitespace,
+          })
+          .pipe(Effect.withSpan("checkpoint.fullThread.diffCheckpoints"));
 
     const turnDiff = buildTurnDiffResult(
       {

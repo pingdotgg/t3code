@@ -288,94 +288,92 @@ export const assetRouteLayer = HttpRouter.add(
   }),
 );
 
-export const staticAndDevRouteLayer = HttpRouter.add(
-  "GET",
-  "*",
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
+// Exported so the component preview asset proxy can fall through to normal
+// static/dev serving when a request has no preview referer.
+export const serveStaticOrDevRequest = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
 
-    if (Option.isNone(url)) {
-      return HttpServerResponse.text("Bad Request", { status: 400 });
-    }
+  if (Option.isNone(url)) {
+    return HttpServerResponse.text("Bad Request", { status: 400 });
+  }
 
-    const config = yield* ServerConfig.ServerConfig;
-    if (config.devUrl && isDevProxiedPath(url.value.pathname)) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
+  const config = yield* ServerConfig.ServerConfig;
+  if (config.devUrl && isDevProxiedPath(url.value.pathname)) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
 
-    if (config.devUrl && isLoopbackHostname(url.value.hostname)) {
-      return HttpServerResponse.redirect(resolveDevRedirectUrl(config.devUrl, url.value), {
-        status: 302,
-      });
-    }
+  if (config.devUrl && isLoopbackHostname(url.value.hostname)) {
+    return HttpServerResponse.redirect(resolveDevRedirectUrl(config.devUrl, url.value), {
+      status: 302,
+    });
+  }
 
-    const staticDir =
-      config.staticDir ?? (config.devUrl ? yield* ServerConfig.resolveStaticDir() : undefined);
-    if (!staticDir) {
-      return HttpServerResponse.text("No static directory configured and no dev URL set.", {
-        status: 503,
-      });
-    }
+  const staticDir =
+    config.staticDir ?? (config.devUrl ? yield* ServerConfig.resolveStaticDir() : undefined);
+  if (!staticDir) {
+    return HttpServerResponse.text("No static directory configured and no dev URL set.", {
+      status: 503,
+    });
+  }
 
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const staticRoot = path.resolve(staticDir);
-    const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
-    const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
-    const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
-    const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
-    const hasPathTraversalSegment = staticRelativePath.startsWith("..");
-    if (
-      staticRelativePath.length === 0 ||
-      hasRawLeadingParentSegment ||
-      hasPathTraversalSegment ||
-      staticRelativePath.includes("\0")
-    ) {
-      return HttpServerResponse.text("Invalid static file path", { status: 400 });
-    }
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const staticRoot = path.resolve(staticDir);
+  const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
+  const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
+  const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
+  const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
+  const hasPathTraversalSegment = staticRelativePath.startsWith("..");
+  if (
+    staticRelativePath.length === 0 ||
+    hasRawLeadingParentSegment ||
+    hasPathTraversalSegment ||
+    staticRelativePath.includes("\0")
+  ) {
+    return HttpServerResponse.text("Invalid static file path", { status: 400 });
+  }
 
-    const isWithinStaticRoot = (candidate: string) =>
-      candidate === staticRoot ||
-      candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);
+  const isWithinStaticRoot = (candidate: string) =>
+    candidate === staticRoot ||
+    candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);
 
-    let filePath = path.resolve(staticRoot, staticRelativePath);
+  let filePath = path.resolve(staticRoot, staticRelativePath);
+  if (!isWithinStaticRoot(filePath)) {
+    return HttpServerResponse.text("Invalid static file path", { status: 400 });
+  }
+
+  const ext = path.extname(filePath);
+  if (!ext) {
+    filePath = path.resolve(filePath, "index.html");
     if (!isWithinStaticRoot(filePath)) {
       return HttpServerResponse.text("Invalid static file path", { status: 400 });
     }
+  }
 
-    const ext = path.extname(filePath);
-    if (!ext) {
-      filePath = path.resolve(filePath, "index.html");
-      if (!isWithinStaticRoot(filePath)) {
-        return HttpServerResponse.text("Invalid static file path", { status: 400 });
-      }
+  const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
+  if (!fileInfo || fileInfo.type !== "File") {
+    const indexPath = path.resolve(staticRoot, "index.html");
+    const indexData = yield* fileSystem.readFile(indexPath).pipe(Effect.orElseSucceed(() => null));
+    if (!indexData) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
     }
-
-    const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
-    if (!fileInfo || fileInfo.type !== "File") {
-      const indexPath = path.resolve(staticRoot, "index.html");
-      const indexData = yield* fileSystem
-        .readFile(indexPath)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (!indexData) {
-        return HttpServerResponse.text("Not Found", { status: 404 });
-      }
-      return HttpServerResponse.uint8Array(indexData, {
-        status: 200,
-        contentType: "text/html; charset=utf-8",
-      });
-    }
-
-    const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-    const data = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
-    if (!data) {
-      return HttpServerResponse.text("Internal Server Error", { status: 500 });
-    }
-
-    return HttpServerResponse.uint8Array(data, {
+    return HttpServerResponse.uint8Array(indexData, {
       status: 200,
-      contentType,
+      contentType: "text/html; charset=utf-8",
     });
-  }),
-);
+  }
+
+  const contentType = Mime.getType(filePath) ?? "application/octet-stream";
+  const data = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
+  if (!data) {
+    return HttpServerResponse.text("Internal Server Error", { status: 500 });
+  }
+
+  return HttpServerResponse.uint8Array(data, {
+    status: 200,
+    contentType,
+  });
+});
+
+export const staticAndDevRouteLayer = HttpRouter.add("GET", "*", serveStaticOrDevRequest);

@@ -47,6 +47,18 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
+  /** Fork-only Storybook/component harness, distinct from browser preview. */
+  componentPreview: Schema.optionalKey(Schema.Boolean),
+  /** Project-local agent skills and commands are available over extension RPCs. */
+  projectLocalAgents: Schema.optionalKey(Schema.Boolean),
+  /** Project file reads and writes support optimistic version checks. */
+  versionedProjectFiles: Schema.optionalKey(Schema.Boolean),
+  /** Project entries can be created, renamed, and deleted. */
+  projectEntryMutations: Schema.optionalKey(Schema.Boolean),
+  /** Forma thread extension state (Ask, queues, and forks) is available. */
+  threadExtensions: Schema.optionalKey(Schema.Boolean),
+  /** Clients may select a Forma application icon. */
+  customAppIcons: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */

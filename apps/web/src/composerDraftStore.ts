@@ -3,6 +3,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  FormaInteractionMode,
+  type FormaInteractionMode as FormaInteractionModeType,
   ModelSelection,
   ProjectId,
   ProviderInstanceId,
@@ -164,7 +166,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   runtimeMode: Schema.optionalKey(RuntimeMode),
-  interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  interactionMode: Schema.optionalKey(FormaInteractionMode),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -298,7 +300,7 @@ export interface ComposerThreadDraftState {
   /** Routing key of the last picked instance (see `modelSelectionByProvider`). */
   activeProvider: ProviderInstanceId | null;
   runtimeMode: RuntimeMode | null;
-  interactionMode: ProviderInteractionMode | null;
+  interactionMode: FormaInteractionModeType | null;
 }
 
 /**
@@ -466,7 +468,7 @@ interface ComposerDraftStoreState {
   ) => void;
   setInteractionMode: (
     threadRef: ComposerThreadTarget,
-    interactionMode: ProviderInteractionMode | null | undefined,
+    interactionMode: FormaInteractionModeType | null | undefined,
   ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => void;
   addImages: (threadRef: ComposerThreadTarget, images: ComposerImageAttachment[]) => void;
@@ -3019,7 +3021,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return;
           }
           const nextInteractionMode =
-            interactionMode === "plan" || interactionMode === "default" ? interactionMode : null;
+            interactionMode === "plan" || interactionMode === "ask" || interactionMode === "default"
+              ? interactionMode
+              : null;
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey];
             if (!existing && nextInteractionMode === null) {

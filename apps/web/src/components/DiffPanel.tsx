@@ -718,12 +718,17 @@ export default function DiffPanel({
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
         {codeViewFiles.length > 0 && (
-          <DiffStatLabel
-            additions={diffLineStat.additions}
-            deletions={diffLineStat.deletions}
-            className="mr-1 text-[11px]"
-            layout="inline"
-          />
+          <>
+            <span className="mr-1 text-[11px] tabular-nums text-muted-foreground">
+              {codeViewFiles.length} {codeViewFiles.length === 1 ? "file" : "files"}
+            </span>
+            <DiffStatLabel
+              additions={diffLineStat.additions}
+              deletions={diffLineStat.deletions}
+              className="mr-1 text-[11px]"
+              layout="inline"
+            />
+          </>
         )}
         {codeViewFiles.length > 0 && (
           <Tooltip>

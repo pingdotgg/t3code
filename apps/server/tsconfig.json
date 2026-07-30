@@ -4,5 +4,6 @@
     "types": ["node"],
     "lib": ["ESNext", "esnext.disposable"]
   },
-  "include": ["src", "vite.config.ts", "scripts", "integration", "../../scripts/lib"]
+  "include": ["src", "vite.config.ts", "scripts", "integration", "../../scripts/lib"],
+  "exclude": ["src/componentPreview/harness"]
 }

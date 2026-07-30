@@ -101,6 +101,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --glass-saturation: 1.08;
 }
 
+.chat-composer-surface {
+  background: var(--composer-surface-fill);
+  border-color: var(--composer-surface-border);
+  box-shadow: var(--composer-surface-overlay-shadow), var(--composer-surface-shadow);
+}
+
+.chat-composer-surface:focus-within {
+  border-color: color-mix(in srgb, var(--ring) 45%, transparent);
+  box-shadow: var(--composer-surface-overlay-shadow), var(--composer-surface-focus-shadow);
+}
+
+.chat-composer-banner {
+  background: var(--composer-banner-background);
+  border-color: var(--composer-banner-border);
+  box-shadow: var(--composer-banner-shadow);
+}
+
 [data-slot="sidebar-wrapper"] {
   --workspace-titlebar-content-left: calc(
     var(--workspace-controls-left) + var(--workspace-titlebar-control-size) +

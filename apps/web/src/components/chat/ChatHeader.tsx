@@ -6,18 +6,27 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { memo } from "react";
+import { memo, type RefObject } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   IconCheckmark as CheckIcon,
   IconChevronDown as ChevronDownIcon,
   IconChevronRight as ChevronRightIcon,
+  IconEllipsis as EllipsisIcon,
   IconPlus as PlusIcon,
 } from "symbols-react";
-import GitActionsControl from "../GitActionsControl";
+import GitActionsControl, { type GitActionsControlHandle } from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -54,6 +63,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  gitActionsRef?: RefObject<GitActionsControlHandle | null> | undefined;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -62,6 +72,10 @@ interface ChatHeaderProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  onExportThread?: (() => void) | undefined;
+  onForkThread?: (() => void) | undefined;
+  onArchiveThread?: (() => void) | undefined;
+  onDeleteThread?: (() => void) | undefined;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -90,11 +104,16 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  gitActionsRef,
   onNewThreadInProject,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onExportThread,
+  onForkThread,
+  onArchiveThread,
+  onDeleteThread,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const fileScripts = useT3ProjectFileScripts(
@@ -197,12 +216,40 @@ export const ChatHeader = memo(function ChatHeader({
         )}
         {activeProjectName && (
           <GitActionsControl
+            ref={gitActionsRef}
             compact
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
           />
         )}
+        <Menu>
+          <MenuTrigger
+            render={
+              <HeaderIconActionButton aria-label="More thread actions" title="More actions" />
+            }
+          >
+            <EllipsisIcon className="size-3 rotate-90" />
+          </MenuTrigger>
+          <MenuPopup align="end" className="min-w-52">
+            <MenuGroup>
+              <MenuGroupLabel>Thread</MenuGroupLabel>
+              {onExportThread ? (
+                <MenuItem onClick={onExportThread}>Export as Markdown</MenuItem>
+              ) : null}
+              {onForkThread ? <MenuItem onClick={onForkThread}>Fork thread</MenuItem> : null}
+              {onArchiveThread ? <MenuItem onClick={onArchiveThread}>Archive</MenuItem> : null}
+              {onDeleteThread ? (
+                <>
+                  <MenuSeparator />
+                  <MenuItem onClick={onDeleteThread} variant="destructive">
+                    Delete
+                  </MenuItem>
+                </>
+              ) : null}
+            </MenuGroup>
+          </MenuPopup>
+        </Menu>
       </div>
     </div>
   );

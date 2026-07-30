@@ -18,6 +18,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -43,6 +44,7 @@ type WindowTitleBarOptions = Pick<
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
+  | DesktopClientSettings.DesktopClientSettings
   | DesktopAppSettings.DesktopAppSettings
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
@@ -51,6 +53,7 @@ type DesktopWindowRuntimeServices =
   | PreviewManager.PreviewManager;
 
 export type DesktopWindowError =
+  | DesktopAssets.DesktopAssetProbeError
   | ElectronWindow.ElectronWindowCreateError
   | PreviewManager.PreviewManagerError;
 
@@ -88,12 +91,11 @@ const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   makeComponentLogger("desktop-window");
 
 function getIconOption(
-  iconPaths: DesktopAssets.DesktopIconPaths,
+  iconPath: Option.Option<string>,
   platform: NodeJS.Platform,
 ): { icon: string } | Record<string, never> {
-  if (platform === "darwin") return {}; // macOS uses .icns from app bundle
-  const ext = platform === "win32" ? "ico" : "png";
-  return Option.match(iconPaths[ext], {
+  if (platform === "darwin") return {};
+  return Option.match(iconPath, {
     onNone: () => ({}),
     onSome: (icon) => ({ icon }),
   });
@@ -246,6 +248,7 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const desktopClientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -292,8 +295,15 @@ export const make = Effect.gen(function* () {
   > {
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
-    const iconPaths = yield* assets.iconPaths;
-    const iconOption = getIconOption(iconPaths, environment.platform);
+    const clientSettings = yield* desktopClientSettings.get;
+    const iconPath = yield* assets.resolveAppIconPath(
+      Option.match(clientSettings, {
+        onNone: () => "default" as const,
+        onSome: (settings) => settings.appIcon,
+      }),
+      environment.platform,
+    );
+    const iconOption = getIconOption(iconPath, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
     const persistedBounds = persistedSettings.mainWindowBounds;

@@ -1,6 +1,9 @@
+import { DEFAULT_APP_ICON_ID, type AppIconId } from "@t3tools/contracts";
 import { ContrastIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { APP_ICON_OPTIONS } from "../../appIcon";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
 import {
   DEFAULT_CODE_FONT_SIZE_PX,
@@ -16,7 +19,7 @@ import {
   writeStoredInterfaceAppearanceSettings,
   type InterfaceAppearanceSettings,
 } from "../../interfaceAppearance";
-import { isMacPlatform } from "../../lib/utils";
+import { cn, isMacPlatform } from "../../lib/utils";
 import { DEFAULT_CUSTOM_THEME_SETTINGS, type ThemeMode } from "../../theme";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -122,12 +125,73 @@ function PixelSettingInput({
   );
 }
 
+function AppIconPreview({ id, src }: { id: AppIconId; src: string }) {
+  const [failed, setFailed] = useState(false);
+  const initials = id
+    .replace("forma-", "")
+    .split("-")
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 2);
+
+  return (
+    <span className="relative flex size-16 items-center justify-center overflow-hidden rounded-[22%]">
+      {!failed ? (
+        <img
+          alt=""
+          className="size-full object-cover"
+          draggable={false}
+          onError={() => setFailed(true)}
+          src={src}
+        />
+      ) : (
+        <span className="text-ui-xs font-semibold text-muted-foreground">{initials}</span>
+      )}
+    </span>
+  );
+}
+
+function AppIconPicker({
+  value,
+  onChange,
+}: {
+  value: AppIconId;
+  onChange: (value: AppIconId) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2 pt-4 pb-5 sm:grid-cols-5">
+      {APP_ICON_OPTIONS.map((option) => {
+        const selected = option.id === value;
+        return (
+          <button
+            aria-pressed={selected}
+            className={cn(
+              "group flex min-h-0 flex-col items-center justify-center gap-2 rounded-xl border px-2 py-3 text-center transition-colors",
+              selected
+                ? "border-foreground/55 bg-foreground/[0.04] text-foreground"
+                : "border-border/70 bg-background/40 text-muted-foreground hover:border-foreground/25 hover:bg-muted/50 hover:text-foreground",
+            )}
+            key={option.id}
+            onClick={() => onChange(option.id)}
+            type="button"
+          >
+            <AppIconPreview id={option.id} src={option.previewSrc} />
+            <span className="text-xs leading-tight font-medium">{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function InterfaceSettingsPanel() {
   const { themeSettings, setThemeHue, setThemeMode, setThemeSaturation, resolvedTheme } =
     useTheme();
   const [appearance, setAppearance] = useState<InterfaceAppearanceSettings>(() =>
     readStoredInterfaceAppearanceSettings(),
   );
+  const appIcon = useClientSettings((settings) => settings.appIcon);
+  const updateClientSettings = useUpdateClientSettings();
   const isMacOs = typeof navigator !== "undefined" && isMacPlatform(navigator.platform);
 
   const updateAppearance = useCallback((next: Partial<InterfaceAppearanceSettings>) => {
@@ -190,6 +254,26 @@ export function InterfaceSettingsPanel() {
             onSaturationChange={setThemeSaturation}
             resolvedTheme={resolvedTheme}
             theme={themeSettings}
+          />
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection title="Icons">
+        <SettingsRow
+          description="Choose the artwork used for browser chrome and the desktop dock or window icon."
+          resetAction={
+            appIcon !== DEFAULT_APP_ICON_ID ? (
+              <SettingResetButton
+                label="app icon"
+                onClick={() => updateClientSettings({ appIcon: DEFAULT_APP_ICON_ID })}
+              />
+            ) : null
+          }
+          title="App icon"
+        >
+          <AppIconPicker
+            onChange={(nextAppIcon) => updateClientSettings({ appIcon: nextAppIcon })}
+            value={appIcon}
           />
         </SettingsRow>
       </SettingsSection>

@@ -117,6 +117,14 @@ export const ServerProviderContinuation = Schema.Struct({
 });
 export type ServerProviderContinuation = typeof ServerProviderContinuation.Type;
 
+/**
+ * Presentation-only interaction modes. `"ask"` is deliberately not part of
+ * the required upstream ProviderInteractionMode used by thread snapshots.
+ */
+export const ServerProviderSupportedInteractionMode = Schema.Literals(["default", "ask", "plan"]);
+export type ServerProviderSupportedInteractionMode =
+  typeof ServerProviderSupportedInteractionMode.Type;
+
 export const ServerProviderVersionAdvisoryStatus = Schema.Literals([
   "unknown",
   "current",
@@ -166,6 +174,7 @@ export const ServerProvider = Schema.Struct({
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
+  supportedInteractionModes: Schema.optional(Schema.Array(ServerProviderSupportedInteractionMode)),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,

@@ -37,6 +37,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -129,6 +130,7 @@ const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
     png: Option.none<string>(),
   }),
   resolveResourcePath: () => Effect.succeed(Option.none<string>()),
+  resolveAppIconPath: () => Effect.succeed(Option.none<string>()),
 } satisfies DesktopAssets.DesktopAssets["Service"]);
 
 const desktopServerExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
@@ -246,6 +248,7 @@ function makeTestLayer(input: {
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
+        DesktopClientSettings.layerTest(),
         desktopServerExposureLayer,
         DesktopState.layer,
         electronMenuLayer,
@@ -345,6 +348,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopAssetsLayer,
           desktopEnvironmentLayer,
           DesktopAppSettings.layerTest(),
+          DesktopClientSettings.layerTest(),
           desktopServerExposureLayer,
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {

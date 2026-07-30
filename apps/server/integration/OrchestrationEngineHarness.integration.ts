@@ -72,6 +72,7 @@ import {
 } from "./TestProviderAdapter.integration.ts";
 import { deriveServerPaths, ServerConfig } from "../src/config.ts";
 import * as WorkspaceEntries from "../src/workspace/WorkspaceEntries.ts";
+import { CheckpointDiffBlobRepository } from "../src/persistence/Services/CheckpointDiffBlobs.ts";
 import * as WorkspacePaths from "../src/workspace/WorkspacePaths.ts";
 import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
 import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
@@ -329,6 +330,14 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(serverSettingsLayer),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
+      Layer.provideMerge(
+        Layer.succeed(CheckpointDiffBlobRepository, {
+          upsert: () => Effect.void,
+          get: () => Effect.succeed(Option.none()),
+          deleteByThreadId: () => Effect.void,
+          deleteAfterTurn: () => Effect.void,
+        }),
+      ),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(
         Layer.succeed(VcsStatusBroadcaster, {

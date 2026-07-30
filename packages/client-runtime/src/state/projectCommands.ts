@@ -44,6 +44,7 @@ export function createProjectEnvironmentAtoms<R, E>(
 ) {
   const projectScheduler = createAtomCommandScheduler();
   const fileScheduler = createAtomCommandScheduler();
+  const entryMutationScheduler = createAtomCommandScheduler();
   const optimisticFileFamily = Atom.family((key: string) =>
     Atom.make<OptimisticProjectFile | null>(null).pipe(
       Atom.withLabel(`environment-data:projects:optimistic-file:${key}`),
@@ -70,6 +71,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    localAgentInventory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:local-agent-inventory",
+      tag: WS_METHODS.projectsLocalAgentInventory,
+      staleTimeMs: 10_000,
       idleTtlMs: 5 * 60_000,
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
@@ -100,6 +107,33 @@ export function createProjectEnvironmentAtoms<R, E>(
         mode: "serial",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
+      },
+    }),
+    createDirectory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:create-directory",
+      tag: WS_METHODS.projectsCreateDirectory,
+      scheduler: entryMutationScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.cwd]),
+      },
+    }),
+    renameEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:rename-entry",
+      tag: WS_METHODS.projectsRenameEntry,
+      scheduler: entryMutationScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.cwd]),
+      },
+    }),
+    deleteEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:delete-entry",
+      tag: WS_METHODS.projectsDeleteEntry,
+      scheduler: entryMutationScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.cwd]),
       },
     }),
   };

@@ -41,7 +41,7 @@ describe("FileSaveCoordinator", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(persist).toHaveBeenCalledOnce();
     expect(persist).toHaveBeenCalledWith("latest");
-    expect(onConfirmed).toHaveBeenCalledWith("latest");
+    expect(onConfirmed).toHaveBeenCalledWith("latest", undefined);
     expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
   });
 
@@ -90,5 +90,32 @@ describe("FileSaveCoordinator", () => {
     await Promise.resolve();
     expect(onPendingChange).toHaveBeenCalledWith(true);
     expect(onPendingChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("pauses after a conflict and resumes only when requested", async () => {
+    vi.useFakeTimers();
+    const persist = vi
+      .fn<(contents: string) => Promise<AtomCommandResult<void, Error>>>()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("conflict"))))
+      .mockResolvedValueOnce(AsyncResult.success(undefined));
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+      onFailed: () => ({ pause: true }),
+    });
+
+    coordinator.change("local draft");
+    await vi.advanceTimersByTimeAsync(500);
+    await Promise.resolve();
+    coordinator.change("newer local draft");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(persist).toHaveBeenCalledOnce();
+
+    coordinator.resume();
+    await vi.runAllTimersAsync();
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith("newer local draft");
   });
 });

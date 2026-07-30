@@ -216,6 +216,7 @@ function isPlanMode(mode: AcpSessionMode): boolean {
 
 function resolveRequestedModeId(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly askOverride: boolean;
   readonly runtimeMode: RuntimeMode;
   readonly modeState: AcpSessionModeState | undefined;
 }): string | undefined {
@@ -226,6 +227,15 @@ function resolveRequestedModeId(input: {
 
   if (input.interactionMode === "plan") {
     return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
+  }
+
+  if (input.askOverride) {
+    return (
+      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+      findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+      modeState.currentModeId
+    );
   }
 
   if (input.runtimeMode === "approval-required") {
@@ -249,6 +259,7 @@ function applyRequestedSessionConfiguration<E>(input: {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly askOverride?: boolean;
   readonly modelSelection:
     | {
         readonly model: string;
@@ -276,6 +287,7 @@ function applyRequestedSessionConfiguration<E>(input: {
 
     const requestedModeId = resolveRequestedModeId({
       interactionMode: input.interactionMode,
+      askOverride: input.askOverride === true,
       runtimeMode: input.runtimeMode,
       modeState: yield* input.runtime.getModeState,
     });
@@ -745,6 +757,7 @@ export function makeCursorAdapter(
             runtime: acp,
             runtimeMode: input.runtimeMode,
             interactionMode: undefined,
+            askOverride: false,
             modelSelection: cursorModelSelection,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
@@ -929,6 +942,7 @@ export function makeCursorAdapter(
             runtime: ctx.acp,
             runtimeMode: ctx.session.runtimeMode,
             interactionMode: input.interactionMode,
+            ...(input.askOverride !== undefined ? { askOverride: input.askOverride } : {}),
             modelSelection:
               model === undefined
                 ? undefined

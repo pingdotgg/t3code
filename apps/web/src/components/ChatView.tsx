@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  type FormaInteractionMode,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -10,6 +11,7 @@ import {
   type ProviderApprovalDecision,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerLocalAgentInventory,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -164,14 +166,21 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { openComponentPreviewSurface } from "../componentPreviewTargets";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import {
+  buildThreadMarkdownExport,
+  downloadThreadMarkdown,
+  threadMarkdownFilename,
+} from "../lib/threadMarkdownExport";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -202,6 +211,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -222,6 +232,9 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import type { GitActionsControlHandle } from "./GitActionsControl";
+import { isGitActionKeybindingCommand } from "../gitActionCommands";
+import { expandProjectLocalAgentsPrompt } from "../localAgentPrompting";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -391,6 +404,11 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const ComponentPreviewPanel = lazy(() =>
+  import("./ComponentPreviewPanel").then((module) => ({
+    default: module.ComponentPreviewPanel,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -1142,6 +1160,11 @@ function ChatViewContent(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
+  const {
+    archiveThread: archiveThreadAction,
+    confirmAndDeleteThread,
+    forkThread: forkThreadAction,
+  } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -1164,6 +1187,19 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
+  const setThreadExtensionInteractionMode = useAtomCommand(
+    threadEnvironment.setExtensionInteractionMode,
+    { reportFailure: false },
+  );
+  const enqueueThreadTurn = useAtomCommand(threadEnvironment.enqueueTurn, {
+    reportFailure: false,
+  });
+  const removeQueuedThreadTurn = useAtomCommand(threadEnvironment.removeQueuedTurn, {
+    reportFailure: false,
+  });
+  const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeQueue, {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -1267,6 +1303,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const gitActionsRef = useRef<GitActionsControlHandle | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -1447,7 +1484,7 @@ function ChatViewContent(props: ChatViewProps) {
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode =
+  const baseInteractionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
@@ -1656,6 +1693,21 @@ function ChatViewContent(props: ChatViewProps) {
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
+  const supportsThreadExtensions =
+    activeEnvironment?.serverConfig?.environment.capabilities.threadExtensions === true;
+  const threadExtensionQuery = useEnvironmentQuery(
+    isServerThread && activeThreadId !== null && supportsThreadExtensions
+      ? threadEnvironment.extensions({
+          environmentId,
+          input: { threadId: activeThreadId },
+        })
+      : null,
+  );
+  const threadExtensionState = threadExtensionQuery.data;
+  const interactionMode: FormaInteractionMode =
+    threadExtensionState?.interactionModeOverride === "ask" ? "ask" : baseInteractionMode;
+  const standardInteractionMode: ProviderInteractionMode =
+    interactionMode === "ask" ? "default" : interactionMode;
   const activeEnvironmentConnectionPhase = activeEnvironment?.connection.phase ?? "available";
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironmentConnectionPhase !== "connected";
@@ -2374,6 +2426,24 @@ function ChatViewContent(props: ChatViewProps) {
       })
     : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const localAgentInventoryQuery = useEnvironmentQuery(
+    gitCwd === null
+      ? null
+      : projectEnvironment.localAgentInventory({
+          environmentId,
+          input: { cwd: gitCwd },
+        }),
+  );
+  const loadLocalAgentInventory = useAtomQueryRunner(projectEnvironment.localAgentInventory, {
+    label: "load project-local agents",
+    reportFailure: false,
+    reportDefect: true,
+  });
+  const readLocalAgentFile = useAtomQueryRunner(projectEnvironment.readFile, {
+    label: "read project-local agent file",
+    reportFailure: false,
+    reportDefect: true,
+  });
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -2425,6 +2495,36 @@ function ChatViewContent(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const handleExportActiveThread = useCallback(() => {
+    if (!activeThread || !isServerThread) return;
+    const markdown = buildThreadMarkdownExport({
+      thread: activeThread,
+      project: activeProject,
+      workspaceRoot: activeWorkspaceRoot,
+      extensionState: threadExtensionState,
+    });
+    downloadThreadMarkdown(threadMarkdownFilename(activeThread.title, activeThread.id), markdown);
+  }, [activeProject, activeThread, activeWorkspaceRoot, isServerThread, threadExtensionState]);
+  const runThreadHeaderAction = useCallback(
+    async (
+      title: string,
+      action: (target: ScopedThreadRef) => Promise<AtomCommandResult<unknown, unknown>>,
+    ) => {
+      if (!activeThreadRef) return;
+      const result = await action(activeThreadRef);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title,
+            description: chatActionErrorMessage(error),
+          }),
+        );
+      }
+    },
+    [activeThreadRef],
+  );
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -2998,26 +3098,66 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const handleInteractionModeChange = useCallback(
-    (mode: ProviderInteractionMode) => {
+    (mode: FormaInteractionMode) => {
       if (mode === interactionMode) return;
-      setComposerDraftInteractionMode(composerDraftTarget, mode);
+      if (!isServerThread || mode !== "ask") {
+        setComposerDraftInteractionMode(composerDraftTarget, mode);
+      }
       if (isLocalDraftThread) {
-        setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
+        setDraftThreadContext(composerDraftTarget, {
+          interactionMode: mode === "ask" ? "default" : mode,
+        });
+      } else if (activeThreadId !== null && supportsThreadExtensions) {
+        void setThreadExtensionInteractionMode({
+          environmentId,
+          input: { threadId: activeThreadId, mode },
+        }).then((result) => {
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            setThreadError(
+              activeThreadId,
+              error instanceof Error ? error.message : "Failed to change interaction mode.",
+            );
+          }
+        });
       }
       scheduleComposerFocus();
     },
     [
+      activeThreadId,
+      environmentId,
       interactionMode,
       isLocalDraftThread,
+      isServerThread,
       scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftInteractionMode,
       setDraftThreadContext,
+      setThreadError,
+      setThreadExtensionInteractionMode,
+      supportsThreadExtensions,
     ],
   );
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const handleRemoveQueuedTurn = useCallback(
+    (messageId: MessageId) => {
+      if (!activeThreadId || !supportsThreadExtensions) return;
+      void removeQueuedThreadTurn({
+        environmentId,
+        input: { threadId: activeThreadId, messageId },
+      });
+    },
+    [activeThreadId, environmentId, removeQueuedThreadTurn, supportsThreadExtensions],
+  );
+  const handleResumeTurnQueue = useCallback(() => {
+    if (!activeThreadId || !supportsThreadExtensions) return;
+    void resumeThreadQueue({
+      environmentId,
+      input: { threadId: activeThreadId },
+    });
+  }, [activeThreadId, environmentId, resumeThreadQueue, supportsThreadExtensions]);
   const dismissPlanSidebarForCurrentTurn = useCallback(() => {
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -3060,6 +3200,13 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addComponentPreviewSurface = useCallback(() => {
+    if (!activeThreadRef || !isServerThread) return;
+    openComponentPreviewSurface(
+      activeThreadRef,
+      activeProject ? scopeProjectRef(activeProject.environmentId, activeProject.id) : null,
+    );
+  }, [activeProject, activeThreadRef, isServerThread]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4397,6 +4544,13 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (isGitActionKeybindingCommand(command)) {
+        if (!gitActionsRef.current?.runKeybindingCommand(command)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -4426,6 +4580,7 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
+    gitActionsRef,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -4606,6 +4761,50 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
+    let localAgentInventory: ServerLocalAgentInventory = localAgentInventoryQuery.data ?? {
+      skills: [],
+      commands: [],
+    };
+    if (gitCwd !== null && localAgentInventoryQuery.data === null) {
+      const inventoryResult = await loadLocalAgentInventory({
+        environmentId,
+        input: { cwd: gitCwd },
+      });
+      if (inventoryResult._tag === "Success") {
+        localAgentInventory = inventoryResult.value;
+      }
+    }
+    let expandedPromptForSend = promptForSend;
+    if (gitCwd !== null) {
+      try {
+        expandedPromptForSend = await expandProjectLocalAgentsPrompt({
+          cwd: gitCwd,
+          prompt: promptForSend,
+          inventory: localAgentInventory,
+          readFileContents: async (relativePath) => {
+            const result = await readLocalAgentFile({
+              environmentId,
+              input: { cwd: gitCwd, relativePath },
+            });
+            if (result._tag === "Failure") {
+              throw squashAtomCommandFailure(result);
+            }
+            return result.value.contents;
+          },
+        });
+      } catch (cause) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Project command could not be loaded",
+            description:
+              cause instanceof Error ? cause.message : "The project-local agent file is invalid.",
+          }),
+        );
+        return;
+      }
+    }
+
     sendInFlightRef.current = true;
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
@@ -4632,7 +4831,7 @@ function ChatViewContent(props: ChatViewProps) {
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendCodeContextsToPrompt(
-        appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+        appendTerminalContextsToPrompt(expandedPromptForSend, composerTerminalContextsSnapshot),
         composerCodeContextsSnapshot,
       ),
       composerElementContextsSnapshot,
@@ -4654,6 +4853,12 @@ function ChatViewContent(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
+    const shouldQueueTurn =
+      isServerThread &&
+      supportsThreadExtensions &&
+      (phase === "running" ||
+        threadExtensionState?.queue.status === "paused" ||
+        (threadExtensionState?.queue.items.length ?? 0) > 0);
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
@@ -4671,33 +4876,34 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Sending always returns to the live edge. The new row becomes the
-    // anchored end-space target so it lands near the top while the response
-    // streams into the reserved space below it.
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "anchoring-new-turn";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    pendingTimelineAnchorRef.current = messageIdForSend;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor({
-      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-      messageId: messageIdForSend,
-    });
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        turnId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
+    if (!shouldQueueTurn) {
+      // Sending always returns to the live edge. Queued turns remain in the
+      // composer queue until the server promotes them into normal history.
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "anchoring-new-turn";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      pendingTimelineAnchorRef.current = messageIdForSend;
+      activeTimelineAnchorIndexRef.current = null;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      setTimelineAnchor({
+        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        messageId: messageIdForSend,
+      });
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+    }
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -4766,7 +4972,7 @@ function ChatViewContent(props: ChatViewProps) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode,
+        interactionMode: standardInteractionMode,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -4790,7 +4996,7 @@ function ChatViewContent(props: ChatViewProps) {
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
-                      interactionMode,
+                      interactionMode: standardInteractionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
@@ -4811,24 +5017,43 @@ function ChatViewContent(props: ChatViewProps) {
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });
-      const startResult = await startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            attachments: turnAttachmentsResult.value,
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: title,
-          runtimeMode,
-          interactionMode,
-          ...(bootstrap ? { bootstrap } : {}),
-          createdAt: messageCreatedAt,
-        },
-      });
+      const startResult = shouldQueueTurn
+        ? await enqueueThreadTurn({
+            environmentId,
+            input: {
+              threadId: threadIdForSend,
+              message: {
+                messageId: messageIdForSend,
+                text: outgoingMessageText,
+                attachments: turnAttachmentsResult.value,
+              },
+              modelSelection: ctxSelectedModelSelection,
+              titleSeed: title,
+              runtimeMode,
+              interactionMode: standardInteractionMode,
+              ...(interactionMode === "ask" ? { askOverride: true } : {}),
+              createdAt: messageCreatedAt,
+            },
+          })
+        : await startThreadTurn({
+            environmentId,
+            input: {
+              threadId: threadIdForSend,
+              message: {
+                messageId: messageIdForSend,
+                role: "user",
+                text: outgoingMessageText,
+                attachments: turnAttachmentsResult.value,
+              },
+              modelSelection: ctxSelectedModelSelection,
+              titleSeed: title,
+              runtimeMode,
+              interactionMode: standardInteractionMode,
+              ...(interactionMode === "ask" ? { askOverride: true } : {}),
+              ...(bootstrap ? { bootstrap } : {}),
+              createdAt: messageCreatedAt,
+            },
+          });
       if (startResult._tag === "Failure") {
         failure = startResult;
       } else {
@@ -5633,6 +5858,10 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "componentPreview" ? (
+      <Suspense fallback={null}>
+        <ComponentPreviewPanel />
+      </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar
         activePlan={activePlan}
@@ -5713,11 +5942,26 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            gitActionsRef={gitActionsRef}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
+            {...(isServerThread
+              ? {
+                  onExportThread: handleExportActiveThread,
+                  onForkThread: () => {
+                    void runThreadHeaderAction("Failed to fork thread", forkThreadAction);
+                  },
+                  onArchiveThread: () => {
+                    void runThreadHeaderAction("Failed to archive thread", archiveThreadAction);
+                  },
+                  onDeleteThread: () => {
+                    void runThreadHeaderAction("Failed to delete thread", confirmAndDeleteThread);
+                  },
+                }
+              : {})}
           />
         </header>
 
@@ -5888,6 +6132,7 @@ function ChatViewContent(props: ChatViewProps) {
                             planSidebarOpen={planSidebarOpen}
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
+                            threadExtensionState={threadExtensionState}
                             lockedProvider={lockedProvider}
                             providerStatuses={providerStatuses as ServerProvider[]}
                             activeProjectDefaultModelSelection={
@@ -5895,6 +6140,10 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeThreadActivities={activeThread?.activities}
+                            localAgentInventory={
+                              localAgentInventoryQuery.data ?? { skills: [], commands: [] }
+                            }
+                            localAgentInventoryLoading={localAgentInventoryQuery.isPending}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}
@@ -5924,6 +6173,8 @@ function ChatViewContent(props: ChatViewProps) {
                             toggleInteractionMode={toggleInteractionMode}
                             handleRuntimeModeChange={handleRuntimeModeChange}
                             handleInteractionModeChange={handleInteractionModeChange}
+                            onRemoveQueuedTurn={handleRemoveQueuedTurn}
+                            onResumeTurnQueue={handleResumeTurnQueue}
                             togglePlanSidebar={togglePlanSidebar}
                             focusComposer={focusComposer}
                             scheduleComposerFocus={scheduleComposerFocus}
@@ -6077,9 +6328,11 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddComponentPreview={addComponentPreviewSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          componentPreviewAvailable={isServerThread}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6104,9 +6357,11 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddComponentPreview={addComponentPreviewSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            componentPreviewAvailable={isServerThread}
           >
             {rightPanelContent}
           </RightPanelTabs>

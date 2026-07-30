@@ -54,6 +54,13 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+import {
+  forkedActivityId,
+  forkedMessageId,
+  forkedPlanId,
+  forkedTurnId,
+  remapForkSourceProposedPlan,
+} from "../threadForking.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -496,6 +503,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
+            componentPreviewWorkspaceRecords: event.payload.componentPreviewWorkspaceRecords ?? [],
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
@@ -519,6 +527,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { defaultModelSelection: event.payload.defaultModelSelection }
               : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
+            ...(event.payload.componentPreviewWorkspaceRecords !== undefined
+              ? {
+                  componentPreviewWorkspaceRecords: event.payload.componentPreviewWorkspaceRecords,
+                }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -618,6 +631,143 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             deletedAt: null,
           });
           return;
+
+        case "thread.forked": {
+          const [sourceRow, sourceMessages, sourceProposedPlans, sourceActivities, sourceTurns] =
+            yield* Effect.all([
+              projectionThreadRepository.getById({
+                threadId: event.payload.sourceThreadId,
+              }),
+              projectionThreadMessageRepository.listByThreadId({
+                threadId: event.payload.sourceThreadId,
+              }),
+              projectionThreadProposedPlanRepository.listByThreadId({
+                threadId: event.payload.sourceThreadId,
+              }),
+              projectionThreadActivityRepository.listByThreadId({
+                threadId: event.payload.sourceThreadId,
+              }),
+              projectionTurnRepository.listByThreadId({
+                threadId: event.payload.sourceThreadId,
+              }),
+            ]);
+
+          yield* projectionThreadRepository.upsert({
+            threadId: event.payload.threadId,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            modelSelection: event.payload.modelSelection,
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            branch: event.payload.branch,
+            worktreePath: event.payload.worktreePath,
+            forkedFromThreadId: event.payload.sourceThreadId,
+            forkedAt: event.payload.createdAt,
+            latestTurnId:
+              Option.isSome(sourceRow) && sourceRow.value.latestTurnId !== null
+                ? forkedTurnId(event.payload.threadId, sourceRow.value.latestTurnId)
+                : null,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
+            latestUserMessageAt: null,
+            pendingApprovalCount: 0,
+            pendingUserInputCount: 0,
+            hasActionableProposedPlan: 0,
+            deletedAt: null,
+          });
+
+          for (const message of sourceMessages) {
+            yield* projectionThreadMessageRepository.upsert({
+              messageId: forkedMessageId(event.payload.threadId, message.messageId),
+              threadId: event.payload.threadId,
+              turnId:
+                message.turnId === null
+                  ? null
+                  : forkedTurnId(event.payload.threadId, message.turnId),
+              role: message.role,
+              text: message.text,
+              ...(message.attachments ? { attachments: message.attachments } : {}),
+              isStreaming: false,
+              createdAt: message.createdAt,
+              updatedAt: message.updatedAt,
+            });
+          }
+
+          for (const proposedPlan of sourceProposedPlans) {
+            yield* projectionThreadProposedPlanRepository.upsert({
+              planId: forkedPlanId(event.payload.threadId, proposedPlan.planId),
+              threadId: event.payload.threadId,
+              turnId:
+                proposedPlan.turnId === null
+                  ? null
+                  : forkedTurnId(event.payload.threadId, proposedPlan.turnId),
+              planMarkdown: proposedPlan.planMarkdown,
+              implementedAt: proposedPlan.implementedAt,
+              implementationThreadId: proposedPlan.implementationThreadId,
+              createdAt: proposedPlan.createdAt,
+              updatedAt: proposedPlan.updatedAt,
+            });
+          }
+
+          for (const activity of sourceActivities) {
+            yield* projectionThreadActivityRepository.upsert({
+              activityId: forkedActivityId(event.payload.threadId, activity.activityId),
+              threadId: event.payload.threadId,
+              turnId:
+                activity.turnId === null
+                  ? null
+                  : forkedTurnId(event.payload.threadId, activity.turnId),
+              tone: activity.tone,
+              kind: activity.kind,
+              summary: activity.summary,
+              payload: activity.payload,
+              ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+              createdAt: activity.createdAt,
+            });
+          }
+
+          for (const turn of sourceTurns) {
+            if (turn.turnId === null || turn.state === "pending" || turn.state === "running") {
+              continue;
+            }
+            const sourcePlan = remapForkSourceProposedPlan({
+              targetThreadId: event.payload.threadId,
+              sourceThreadId: event.payload.sourceThreadId,
+              sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
+              sourceProposedPlanId: turn.sourceProposedPlanId,
+            });
+            yield* projectionTurnRepository.upsertByTurnId({
+              threadId: event.payload.threadId,
+              turnId: forkedTurnId(event.payload.threadId, turn.turnId),
+              pendingMessageId:
+                turn.pendingMessageId === null
+                  ? null
+                  : forkedMessageId(event.payload.threadId, turn.pendingMessageId),
+              sourceProposedPlanThreadId: sourcePlan.sourceProposedPlanThreadId,
+              sourceProposedPlanId: sourcePlan.sourceProposedPlanId,
+              assistantMessageId:
+                turn.assistantMessageId === null
+                  ? null
+                  : forkedMessageId(event.payload.threadId, turn.assistantMessageId),
+              state: turn.state,
+              requestedAt: turn.requestedAt,
+              startedAt: turn.startedAt,
+              completedAt: turn.completedAt,
+              checkpointTurnCount: null,
+              checkpointRef: null,
+              checkpointStatus: null,
+              checkpointFiles: [],
+            });
+          }
+
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
 
         case "thread.archived": {
           const existingRow = yield* projectionThreadRepository.getById({

@@ -1,6 +1,6 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import { FileDiff, Files, Globe2, Layers, Plus, TerminalSquare, X } from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -24,6 +24,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { EditorSurfaceIcon, SidebarPlanReadyIcon, TerminalSurfaceIcon } from "./icons/custom";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -44,9 +45,11 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddComponentPreview: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  componentPreviewAvailable: boolean;
   children: ReactNode;
 }
 
@@ -54,6 +57,7 @@ const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
+  componentPreview: "Component previews are only available for server threads.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";
@@ -91,9 +95,11 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddComponentPreview: () => void;
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  componentPreviewAvailable: boolean;
 }) {
   const actions = [
     {
@@ -127,6 +133,14 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
+    },
+    {
+      label: "Component preview",
+      description: "Render project components live.",
+      icon: Layers,
+      available: props.componentPreviewAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.componentPreview,
+      onClick: props.onAddComponentPreview,
     },
   ] as const;
 
@@ -205,6 +219,8 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
+    case "componentPreview":
+      return "Component preview";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -252,7 +268,7 @@ function SurfaceIcon({
     case "diff":
       return <FileDiff className="size-3.5 shrink-0" />;
     case "files":
-      return <Files className="size-3.5 shrink-0" />;
+      return <EditorSurfaceIcon className="size-3.5 shrink-0" />;
     case "file":
       return (
         <PierreEntryIcon
@@ -263,9 +279,11 @@ function SurfaceIcon({
         />
       );
     case "terminal":
-      return <TerminalSquare className="size-3.5 shrink-0" />;
+      return <TerminalSurfaceIcon className="size-3.5 shrink-0" />;
     case "plan":
-      return <ClipboardList className="size-3.5 shrink-0" />;
+      return <SidebarPlanReadyIcon className="size-3.5 shrink-0 text-violet-500" />;
+    case "componentPreview":
+      return <Layers className="size-3.5 shrink-0" />;
   }
 }
 
@@ -357,7 +375,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "workspace-topbar gap-1 pl-2",
+          "workspace-topbar gap-1 border-b border-border/70 bg-card/55 pl-2 backdrop-blur-md",
           !ownsDesktopTitleBar && "[--workspace-topbar-height:--spacing(11)]",
           props.mode === "inline" ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
@@ -385,9 +403,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
-                    "group flex h-7 min-w-25 max-w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm",
+                    "group flex h-6.5 min-w-24 max-w-42 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs",
                     active
-                      ? "bg-accent text-foreground"
+                      ? "bg-background text-foreground shadow-sm ring-1 ring-border/70"
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
@@ -471,6 +489,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <FileDiff />
                     Diff
                   </SurfaceMenuItem>
+                  <SurfaceMenuItem
+                    available={props.componentPreviewAvailable}
+                    disabledReason={SURFACE_DISABLED_REASONS.componentPreview}
+                    onClick={props.onAddComponentPreview}
+                  >
+                    <Layers />
+                    Component preview
+                  </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -485,9 +511,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddComponentPreview={props.onAddComponentPreview}
             browserAvailable={props.browserAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
+            componentPreviewAvailable={props.componentPreviewAvailable}
           />
         ) : (
           props.children

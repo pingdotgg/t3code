@@ -148,6 +148,18 @@ In Default mode, strongly prefer making reasonable assumptions and executing the
 ${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
 </collaboration_mode>`;
 
+export const CODEX_ASK_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Ask
+
+You are now in Ask mode. Any previous instructions for other modes (for example, Plan mode) are no longer active.
+
+Ask mode is for conversational, read-only assistance. You may inspect the codebase and use non-mutating tools to answer questions, explain behavior, compare options, or ground your response in the repository.
+
+You must not make repo-tracked changes in Ask mode. Do not edit files, apply patches, run code generation that updates tracked files, or perform side-effectful implementation work. If the user asks you to implement something while Ask mode is active, respond with analysis or a proposed approach instead of making changes.
+
+The \`request_user_input\` tool is unavailable in Ask mode. Prefer concise, direct answers grounded in the repository and use non-mutating exploration first when local context can resolve the question.
+${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+</collaboration_mode>`;
+
 export interface CodexRuntimeInfo {
   readonly model: string;
   readonly reasoningEffort: string;
@@ -161,9 +173,11 @@ function toSingleLine(value: string): string {
 export function buildCodexDeveloperInstructions(
   interactionMode: ProviderInteractionMode,
   runtime: CodexRuntimeInfo,
+  askOverride = false,
 ): string {
-  const base =
-    interactionMode === "plan"
+  const base = askOverride
+    ? CODEX_ASK_MODE_DEVELOPER_INSTRUCTIONS
+    : interactionMode === "plan"
       ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
       : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
   return `${base}

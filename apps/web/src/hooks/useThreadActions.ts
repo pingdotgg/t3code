@@ -23,9 +23,11 @@ import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsThreadExtensions,
   readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
+  readThreadDetail,
 } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
@@ -33,6 +35,11 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import {
+  buildThreadMarkdownExport,
+  downloadThreadMarkdown,
+  threadMarkdownFilename,
+} from "../lib/threadMarkdownExport";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -103,6 +110,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const deleteThreadMutation = useAtomCommand(threadEnvironment.delete, {
+    reportFailure: false,
+  });
+  const forkThreadMutation = useAtomCommand(threadEnvironment.fork, {
     reportFailure: false,
   });
   const settleThreadMutation = useAtomCommand(threadEnvironment.settle, {
@@ -555,12 +565,63 @@ export function useThreadActions() {
     [confirmThreadDelete, deleteThread, resolveThreadTarget],
   );
 
+  const forkThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      if (!readEnvironmentSupportsThreadExtensions(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new Error("This environment does not support thread forks. Update the server first."),
+          ),
+        );
+      }
+      const result = await forkThreadMutation({
+        environmentId: target.environmentId,
+        input: { sourceThreadId: target.threadId },
+      });
+      if (result._tag === "Failure") return result;
+
+      const navigationResult = await settlePromise(() =>
+        router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(
+            scopeThreadRef(target.environmentId, result.value.threadId),
+          ),
+        }),
+      );
+      return navigationResult._tag === "Failure" ? navigationResult : result;
+    },
+    [forkThreadMutation, router],
+  );
+
+  const exportThread = useCallback((target: ScopedThreadRef) => {
+    try {
+      const thread = readThreadDetail(target);
+      if (!thread) {
+        return AsyncResult.failure(
+          Cause.fail(new Error("Open the thread once before exporting its full history.")),
+        );
+      }
+      const project = readProject(scopeProjectRef(target.environmentId, thread.projectId));
+      const markdown = buildThreadMarkdownExport({
+        thread,
+        project,
+        workspaceRoot: thread.worktreePath ?? project?.workspaceRoot,
+      });
+      downloadThreadMarkdown(threadMarkdownFilename(thread.title, thread.id), markdown);
+      return AsyncResult.success(undefined);
+    } catch (error) {
+      return AsyncResult.failure(Cause.fail(error));
+    }
+  }, []);
+
   return useMemo(
     () => ({
       archiveThread,
       unarchiveThread,
       deleteThread,
       confirmAndDeleteThread,
+      forkThread,
+      exportThread,
       settleThread,
       unsettleThread,
       snoozeThread,
@@ -570,6 +631,8 @@ export function useThreadActions() {
       archiveThread,
       confirmAndDeleteThread,
       deleteThread,
+      forkThread,
+      exportThread,
       settleThread,
       snoozeThread,
       unarchiveThread,

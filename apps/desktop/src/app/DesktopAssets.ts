@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { DEFAULT_APP_ICON_ID, type AppIconId } from "@t3tools/contracts";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -32,6 +33,10 @@ export class DesktopAssets extends Context.Service<
     readonly iconPaths: Effect.Effect<DesktopIconPaths>;
     readonly resolveResourcePath: (
       fileName: string,
+    ) => Effect.Effect<Option.Option<string>, DesktopAssetProbeError>;
+    readonly resolveAppIconPath: (
+      appIcon: AppIconId,
+      platform: NodeJS.Platform,
     ) => Effect.Effect<Option.Option<string>, DesktopAssetProbeError>;
   }
 >()("@t3tools/desktop/app/DesktopAssets") {}
@@ -91,6 +96,8 @@ const resolveIconPath = Effect.fn("desktop.assets.resolveIconPath")(function* (
 });
 
 export const make = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const context = yield* Effect.context<
     FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
   >();
@@ -100,6 +107,34 @@ export const make = Effect.gen(function* () {
   );
   const iconPaths = { ico, icns, png } satisfies DesktopIconPaths;
 
+  const resolveAppIconPath = Effect.fn("desktop.assets.resolveAppIconPath")(function* (
+    appIcon: AppIconId,
+    platform: NodeJS.Platform,
+  ) {
+    if (appIcon === DEFAULT_APP_ICON_ID) {
+      const ext = platform === "win32" ? "ico" : "png";
+      return iconPaths[ext];
+    }
+
+    const fileName = `${appIcon}.png`;
+    const candidates = [
+      ...environment.resolveResourcePathCandidates(`app-icons/${fileName}`),
+      environment.path.join(environment.appRoot, "apps/web/public/app-icons", fileName),
+      environment.path.join(environment.appRoot, "apps/web/dist/app-icons", fileName),
+    ];
+    for (const candidate of candidates) {
+      const exists = yield* fileSystem
+        .exists(candidate)
+        .pipe(
+          Effect.mapError(
+            (cause) => new DesktopAssetProbeError({ fileName, candidatePath: candidate, cause }),
+          ),
+        );
+      if (exists) return Option.some(candidate);
+    }
+    return iconPaths.png;
+  });
+
   return DesktopAssets.of({
     iconPaths: Effect.succeed(iconPaths),
     resolveResourcePath: Effect.fn("desktop.assets.resolveResourcePath.scoped")(
@@ -107,6 +142,7 @@ export const make = Effect.gen(function* () {
         return yield* resolveResourcePath(fileName).pipe(Effect.provide(context));
       },
     ),
+    resolveAppIconPath,
   });
 });
 

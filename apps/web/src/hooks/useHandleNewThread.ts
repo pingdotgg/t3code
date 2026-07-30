@@ -62,6 +62,7 @@ export function useNewThreadHandler() {
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
+        setInteractionMode,
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
       // A new thread carries the user's *working mode* from the thread being
@@ -100,6 +101,8 @@ export function useNewThreadHandler() {
         carrySourceShell?.interactionMode ??
         carrySourceDraft?.interactionMode ??
         null;
+      const carryStandardInteractionMode =
+        carryInteractionMode === "ask" ? "default" : carryInteractionMode;
       const project = projects.find(
         (candidate) =>
           candidate.id === projectRef.projectId &&
@@ -169,7 +172,9 @@ export function useNewThreadHandler() {
             setDraftThreadContext(reusableStoredDraftThread.draftId, {
               ...workspaceContext,
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
-              ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+              ...(carryStandardInteractionMode
+                ? { interactionMode: carryStandardInteractionMode }
+                : {}),
             });
             if (carryModelSelection) {
               // The carried selection is a complete snapshot of the viewed
@@ -178,6 +183,9 @@ export function useNewThreadHandler() {
               setModelSelection(reusableStoredDraftThread.draftId, carryModelSelection, {
                 replaceOptions: true,
               });
+            }
+            if (carryInteractionMode) {
+              setInteractionMode(reusableStoredDraftThread.draftId, carryInteractionMode);
             }
           }
           // The workspace context must also ride along here: when projectRef
@@ -193,7 +201,9 @@ export function useNewThreadHandler() {
               threadId: reusableStoredDraftThread.threadId,
               ...(workspaceContext ?? {}),
               ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
-              ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+              ...(carryStandardInteractionMode
+                ? { interactionMode: carryStandardInteractionMode }
+                : {}),
             },
           );
           if (
@@ -260,9 +270,14 @@ export function useNewThreadHandler() {
               newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
             }),
           runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
-          ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+          ...(carryStandardInteractionMode
+            ? { interactionMode: carryStandardInteractionMode }
+            : {}),
         });
         applyStickyState(draftId);
+        if (carryInteractionMode) {
+          setInteractionMode(draftId, carryInteractionMode);
+        }
         if (carryModelSelection) {
           // After sticky state so the viewed thread's exact selection
           // (model + options like effort and context window) wins over the

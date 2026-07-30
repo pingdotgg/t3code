@@ -1,7 +1,13 @@
+import { WS_METHODS } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
 
-import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
+import {
+  createAtomCommandScheduler,
+  createEnvironmentCommand,
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 import {
   type ArchiveThreadInput,
   type CreateThreadInput,
@@ -70,6 +76,44 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    extensions: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:thread:extensions",
+      tag: WS_METHODS.subscribeThreadExtensions,
+      idleTtlMs: 60_000,
+    }),
+    setExtensionInteractionMode: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread-extension:set-interaction-mode",
+      tag: WS_METHODS.threadExtensionsSetInteractionMode,
+      scheduler,
+      concurrency,
+    }),
+    enqueueTurn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread-extension:enqueue-turn",
+      tag: WS_METHODS.threadExtensionsEnqueueTurn,
+      scheduler,
+      concurrency,
+    }),
+    removeQueuedTurn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread-extension:remove-queued-turn",
+      tag: WS_METHODS.threadExtensionsRemoveQueuedTurn,
+      scheduler,
+      concurrency,
+    }),
+    resumeQueue: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread-extension:resume-queue",
+      tag: WS_METHODS.threadExtensionsResumeQueue,
+      scheduler,
+      concurrency,
+    }),
+    fork: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread-extension:fork",
+      tag: WS_METHODS.threadExtensionsFork,
+      scheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
+      },
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),
