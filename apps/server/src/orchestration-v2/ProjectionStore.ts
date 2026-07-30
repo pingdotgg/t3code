@@ -1812,6 +1812,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.unsettled" &&
           event.type !== "thread.snoozed" &&
           event.type !== "thread.unsnoozed" &&
+          event.type !== "thread.visited" &&
+          event.type !== "thread.marked-unread" &&
           event.type !== "thread.metadata-updated" &&
           event.type !== "thread.runtime-mode-updated" &&
           event.type !== "thread.interaction-mode-updated" &&
