@@ -13,12 +13,15 @@ import {
   ChevronRightIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
-  Columns2Icon,
-  PilcrowIcon,
-  Rows3Icon,
   SearchIcon,
-  TextWrapIcon,
 } from "lucide-react";
+import {
+  IconEllipsis as EllipsisIcon,
+  IconParagraphsign as PilcrowIcon,
+  IconRectangleSplit2x1 as Columns2Icon,
+  IconRectangleSplit3x1 as Rows3Icon,
+  IconTextWordSpacing as TextWrapIcon,
+} from "symbols-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
@@ -44,8 +47,7 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
-import { Button } from "./ui/button";
-import { ToggleGroup, Toggle } from "./ui/toggle-group";
+import { HeaderIconActionButton } from "./HeaderIconActionButton";
 import { Switch } from "./ui/switch";
 import {
   Combobox,
@@ -64,6 +66,12 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
@@ -716,28 +724,30 @@ export default function DiffPanel({
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      <div className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
         {codeViewFiles.length > 0 && (
-          <>
-            <span className="mr-1 text-[11px] tabular-nums text-muted-foreground">
-              {codeViewFiles.length} {codeViewFiles.length === 1 ? "file" : "files"}
+          <div className="text-ui-2xs hidden items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2.5 py-1 text-muted-foreground/80 md:flex">
+            <span>
+              {codeViewFiles.length} file{codeViewFiles.length === 1 ? "" : "s"}
             </span>
-            <DiffStatLabel
-              additions={diffLineStat.additions}
-              deletions={diffLineStat.deletions}
-              className="mr-1 text-[11px]"
-              layout="inline"
-            />
-          </>
+            {diffLineStat.additions > 0 || diffLineStat.deletions > 0 ? (
+              <>
+                <span className="text-muted-foreground/50">•</span>
+                <DiffStatLabel
+                  additions={diffLineStat.additions}
+                  deletions={diffLineStat.deletions}
+                  layout="inline"
+                />
+              </>
+            ) : null}
+          </div>
         )}
         {codeViewFiles.length > 0 && (
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button
+                <HeaderIconActionButton
                   type="button"
-                  size="icon-xs"
-                  variant="outline"
                   aria-label={allDiffFilesCollapsed ? "Expand all files" : "Collapse all files"}
                   onClick={toggleDiffFileCollapse}
                 />
@@ -754,67 +764,64 @@ export default function DiffPanel({
             </TooltipPopup>
           </Tooltip>
         )}
-        <ToggleGroup
-          className="shrink-0"
-          variant="outline"
-          size="xs"
-          value={[diffRenderMode]}
-          onValueChange={(value) => {
-            const next = value[0];
-            if (next === "stacked" || next === "split") {
-              setDiffRenderMode(next);
-            }
-          }}
-        >
-          <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3" />
-          </Toggle>
-          <Toggle aria-label="Split diff view" value="split">
-            <Columns2Icon className="size-3" />
-          </Toggle>
-        </ToggleGroup>
-        <Tooltip>
-          <TooltipTrigger
+        <Menu>
+          <MenuTrigger
             render={
-              <Toggle
-                aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
-                variant="outline"
-                size="xs"
-                pressed={wordWrap}
-                onPressedChange={(pressed) => {
-                  setWordWrap(Boolean(pressed));
-                }}
-              />
+              <HeaderIconActionButton aria-label="Diff view options" title="Diff view options">
+                <EllipsisIcon className="size-3 rotate-90 fill-current" />
+              </HeaderIconActionButton>
             }
-          >
-            <TextWrapIcon className="size-3" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
-                }
-                variant="outline"
-                size="xs"
-                pressed={diffIgnoreWhitespace}
-                onPressedChange={(pressed) => {
-                  setDiffIgnoreWhitespace(Boolean(pressed));
-                }}
-              />
-            }
-          >
-            <PilcrowIcon className="size-3" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
-          </TooltipPopup>
-        </Tooltip>
+          />
+          <MenuPopup align="end" className="w-56">
+            <MenuItem
+              onClick={() => {
+                setDiffRenderMode("stacked");
+              }}
+            >
+              <Rows3Icon className="size-3 fill-current" />
+              Unified view
+              {diffRenderMode === "stacked" ? (
+                <span className="ml-auto text-xs">Selected</span>
+              ) : null}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setDiffRenderMode("split");
+              }}
+            >
+              <Columns2Icon className="size-3 fill-current" />
+              Split view
+              {diffRenderMode === "split" ? (
+                <span className="ml-auto text-xs">Selected</span>
+              ) : null}
+            </MenuItem>
+            <MenuSeparator />
+            <MenuCheckboxItem
+              checked={wordWrap}
+              onCheckedChange={(checked) => {
+                setWordWrap(Boolean(checked));
+              }}
+              variant="switch"
+            >
+              <span className="inline-flex items-center gap-2">
+                <TextWrapIcon className="size-3 fill-current" />
+                Line wrap
+              </span>
+            </MenuCheckboxItem>
+            <MenuCheckboxItem
+              checked={diffIgnoreWhitespace}
+              onCheckedChange={(checked) => {
+                setDiffIgnoreWhitespace(Boolean(checked));
+              }}
+              variant="switch"
+            >
+              <span className="inline-flex items-center gap-2">
+                <PilcrowIcon className="size-3 fill-current" />
+                Hide whitespace changes
+              </span>
+            </MenuCheckboxItem>
+          </MenuPopup>
+        </Menu>
       </div>
     </>
   );

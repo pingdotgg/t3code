@@ -9,12 +9,12 @@ import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import ChatMarkdown from "./ChatMarkdown";
 import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  EllipsisIcon,
-  LoaderIcon,
-} from "lucide-react";
+  IconCheckmark as CheckIcon,
+  IconChevronDown as ChevronDownIcon,
+  IconChevronRight as ChevronRightIcon,
+  IconEllipsis as EllipsisIcon,
+  IconProgressIndicator as LoaderIcon,
+} from "symbols-react";
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
 import type { LatestProposedPlanState } from "../session-logic";
@@ -40,15 +40,15 @@ import { useAtomCommand } from "~/state/use-atom-command";
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
     return (
-      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-success/10 text-success-foreground">
-        <CheckIcon className="size-3" />
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-500">
+        <CheckIcon className="size-3 fill-current" />
       </span>
     );
   }
   if (status === "inProgress") {
     return (
-      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-        <LoaderIcon className="size-3 animate-spin" />
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-blue-400">
+        <LoaderIcon className="size-3 animate-spin fill-current" />
       </span>
     );
   }
@@ -170,7 +170,7 @@ const PlanSidebar = memo(function PlanSidebar({
             />
           </span>
           {activePlan ? (
-            <span className="text-[11px] text-muted-foreground/60 tabular-nums">
+            <span className="text-ui-xs text-muted-foreground/60">
               {formatTimestamp(activePlan.createdAt, timestampFormat)}
             </span>
           ) : null}
@@ -212,7 +212,7 @@ const PlanSidebar = memo(function PlanSidebar({
         <div className="p-3 space-y-4">
           {/* Explanation */}
           {activePlan?.explanation ? (
-            <p className="text-[13px] leading-relaxed text-muted-foreground/80">
+            <p className="text-ui-sm leading-relaxed text-muted-foreground/80">
               {activePlan.explanation}
             </p>
           ) : null}
@@ -220,22 +220,22 @@ const PlanSidebar = memo(function PlanSidebar({
           {/* Plan Steps */}
           {activePlan && activePlan.steps.length > 0 ? (
             <div className="space-y-1">
-              <p className="mb-2 text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase">
+              <p className="text-ui-2xs mb-2 font-semibold tracking-widest text-muted-foreground/40 uppercase">
                 Steps
               </p>
               {activePlan.steps.map((step) => (
                 <div
                   key={`${step.status}:${step.step}`}
                   className={cn(
-                    "flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-colors duration-200",
+                    "flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]",
                     step.status === "inProgress" && "bg-blue-500/5",
                     step.status === "completed" && "bg-emerald-500/5",
                   )}
                 >
-                  {stepStatusIcon(step.status)}
+                  <div className="mt-0.5">{stepStatusIcon(step.status)}</div>
                   <p
                     className={cn(
-                      "text-[13px] leading-snug",
+                      "text-ui-sm leading-snug",
                       step.status === "completed"
                         ? "text-muted-foreground/50 line-through decoration-muted-foreground/20"
                         : step.status === "inProgress"
@@ -259,11 +259,11 @@ const PlanSidebar = memo(function PlanSidebar({
                 onClick={() => setProposedPlanExpanded((v) => !v)}
               >
                 {proposedPlanExpanded ? (
-                  <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground/40 transition-transform" />
+                  <ChevronDownIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]" />
                 ) : (
-                  <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/40 transition-transform" />
+                  <ChevronRightIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]" />
                 )}
-                <span className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60">
+                <span className="text-ui-2xs font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60">
                   {planTitle ?? "Full Plan"}
                 </span>
               </button>
@@ -283,8 +283,8 @@ const PlanSidebar = memo(function PlanSidebar({
           {/* Empty state */}
           {!activePlan && !planMarkdown ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-[13px] text-muted-foreground/40">No active plan yet.</p>
-              <p className="mt-1 text-[11px] text-muted-foreground/30">
+              <p className="text-ui-sm text-muted-foreground/40">No active plan yet.</p>
+              <p className="text-ui-xs mt-1 text-muted-foreground/30">
                 Plans will appear here when generated.
               </p>
             </div>

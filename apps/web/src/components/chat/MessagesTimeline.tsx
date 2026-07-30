@@ -63,7 +63,8 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
-import { MessageCopyButton } from "./MessageCopyButton";
+import { MessageCopyButton, SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME } from "./MessageCopyButton";
+import { MICRO_FADE_MOTION_CLASS_NAME } from "~/lib/motion";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -978,20 +979,32 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex w-full items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+      <div
+        className={cn(
+          "flex w-full items-center justify-end pe-1 tabular-nums opacity-0 focus-within:opacity-100 group-hover:opacity-100",
+          MICRO_FADE_MOTION_CLASS_NAME,
+        )}
+      >
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
-            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+            <TooltipTrigger
+              render={<p className="text-ui-2xs text-muted-foreground/70 tabular-nums" />}
+            >
               {formatShortTimestamp(row.message.createdAt, ctx.timestampFormat)}
             </TooltipTrigger>
             <TooltipPopup>
               {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
             </TooltipPopup>
           </Tooltip>
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-1.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
             {displayedUserMessage.copyText && (
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
+              <MessageCopyButton
+                text={displayedUserMessage.copyText}
+                size="icon-xs"
+                variant="outline"
+                className={SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME}
+              />
             )}
           </div>
         </div>
@@ -1010,8 +1023,9 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
         render={
           <Button
             type="button"
-            size="xs"
-            variant="ghost"
+            size="icon-xs"
+            variant="outline"
+            className={SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME}
             disabled={activity.isRevertingCheckpoint || activity.isWorking}
             onClick={() => ctx.onRevertUserMessage(messageId)}
             aria-label="Revert to this message"
@@ -1066,12 +1080,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         {row.showAssistantMeta ? (
-          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
-            <AssistantCopyButton row={row} />
+          <div className="mt-1.5 flex items-center gap-2 tabular-nums">
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger
-                  render={<p className="text-muted-foreground text-xs tabular-nums" />}
+                  render={<p className="text-ui-2xs text-muted-foreground/30 tabular-nums" />}
                 >
                   {formatShortTimestamp(row.message.updatedAt, ctx.timestampFormat)}
                 </TooltipTrigger>
@@ -1080,6 +1093,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 </TooltipPopup>
               </Tooltip>
             )}
+            <AssistantCopyButton row={row} />
           </div>
         ) : null}
       </div>
@@ -1098,7 +1112,21 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return (
+    <div
+      className={cn(
+        "flex items-center opacity-0 focus-within:opacity-100 group-hover/assistant:opacity-100",
+        MICRO_FADE_MOTION_CLASS_NAME,
+      )}
+    >
+      <MessageCopyButton
+        text={assistantCopyState.text ?? ""}
+        size="icon-xs"
+        variant="outline"
+        className={SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME}
+      />
+    </div>
+  );
 }
 
 function ProposedPlanTimelineRow({
