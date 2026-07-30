@@ -31,7 +31,7 @@ const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
 export interface SourceControlProviderRegistration {
   readonly kind: SourceControlProviderKind;
   readonly provider: SourceControlProvider.SourceControlProvider["Service"];
-  readonly discovery: SourceControlProviderDiscoverySpec;
+  readonly discovery?: SourceControlProviderDiscoverySpec;
 }
 
 export interface SourceControlProviderHandle {
@@ -202,7 +202,9 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       SourceControlProviderKind,
       SourceControlProvider.SourceControlProvider["Service"]
     >(registrations.map((registration) => [registration.kind, registration.provider]));
-    const discoverySpecs = registrations.map((registration) => registration.discovery);
+    const discoverySpecs = registrations.flatMap((registration) =>
+      registration.discovery ? [registration.discovery] : [],
+    );
 
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
@@ -278,7 +280,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           }),
         ),
         { concurrency: "unbounded" },
-      ),
+      ).pipe(Effect.map((results) => results.flat())),
     });
   },
 );
