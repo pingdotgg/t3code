@@ -51,7 +51,10 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "./ProjectScriptsControl";
 import { commandForProjectScript, nextProjectScriptId } from "../projectScripts";
-import { syncProjectScriptKeybinding } from "../lib/projectScriptKeybindings";
+import {
+  syncProjectScriptKeybinding,
+  throwOnAtomCommandFailure,
+} from "../lib/projectScriptKeybindings";
 import {
   useClientSettings,
   usePrimarySettings,
@@ -85,6 +88,7 @@ import {
   EMPTY_SERVER_PROVIDERS,
   primaryServerKeybindingsAtom,
   primaryServerProvidersAtom,
+  serverEnvironment,
 } from "../state/server";
 import { deriveProjectGroupingOverrideKey, selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
@@ -350,6 +354,12 @@ function ProjectSettingsDialogContent({
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const updateProjectSettings = useAtomCommand(projectEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
+    reportFailure: false,
+  });
+  const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
   const projectServerConfig = project?.environmentId
@@ -841,7 +851,16 @@ function ProjectSettingsDialogContent({
         keybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
-        server: readLocalApi()?.server,
+        server: {
+          upsertKeybinding: (rule) =>
+            throwOnAtomCommandFailure(
+              upsertKeybinding({ environmentId: project.environmentId, input: rule }),
+            ),
+          removeKeybinding: (target) =>
+            throwOnAtomCommandFailure(
+              removeKeybinding({ environmentId: project.environmentId, input: target }),
+            ),
+        },
       }),
     );
     refreshProjectDetails();

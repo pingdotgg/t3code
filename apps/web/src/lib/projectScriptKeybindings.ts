@@ -1,10 +1,14 @@
 import {
   KeybindingRule as KeybindingRuleSchema,
-  type LocalApi,
   type KeybindingCommand,
   type KeybindingRule,
   type ResolvedKeybindingsConfig,
+  type ServerRemoveKeybindingInput,
 } from "@t3tools/contracts";
+import {
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 
 export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";
@@ -35,10 +39,15 @@ export function decodeProjectScriptKeybindingRule(input: {
   return decoded.value;
 }
 
-type ProjectScriptKeybindingServer = Pick<
-  LocalApi["server"],
-  "removeKeybinding" | "upsertKeybinding"
->;
+/**
+ * Keybinding writes used to go through the desktop-only `LocalApi.server`
+ * bridge. That bridge is gone, so callers pass an adapter over the
+ * environment-scoped RPC commands instead.
+ */
+export interface ProjectScriptKeybindingServer {
+  readonly upsertKeybinding: (rule: KeybindingRule) => Promise<unknown>;
+  readonly removeKeybinding: (target: ServerRemoveKeybindingInput) => Promise<unknown>;
+}
 
 function keybindingValueFromResolvedRule(binding: ResolvedKeybindingsConfig[number]) {
   const parts: string[] = [];
@@ -122,4 +131,19 @@ export async function syncProjectScriptKeybinding(input: {
       await input.server.removeKeybinding(target);
     }
   }
+}
+
+/**
+ * Atom commands report failure in their result rather than by throwing, so
+ * adapt them for `syncProjectScriptKeybinding`, which sequences writes and
+ * needs a rejected promise to stop after a failed upsert.
+ */
+export async function throwOnAtomCommandFailure<A, E>(
+  command: Promise<AtomCommandResult<A, E>>,
+): Promise<A> {
+  const result = await command;
+  if (result._tag === "Failure") {
+    throw squashAtomCommandFailure(result);
+  }
+  return result.value;
 }

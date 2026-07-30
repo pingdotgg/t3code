@@ -52,6 +52,7 @@ function makeEnvironmentLayer(
   baseDir: string,
   options?: {
     readonly appPath?: string;
+    readonly dirname?: string;
     readonly isPackaged?: boolean;
     readonly devServerUrl?: string;
     readonly platform?: NodeJS.Platform;
@@ -59,7 +60,7 @@ function makeEnvironmentLayer(
   },
 ) {
   return DesktopEnvironment.layer({
-    dirname: "/repo/apps/desktop/src",
+    dirname: options?.dirname ?? "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: options?.platform ?? "darwin",
     processArch: "x64",
@@ -464,6 +465,8 @@ describe("DesktopBackendConfiguration", () => {
           // both wslhost-forwarded localhost and the distro's eth0 IP.
           assert.equal(config.bootstrap.host, "0.0.0.0");
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
+          assert.notProperty(config.bootstrap, "desktopTelemetryFd");
+          assert.notProperty(config.bootstrap, "resourceMonitorPath");
           // httpBaseUrl uses the resolved distro IP from the test stub,
           // not localhost — the renderer reaches the backend directly to
           // avoid relying on wslhost forwarding.
@@ -707,6 +710,97 @@ describe("DesktopBackendConfiguration", () => {
             ),
             Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
             Layer.provideMerge(makeEnvironmentLayer(baseDir, { platform: "win32" })),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prefers the external packaged resource monitor over the copy inside the asar", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const resourcesPath = `${baseDir}/resources`;
+      const dirname = `${resourcesPath}/app.asar/apps/desktop/dist-electron`;
+      const embeddedMonitorPath = `${resourcesPath}/app.asar/apps/desktop/prod-resources/resource-monitor/t3-resource-monitor`;
+      const monitorPath = `${resourcesPath}/resource-monitor/t3-resource-monitor`;
+      yield* fileSystem.makeDirectory(
+        `${resourcesPath}/app.asar/apps/desktop/prod-resources/resource-monitor`,
+        { recursive: true },
+      );
+      yield* fileSystem.makeDirectory(`${resourcesPath}/resource-monitor`, {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(embeddedMonitorPath, "embedded");
+      yield* fileSystem.writeFileString(monitorPath, "binary");
+      yield* fileSystem.chmod(monitorPath, 0o755);
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolvePrimary;
+        assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
+        assert.equal(config.bootstrap.desktopTelemetryFd, 4);
+        assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: `${resourcesPath}/app.asar`,
+                dirname,
+                isPackaged: true,
+                resourcesPath,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prefers the release resource monitor when both development builds exist", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const dirname = path.join(baseDir, "apps/desktop/src");
+      const releaseMonitorPath = path.join(
+        baseDir,
+        "native/resource-monitor/target/release/t3-resource-monitor",
+      );
+      const debugMonitorPath = path.join(
+        baseDir,
+        "native/resource-monitor/target/debug/t3-resource-monitor",
+      );
+      yield* fileSystem.makeDirectory(path.dirname(releaseMonitorPath), { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(debugMonitorPath), { recursive: true });
+      yield* fileSystem.writeFileString(releaseMonitorPath, "release");
+      yield* fileSystem.writeFileString(debugMonitorPath, "debug");
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolvePrimary;
+        assert.equal(config.bootstrap.resourceMonitorPath, releaseMonitorPath);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                dirname,
+                devServerUrl: "http://127.0.0.1:5733",
+                isPackaged: false,
+              }),
+            ),
           ),
         ),
       );
