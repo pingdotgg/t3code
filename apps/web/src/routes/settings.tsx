@@ -74,11 +74,11 @@ function SettingsContentLayout() {
         {!isElectron && (
           <header
             className={cn(
-              "px-3 py-2 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
+              "workspace-topbar px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            <div className="flex min-h-7 items-center gap-2 sm:min-h-6">
+            <div className="flex w-full items-center gap-2">
               <span className="text-sm font-medium text-foreground">Settings</span>
               {showRestoreDefaults ? (
                 <div className="ms-auto flex items-center gap-2">

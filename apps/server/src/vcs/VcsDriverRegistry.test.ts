@@ -92,4 +92,49 @@ describe("VcsDriverRegistry", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("detects a repository created after a negative lookup", () => {
+    let insideWorkTreeChecks = 0;
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.provide(
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+          resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            Effect.sync(() => {
+              const command = normalizeGitArgs(input.args).join(" ");
+              if (command === "rev-parse --is-inside-work-tree") {
+                insideWorkTreeChecks += 1;
+                return insideWorkTreeChecks === 1
+                  ? {
+                      ...processOutput(""),
+                      exitCode: ChildProcessSpawner.ExitCode(128),
+                      stderr: "fatal: not a git repository",
+                    }
+                  : processOutput("true\n");
+              }
+              if (command === "rev-parse --show-toplevel") {
+                return processOutput("/repo\n");
+              }
+              if (command === "rev-parse --git-common-dir") {
+                return processOutput("/repo/.git\n");
+              }
+              return processOutput("");
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+
+      assert.equal(yield* registry.detect({ cwd: "/repo" }), null);
+      assert.equal((yield* registry.detect({ cwd: "/repo" }))?.repository.rootPath, "/repo");
+      assert.equal(insideWorkTreeChecks, 2);
+    }).pipe(Effect.provide(layer));
+  });
 });

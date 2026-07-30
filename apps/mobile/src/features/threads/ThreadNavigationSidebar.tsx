@@ -3,10 +3,13 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import {
+  threadSearchMatchKey,
+  type EnvironmentThreadSearchMatch,
+} from "@t3tools/client-runtime/state/thread-search";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
@@ -25,9 +28,10 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { useThreadSearch } from "../../state/queries";
+import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { usePendingNewTasks, type PendingNewTask } from "../../state/use-pending-new-tasks";
+import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
@@ -63,26 +67,21 @@ import {
   ThreadListRow,
   ThreadListShowMoreRow,
 } from "./thread-list-items";
-import { ThreadListV2Row } from "./thread-list-v2-items";
+import { ThreadListV2PendingRow, ThreadListV2Row } from "./thread-list-v2-items";
 import {
   buildThreadListV2Items,
+  buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2Item,
+  type ThreadListV2ListItem,
 } from "./threadListV2";
 
 /** The sidebar list serves both lists: v1 grouped items or, when the Thread
-    List v2 beta is on, queued offline tasks, flat v2 rows, and a settled
+    List v2 beta is on, flat v2 rows with queued tasks spliced in, and a settled
     "Show more" pager. */
 type SidebarListItem =
   | HomeListItem
-  | {
-      readonly type: "v2-pending-task";
-      readonly key: string;
-      readonly pendingTask: PendingNewTask;
-      readonly isLast: boolean;
-    }
-  | { readonly type: "v2-thread"; readonly key: string; readonly item: ThreadListV2Item }
+  | ThreadListV2ListItem
   | { readonly type: "v2-show-more"; readonly key: string; readonly hiddenCount: number };
 
 /**
@@ -186,7 +185,7 @@ function ThreadNavigationSidebarPane(
   const colorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const projects = useProjects();
   const threads = useThreadShells();
-  const { state: catalogState } = useWorkspaceState();
+  const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [headerIsOverContent, setHeaderIsOverContent] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
@@ -196,10 +195,7 @@ function ThreadNavigationSidebarPane(
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
   const { archiveThread, confirmDeleteThread, settleThread, unsettleThread } =
     useThreadListActions();
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const threadListV2Enabled =
-    AsyncResult.isSuccess(preferencesResult) &&
-    preferencesResult.value.threadListV2Enabled === true;
+  const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -218,6 +214,35 @@ function ThreadNavigationSidebarPane(
   );
   const { options, setSelectedEnvironmentId, setProjectSortOrder, setThreadSortOrder } =
     useHomeListOptions(availableEnvironmentIds);
+  const searchEnvironmentIds = useMemo(
+    () =>
+      options.selectedEnvironmentId === null
+        ? workspaceEnvironments
+            .filter((environment) => environment.connectionState === "connected")
+            .map((environment) => environment.environmentId)
+        : workspaceEnvironments.some(
+              (environment) =>
+                environment.environmentId === options.selectedEnvironmentId &&
+                environment.connectionState === "connected",
+            )
+          ? [options.selectedEnvironmentId]
+          : [],
+    [options.selectedEnvironmentId, workspaceEnvironments],
+  );
+  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const threadSearchMatchByKey = useMemo(() => {
+    const matches = new Map<string, EnvironmentThreadSearchMatch>();
+    for (const match of threadSearch.matches) {
+      if (match.source === "user" || match.source === "assistant") {
+        matches.set(threadSearchMatchKey(match), match);
+      }
+    }
+    return matches;
+  }, [threadSearch.matches]);
+  const matchedThreadKeys = useMemo(
+    () => new Set(threadSearch.matches.map(threadSearchMatchKey)),
+    [threadSearch.matches],
+  );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectScopes = useMemo(
     () =>
@@ -314,11 +339,19 @@ function ThreadNavigationSidebarPane(
         pendingTasks: scopedPendingTasks,
         environmentId: options.selectedEnvironmentId,
         searchQuery: props.searchQuery,
+        matchedThreadKeys,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
       }),
-    [options, props.searchQuery, scopedPendingTasks, scopedProjects, scopedThreads],
+    [
+      matchedThreadKeys,
+      options,
+      props.searchQuery,
+      scopedPendingTasks,
+      scopedProjects,
+      scopedThreads,
+    ],
   );
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
@@ -441,6 +474,7 @@ function ThreadNavigationSidebarPane(
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
+      matchedThreadKeys,
       changeRequestStateByKey,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -454,6 +488,7 @@ function ThreadNavigationSidebarPane(
     snoozeWakeTick,
     options.selectedEnvironmentId,
     props.searchQuery,
+    matchedThreadKeys,
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
@@ -477,11 +512,11 @@ function ThreadNavigationSidebarPane(
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
     if (!threadListV2Enabled) return listLayout.items;
-    // Queued offline tasks render above the thread rows (mirrors the
-    // compact Home v2 list): they are not thread shells, so the v2 item
-    // builder never sees them, but they must stay visible and deletable
-    // while their environment is offline. Same environment scope and
-    // search filter as the list.
+    // Queued offline tasks are not thread shells, so the v2 item builder
+    // never sees them; the shared splice puts them below the active block
+    // (mirrors the compact Home v2 list) where they stay visible and
+    // deletable while their environment is offline. Same environment scope
+    // and search filter as the list.
     const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
     const v2PendingTasks = pendingTasks.filter(
       (pendingTask) =>
@@ -494,19 +529,10 @@ function ThreadNavigationSidebarPane(
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
-    const items: SidebarListItem[] = v2PendingTasks.map((pendingTask, index) => ({
-      type: "v2-pending-task" as const,
-      key: `v2-pending:${pendingTask.message.messageId}`,
-      pendingTask,
-      isLast: index === v2PendingTasks.length - 1,
-    }));
-    for (const item of threadListV2Layout.items) {
-      items.push({
-        type: "v2-thread" as const,
-        key: scopedThreadKey(item.thread.environmentId, item.thread.id),
-        item,
-      });
-    }
+    const items: SidebarListItem[] = buildThreadListV2ListItems({
+      items: threadListV2Layout.items,
+      pendingTasks: v2PendingTasks,
+    });
     if (threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
         type: "v2-show-more",
@@ -694,13 +720,28 @@ function ThreadNavigationSidebarPane(
     onScroll: handleScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
+  // Project shells load after the first rows draw, so the maps they feed have
+  // to bust the recycler's memoization — otherwise a row keeps the blank
+  // favicon and fallback title it was first rendered with.
   const listExtraData = useMemo(
     () => ({
       selectedThreadKey: props.selectedThreadKey ?? "",
+      projectByKey,
+      projectCwdByKey,
+      projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
+      threadSearchMatchByKey,
     }),
-    [props.selectedThreadKey, savedConnectionsById, serverConfigs],
+    [
+      props.selectedThreadKey,
+      projectByKey,
+      projectCwdByKey,
+      projectTitleByProjectKey,
+      savedConnectionsById,
+      serverConfigs,
+      threadSearchMatchByKey,
+    ],
   );
   const sidebarItemsAreEqual = useCallback(
     (previous: SidebarListItem, item: SidebarListItem): boolean => {
@@ -715,16 +756,19 @@ function ThreadNavigationSidebarPane(
       if (previous.type === "v2-show-more" && item.type === "v2-show-more") {
         return previous.hiddenCount === item.hiddenCount;
       }
-      if (previous.type === "v2-pending-task" && item.type === "v2-pending-task") {
-        return previous.pendingTask === item.pendingTask && previous.isLast === item.isLast;
+      if (previous.type === "v2-pending" && item.type === "v2-pending") {
+        return (
+          previous.pendingTask === item.pendingTask &&
+          previous.showPendingDivider === item.showPendingDivider
+        );
       }
       if (
         previous.type === "v2-thread" ||
         previous.type === "v2-show-more" ||
-        previous.type === "v2-pending-task" ||
+        previous.type === "v2-pending" ||
         item.type === "v2-thread" ||
         item.type === "v2-show-more" ||
-        item.type === "v2-pending-task"
+        item.type === "v2-pending"
       ) {
         return false;
       }
@@ -752,20 +796,29 @@ function ThreadNavigationSidebarPane(
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
-        case "v2-pending-task":
+        case "v2-pending": {
+          const pendingScopeKey = scopedProjectKey(
+            item.pendingTask.message.environmentId,
+            item.pendingTask.creation.projectId,
+          );
           return (
-            <PendingTaskListRow
-              variant="sidebar"
+            <ThreadListV2PendingRow
               pendingTask={item.pendingTask}
+              project={projectByKey.get(pendingScopeKey) ?? null}
+              projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
               environmentLabel={
-                savedConnectionsById[item.pendingTask.message.environmentId]?.environmentLabel ??
-                null
+                Object.keys(savedConnectionsById).length > 1
+                  ? (savedConnectionsById[item.pendingTask.message.environmentId]
+                      ?.environmentLabel ?? null)
+                  : null
               }
-              isLast={item.isLast}
+              pane="sidebar"
+              showPendingDivider={item.showPendingDivider}
               onSelectPendingTask={openPendingTask}
               onDeletePendingTask={confirmDeletePendingTask}
             />
           );
+        }
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
@@ -790,6 +843,13 @@ function ThreadNavigationSidebarPane(
                   ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
                   : null
               }
+              searchMatch={threadSearchMatchByKey.get(
+                threadSearchMatchKey({
+                  environmentId: thread.environmentId,
+                  threadId: thread.id,
+                }),
+              )}
+              searchQuery={props.searchQuery}
               pane="sidebar"
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
@@ -869,6 +929,13 @@ function ThreadNavigationSidebarPane(
                 null
               }
               isLast={item.isLast}
+              searchMatch={threadSearchMatchByKey.get(
+                threadSearchMatchKey({
+                  environmentId: thread.environmentId,
+                  threadId: thread.id,
+                }),
+              )}
+              searchQuery={props.searchQuery}
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
               }
@@ -907,10 +974,12 @@ function ThreadNavigationSidebarPane(
       projectCwdByKey,
       projectTitleByProjectKey,
       props.onNewThreadInProject,
+      props.searchQuery,
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
       serverConfigs,
+      threadSearchMatchByKey,
       settleThread,
       settlementEnvironmentIds,
       showMoreSettled,
@@ -970,13 +1039,15 @@ function ThreadNavigationSidebarPane(
       {catalogState.isLoadingConnections
         ? "Loading threads…"
         : props.searchQuery.trim().length > 0
-          ? snoozedCount > 0
-            ? // Snoozed matches passed this same search filter — "No
-              // matching threads" would misreport them as nonexistent.
-              snoozedCount === 1
-              ? "1 matching thread snoozed"
-              : "All matching threads snoozed"
-            : "No matching threads"
+          ? threadSearch.isPending && snoozedCount === 0
+            ? "Searching thread messages…"
+            : snoozedCount > 0
+              ? // Snoozed matches passed this same search filter — "No
+                // matching threads" would misreport them as nonexistent.
+                snoozedCount === 1
+                ? "1 matching thread snoozed"
+                : "All matching threads snoozed"
+              : "No matching threads"
           : snoozedCount > 0
             ? snoozedCount === 1
               ? "1 thread snoozed"

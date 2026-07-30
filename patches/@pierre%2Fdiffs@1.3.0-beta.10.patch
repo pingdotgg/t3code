@@ -1,0 +1,85 @@
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+index ff78e2a..f9df318 100644
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -146,14 +146,11 @@ var Editor = class {
+ 			const file = fileInstance.__getCurrentFile?.();
+ 			if (file !== void 0) requirePersistedCacheKey(file);
+ 		}
+-		const { useTokenTransformer, enableGutterUtility, enableLineSelection, lineHoverHighlight = "disabled", ...rest } = fileInstance.options;
+-		if (useTokenTransformer !== true || enableGutterUtility === true || enableLineSelection === true || lineHoverHighlight !== "disabled") {
++		const { useTokenTransformer, ...rest } = fileInstance.options;
++		if (useTokenTransformer !== true) {
+ 			fileInstance.setOptions({
+ 				...rest,
+-				useTokenTransformer: true,
+-				enableGutterUtility: false,
+-				enableLineSelection: false,
+-				lineHoverHighlight: "disabled"
++				useTokenTransformer: true
+ 			});
+ 			fileInstance.rerender();
+ 		}
+@@ -908,6 +905,7 @@ var Editor = class {
+ 				return lineNumber - 1;
+ 			};
+ 			this.#editorEventDisposes.push(addEventListener(gutterEl, "pointerdown", (e) => {
++				if (this.#fileInstance?.options.enableLineSelection === true) return;
+ 				const gutterRow = resolveGutterTarget(e.composedPath()[0]);
+ 				if (gutterRow?.dataset.lineType === "change-deletion") {
+ 					const code = gutterRow.closest("[data-code]");
+@@ -1522,6 +1520,7 @@ var Editor = class {
+ 			if (gutterEl !== void 0) gutterEl.style.gridRow = "span " + gridRow;
+ 		}
+ 		fileInstance.updateRenderCache(dirtyLines, tokenizer.themeType, !didLineCountChange, didLineCountChange);
++		if (fileInstance.file !== void 0) fileInstance.file.contents = textDocument.getText();
+ 		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
+ 		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
+ 		if (newLineAnnotations !== void 0) {
+@@ -1788,6 +1787,7 @@ var Editor = class {
+ 		}
+ 	}
+ 	#setSelectedLinesSafe(range, lineNumberOnly = false) {
++		if (this.#fileInstance?.options.controlledSelection === true) return;
+ 		try {
+ 			this.#fileInstance?.setSelectedLines(range, {
+ 				notify: false,
+diff --git a/dist/react/utils/useFileInstance.js b/dist/react/utils/useFileInstance.js
+index e9f62f5..af82a46 100644
+--- a/dist/react/utils/useFileInstance.js
++++ b/dist/react/utils/useFileInstance.js
+@@ -91,10 +91,7 @@ function mergeFileOptions({ options, controlledSelection, contentEditable, hasCu
+ 	};
+ 	if (needsEditorOptions) merged = {
+ 		...merged,
+-		useTokenTransformer: true,
+-		enableGutterUtility: false,
+-		enableLineSelection: false,
+-		lineHoverHighlight: "disabled"
++		useTokenTransformer: true
+ 	};
+ 	return merged;
+ }
+diff --git a/package.json b/package.json
+index ff61c90..1e170e5 100644
+--- a/package.json
++++ b/package.json
+@@ -55,6 +55,18 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/getFiletypeFromFileName": {
++      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
++      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {
