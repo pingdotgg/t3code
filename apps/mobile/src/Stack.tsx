@@ -131,6 +131,13 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
+// UIKit's own `.medium()` and `.large()` detents, so a sheet opens and expands to the
+// heights the running iOS version considers right. The negative values are sentinels
+// our react-native-screens patch understands (SHEET_SYSTEM_DETENT_* in
+// patches/react-native-screens@4.25.2.patch); Android has no system detents, so it
+// gets the fractions those two approximate.
+const SYSTEM_MEDIUM_LARGE_DETENTS = Platform.OS === "ios" ? [-3, -2] : [0.5, 1.0];
+
 const SettingsSheetStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
@@ -477,7 +484,7 @@ export const RootStack = createNativeStackNavigator({
           ? { presentation: "card" as const }
           : {
               presentation: "formSheet" as const,
-              sheetAllowedDetents: [0.7, 0.92],
+              sheetAllowedDetents: SYSTEM_MEDIUM_LARGE_DETENTS,
               sheetGrabberVisible: true,
             }),
       },
