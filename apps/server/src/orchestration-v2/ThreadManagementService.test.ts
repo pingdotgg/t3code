@@ -24,7 +24,8 @@ import {
   ThreadManagementService,
   ThreadManagementThreadNotFoundError,
   ThreadManagementThreadNotInterruptibleError,
-  ThreadManagementThreadNotSendableError,
+  ThreadManagementThreadArchivedError,
+  ThreadManagementNoSteerableRunError,
   withCreationProvenance,
 } from "./ThreadManagementService.ts";
 
@@ -216,20 +217,19 @@ it("derives thread management messages from structural error attributes", () => 
   expect(runNotFound).toMatchObject({ threadId, runId });
   expect(runNotFound.message).toBe(`Run ${runId} does not belong to thread ${threadId}.`);
 
-  const archived = new ThreadManagementThreadNotSendableError({
+  const archived = new ThreadManagementThreadArchivedError({
     threadId,
-    reason: { _tag: "Archived" },
   });
-  expect(archived).toMatchObject({ threadId, reason: { _tag: "Archived" } });
+  expect(archived).toMatchObject({ threadId });
   expect(archived.message).toBe(`Thread ${threadId} is archived and cannot receive messages.`);
 
-  const notSteerable = new ThreadManagementThreadNotSendableError({
+  const notSteerable = new ThreadManagementNoSteerableRunError({
     threadId,
-    reason: { _tag: "NoSteerableRun", mode: "restart" },
+    mode: "restart",
   });
   expect(notSteerable).toMatchObject({
     threadId,
-    reason: { _tag: "NoSteerableRun", mode: "restart" },
+    mode: "restart",
   });
   expect(notSteerable.message).toBe(
     `Thread ${threadId} has no running turn that can be restarted.`,
