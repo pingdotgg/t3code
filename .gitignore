@@ -29,6 +29,7 @@ dist-electron/
 .electron-runtime/
 .showcase/
 apps/mobile/.showcase/
+**/android/.gradle/
 artifacts/app-store/screenshots/
 native/**/target/
 node_modules/
