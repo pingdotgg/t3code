@@ -1,7 +1,7 @@
 import type {
   OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ShellSnapshot,
-  OrchestrationV2ThreadShellSnapshot,
+  OrchestrationV2ThreadShell,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
@@ -76,30 +76,33 @@ export function shellStreamItemsFromInitialSnapshot(input: {
   ];
 }
 
-/** Converts a committed event and its resulting shell snapshot into one delta. */
-export function shellStreamItemFromSnapshot(input: {
-  readonly stored: OrchestrationV2StoredEvent;
-  readonly snapshot: OrchestrationV2ThreadShellSnapshot;
-}): Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> {
-  const active = input.snapshot.threads.find((thread) => thread.id === input.stored.event.threadId);
-  if (active !== undefined) {
-    return {
-      kind: "thread.updated",
-      sequence: input.stored.sequence,
-      location: "active",
-      thread: active,
-    };
+/** Keep only the newest stored event per thread within a coalescing window. */
+export function coalesceStoredThreadEvents(
+  events: ReadonlyArray<OrchestrationV2StoredEvent>,
+): ReadonlyArray<OrchestrationV2StoredEvent> {
+  const latestByThreadId = new Map<string, OrchestrationV2StoredEvent>();
+  for (const stored of events) {
+    latestByThreadId.set(stored.event.threadId, stored);
   }
-
-  const archived = input.snapshot.archivedThreads.find(
-    (thread) => thread.id === input.stored.event.threadId,
+  return Array.from(latestByThreadId.values()).sort(
+    (left, right) => left.sequence - right.sequence,
   );
-  if (archived !== undefined) {
+}
+
+/**
+ * Converts a committed event and the affected thread's current shell into one
+ * delta. `shell` is null when the thread is deleted or unknown.
+ */
+export function shellStreamItemFromThreadShell(input: {
+  readonly stored: OrchestrationV2StoredEvent;
+  readonly shell: OrchestrationV2ThreadShell | null;
+}): Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> {
+  if (input.shell !== null) {
     return {
       kind: "thread.updated",
       sequence: input.stored.sequence,
-      location: "archive",
-      thread: archived,
+      location: input.shell.archivedAt === null ? "active" : "archive",
+      thread: input.shell,
     };
   }
 
@@ -115,18 +118,15 @@ export function shellStreamItemFromSnapshot(input: {
 }
 
 /** Converts a committed event into an archive-only delta when it changes archive membership. */
-export function archivedShellStreamItemFromSnapshot(input: {
+export function archivedShellStreamItemFromThreadShell(input: {
   readonly stored: OrchestrationV2StoredEvent;
-  readonly snapshot: OrchestrationV2ThreadShellSnapshot;
+  readonly shell: OrchestrationV2ThreadShell | null;
 }): Exclude<OrchestrationV2ArchivedShellStreamItem, { readonly kind: "snapshot" }> | null {
-  const archived = input.snapshot.archivedThreads.find(
-    (thread) => thread.id === input.stored.event.threadId,
-  );
-  if (archived !== undefined) {
+  if (input.shell !== null && input.shell.archivedAt !== null) {
     return {
       kind: "thread.updated",
       sequence: input.stored.sequence,
-      thread: archived,
+      thread: input.shell,
     };
   }
   if (
