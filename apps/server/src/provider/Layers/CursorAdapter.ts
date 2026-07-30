@@ -548,6 +548,7 @@ export function makeCursorAdapter(
             serverConfig.stateDir,
             "plans",
             "cursor",
+            encodeURIComponent(boundInstanceId),
             `${encodeURIComponent(input.threadId)}.md`,
           );
           const lastProposedPlanMarkdown = yield* fileSystem
