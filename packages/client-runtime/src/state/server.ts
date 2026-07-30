@@ -47,11 +47,13 @@ export type ServerUpdateState =
   | {
       readonly status: "running";
       readonly stage: ServerUpdateStage;
+      readonly fromVersion: string;
       readonly targetVersion: string;
     }
   | {
       readonly status: "failed";
       readonly stage: ServerUpdateStage;
+      readonly fromVersion: string;
       readonly targetVersion: string;
       readonly message: string;
     };
@@ -95,18 +97,44 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass
 }
 
 export function serverUpdateStateForProgressEvent(
+  fromVersion: string,
   targetVersion: string,
   event: ServerSelfUpdateProgressEvent,
 ): Extract<ServerUpdateState, { status: "running" }> {
   return {
     status: "running",
     stage: event.type === "complete" ? "resuming" : event.stage,
+    fromVersion,
     targetVersion,
   };
 }
 
+export function serverUpdateStateForServerVersion(
+  state: ServerUpdateState,
+  serverVersion: string | null,
+): ServerUpdateState {
+  return state.status === "idle" || serverVersion === null || state.fromVersion === serverVersion
+    ? state
+    : IDLE_SERVER_UPDATE_STATE;
+}
+
 function serverUpdateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
+}
+
+function isRpcSocketError(error: unknown): boolean {
+  if (!isRpcClientError(error)) {
+    return false;
+  }
+  switch (error.reason._tag) {
+    case "SocketReadError":
+    case "SocketWriteError":
+    case "SocketOpenError":
+    case "SocketCloseError":
+      return true;
+    default:
+      return false;
+  }
 }
 
 export function isLegacyUpdateHandoffLoss(cause: Cause.Cause<unknown>): boolean {
@@ -115,7 +143,7 @@ export function isLegacyUpdateHandoffLoss(cause: Cause.Cause<unknown>): boolean 
   }
   return (
     cause.reasons.length > 0 &&
-    cause.reasons.every((reason) => Cause.isFailReason(reason) && isRpcClientError(reason.error))
+    cause.reasons.every((reason) => Cause.isFailReason(reason) && isRpcSocketError(reason.error))
   );
 }
 
@@ -380,8 +408,16 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     }).pipe(Atom.withLabel(`environment-data:server:config:${environmentId}`));
   });
+  const updateStateValueAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) =>
+      serverUpdateStateForServerVersion(
+        get(serverUpdateStateAtom(environmentId)),
+        get(configValueAtom(environmentId))?.environment.serverVersion ?? null,
+      ),
+    ).pipe(Atom.withLabel(`environment-data:server:update-state-value:${environmentId}`)),
+  );
   const updateStateAtom = (environmentId: EnvironmentId | null) =>
-    environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : serverUpdateStateAtom(environmentId);
+    environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : updateStateValueAtom(environmentId);
   const updateServer = createRuntimeCommand<
     EnvironmentRegistry | EnvironmentCacheStore | R,
     E,
@@ -390,25 +426,25 @@ export function createServerEnvironmentAtoms<R, E>(
     unknown
   >(runtime, {
     label: "environment-data:server:update-server",
-    concurrency: {
-      mode: "singleFlight",
-      key: ({ environmentId }) => environmentId,
-    },
+    scheduler: configScheduler,
+    concurrency: configConcurrency,
     execute: (target, atomRegistry) => {
-      const stateAtom = updateStateAtom(target.environmentId);
+      const stateAtom = serverUpdateStateAtom(target.environmentId);
       const targetVersion = target.input.targetVersion;
+      const currentConfig = atomRegistry.get(configValueAtom(target.environmentId));
+      const fromVersion = currentConfig?.environment.serverVersion ?? targetVersion;
       let currentStage: ServerUpdateStage = "downloading";
       atomRegistry.set(stateAtom, {
         status: "running",
         stage: currentStage,
+        fromVersion,
         targetVersion,
       });
 
       return Effect.gen(function* () {
         const environmentRegistry = yield* EnvironmentRegistry;
         const supportsProgress =
-          atomRegistry.get(configValueAtom(target.environmentId))?.environment.capabilities
-            .serverSelfUpdateProgress === true;
+          currentConfig?.environment.capabilities.serverSelfUpdateProgress === true;
 
         const result: ServerSelfUpdateResult = supportsProgress
           ? yield* Effect.gen(function* () {
@@ -426,7 +462,7 @@ export function createServerEnvironmentAtoms<R, E>(
                       currentStage = event.type === "complete" ? "resuming" : event.stage;
                       atomRegistry.set(
                         stateAtom,
-                        serverUpdateStateForProgressEvent(targetVersion, event),
+                        serverUpdateStateForProgressEvent(fromVersion, targetVersion, event),
                       );
                     }).pipe(
                       Effect.andThen(
@@ -445,8 +481,7 @@ export function createServerEnvironmentAtoms<R, E>(
               );
             })
           : yield* Effect.gen(function* () {
-              const selfUpdateMethod = atomRegistry.get(configValueAtom(target.environmentId))
-                ?.environment.capabilities.serverSelfUpdate;
+              const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
               const exit = yield* environmentRegistry
                 .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
                 .pipe(Effect.exit);
@@ -469,6 +504,7 @@ export function createServerEnvironmentAtoms<R, E>(
         atomRegistry.set(stateAtom, {
           status: "running",
           stage: currentStage,
+          fromVersion,
           targetVersion,
         });
 
@@ -518,6 +554,7 @@ export function createServerEnvironmentAtoms<R, E>(
             atomRegistry.set(stateAtom, {
               status: "failed",
               stage: currentStage,
+              fromVersion,
               targetVersion,
               message: serverUpdateFailureMessage(Cause.squash(exit.cause)),
             });

@@ -106,7 +106,12 @@ describe("ServerUpdateProgress", () => {
       <ServerUpdateProgress
         fromVersion="0.0.30"
         serverLabel="bb-1"
-        state={{ status: "running", stage: "resuming", targetVersion: "0.0.31" }}
+        state={{
+          status: "running",
+          stage: "resuming",
+          fromVersion: "0.0.30",
+          targetVersion: "0.0.31",
+        }}
       />,
     );
 
@@ -127,6 +132,7 @@ describe("ServerUpdateProgress", () => {
         state={{
           status: "failed",
           stage: "installing",
+          fromVersion: "0.0.30",
           targetVersion: "0.0.31",
           message: "The package could not be verified.",
         }}
