@@ -51,4 +51,11 @@ export const HostProcessArguments = Context.Reference<ReadonlyArray<string>>(
   },
 );
 
+export const HostProcessUserId = Context.Reference<number | null>(
+  "@t3tools/shared/hostProcess/HostProcessUserId",
+  {
+    defaultValue: () => (typeof process.getuid === "function" ? process.getuid() : null),
+  },
+);
+
 export const isHostWindows = Effect.map(HostProcessPlatform, (platform) => platform === "win32");

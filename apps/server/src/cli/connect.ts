@@ -695,7 +695,7 @@ export const connectCommand = Command.make("connect", {
         const background = yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding);
         if (background) {
           yield* Console.log(
-            "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out.",
+            "\n✓ Background service ready\n\nT3 Code will start automatically and stay reachable in the background.",
           );
           return;
         }

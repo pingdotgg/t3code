@@ -13,13 +13,17 @@ import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  BOOT_SERVICE_LAUNCH_AGENT_LABEL,
   BOOT_SERVICE_UNIT_ENV,
   BOOT_SERVICE_UNIT_FILE,
+  launchAgentPaths,
+  renderBootServiceLaunchAgent,
   renderBootServiceUnit,
 } from "./bootService.ts";
 import * as SelfUpdate from "./selfUpdate.ts";
@@ -76,6 +80,7 @@ const provideHostRefs = (input: {
       Layer.succeed(HostProcessEnvironment, input.env),
       Layer.succeed(HostProcessExecutablePath, NODE_PATH),
       Layer.succeed(HostProcessArguments, [NODE_PATH, input.entryPath, "serve"]),
+      Layer.succeed(HostProcessUserId, 501),
     ),
   );
 
@@ -192,6 +197,41 @@ it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
     }),
   );
 
+  it.effect("reports boot-service for the T3-managed macOS LaunchAgent", () =>
+    Effect.gen(function* () {
+      const { fs, home, path } = yield* makeHome();
+      const baseDir = path.join(home, ".t3");
+      const launchAgent = launchAgentPaths(path, home, baseDir, 501);
+      yield* fs.makeDirectory(path.dirname(launchAgent.unitPath), { recursive: true });
+      yield* fs.writeFileString(
+        launchAgent.unitPath,
+        renderBootServiceLaunchAgent({
+          nodePath: NODE_PATH,
+          t3EntryPath: launchAgent.activeEntryPath,
+          baseDir,
+          logPath: path.join(baseDir, "userdata", "logs", "boot-service.log"),
+          unitPath: launchAgent.unitPath,
+        }),
+      );
+
+      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
+        desktopManaged: false,
+      }).pipe(
+        provideHostRefs({
+          platform: "darwin",
+          env: {
+            HOME: home,
+            T3CODE_HOME: baseDir,
+            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_LAUNCH_AGENT_LABEL,
+          },
+          entryPath: launchAgent.activeEntryPath,
+        }),
+      );
+
+      assert.equal(method, "boot-service");
+    }),
+  );
+
   it.effect("reports desktop-managed for desktop-supervised backends", () =>
     Effect.gen(function* () {
       const { home, path } = yield* makeHome();
@@ -262,11 +302,21 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
     const baseDir = path.join(home, ".t3");
+    const platform = options?.platform ?? "linux";
+    const launchdBootService = options?.bootService === true && platform === "darwin";
+    const launchAgent = launchAgentPaths(path, home, baseDir, 501);
     const entryPath =
       options?.entryPath ??
-      path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
-    const env: NodeJS.ProcessEnv =
-      options?.bootService === true
+      (launchdBootService
+        ? launchAgent.activeEntryPath
+        : path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs"));
+    const env: NodeJS.ProcessEnv = launchdBootService
+      ? {
+          HOME: home,
+          T3CODE_HOME: baseDir,
+          [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_LAUNCH_AGENT_LABEL,
+        }
+      : options?.bootService === true
         ? {
             HOME: home,
             INVOCATION_ID: "abc123",
@@ -274,18 +324,37 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
           }
         : { HOME: home };
     if (options?.bootService === true) {
-      const unitDir = path.join(home, ".config", "systemd", "user");
-      yield* fs.makeDirectory(unitDir, { recursive: true });
-      yield* fs.writeFileString(
-        path.join(unitDir, "t3code.service"),
-        renderBootServiceUnit({
-          nodePath: NODE_PATH,
-          t3EntryPath: entryPath,
-          baseDir,
-          logPath: path.join(baseDir, "userdata", "logs", "boot-service.log"),
-          unitPath: path.join(unitDir, "t3code.service"),
-        }),
-      );
+      if (launchdBootService) {
+        const previousRuntime = path.join(baseDir, "runtime", "versions", "0.0.28");
+        yield* fs.makeDirectory(path.dirname(launchAgent.unitPath), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(launchAgent.activeRuntimeLinkPath), {
+          recursive: true,
+        });
+        yield* fs.symlink(previousRuntime, launchAgent.activeRuntimeLinkPath);
+        yield* fs.writeFileString(
+          launchAgent.unitPath,
+          renderBootServiceLaunchAgent({
+            nodePath: NODE_PATH,
+            t3EntryPath: entryPath,
+            baseDir,
+            logPath: path.join(baseDir, "userdata", "logs", "boot-service.log"),
+            unitPath: launchAgent.unitPath,
+          }),
+        );
+      } else {
+        const unitDir = path.join(home, ".config", "systemd", "user");
+        yield* fs.makeDirectory(unitDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(unitDir, "t3code.service"),
+          renderBootServiceUnit({
+            nodePath: NODE_PATH,
+            t3EntryPath: entryPath,
+            baseDir,
+            logPath: path.join(baseDir, "userdata", "logs", "boot-service.log"),
+            unitPath: path.join(unitDir, "t3code.service"),
+          }),
+        );
+      }
     }
 
     const commands: Array<RecordedCommand> = [];
@@ -333,7 +402,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
           configLayer,
         ),
       ),
-      provideHostRefs({ platform: options?.platform ?? "linux", env, entryPath }),
+      provideHostRefs({ platform, env, entryPath }),
     );
     return {
       fs,
@@ -341,6 +410,7 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       home,
       baseDir,
       entryPath,
+      launchAgent,
       commands,
       spawns,
       exitCount: () => exited,
@@ -517,6 +587,53 @@ it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
       assert.lengthOf(context.spawns, 0);
       // systemd replaces the process; the server must not exit itself.
       assert.equal(context.exitCount(), 0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("switches the macOS LaunchAgent runtime and restarts it", () =>
+    Effect.gen(function* () {
+      const context = yield* makeContext({
+        platform: "darwin",
+        bootService: true,
+      });
+
+      const result = yield* context.service.update({ targetVersion: "0.0.29" });
+
+      assert.deepEqual(result, { targetVersion: "0.0.29", method: "boot-service" });
+      assert.equal(
+        yield* context.fs.readLink(context.launchAgent.activeRuntimeLinkPath),
+        context.path.join(context.baseDir, "runtime", "versions", "0.0.29"),
+      );
+      assert.deepEqual(
+        context.commands.map((entry) => entry.command),
+        ["npm", NODE_PATH, "/bin/launchctl"],
+      );
+      assert.deepEqual(context.commands[2], {
+        command: "/bin/launchctl",
+        args: ["kickstart", "-k", "gui/501/com.t3tools.t3code.server"],
+      });
+      assert.lengthOf(context.spawns, 0);
+      assert.equal(context.exitCount(), 0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("restores the previous macOS runtime when launchd rejects the restart", () =>
+    Effect.gen(function* () {
+      const context = yield* makeContext({
+        platform: "darwin",
+        bootService: true,
+        failWhen: (command) => command === "/bin/launchctl",
+      });
+      const previousRuntime = yield* context.fs.readLink(context.launchAgent.activeRuntimeLinkPath);
+
+      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
+
+      assert.include(error.reason, "Restarting the T3 Code LaunchAgent failed");
+      assert.equal(
+        yield* context.fs.readLink(context.launchAgent.activeRuntimeLinkPath),
+        previousRuntime,
+      );
+      assert.lengthOf(context.spawns, 0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

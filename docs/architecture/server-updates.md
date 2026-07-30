@@ -32,17 +32,17 @@ the mismatch and action disappear.
 
 The server resolves its capability once at startup and publishes it in the environment descriptor.
 
-| Advertised value  | Process shape                                                                                 | Client behavior                                                       |
-| ----------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `boot-service`    | Linux server running under the T3-managed systemd user service                                | Call the update RPC; the service unit is replaced and restarted.      |
-| `respawn`         | Published npm CLI running in the foreground on macOS or Linux                                 | Call the update RPC; the process hands off to a detached replacement. |
-| `desktop-managed` | Backend supervised by the desktop app                                                         | Tell the user to update the desktop app on the server machine.        |
-| absent            | Older server, development checkout, Windows foreground process, or an unrecognized supervisor | Offer the exact manual relaunch command.                              |
+| Advertised value  | Process shape                                                                                 | Client behavior                                                         |
+| ----------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `boot-service`    | Server running under the T3-managed systemd user service or macOS LaunchAgent                 | Call the update RPC; the managed service switches runtime and restarts. |
+| `respawn`         | Published npm CLI running in the foreground on macOS or Linux                                 | Call the update RPC; the process hands off to a detached replacement.   |
+| `desktop-managed` | Backend supervised by the desktop app                                                         | Tell the user to update the desktop app on the server machine.          |
+| absent            | Older server, development checkout, Windows foreground process, or an unrecognized supervisor | Offer the exact manual relaunch command.                                |
 
 Desktop ownership takes precedence over process-shape detection. A desktop-managed backend must
 never spawn a second CLI server beside the app-owned process. Likewise, a process launched by an
-unrecognized systemd unit does not claim the foreground respawn path because its supervisor could
-bring the old version back.
+unrecognized systemd unit or marked LaunchAgent does not claim the foreground respawn path because
+its supervisor could bring the old version back.
 
 ## Update Flow
 
@@ -56,7 +56,7 @@ flowchart TD
     F --> G[Run version preflight]
     G -->|fails| H[Remove failed runtime and keep current server]
     G -->|passes| I{Handoff method}
-    I -->|boot-service| J[Rewrite and restart T3 systemd unit]
+    I -->|boot-service| J[Switch runtime and restart managed service]
     I -->|respawn| K[Start delayed replacement and exit current process]
     J --> L[Client reconnects]
     K --> L
@@ -77,10 +77,11 @@ preflight also removes the candidate runtime so retrying the same version perfor
 
 ## Host Service Lifecycle
 
-The systemd user service is a host lifecycle concern, not a T3 Connect resource. The standalone
-`t3 service install`, `uninstall`, `update`, and `status` commands own it. Install and update both
-reconcile the unit through `BootService`; running `npx t3@latest service update` therefore pins and
-activates the latest CLI release without requiring a connected client.
+The systemd user service or macOS LaunchAgent is a host lifecycle concern, not a T3 Connect
+resource. The standalone `t3 service install`, `uninstall`, `update`, and `status` commands own it.
+Install and update both reconcile the unit through `BootService`; running
+`npx t3@latest service update` therefore pins and activates the latest CLI release without requiring
+a connected client.
 
 The `t3 connect` onboarding flow may offer service installation, but it calls the same reconciliation
 operation as `t3 service install`. Connect logout only disables cloud access and clears its
@@ -88,9 +89,13 @@ authorization; it does not uninstall the host service.
 
 ## Process Handoff
 
-For `boot-service`, the server atomically rewrites the T3-managed user unit to point at the verified
-runtime, reloads systemd, and restarts the unit. Reload and restart failures restore the previous
-unit before returning an error.
+For a systemd `boot-service`, the server atomically rewrites the T3-managed user unit to point at
+the verified runtime, reloads systemd, and restarts the unit. Reload and restart failures restore
+the previous unit before returning an error.
+
+For a macOS `boot-service`, the LaunchAgent always starts a stable entry path. The server atomically
+switches that path to the verified runtime and asks launchd to restart the job. A rejected restart
+restores the previous runtime link before returning an error.
 
 For `respawn`, the server starts a detached, delayed replacement that replays the original CLI
 arguments. It then acknowledges the request and schedules the current process to exit. The delays

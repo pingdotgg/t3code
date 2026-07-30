@@ -10,8 +10,10 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import {
   HostProcessArguments,
+  HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
 
 import { reconcileService } from "../cli/service.ts";
@@ -31,6 +33,7 @@ const makeRecordingRunnerLayer = (
   options?: {
     readonly failCommand?: string;
     readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
+    readonly stdoutFor?: (command: string, args: ReadonlyArray<string>) => string | undefined;
   },
 ) =>
   Layer.succeed(
@@ -44,7 +47,7 @@ const makeRecordingRunnerLayer = (
             input.command === options?.failCommand ||
             options?.failWhen?.(input.command, input.args) === true;
           return {
-            stdout: "",
+            stdout: options?.stdoutFor?.(input.command, input.args) ?? "",
             stderr: failed ? `${input.command} exploded` : "",
             code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
             timedOut: false,
@@ -60,10 +63,16 @@ const makeHost = (entry: string): BootService.BootServiceHost => ({
   cliEntryPath: entry,
 });
 
-const provideHostRefs = (home: string, platform: NodeJS.Platform = "linux") =>
+const provideHostRefs = (
+  home: string,
+  platform: NodeJS.Platform = "linux",
+  pathEnvironment = "/test/bin:/usr/bin:/bin",
+) =>
   Effect.provide(
     Layer.mergeAll(
       Layer.succeed(HostProcessPlatform, platform),
+      Layer.succeed(HostProcessEnvironment, { HOME: home, PATH: pathEnvironment }),
+      Layer.succeed(HostProcessUserId, 501),
       ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
     ),
   );
@@ -141,6 +150,50 @@ it("quotes systemd values containing spaces and escapes percent specifiers", () 
   // quoting is not), but % still goes through specifier expansion.
   assert.include(unit, "StandardOutput=append:/home/me/100%%logs/boot.log");
   assert.include(unit, "StandardError=append:/home/me/100%%logs/boot.log");
+});
+
+it("renders a restartable per-user macOS LaunchAgent", () => {
+  const launchAgent = BootService.renderBootServiceLaunchAgent({
+    nodePath: "/opt/homebrew/bin/node",
+    t3EntryPath: "/Users/theo/T3 & Data/runtime/service/current/node_modules/t3/dist/bin.mjs",
+    baseDir: "/Users/theo/T3 & Data",
+    logPath: "/Users/theo/T3 & Data/userdata/logs/boot-service.log",
+    unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.t3code.server.plist",
+    pathEnvironment: "/opt/homebrew/bin:/usr/bin:/bin",
+  });
+
+  assert.include(launchAgent, "<string>com.t3tools.t3code.server</string>");
+  assert.include(launchAgent, "<key>RunAtLoad</key>\n  <true/>");
+  assert.include(launchAgent, "<key>KeepAlive</key>\n  <true/>");
+  assert.include(launchAgent, "<string>/Users/theo/T3 &amp; Data</string>");
+  assert.include(
+    launchAgent,
+    "<string>/Users/theo/T3 &amp; Data/runtime/service/current/node_modules/t3/dist/bin.mjs</string>",
+  );
+  assert.include(
+    launchAgent,
+    "<key>T3_BOOT_SERVICE_UNIT</key>\n    <string>com.t3tools.t3code.server</string>",
+  );
+  assert.include(
+    launchAgent,
+    "<key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin:/bin</string>",
+  );
+});
+
+it("uses typed supervisor context for launchd recovery guidance", () => {
+  assert.include(
+    new BootService.BootServiceCommandError({
+      step: "loading the background service",
+      supervisor: "launchd",
+    }).message,
+    "System Settings > General > Login Items & Extensions",
+  );
+  assert.notInclude(
+    new BootService.BootServiceCommandError({
+      step: "checking the LaunchAgent",
+    }).message,
+    "System Settings",
+  );
 });
 
 it("flags package-manager cache entry points as ephemeral", () => {
@@ -388,7 +441,250 @@ it.layer(NodeServices.layer)("BootService", (it) => {
     }),
   );
 
-  it.effect("fails on non-Linux platforms without touching the filesystem", () =>
+  it.effect("installs and starts a pinned macOS LaunchAgent", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands)),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const plan = yield* service.install;
+      const runtimeDir = path.join(dirs.baseDir, "runtime", "versions", "0.0.27");
+      const activeRuntimeLink = path.join(dirs.baseDir, "runtime", "service", "current");
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.t3tools.t3code.server.plist",
+      );
+
+      assert.equal(
+        plan.t3EntryPath,
+        path.join(activeRuntimeLink, "node_modules", "t3", "dist", "bin.mjs"),
+      );
+      assert.equal(yield* fs.readLink(activeRuntimeLink), runtimeDir);
+      assert.deepEqual(
+        commands.map((entry) => [entry.command, ...entry.args].join(" ")),
+        [
+          `npm install --prefix ${runtimeDir} --no-fund --no-audit t3@0.0.27`,
+          "/bin/launchctl print-disabled gui/501",
+          "/bin/launchctl print gui/501/com.t3tools.t3code.server",
+          "/bin/launchctl enable gui/501/com.t3tools.t3code.server",
+          "/bin/launchctl bootout gui/501/com.t3tools.t3code.server",
+          `/bin/launchctl bootstrap gui/501 ${launchAgentPath}`,
+          "/bin/launchctl print gui/501/com.t3tools.t3code.server",
+        ],
+      );
+
+      const plist = yield* fs.readFileString(launchAgentPath);
+      assert.include(plist, `<string>${plan.t3EntryPath}</string>`);
+      assert.notInclude(plist, dirs.stableEntry);
+
+      // The recording npm runner does not materialize files, so complete the
+      // managed runtime before checking the current-state contract.
+      yield* fs.makeDirectory(path.dirname(path.join(runtimeDir, "node_modules/t3/dist/bin.mjs")), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(runtimeDir, "node_modules", "t3", "dist", "bin.mjs"),
+        "#!/usr/bin/env node\n",
+      );
+      const status = yield* service.status;
+      assert.isTrue(status.supported);
+      assert.isTrue(status.installed);
+      assert.isTrue(status.current);
+
+      const differentPathService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer([])),
+        provideHostRefs(dirs.home, "darwin", "/different/setup/path"),
+      );
+      assert.isTrue((yield* differentPathService.status).current);
+
+      assert.isTrue(yield* service.uninstall);
+      assert.isFalse(yield* fs.exists(launchAgentPath));
+    }),
+  );
+
+  it.effect("restores the previous macOS runtime when LaunchAgent activation fails", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const initialCommands: Array<RecordedCommand> = [];
+      const initialService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(initialCommands)),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+      yield* initialService.install;
+
+      const activeRuntimeLink = path.join(dirs.baseDir, "runtime", "service", "current");
+      const previousRuntime = yield* fs.readLink(activeRuntimeLink);
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.t3tools.t3code.server.plist",
+      );
+      const previousLaunchAgent = yield* fs.readFileString(launchAgentPath);
+      const repairCommands: Array<RecordedCommand> = [];
+      const repairService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(repairCommands, {
+            failWhen: (command, args) => command === "/bin/launchctl" && args.includes("bootstrap"),
+            stdoutFor: (command, args) =>
+              command === "/bin/launchctl" && args.includes("print-disabled")
+                ? 'disabled services = {\n  "com.t3tools.t3code.server" => true\n}\n'
+                : undefined,
+          }),
+        ),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const error = yield* repairService.install.pipe(Effect.flip);
+
+      assert.isTrue(isCommandError(error));
+      assert.equal(yield* fs.readLink(activeRuntimeLink), previousRuntime);
+      assert.equal(yield* fs.readFileString(launchAgentPath), previousLaunchAgent);
+      assert.isTrue(
+        repairCommands.some(
+          ({ command, args }) =>
+            command === "/bin/launchctl" &&
+            args.join(" ") === "disable gui/501/com.t3tools.t3code.server",
+        ),
+      );
+    }),
+  );
+
+  it.effect("leaves a previously stopped macOS LaunchAgent stopped after rollback", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const initialService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(Effect.provide(makeRecordingRunnerLayer([])), provideHostRefs(dirs.home, "darwin"));
+      yield* initialService.install;
+
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.t3tools.t3code.server.plist",
+      );
+      const previousLaunchAgent = yield* fs.readFileString(launchAgentPath);
+      const commands: Array<RecordedCommand> = [];
+      const repairService = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.28",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer(commands, {
+            failWhen: (command, args) =>
+              command === "/bin/launchctl" &&
+              (args.includes("print") || args.includes("bootstrap")),
+          }),
+        ),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const error = yield* repairService.install.pipe(Effect.flip);
+
+      assert.isTrue(isCommandError(error));
+      assert.equal(yield* fs.readFileString(launchAgentPath), previousLaunchAgent);
+      assert.lengthOf(
+        commands.filter(
+          ({ command, args }) => command === "/bin/launchctl" && args.includes("bootstrap"),
+        ),
+        1,
+      );
+    }),
+  );
+
+  it.effect("stops an orphaned macOS LaunchAgent when its plist is already gone", () =>
+    Effect.gen(function* () {
+      const { dirs } = yield* makeTestContext();
+      const commands: Array<RecordedCommand> = [];
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(makeRecordingRunnerLayer(commands)),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+
+      assert.isTrue(yield* service.uninstall);
+      assert.deepEqual(commands, [
+        {
+          command: "/bin/launchctl",
+          args: ["print", "gui/501/com.t3tools.t3code.server"],
+        },
+        {
+          command: "/bin/launchctl",
+          args: ["bootout", "gui/501/com.t3tools.t3code.server"],
+        },
+      ]);
+    }),
+  );
+
+  it.effect("keeps the macOS plist when launchd cannot stop a loaded agent", () =>
+    Effect.gen(function* () {
+      const { dirs, fs, path } = yield* makeTestContext();
+      const launchAgentPath = path.join(
+        dirs.home,
+        "Library",
+        "LaunchAgents",
+        "com.t3tools.t3code.server.plist",
+      );
+      yield* fs.makeDirectory(path.dirname(launchAgentPath), { recursive: true });
+      yield* fs.writeFileString(launchAgentPath, "existing launch agent");
+
+      const service = yield* BootService.make({
+        baseDir: dirs.baseDir,
+        logsDir: dirs.logsDir,
+        cliVersion: "0.0.27",
+        host: makeHost(dirs.stableEntry),
+      }).pipe(
+        Effect.provide(
+          makeRecordingRunnerLayer([], {
+            failWhen: (command, args) => command === "/bin/launchctl" && args.includes("bootout"),
+          }),
+        ),
+        provideHostRefs(dirs.home, "darwin"),
+      );
+
+      const error = yield* service.uninstall.pipe(Effect.flip);
+
+      assert.isTrue(isCommandError(error));
+      assert.isTrue(yield* fs.exists(launchAgentPath));
+    }),
+  );
+
+  it.effect("fails on unsupported platforms without touching the filesystem", () =>
     Effect.gen(function* () {
       const { dirs, fs, path } = yield* makeTestContext();
       const commands: Array<RecordedCommand> = [];
@@ -399,7 +695,7 @@ it.layer(NodeServices.layer)("BootService", (it) => {
         host: makeHost("/usr/local/lib/node_modules/t3/dist/bin.mjs"),
       }).pipe(
         Effect.provide(makeRecordingRunnerLayer(commands)),
-        provideHostRefs(dirs.home, "darwin"),
+        provideHostRefs(dirs.home, "win32"),
       );
 
       const error = yield* service.install.pipe(Effect.flip);

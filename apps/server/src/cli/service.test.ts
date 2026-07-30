@@ -16,7 +16,7 @@ it("reports the installed service version and host paths", () => {
     [
       "T3 Code service",
       "  Status: installed · t3@0.0.29",
-      "  Unit: /home/me/.config/systemd/user/t3code.service",
+      "  Definition: /home/me/.config/systemd/user/t3code.service",
       "  Logs: /home/me/.t3/userdata/logs/boot-service.log",
     ].join("\n"),
   );
@@ -29,9 +29,9 @@ it("gives a direct repair command for a stale service", () => {
   );
 });
 
-it("explains service availability without systemd", () => {
+it("explains service availability on unsupported platforms", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
-    "Supported on: Linux with systemd",
+    "Supported on: macOS with launchd or Linux with systemd",
   );
 });

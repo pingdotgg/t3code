@@ -1,7 +1,14 @@
 # Running T3 Code in the Background
 
-On a Linux host, T3 Code can run as a background service for your user. It starts when the machine
-boots and keeps running after you log out.
+On macOS or Linux, T3 Code can run as a background service for your user. The simplest setup is:
+
+```sh
+npx t3 connect
+```
+
+After T3 Connect links the machine, accept the default background setup. T3 Code starts immediately
+and returns automatically after a reboot. On macOS, the per-user LaunchAgent starts after you sign
+in. On Linux, the systemd user service starts at boot and keeps running after you log out.
 
 ## Manage the Service
 
@@ -33,10 +40,10 @@ Updating restarts T3 Code briefly. Let active agent work and terminal commands f
 
 ## Using It with T3 Connect
 
-T3 Connect may offer to install the service during setup so the host stays reachable after you log
-out. This is only an onboarding shortcut: the service and T3 Connect are managed separately.
+T3 Connect offers to install the service during setup so the host starts automatically and stays
+reachable in the background. The service and T3 Connect are still managed separately.
 
 Signing out of T3 Connect does not remove the service. Use `t3 service uninstall` when you no longer
 want T3 Code to start in the background.
 
-The background service currently requires Linux with systemd.
+The background service requires macOS with launchd or Linux with systemd.

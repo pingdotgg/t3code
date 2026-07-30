@@ -21,8 +21,8 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
 /** How a server can replace itself with another version when asked over RPC:
-    "boot-service" rewrites the systemd user unit and restarts it; "respawn"
-    installs the target version and respawns the foreground process. */
+    "boot-service" hands off through its systemd unit or macOS LaunchAgent;
+    "respawn" installs the target version and replaces the foreground process. */
 export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 

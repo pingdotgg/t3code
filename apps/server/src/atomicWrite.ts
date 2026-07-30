@@ -23,3 +23,25 @@ export const writeFileStringAtomically = (input: {
       yield* fs.rename(tempPath, input.filePath);
     }),
   );
+
+export const writeSymbolicLinkAtomically = (input: {
+  readonly linkPath: string;
+  readonly targetPath: string;
+}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const targetDirectory = path.dirname(input.linkPath);
+
+      yield* fs.makeDirectory(targetDirectory, { recursive: true });
+      const tempDirectory = yield* fs.makeTempDirectoryScoped({
+        directory: targetDirectory,
+        prefix: `${path.basename(input.linkPath)}.`,
+      });
+      const tempPath = path.join(tempDirectory, "link.tmp");
+
+      yield* fs.symlink(input.targetPath, tempPath);
+      yield* fs.rename(tempPath, input.linkPath);
+    }),
+  );

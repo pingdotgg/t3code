@@ -48,7 +48,7 @@ export function formatServiceStatus(
   cliVersion: string,
 ): string {
   if (!status.supported) {
-    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd";
+    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: macOS with launchd or Linux with systemd";
   }
   if (!status.installed) {
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
@@ -56,7 +56,7 @@ export function formatServiceStatus(
   return [
     "T3 Code service",
     `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
-    `  Unit: ${status.unitPath}`,
+    `  Definition: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
   ].join("\n");
@@ -156,8 +156,7 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     Prompt.confirm({
       message: installed
         ? "The installed T3 Code service needs an update or repair. Update it now?"
-        : "Run T3 Code in the background whenever this machine boots? " +
-          "It stays reachable through T3 Connect even after you log out.",
+        : "Start T3 Code automatically and keep this machine reachable in the background?",
       initial: true,
     }),
   );
