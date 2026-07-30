@@ -5,7 +5,6 @@ import type {
   OrchestrationQueuedTurn,
   ProjectEntry,
   ProviderApprovalDecision,
-  ProviderInteractionMode,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -93,7 +92,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
-  BotIcon,
   CircleAlertIcon,
   ListTodoIcon,
   type LucideIcon,
@@ -103,7 +101,6 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
   deriveProviderInstanceEntries,
@@ -190,13 +187,10 @@ function isInsideComposerFloatingLayer(element: Element): boolean {
 }
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
-  showInteractionModeToggle: boolean;
-  interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
-  onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
@@ -206,30 +200,6 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   return (
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-      {props.showInteractionModeToggle ? (
-        <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
-                ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
-          >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
-
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-        </>
-      ) : null}
 
       <Select
         value={props.runtimeMode}
@@ -440,7 +410,6 @@ export interface ChatComposerProps {
 
   // Mode
   runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
@@ -488,9 +457,7 @@ export interface ChatComposerProps {
   ) => void;
 
   onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
-  toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
-  handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   togglePlanSidebar: () => void;
 
   focusComposer: () => void;
@@ -537,7 +504,6 @@ export const ChatComposer = memo(
       planSidebarLabel,
       planSidebarOpen,
       runtimeMode,
-      interactionMode,
       lockedProvider,
       providerStatuses,
       activeProjectDefaultModelSelection,
@@ -563,9 +529,7 @@ export const ChatComposer = memo(
       onPreviousActivePendingUserInputQuestion,
       onChangeActivePendingUserInputCustomAnswer,
       onProviderModelSelect,
-      toggleInteractionMode,
       handleRuntimeModeChange,
-      handleInteractionModeChange,
       togglePlanSidebar,
       focusComposer,
       scheduleComposerFocus,
@@ -765,15 +729,6 @@ export const ChatComposer = memo(
 
     const selectedPromptEffort = composerProviderState.promptEffort;
     const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-    const composerProviderControls = useMemo(
-      () => ({
-        showInteractionModeToggle: getProviderInteractionModeToggle(
-          providerStatuses,
-          selectedProvider,
-        ),
-      }),
-      [providerStatuses, selectedProvider],
-    );
     const selectedModelSelection = useMemo<ModelSelection>(
       () =>
         createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
@@ -924,20 +879,6 @@ export const ChatComposer = memo(
             command: "model",
             label: "/model",
             description: "Switch response model for this thread",
-          },
-          {
-            id: "slash:plan",
-            type: "slash-command",
-            command: "plan",
-            label: "/plan",
-            description: "Switch this thread into plan mode",
-          },
-          {
-            id: "slash:default",
-            type: "slash-command",
-            command: "default",
-            label: "/default",
-            description: "Switch this thread back to normal build mode",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1581,13 +1522,6 @@ export const ChatComposer = memo(
             }
             return;
           }
-          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
-          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-          });
-          if (applied) {
-            setComposerHighlightedItemId(null);
-          }
           return;
         }
         if (item.type === "provider-slash-command") {
@@ -1627,7 +1561,7 @@ export const ChatComposer = memo(
           return;
         }
       },
-      [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+      [applyPromptReplacement, resolveActiveComposerTrigger],
     );
 
     const onComposerMenuItemHighlighted = useCallback(
@@ -1726,10 +1660,6 @@ export const ChatComposer = memo(
       key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
       event: KeyboardEvent,
     ) => {
-      if (key === "Tab" && event.shiftKey) {
-        toggleInteractionMode();
-        return true;
-      }
       const { trigger } = resolveActiveComposerTrigger();
       const menuIsActive = composerMenuOpenRef.current || trigger !== null;
       if (menuIsActive) {
@@ -2352,13 +2282,10 @@ export const ChatComposer = memo(
                   {isComposerFooterCompact ? (
                     <CompactComposerControlsMenu
                       activePlan={showPlanSidebarToggle}
-                      interactionMode={interactionMode}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
-                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
-                      onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
                       onRuntimeModeChange={handleRuntimeModeChange}
                     />
@@ -2374,15 +2301,10 @@ export const ChatComposer = memo(
                         </>
                       ) : null}
                       <ComposerFooterModeControls
-                        showInteractionModeToggle={
-                          composerProviderControls.showInteractionModeToggle
-                        }
-                        interactionMode={interactionMode}
                         runtimeMode={runtimeMode}
                         showPlanToggle={showPlanSidebarToggle}
                         planSidebarLabel={planSidebarLabel}
                         planSidebarOpen={planSidebarOpen}
-                        onToggleInteractionMode={toggleInteractionMode}
                         onRuntimeModeChange={handleRuntimeModeChange}
                         onTogglePlanSidebar={togglePlanSidebar}
                       />

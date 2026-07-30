@@ -10,11 +10,11 @@ describe("searchSlashCommandItems", () => {
   it("moves exact provider command matches ahead of broader description matches", () => {
     const items = [
       {
-        id: "slash:default",
+        id: "slash:model",
         type: "slash-command",
-        command: "default",
-        label: "/default",
-        description: "Switch this thread back to normal build mode",
+        command: "model",
+        label: "/model",
+        description: "Select a model for UI work",
       },
       {
         id: "provider-slash-command:claudeAgent:ui",
@@ -38,7 +38,7 @@ describe("searchSlashCommandItems", () => {
 
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:ui",
-      "slash:default",
+      "slash:model",
     ]);
   });
 

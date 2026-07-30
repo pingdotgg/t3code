@@ -1405,18 +1405,6 @@ async function expectComposerActionsContained(): Promise<void> {
   );
 }
 
-async function waitForInteractionModeButton(
-  expectedLabel: "Build" | "Plan",
-): Promise<HTMLButtonElement> {
-  return waitForElement(
-    () =>
-      Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === expectedLabel,
-      ) as HTMLButtonElement | null,
-    `Unable to find ${expectedLabel} interaction mode button.`,
-  );
-}
-
 async function waitForServerConfigToApply(): Promise<void> {
   await vi.waitFor(
     () => {
@@ -3052,63 +3040,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
+  it("hides mode controls and sends legacy plan threads in build mode", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-target-legacy-plan" as MessageId,
+      targetText: "legacy plan target",
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-target-hotkey" as MessageId,
-        targetText: "hotkey target",
-      }),
+      snapshot: {
+        ...snapshot,
+        threads: snapshot.threads.map((thread) => ({ ...thread, interactionMode: "plan" })),
+      },
+      resolveRpc: (body) =>
+        body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand
+          ? { sequence: fixture.snapshot.snapshotSequence + 1 }
+          : undefined,
     });
 
     try {
-      const initialModeButton = await waitForInteractionModeButton("Build");
-      expect(initialModeButton.title).toContain("enter plan mode");
-
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Tab",
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Implement the change");
       await waitForLayout();
 
-      expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
-
-      const composerEditor = await waitForComposerEditor();
-      composerEditor.focus();
-      composerEditor.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Tab",
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-
       await vi.waitFor(
-        async () => {
-          expect((await waitForInteractionModeButton("Plan")).title).toContain(
-            "return to normal build mode",
-          );
+        () => {
+          expect(
+            Array.from(document.querySelectorAll("button")).some((button) => {
+              const label = button.textContent?.trim();
+              return label === "Build" || label === "Plan";
+            }),
+          ).toBe(false);
         },
         { timeout: 8_000, interval: 16 },
       );
 
-      composerEditor.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Tab",
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+      (await waitForSendButton()).click();
 
       await vi.waitFor(
-        async () => {
-          expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+        () => {
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          );
+          expect(turnStartRequest).toMatchObject({
+            interactionMode: "default",
+          });
         },
         { timeout: 8_000, interval: 16 },
       );
