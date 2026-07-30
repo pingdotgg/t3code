@@ -110,6 +110,10 @@ export function selectHeaderThreads(
   );
 }
 
+export function shouldShowHeaderPanelToggle(rightPanelOpen: boolean): boolean {
+  return !rightPanelOpen;
+}
+
 export const ChatHeader = memo(function ChatHeader({
   routeKind,
   activeThreadEnvironmentId,
@@ -224,27 +228,26 @@ export const ChatHeader = memo(function ChatHeader({
           onArchiveThread={onArchiveThread}
           onDeleteThread={onDeleteThread}
         />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <HeaderIconActionButton
-                aria-label={rightPanelOpen ? "Close right panel" : "Open right panel"}
-                pressed={rightPanelOpen}
-                disabled={!rightPanelAvailable}
-                onClick={onToggleRightPanel}
-              />
-            }
-          >
-            <SidebarPanelIcon className="size-4 rotate-180" aria-hidden />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {rightPanelAvailable
-              ? rightPanelOpen
-                ? "Close right panel"
-                : "Open right panel"
-              : "Right panel is unavailable until a project is open"}
-          </TooltipPopup>
-        </Tooltip>
+        {shouldShowHeaderPanelToggle(rightPanelOpen) ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <HeaderIconActionButton
+                  aria-label="Open right panel"
+                  disabled={!rightPanelAvailable}
+                  onClick={onToggleRightPanel}
+                />
+              }
+            >
+              <SidebarPanelIcon className="size-4 rotate-180" aria-hidden />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              {rightPanelAvailable
+                ? "Open right panel"
+                : "Right panel is unavailable until a project is open"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
     </div>
   );
