@@ -99,6 +99,10 @@
       "types": "./src/orchestrationTiming.ts",
       "import": "./src/orchestrationTiming.ts"
     },
+    "./localAgents": {
+      "types": "./src/localAgents.ts",
+      "import": "./src/localAgents.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"

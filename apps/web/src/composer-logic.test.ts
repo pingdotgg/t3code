@@ -10,7 +10,6 @@ import {
   replaceTextRange,
   shouldSubmitComposerOnEnter,
 } from "./composer-logic";
-import { INLINE_CODE_CONTEXT_PLACEHOLDER } from "./lib/codeContext";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 describe("shouldSubmitComposerOnEnter", () => {
@@ -350,15 +349,6 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
   });
 
-  it("treats code pills as inline tokens for adjacency checks", () => {
-    const text = `open ${INLINE_CODE_CONTEXT_PLACEHOLDER} next`;
-    const tokenStart = "open ".length;
-    const tokenEnd = tokenStart + 1;
-
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
-  });
-
   it("treats skill pills as inline tokens for adjacency checks", () => {
     const text = "run $review-follow-up next";
     const tokenStart = "run ".length;
@@ -372,10 +362,6 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 describe("parseStandaloneComposerSlashCommand", () => {
   it("parses standalone /plan command", () => {
     expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
-  });
-
-  it("parses standalone /ask command", () => {
-    expect(parseStandaloneComposerSlashCommand("/ask")).toBe("ask");
   });
 
   it("parses standalone /default command", () => {

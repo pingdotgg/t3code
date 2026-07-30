@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Option } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   combinedAuthOutput,
@@ -28,6 +29,12 @@ describe("SourceControlProviderDiscovery", () => {
       account: Option.some("steven"),
       host: Option.some("github.com"),
     });
-    expect(combinedAuthOutput({ stdout: "ok", stderr: "warn", exitCode: 0 })).toBe("ok\nwarn");
+    expect(
+      combinedAuthOutput({
+        stdout: "ok",
+        stderr: "warn",
+        exitCode: ChildProcessSpawner.ExitCode(0),
+      }),
+    ).toBe("ok\nwarn");
   });
 });

@@ -1,20 +1,15 @@
 import {
-  CheckpointRef,
   CommandId,
   EventId,
-  MessageId,
   ProjectId,
   ProviderDriverKind,
   ThreadId,
-  TurnId,
   type OrchestrationEvent,
-  type OrchestrationProposedPlanId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
-import { forkedActivityId, forkedMessageId, forkedPlanId, forkedTurnId } from "./threadForking.ts";
 
 function makeEvent(input: {
   sequence: number;
@@ -104,210 +99,8 @@ describe("orchestration projector", () => {
         activities: [],
         checkpoints: [],
         session: null,
-        turnQueue: {
-          items: [],
-          status: "idle",
-          pauseReason: null,
-        },
       },
     ]);
-  });
-
-  it("forks thread history with deterministic re-keying and cleared runtime state", async () => {
-    const now = new Date().toISOString();
-    const sourceThreadId = ThreadId.make("thread-source");
-    const forkThreadId = ThreadId.make("thread-fork");
-    const sourceTurnId = TurnId.make("turn-source");
-    const sourceMessageId = MessageId.make("message-source");
-    const sourcePlanId = "plan-source" as OrchestrationProposedPlanId;
-    const sourceActivityId = EventId.make("activity-source");
-    const model = {
-      ...createEmptyReadModel(now),
-      threads: [
-        {
-          id: sourceThreadId,
-          projectId: ProjectId.make("project-1"),
-          title: "demo",
-          modelSelection: {
-            provider: "codex" as const,
-            model: "gpt-5-codex",
-          },
-          runtimeMode: "full-access" as const,
-          interactionMode: "default" as const,
-          branch: "feature/demo",
-          worktreePath: "/tmp/demo",
-          latestTurn: {
-            turnId: sourceTurnId,
-            state: "completed" as const,
-            requestedAt: now,
-            startedAt: now,
-            completedAt: now,
-            assistantMessageId: sourceMessageId,
-            sourceProposedPlan: {
-              threadId: sourceThreadId,
-              planId: sourcePlanId,
-            },
-          },
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          deletedAt: null,
-          messages: [
-            {
-              id: sourceMessageId,
-              role: "assistant" as const,
-              text: "hello",
-              turnId: sourceTurnId,
-              streaming: false,
-              createdAt: now,
-              updatedAt: now,
-            },
-          ],
-          proposedPlans: [
-            {
-              id: sourcePlanId,
-              turnId: sourceTurnId,
-              planMarkdown: "# Demo",
-              implementedAt: null,
-              implementationThreadId: null,
-              createdAt: now,
-              updatedAt: now,
-            },
-          ],
-          activities: [
-            {
-              id: sourceActivityId,
-              tone: "info" as const,
-              kind: "runtime.note",
-              summary: "hello",
-              payload: { ok: true },
-              turnId: sourceTurnId,
-              sequence: 1,
-              createdAt: now,
-            },
-          ],
-          checkpoints: [
-            {
-              turnId: sourceTurnId,
-              checkpointTurnCount: 1,
-              checkpointRef: CheckpointRef.make("checkpoint/source/1"),
-              status: "ready" as const,
-              files: [],
-              assistantMessageId: sourceMessageId,
-              completedAt: now,
-            },
-          ],
-          session: {
-            threadId: sourceThreadId,
-            status: "ready" as const,
-            providerName: "codex",
-            runtimeMode: "full-access" as const,
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: now,
-          },
-          turnQueue: {
-            items: [],
-            status: "idle" as const,
-            pauseReason: null,
-          },
-        },
-      ],
-    };
-
-    const next = await Effect.runPromise(
-      projectEvent(
-        model,
-        makeEvent({
-          sequence: 1,
-          type: "thread.forked",
-          aggregateKind: "thread",
-          aggregateId: forkThreadId,
-          occurredAt: now,
-          commandId: "cmd-thread-fork",
-          payload: {
-            threadId: forkThreadId,
-            sourceThreadId,
-            projectId: "project-1",
-            title: "demo (fork)",
-            modelSelection: {
-              provider: "codex",
-              model: "gpt-5-codex",
-            },
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: "feature/demo",
-            worktreePath: "/tmp/demo",
-            createdAt: now,
-            updatedAt: now,
-          },
-        }),
-      ),
-    );
-
-    const thread = next.threads.find((entry) => entry.id === forkThreadId);
-    expect(thread).toBeDefined();
-    expect(thread).toMatchObject({
-      id: forkThreadId,
-      title: "demo (fork)",
-      branch: "feature/demo",
-      worktreePath: "/tmp/demo",
-      createdAt: now,
-      updatedAt: now,
-      session: null,
-      checkpoints: [],
-      turnQueue: {
-        items: [],
-        status: "idle",
-        pauseReason: null,
-      },
-    });
-    expect(thread?.messages).toEqual([
-      {
-        id: forkedMessageId(forkThreadId, sourceMessageId),
-        role: "assistant",
-        text: "hello",
-        turnId: forkedTurnId(forkThreadId, sourceTurnId),
-        streaming: false,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-    expect(thread?.proposedPlans).toEqual([
-      {
-        id: forkedPlanId(forkThreadId, sourcePlanId),
-        turnId: forkedTurnId(forkThreadId, sourceTurnId),
-        planMarkdown: "# Demo",
-        implementedAt: null,
-        implementationThreadId: null,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
-    expect(thread?.activities).toEqual([
-      {
-        id: forkedActivityId(forkThreadId, sourceActivityId),
-        tone: "info",
-        kind: "runtime.note",
-        summary: "hello",
-        payload: { ok: true },
-        turnId: forkedTurnId(forkThreadId, sourceTurnId),
-        sequence: 1,
-        createdAt: now,
-      },
-    ]);
-    expect(thread?.latestTurn).toEqual({
-      turnId: forkedTurnId(forkThreadId, sourceTurnId),
-      state: "completed",
-      requestedAt: now,
-      startedAt: now,
-      completedAt: now,
-      assistantMessageId: forkedMessageId(forkThreadId, sourceMessageId),
-      sourceProposedPlan: {
-        threadId: forkThreadId,
-        planId: forkedPlanId(forkThreadId, sourcePlanId),
-      },
-    });
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
-import { ProjectAgentInventory } from "../Services/ProjectAgentInventory.ts";
+import { ProjectAgentInventory } from "./Services/ProjectAgentInventory.ts";
 import { ProjectAgentInventoryLive } from "./ProjectAgentInventory.ts";
 
 const TestLayer = Layer.empty.pipe(

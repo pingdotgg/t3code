@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - direct fs access for agent inventory scanning
 import * as fsPromises from "node:fs/promises";
 
 import type {
@@ -15,7 +16,7 @@ import {
 import {
   ProjectAgentInventory,
   type ProjectAgentInventoryShape,
-} from "../Services/ProjectAgentInventory.ts";
+} from "./Services/ProjectAgentInventory.ts";
 
 const DEFAULT_AGENT_INVENTORY_CACHE_CAPACITY = 16;
 const DEFAULT_AGENT_INVENTORY_CACHE_TTL = Duration.seconds(10);
@@ -331,13 +332,13 @@ const makeProjectAgentInventory = Effect.gen(function* () {
 
   const getInventory: ProjectAgentInventoryShape["getInventory"] = Effect.fn(
     "ProjectAgentInventory.getInventory",
-  )(function* (cwd) {
+  )(function* (cwd: string) {
     return yield* Cache.get(inventoryCache, path.resolve(cwd));
   });
 
   const invalidate: ProjectAgentInventoryShape["invalidate"] = Effect.fn(
     "ProjectAgentInventory.invalidate",
-  )(function* (cwd) {
+  )(function* (cwd: string) {
     yield* Cache.invalidate(inventoryCache, path.resolve(cwd));
   });
 

@@ -8,7 +8,7 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("030_CanonicalizeModelSelectionOptions", (it) => {
+layer("026_CanonicalizeModelSelectionOptions", (it) => {
   it.effect("converts legacy object-shape options into array-shape on projections and events", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -277,7 +277,7 @@ layer("030_CanonicalizeModelSelectionOptions", (it) => {
             )
         `;
 
-      yield* runMigrations({ toMigrationInclusive: 30 });
+      yield* runMigrations({ toMigrationInclusive: 26 });
 
       // Projection projects
       const projectRows = yield* sql<{

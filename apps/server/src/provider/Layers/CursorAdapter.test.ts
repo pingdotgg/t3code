@@ -160,7 +160,7 @@ const cursorAdapterTestLayer = it.layer(
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
-        prefix: "forma-cursor-adapter-test-",
+        prefix: "t3code-cursor-adapter-test-",
       }),
     ),
     Layer.provideMerge(NodeServices.layer),
@@ -482,60 +482,6 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect("maps app ask mode onto the ACP ask session mode", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CursorAdapter;
-      const serverSettings = yield* ServerSettingsService;
-      const threadId = ThreadId.make("cursor-ask-mode-probe");
-      const tempDir = yield* Effect.promise(() => mkdtemp(path.join(os.tmpdir(), "cursor-acp-")));
-      const requestLogPath = path.join(tempDir, "requests.ndjson");
-      const argvLogPath = path.join(tempDir, "argv.txt");
-      yield* Effect.promise(() => writeFile(requestLogPath, "", "utf8"));
-      const wrapperPath = yield* Effect.promise(() =>
-        makeProbeWrapper(requestLogPath, argvLogPath),
-      );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
-
-      yield* adapter.startSession({
-        threadId,
-        provider: "cursor",
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-        modelSelection: { provider: "cursor", model: "composer-2" },
-      });
-
-      yield* adapter.sendTurn({
-        threadId,
-        input: "explain this change",
-        attachments: [],
-        interactionMode: "ask",
-      });
-      yield* adapter.stopSession(threadId);
-
-      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
-      const modeRequest = requests
-        .toReversed()
-        .find(
-          (entry) =>
-            entry.method === "session/set_mode" ||
-            (entry.method === "session/set_config_option" &&
-              (entry.params as Record<string, unknown> | undefined)?.configId === "mode"),
-        );
-      assert.isDefined(modeRequest);
-      assert.equal(
-        (modeRequest?.params as Record<string, unknown> | undefined)?.sessionId,
-        "mock-session-1",
-      );
-      assert.include(
-        ["ask"],
-        String(
-          (modeRequest?.params as Record<string, unknown> | undefined)?.modeId ??
-            (modeRequest?.params as Record<string, unknown> | undefined)?.value,
-        ),
-      );
-    }),
-  );
-
   it.effect(
     "applies initial model and mode configuration during startSession and skips repeating it on first send",
     () =>
@@ -772,7 +718,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             Layer.provideMerge(ServerSettingsService.layerTest()),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
-                prefix: "forma-cursor-adapter-test-",
+                prefix: "t3code-cursor-adapter-test-",
               }),
             ),
             Layer.provideMerge(NodeServices.layer),

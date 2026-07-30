@@ -10,4 +10,4 @@ export interface ProjectAgentInventoryShape {
 export class ProjectAgentInventory extends Context.Service<
   ProjectAgentInventory,
   ProjectAgentInventoryShape
->()("t3/project/ProjectAgentInventory") {}
+>()("t3/project/Services/ProjectAgentInventory") {}

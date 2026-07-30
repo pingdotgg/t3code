@@ -1,7 +1,5 @@
 packages:
   - apps/*
-  # Fork: skip the mobile app's ~100 expo deps; we use the official mobile app.
-  - "!apps/mobile"
   - infra/*
   - oxlint-plugin-t3code
   - packages/*

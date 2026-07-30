@@ -10,8 +10,6 @@ import {
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
-  OrchestrationTurnQueuePauseReason,
-  OrchestrationTurnQueueStatus,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -34,8 +32,6 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
-  forkedFromThreadId: Schema.NullOr(ThreadId),
-  forkedAt: Schema.NullOr(IsoDateTime),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -48,9 +44,6 @@ export const ProjectionThread = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
-  queuedTurnCount: NonNegativeInt,
-  turnQueueStatus: OrchestrationTurnQueueStatus,
-  turnQueuePauseReason: OrchestrationTurnQueuePauseReason,
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

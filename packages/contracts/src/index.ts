@@ -15,6 +15,8 @@ export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";
 export * from "./settings.ts";
+// Fork: project-local agents (Forma feature)
+export * from "./localAgents.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";

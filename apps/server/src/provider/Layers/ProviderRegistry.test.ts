@@ -1568,7 +1568,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
-                prefix: "forma-provider-registry-",
+                prefix: "t3-provider-registry-",
               }),
             ),
             Layer.provideMerge(TestHttpClientLive),
@@ -1752,7 +1752,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
-                  prefix: "forma-provider-registry-",
+                  prefix: "t3-provider-registry-",
                 }),
               ),
               Layer.provideMerge(TestHttpClientLive),
@@ -1811,7 +1811,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");
-              assert.strictEqual(cursorProvider?.message, "Cursor is disabled in Forma settings.");
+              assert.strictEqual(
+                cursorProvider?.message,
+                "Cursor is disabled in T3 Code settings.",
+              );
               assert.strictEqual(cursorSpawned, false);
             }).pipe(Effect.provide(runtimeServices));
           }),
@@ -1825,7 +1828,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.enabled, false);
           assert.strictEqual(status.status, "disabled");
           assert.strictEqual(status.installed, false);
-          assert.strictEqual(status.message, "Codex is disabled in Forma settings.");
+          assert.strictEqual(status.message, "Codex is disabled in T3 Code settings.");
         }),
       );
     });
@@ -2038,87 +2041,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           ),
       );
 
-      it.effect(
-        "includes Claude Fable 5 with high as the default effort on supported versions",
-        () =>
-          Effect.gen(function* () {
-            const status = yield* checkClaudeProviderStatus();
-            assert.isDefined(status.models.find((model) => model.slug === "fable"));
-
-            const fable = status.models.find((model) => model.slug === "claude-fable-5");
-            if (!fable) {
-              assert.fail("Expected Claude Fable 5 to be present for Claude Code v2.1.170.");
-            }
-            if (!fable.capabilities) {
-              assert.fail(
-                "Expected Claude Fable 5 capabilities to be present for Claude Code v2.1.170.",
-              );
-            }
-            const effortDescriptor = fable.capabilities.optionDescriptors?.find(
-              (descriptor) => descriptor.type === "select" && descriptor.id === "effort",
-            );
-            assert.deepStrictEqual(
-              effortDescriptor?.type === "select"
-                ? effortDescriptor.options.find((option) => option.isDefault)
-                : undefined,
-              { id: "high", label: "High", isDefault: true },
-            );
-          }).pipe(
-            Effect.provide(
-              mockSpawnerLayer((args) => {
-                const joined = args.join(" ");
-                if (joined === "--version") return { stdout: "2.1.170\n", stderr: "", code: 0 };
-                if (joined === "auth status")
-                  return {
-                    stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                    stderr: "",
-                    code: 0,
-                  };
-                throw new Error(`Unexpected args: ${joined}`);
-              }),
-            ),
-          ),
-      );
-
-      it.effect("includes current Claude alias models and Sonnet max effort", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus();
-          assert.isDefined(status.models.find((model) => model.slug === "best"));
-          assert.isDefined(status.models.find((model) => model.slug === "opus"));
-          assert.isDefined(status.models.find((model) => model.slug === "sonnet"));
-          assert.isDefined(status.models.find((model) => model.slug === "haiku"));
-          assert.isDefined(status.models.find((model) => model.slug === "opusplan"));
-
-          const sonnet = status.models.find((model) => model.slug === "claude-sonnet-4-6");
-          if (!sonnet?.capabilities) {
-            assert.fail("Expected Claude Sonnet 4.6 capabilities to be present.");
-          }
-
-          const effortDescriptor = sonnet.capabilities.optionDescriptors?.find(
-            (descriptor) => descriptor.type === "select" && descriptor.id === "effort",
-          );
-          if (!effortDescriptor || effortDescriptor.type !== "select") {
-            assert.fail("Expected Claude Sonnet 4.6 to expose an effort descriptor.");
-          }
-
-          assert.isTrue(effortDescriptor.options.some((option) => option.id === "max"));
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "2.1.126\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                  stderr: "",
-                  code: 0,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
-
       it.effect("hides Claude Opus 4.7 on older Claude Code versions", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
@@ -2131,7 +2053,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           assert.strictEqual(
             status.message,
-            "Claude Code v2.1.110 is too old for Claude Fable 5. Upgrade to v2.1.170 or newer to access it.",
+            "Claude Code v2.1.110 is too old for Claude Opus 4.7. Upgrade to v2.1.111 or newer to access it.",
           );
         }).pipe(
           Effect.provide(

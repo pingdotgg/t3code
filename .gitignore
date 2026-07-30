@@ -36,3 +36,16 @@ node_modules/
 *.log
 .env*
 !.env.example
+references/
+.agents/
+.claude
+.codex
+.cursor
+.repos
+.plans
+.turbo
+.vite-hooks
+.vscode
+.t3
+.macroscope
+

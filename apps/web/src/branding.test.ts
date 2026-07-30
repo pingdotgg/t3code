@@ -26,9 +26,9 @@ describe("branding", () => {
       value: {
         desktopBridge: {
           getAppBranding: () => ({
-            baseName: "Forma",
+            baseName: "T3 Code",
             stageLabel: "Nightly",
-            displayName: "Forma (Nightly)",
+            displayName: "T3 Code (Nightly)",
           }),
         },
       },
@@ -36,18 +36,9 @@ describe("branding", () => {
 
     const branding = await import("./branding");
 
-    expect(branding.APP_BASE_NAME).toBe("Forma");
+    expect(branding.APP_BASE_NAME).toBe("T3 Code");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("Forma (Nightly)");
-    expect(branding.APP_DEFAULT_ICON_ID).toBe("forma-nightly");
-  });
-
-  it("maps build stages to the expected default icon ids", async () => {
-    const branding = await import("./branding");
-
-    expect(branding.resolveDefaultBuildAppIconId("Alpha")).toBe("forma-prod");
-    expect(branding.resolveDefaultBuildAppIconId("Nightly")).toBe("forma-nightly");
-    expect(branding.resolveDefaultBuildAppIconId("Dev")).toBe("forma-dev");
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
   });
 
   it("normalizes hosted app channel metadata", async () => {

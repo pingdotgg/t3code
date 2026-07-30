@@ -3,7 +3,6 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
-  type OrchestrationReadModel,
   ProjectId,
   ThreadId,
   TurnId,
@@ -47,7 +46,7 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(val
 
 async function createOrchestrationSystem() {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-    prefix: "forma-orchestration-engine-test-",
+    prefix: "t3-orchestration-engine-test-",
   });
   const orchestrationLayer = Layer.mergeAll(
     OrchestrationEngineLive.pipe(
@@ -112,7 +111,7 @@ describe("OrchestrationEngine", () => {
         ),
     };
 
-    const projectionSnapshot: OrchestrationReadModel = {
+    const projectionSnapshot = {
       snapshotSequence: 7,
       updatedAt: "2026-03-03T00:00:04.000Z",
       projects: [
@@ -154,11 +153,6 @@ describe("OrchestrationEngine", () => {
           proposedPlans: [],
           activities: [],
           checkpoints: [],
-          turnQueue: {
-            items: [],
-            status: "idle",
-            pauseReason: null,
-          },
           session: null,
         },
       ],
@@ -788,7 +782,7 @@ describe("OrchestrationEngine", () => {
     };
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-      prefix: "forma-orchestration-engine-test-",
+      prefix: "t3-orchestration-engine-test-",
     });
 
     const runtime = ManagedRuntime.make(

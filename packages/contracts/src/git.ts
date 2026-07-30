@@ -203,8 +203,6 @@ const VcsStatusChangeRequest = Schema.Struct({
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
 });
-export type GitStatusPr = typeof GitStatusPr.Type;
-
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
@@ -279,7 +277,7 @@ export const GitResolvePullRequestResult = Schema.Struct({
 export type GitResolvePullRequestResult = typeof GitResolvePullRequestResult.Type;
 
 export const GitListOpenPullRequestsResult = Schema.Struct({
-  pullRequests: Schema.Array(GitStatusPr),
+  pullRequests: Schema.Array(VcsStatusChangeRequest),
 });
 export type GitListOpenPullRequestsResult = typeof GitListOpenPullRequestsResult.Type;
 

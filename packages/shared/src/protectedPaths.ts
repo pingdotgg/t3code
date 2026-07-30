@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - platform-specific path joining (win32/posix) needs node:path directly.
 import nodePath from "node:path";
 
 const DARWIN_HOME_DIRECTORY_NAMES = [

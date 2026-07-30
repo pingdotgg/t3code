@@ -1,4 +1,3 @@
-import { INLINE_CODE_CONTEXT_PLACEHOLDER, type CodeContextDraft } from "./lib/codeContext";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -25,10 +24,6 @@ export type ComposerPromptSegment =
   | {
       type: "terminal-context";
       context: TerminalContextDraft | null;
-    }
-  | {
-      type: "code-context";
-      context: CodeContextDraft | null;
     };
 
 function rangeIncludesIndex(start: number, end: number, index: number): boolean {
@@ -57,21 +52,13 @@ function forEachPromptSegmentSlice(
       | {
           type: "terminal-context";
           promptOffset: number;
-        }
-      | {
-          type: "code-context";
-          promptOffset: number;
         },
   ) => boolean | void,
 ): boolean {
   let textCursor = 0;
 
   for (let index = 0; index < prompt.length; index += 1) {
-    const placeholder = prompt[index];
-    if (
-      placeholder !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER &&
-      placeholder !== INLINE_CODE_CONTEXT_PLACEHOLDER
-    ) {
+    if (prompt[index] !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
       continue;
     }
 
@@ -85,13 +72,7 @@ function forEachPromptSegmentSlice(
     ) {
       return true;
     }
-    if (
-      visitor({
-        type:
-          placeholder === INLINE_TERMINAL_CONTEXT_PLACEHOLDER ? "terminal-context" : "code-context",
-        promptOffset: index,
-      }) === true
-    ) {
+    if (visitor({ type: "terminal-context", promptOffset: index }) === true) {
       return true;
     }
     textCursor = index + 1;
@@ -217,7 +198,6 @@ export function selectionTouchesMentionBoundary(
 export function splitPromptIntoComposerSegments(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft> = [],
-  codeContexts: ReadonlyArray<CodeContextDraft> = [],
 ): ComposerPromptSegment[] {
   if (!prompt) {
     return [];
@@ -225,27 +205,17 @@ export function splitPromptIntoComposerSegments(
 
   const segments: ComposerPromptSegment[] = [];
   let terminalContextIndex = 0;
-  let codeContextIndex = 0;
   forEachPromptSegmentSlice(prompt, (slice) => {
     if (slice.type === "text") {
       segments.push(...splitPromptTextIntoComposerSegments(slice.text));
       return false;
     }
 
-    if (slice.type === "terminal-context") {
-      segments.push({
-        type: "terminal-context",
-        context: terminalContexts[terminalContextIndex] ?? null,
-      });
-      terminalContextIndex += 1;
-      return false;
-    }
-
     segments.push({
-      type: "code-context",
-      context: codeContexts[codeContextIndex] ?? null,
+      type: "terminal-context",
+      context: terminalContexts[terminalContextIndex] ?? null,
     });
-    codeContextIndex += 1;
+    terminalContextIndex += 1;
     return false;
   });
 
