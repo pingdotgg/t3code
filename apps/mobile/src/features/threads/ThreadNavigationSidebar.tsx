@@ -3,6 +3,10 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import {
+  threadSearchMatchKey,
+  type EnvironmentThreadSearchMatch,
+} from "@t3tools/client-runtime/state/thread-search";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
@@ -24,6 +28,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
@@ -209,6 +214,27 @@ function ThreadNavigationSidebarPane(
   );
   const { options, setSelectedEnvironmentId, setProjectSortOrder, setThreadSortOrder } =
     useHomeListOptions(availableEnvironmentIds);
+  const searchEnvironmentIds = useMemo(
+    () =>
+      options.selectedEnvironmentId === null
+        ? environments.map((environment) => environment.environmentId)
+        : [options.selectedEnvironmentId],
+    [environments, options.selectedEnvironmentId],
+  );
+  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const threadSearchMatchByKey = useMemo(() => {
+    const matches = new Map<string, EnvironmentThreadSearchMatch>();
+    for (const match of threadSearch.matches) {
+      if (match.source === "user" || match.source === "assistant") {
+        matches.set(threadSearchMatchKey(match), match);
+      }
+    }
+    return matches;
+  }, [threadSearch.matches]);
+  const matchedThreadKeys = useMemo(
+    () => new Set(threadSearch.matches.map(threadSearchMatchKey)),
+    [threadSearch.matches],
+  );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectScopes = useMemo(
     () =>
@@ -305,11 +331,19 @@ function ThreadNavigationSidebarPane(
         pendingTasks: scopedPendingTasks,
         environmentId: options.selectedEnvironmentId,
         searchQuery: props.searchQuery,
+        matchedThreadKeys,
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
       }),
-    [options, props.searchQuery, scopedPendingTasks, scopedProjects, scopedThreads],
+    [
+      matchedThreadKeys,
+      options,
+      props.searchQuery,
+      scopedPendingTasks,
+      scopedProjects,
+      scopedThreads,
+    ],
   );
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
@@ -432,6 +466,7 @@ function ThreadNavigationSidebarPane(
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
+      matchedThreadKeys,
       changeRequestStateByKey,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -445,6 +480,7 @@ function ThreadNavigationSidebarPane(
     snoozeWakeTick,
     options.selectedEnvironmentId,
     props.searchQuery,
+    matchedThreadKeys,
     settledVisibleCount,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
@@ -687,6 +723,7 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
+      threadSearchMatchByKey,
     }),
     [
       props.selectedThreadKey,
@@ -695,6 +732,7 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       savedConnectionsById,
       serverConfigs,
+      threadSearchMatchByKey,
     ],
   );
   const sidebarItemsAreEqual = useCallback(
@@ -797,6 +835,13 @@ function ThreadNavigationSidebarPane(
                   ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
                   : null
               }
+              searchMatch={threadSearchMatchByKey.get(
+                threadSearchMatchKey({
+                  environmentId: thread.environmentId,
+                  threadId: thread.id,
+                }),
+              )}
+              searchQuery={props.searchQuery}
               pane="sidebar"
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
@@ -876,6 +921,13 @@ function ThreadNavigationSidebarPane(
                 null
               }
               isLast={item.isLast}
+              searchMatch={threadSearchMatchByKey.get(
+                threadSearchMatchKey({
+                  environmentId: thread.environmentId,
+                  threadId: thread.id,
+                }),
+              )}
+              searchQuery={props.searchQuery}
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
               }
@@ -914,10 +966,12 @@ function ThreadNavigationSidebarPane(
       projectCwdByKey,
       projectTitleByProjectKey,
       props.onNewThreadInProject,
+      props.searchQuery,
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
       serverConfigs,
+      threadSearchMatchByKey,
       settleThread,
       settlementEnvironmentIds,
       showMoreSettled,

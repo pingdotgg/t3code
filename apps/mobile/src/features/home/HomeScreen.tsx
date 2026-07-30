@@ -7,6 +7,10 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import {
+  threadSearchMatchKey,
+  type EnvironmentThreadSearchMatch,
+} from "@t3tools/client-runtime/state/thread-search";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -27,6 +31,7 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -189,6 +194,27 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
+  const searchEnvironmentIds = useMemo(
+    () =>
+      props.selectedEnvironmentId === null
+        ? props.environments.map((environment) => environment.environmentId)
+        : [props.selectedEnvironmentId],
+    [props.environments, props.selectedEnvironmentId],
+  );
+  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const threadSearchMatchByKey = useMemo(() => {
+    const matches = new Map<string, EnvironmentThreadSearchMatch>();
+    for (const match of threadSearch.matches) {
+      if (match.source === "user" || match.source === "assistant") {
+        matches.set(threadSearchMatchKey(match), match);
+      }
+    }
+    return matches;
+  }, [threadSearch.matches]);
+  const matchedThreadKeys = useMemo(
+    () => new Set(threadSearch.matches.map(threadSearchMatchKey)),
+    [threadSearch.matches],
+  );
   const effectiveGroupDisplayStates = useMemo(() => {
     const next = new Map(groupDisplayStates);
     if (!AsyncResult.isSuccess(preferencesResult)) {
@@ -318,6 +344,7 @@ export function HomeScreen(props: HomeScreenProps) {
         pendingTasks: scopedPendingTasks,
         environmentId: props.selectedEnvironmentId,
         searchQuery: props.searchQuery,
+        matchedThreadKeys,
         projectSortOrder: props.projectSortOrder,
         threadSortOrder: props.threadSortOrder,
         projectGroupingMode: props.projectGroupingMode,
@@ -328,6 +355,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.searchQuery,
       props.selectedEnvironmentId,
       props.threadSortOrder,
+      matchedThreadKeys,
       scopedPendingTasks,
       scopedProjects,
       scopedThreads,
@@ -516,6 +544,7 @@ export function HomeScreen(props: HomeScreenProps) {
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
+      matchedThreadKeys,
       changeRequestStateByKey,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -533,6 +562,7 @@ export function HomeScreen(props: HomeScreenProps) {
     props.searchQuery,
     props.selectedEnvironmentId,
     props.threads,
+    matchedThreadKeys,
     threadListV2Enabled,
     v2ScopedProjectGroup,
   ]);
@@ -629,6 +659,13 @@ export function HomeScreen(props: HomeScreenProps) {
               ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
               : null
           }
+          searchMatch={threadSearchMatchByKey.get(
+            threadSearchMatchKey({
+              environmentId: thread.environmentId,
+              threadId: thread.id,
+            }),
+          )}
+          searchQuery={props.searchQuery}
           onSelectThread={props.onSelectThread}
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
@@ -660,7 +697,9 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       serverConfigs,
       settlementEnvironmentIds,
+      threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,
+      props.searchQuery,
     ],
   );
   const v2KeyExtractor = useCallback((item: ThreadListV2ListItem) => item.key, []);
@@ -675,12 +714,14 @@ export function HomeScreen(props: HomeScreenProps) {
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
       serverConfigs,
       savedConnectionsById: props.savedConnectionsById,
+      threadSearchMatchByKey,
     }),
     [
       projectByKey,
       projectCwdByKey,
       props.savedConnectionsById,
       serverConfigs,
+      threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,
     ],
   );
@@ -740,6 +781,13 @@ export function HomeScreen(props: HomeScreenProps) {
                 null
               }
               isLast={item.isLast}
+              searchMatch={threadSearchMatchByKey.get(
+                threadSearchMatchKey({
+                  environmentId: thread.environmentId,
+                  threadId: thread.id,
+                }),
+              )}
+              searchQuery={props.searchQuery}
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}
               onSelectThread={props.onSelectThread}
@@ -770,7 +818,9 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onNewThreadInProject,
       props.onSelectPendingTask,
       props.onSelectThread,
+      props.searchQuery,
       props.savedConnectionsById,
+      threadSearchMatchByKey,
       updateGroupDisplay,
     ],
   );
