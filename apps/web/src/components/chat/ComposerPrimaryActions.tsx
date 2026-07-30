@@ -298,16 +298,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const canInterrupt = action.kind === "interrupt";
 
   return (
-    <button
+    <Button
       type={canInterrupt ? "button" : "submit"}
+      size="icon"
+      variant={canInterrupt ? "destructive-outline" : "default"}
       className={cn(
-        "relative isolate flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full shadow-xs transition-[transform,background-color,box-shadow,filter] duration-(--motion-duration-fast) ease-(--motion-ease-standard) focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none active:scale-95 motion-reduce:transition-none",
-        canInterrupt
-          ? "bg-destructive/90 text-white shadow-destructive/24 hover:bg-destructive"
-          : stageBackdropVariant
-            ? "bg-transparent text-primary-foreground enabled:shadow-black/24 enabled:hover:brightness-110"
-            : "bg-primary/90 text-primary-foreground shadow-primary/24 enabled:hover:bg-primary",
-        "enabled:cursor-pointer enabled:hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100",
+        "rounded-full",
+        stageBackdropVariant &&
+          !canInterrupt &&
+          "isolate overflow-hidden border-transparent bg-transparent text-primary-foreground shadow-black/24 hover:bg-transparent hover:brightness-110",
       )}
       {...pointerFocusProps}
       disabled={action.disabled}
@@ -327,6 +326,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       ) : (
         <ComposerSendIcon />
       )}
-    </button>
+    </Button>
   );
 });
