@@ -55,6 +55,7 @@ import Migration0937 from "./Migrations/937_ResetProjectComponentPreviewState.ts
 import Migration0938 from "./Migrations/938_ReconcileLegacyForkMigrationHistory.ts";
 import Migration0939 from "./Migrations/939_ThreadExtensionQueue.ts";
 import Migration0940 from "./Migrations/940_ProjectionThreadsForkLineage.ts";
+import Migration0941 from "./Migrations/941_ReconcileLegacyForkUpstreamOverlap.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -114,6 +115,7 @@ export const migrationEntries = [
   [938, "ReconcileLegacyForkMigrationHistory", Migration0938],
   [939, "ThreadExtensionQueue", Migration0939],
   [940, "ProjectionThreadsForkLineage", Migration0940],
+  [941, "ReconcileLegacyForkUpstreamOverlap", Migration0941],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
