@@ -1,4 +1,12 @@
 export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
+export type ThreadListAction =
+  | "archive"
+  | "unarchive"
+  | "delete"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze";
 
 const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
 
@@ -32,4 +40,22 @@ export function resolveFileSelectionNavigationAction(input: {
   readonly hasPersistentFileInspector: boolean;
 }): AdaptiveNavigationAction {
   return input.hasPersistentFileInspector ? "replace" : "push";
+}
+
+/**
+ * Removing the selected thread from the live sidebar also invalidates its
+ * persistent detail pane. Reverse actions keep the current detail visible.
+ */
+export function shouldInvalidateSelectedThreadDetail(input: {
+  readonly action: ThreadListAction;
+  readonly actedThreadKey: string;
+  readonly selectedThreadKey: string | null;
+}): boolean {
+  return (
+    input.actedThreadKey === input.selectedThreadKey &&
+    (input.action === "archive" ||
+      input.action === "delete" ||
+      input.action === "settle" ||
+      input.action === "snooze")
+  );
 }
