@@ -607,7 +607,7 @@ export function makeVcsCapability(input: {
           exitCode: result.exitCode,
           stdout: result.stdout,
           stderr: result.stderr,
-          detail: result.stderr.trim() || "git merge failed",
+          detail: "git merge failed",
         });
       }),
 

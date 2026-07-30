@@ -13,10 +13,27 @@ const repoRoot = NodePath.resolve(fixtureRoot, "../..");
 
 function outDirFromArgs(argv) {
   const direct = argv.find((arg) => arg.startsWith("--out-dir="));
-  if (direct) return NodePath.resolve(fixtureRoot, direct.slice("--out-dir=".length));
+  if (direct) return validateOutDir(direct.slice("--out-dir=".length));
   const index = argv.indexOf("--out-dir");
-  if (index >= 0 && argv[index + 1]) return NodePath.resolve(fixtureRoot, argv[index + 1]);
+  if (index >= 0) return validateOutDir(argv[index + 1] ?? "");
   return NodePath.join(fixtureRoot, "dist");
+}
+
+function validateOutDir(input) {
+  if (input.trim() === "") {
+    throw new Error("--out-dir must not be empty");
+  }
+  const resolved = NodePath.resolve(fixtureRoot, input);
+  const relative = NodePath.relative(fixtureRoot, resolved);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(relative)
+  ) {
+    throw new Error("--out-dir must be a descendant of the hello-board fixture root");
+  }
+  return resolved;
 }
 
 const outDir = outDirFromArgs(process.argv.slice(2));
@@ -113,7 +130,7 @@ NodeFS.writeFileSync(
 
 bundle(
   NodePath.join(fixtureRoot, "server/index.ts"),
-  NodePath.join(packageDir, "server/index.js"),
+  NodePath.join(packageDir, "server/index.mjs"),
   "node",
   ["@t3tools/plugin-sdk", "effect", "effect/*"],
 );
@@ -144,8 +161,8 @@ const archive = NodeZlib.gzipSync(
       body: NodeFS.readFileSync(NodePath.join(packageDir, "manifest.json")),
     },
     {
-      name: "server/index.js",
-      body: NodeFS.readFileSync(NodePath.join(packageDir, "server/index.js")),
+      name: "server/index.mjs",
+      body: NodeFS.readFileSync(NodePath.join(packageDir, "server/index.mjs")),
     },
     { name: "web/index.js", body: NodeFS.readFileSync(NodePath.join(packageDir, "web/index.js")) },
   ]),

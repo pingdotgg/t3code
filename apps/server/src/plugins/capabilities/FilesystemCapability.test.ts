@@ -146,6 +146,30 @@ layer("FilesystemCapability", (it) => {
     ),
   );
 
+  it.effect("re-inspects concurrently created parents after an EEXIST mkdir race", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeTempDir("plugin-fs-root-");
+        const grants = yield* makePluginWorkspaceGrants;
+        const filesystem = makeCapability({ projectRoots: [root], grants });
+
+        yield* Effect.all(
+          Array.from({ length: 40 }, (_, index) =>
+            filesystem.writeFileString({
+              root,
+              relativePath: `race/parent/file-${index}.txt`,
+              contents: `file ${index}`,
+            }),
+          ),
+          { concurrency: "unbounded" },
+        );
+
+        const entries = yield* filesystem.listDir({ root, relativePath: "race/parent" });
+        assert.lengthOf(entries, 40);
+      }),
+    ),
+  );
+
   it.effect("fails the listing on an I/O error instead of returning it incomplete", () =>
     Effect.scoped(
       Effect.gen(function* () {

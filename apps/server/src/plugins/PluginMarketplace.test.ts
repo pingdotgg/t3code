@@ -67,6 +67,12 @@ const TestPluginHttpClientTransportLive = Layer.succeed(
     ),
 );
 
+const marketplaceTransportLayer = (handler: (input: { readonly url: string }) => Response) =>
+  Layer.succeed(PluginHttpClientTransportService, (request) => {
+    const url = request.url.toString();
+    return Effect.succeed(HttpClientResponse.fromWeb(HttpClientRequest.get(url), handler({ url })));
+  });
+
 const marketplaceTest = it.layer(
   PluginMarketplaceLayer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -304,6 +310,49 @@ marketplaceTest("PluginMarketplace", (it) => {
         assert.isTrue(Result.isFailure(result));
       }),
     ),
+  );
+});
+
+it.effect("PluginMarketplace drains non-OK marketplace response bodies before failing", () => {
+  let pulled = 0;
+  const layer = PluginMarketplaceLayer.pipe(
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(TestClock.layer()),
+    Layer.provideMerge(TestOutboundLookupLive),
+    Layer.provideMerge(
+      marketplaceTransportLayer(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                pulled += 1;
+                controller.enqueue(new TextEncoder().encode("not found"));
+                controller.close();
+              },
+            }),
+            { status: 404 },
+          ),
+      ),
+    ),
+  );
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const marketplace = yield* PluginMarketplace;
+      const result = yield* Effect.result(
+        marketplace.fetchSource({
+          id: "missing",
+          url: "https://example.test/marketplace.json",
+          addedAt: "2026-07-03T00:00:00.000Z",
+        }),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.equal(result.failure.code, "catalog-fetch-failed");
+        assert.include(result.failure.message, "non-OK");
+      }
+      assert.equal(pulled, 1);
+    }).pipe(Effect.provide(layer)),
   );
 });
 

@@ -3,7 +3,12 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import * as Cause from "effect/Cause";
 import { describe, expect, it } from "vite-plus/test";
 
-import { performSettingsSave, settingsSaveErrorMessage, type Draft } from "./PluginSettingsPage";
+import {
+  nextSettingsEditedValue,
+  performSettingsSave,
+  settingsSaveErrorMessage,
+  type Draft,
+} from "./PluginSettingsPage";
 
 const pluginId = PluginId.make("settings-page-plugin");
 
@@ -151,5 +156,28 @@ describe("performSettingsSave", () => {
     // expectedRevision the server never issued.
     expect(applies).toBe(0);
     expect(reloads).toBe(0);
+  });
+});
+
+describe("nextSettingsEditedValue", () => {
+  it("ignores form edits while settings are saving or reloading", () => {
+    const current = { baseUrl: "https://current.example" };
+    expect(
+      nextSettingsEditedValue({
+        current,
+        next: { baseUrl: "https://typed-during-save.example" },
+        busy: true,
+      }),
+    ).toBe(current);
+  });
+
+  it("applies form edits when the settings page is idle", () => {
+    expect(
+      nextSettingsEditedValue({
+        current: { baseUrl: "https://current.example" },
+        next: { baseUrl: "https://edited.example" },
+        busy: false,
+      }),
+    ).toEqual({ baseUrl: "https://edited.example" });
   });
 });

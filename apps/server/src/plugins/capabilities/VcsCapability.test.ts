@@ -534,11 +534,14 @@ it.layer(TestLayer)("VcsCapability", (it) => {
 
           // A nonexistent ref makes `git merge` exit nonzero with NO unmerged
           // files. This is a genuine error and must NOT be masked as a conflict.
+          const missingRef = "does-not-exist-secret-token-ref";
           const error = yield* vcs
-            .merge({ worktreePath: repo, ref: "does-not-exist-ref", abortOnConflict: true })
+            .merge({ worktreePath: repo, ref: missingRef, abortOnConflict: true })
             .pipe(Effect.flip);
           expect(error).toBeInstanceOf(GitCommandError);
-          expect((error as GitCommandError).stderr).toContain("does-not-exist-ref");
+          expect((error as GitCommandError).stderr).toContain(missingRef);
+          expect((error as GitCommandError).detail).toBe("git merge failed");
+          expect((error as GitCommandError).detail).not.toContain(missingRef);
           // Best-effort abort keeps the tree clean even on a genuine failure.
           expect(yield* git(repo, ["status", "--porcelain"])).toBe("");
         }),

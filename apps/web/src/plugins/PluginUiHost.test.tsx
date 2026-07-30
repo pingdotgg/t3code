@@ -5,7 +5,9 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Stream from "effect/Stream";
 
 import {
+  EMPTY_PLUGIN_UI_REGISTRY_SNAPSHOT,
   GENERATED_SETTINGS_PAGE_ID,
+  clearPluginUiHostRegistrations,
   createPluginUiHostState,
   getPluginWebEntryUrl,
   parsePluginIdParam,
@@ -341,6 +343,40 @@ describe("PluginUiHost", () => {
       importWebPlugin,
     });
     expect(second.routes).toHaveLength(0);
+  });
+
+  it("clears cached registrations and injected plugin styles on host cleanup", async () => {
+    const state = createPluginUiHostState();
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo()],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: defineWebPlugin({
+          register(ctx) {
+            ctx.registerRoute({ path: "overview", component: () => null });
+          },
+        }),
+      }),
+    });
+    expect(snapshot.routes).toHaveLength(1);
+    expect(state.loaded.size).toBe(1);
+
+    if (typeof document !== "undefined") {
+      const style = document.createElement("style");
+      style.setAttribute("data-t3-plugin-styles", fixturePluginId);
+      style.setAttribute(
+        "data-t3-plugin-styles-href",
+        "/plugins/fixture-plugin/1.2.3/web/index.css",
+      );
+      document.head.appendChild(style);
+    }
+
+    expect(clearPluginUiHostRegistrations(state)).toBe(EMPTY_PLUGIN_UI_REGISTRY_SNAPSHOT);
+    expect(state.loaded.size).toBe(0);
+    if (typeof document !== "undefined") {
+      expect(document.head.querySelector("style[data-t3-plugin-styles]")).toBeNull();
+    }
   });
 
   it("parses valid plugin id route params and rejects invalid ones without throwing", () => {

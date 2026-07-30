@@ -6,7 +6,9 @@ import {
   getPluginHostShimSource,
   injectPluginHostHeadHtml,
   pluginHostImportMap,
+  pluginHostShimExportNames,
 } from "./pluginHostWeb.ts";
+import * as Contracts from "@t3tools/contracts";
 
 describe("pluginHostWeb", () => {
   it("injects the import map and bootstrap at head start once", () => {
@@ -60,5 +62,11 @@ describe("pluginHostWeb", () => {
     expect(source).toContain('const m = globalThis.__T3_PLUGIN_HOST__["react"];');
     expect(source).toContain("export default m.default ?? m;");
     expect(source).toContain("export const useState = m.useState;");
+  });
+
+  it("keeps the contracts shim exports in sync with @t3tools/contracts", () => {
+    expect([...pluginHostShimExportNames["@t3tools/contracts"]].sort()).toEqual(
+      Object.keys(Contracts).sort(),
+    );
   });
 });

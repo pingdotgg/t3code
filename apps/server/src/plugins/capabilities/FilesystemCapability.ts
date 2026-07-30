@@ -70,6 +70,10 @@ class NodePathNotFound extends Error {
   readonly _tag = "NodePathNotFound";
 }
 
+class NodePathAlreadyExists extends Error {
+  readonly _tag = "NodePathAlreadyExists";
+}
+
 const isFilesystemIoError = Schema.is(FilesystemIoError);
 
 const isNodeNotFound = (cause: unknown): boolean =>
@@ -87,6 +91,12 @@ const isNodeSymlinkLoop = (cause: unknown): boolean =>
   cause !== null &&
   "code" in cause &&
   (cause as { readonly code?: unknown }).code === "ELOOP";
+
+const isNodeAlreadyExists = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  (cause as { readonly code?: unknown }).code === "EEXIST";
 
 const pathError = (
   context: FilesystemPathContext,
@@ -299,11 +309,17 @@ function resolveParent(input: {
         yield* Effect.tryPromise({
           try: () => NodeFSP.mkdir(candidate),
           catch: (cause) =>
-            ioError(input.context, input.operation, "failed to create directory", {
-              resolvedPath: candidate,
-              cause,
-            }),
-        });
+            isNodeAlreadyExists(cause)
+              ? new NodePathAlreadyExists()
+              : ioError(input.context, input.operation, "failed to create directory", {
+                  resolvedPath: candidate,
+                  cause,
+                }),
+        }).pipe(
+          Effect.catch((error) =>
+            error instanceof NodePathAlreadyExists ? Effect.void : Effect.fail(error),
+          ),
+        );
         lstat = yield* Effect.tryPromise({
           try: () => NodeFSP.lstat(candidate),
           catch: (cause) =>

@@ -461,25 +461,27 @@ export const EMPTY_PLUGIN_LOCKFILE: PluginLockfile = {
 };
 
 interface ParsedSemver {
-  readonly major: number;
-  readonly minor: number;
-  readonly patch: number;
+  readonly major: string;
+  readonly minor: string;
+  readonly patch: string;
 }
 
 function parseStrictSemver(value: string): ParsedSemver | null {
   const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
   if (!match) return null;
   return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
+    major: match[1] ?? "0",
+    minor: match[2] ?? "0",
+    patch: match[3] ?? "0",
   };
 }
 
 function compareStrictSemver(left: ParsedSemver, right: ParsedSemver): number {
-  if (left.major !== right.major) return left.major - right.major;
-  if (left.minor !== right.minor) return left.minor - right.minor;
-  return left.patch - right.patch;
+  return (
+    compareDecimalStrings(left.major, right.major) ||
+    compareDecimalStrings(left.minor, right.minor) ||
+    compareDecimalStrings(left.patch, right.patch)
+  );
 }
 
 // Parse a version into its numeric core and prerelease identifiers, ignoring
@@ -492,10 +494,8 @@ const parseSemverPrecedence = (value: string) => {
   const core = dashIndex === -1 ? withoutBuild : withoutBuild.slice(0, dashIndex);
   const prerelease = dashIndex === -1 ? "" : withoutBuild.slice(dashIndex + 1);
   const coreParts = core.split(".");
-  const numericAt = (index: number) => {
-    const parsed = Number.parseInt(coreParts[index] ?? "", 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-  };
+  const numericAt = (index: number) =>
+    /^\d+$/u.test(coreParts[index] ?? "") ? (coreParts[index] ?? "0") : "0";
   return {
     major: numericAt(0),
     minor: numericAt(1),
@@ -504,6 +504,18 @@ const parseSemverPrecedence = (value: string) => {
   };
 };
 
+const compareDecimalStrings = (left: string, right: string): number => {
+  const normalizedLeft = left.replace(/^0+/u, "") || "0";
+  const normalizedRight = right.replace(/^0+/u, "") || "0";
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return normalizedLeft.length < normalizedRight.length ? -1 : 1;
+  }
+  return normalizedLeft < normalizedRight ? -1 : normalizedLeft > normalizedRight ? 1 : 0;
+};
+
+const equalDecimalStrings = (left: string, right: string): boolean =>
+  compareDecimalStrings(left, right) === 0;
+
 // Compare two prerelease identifiers per semver.org §11: numeric identifiers
 // compare numerically and always rank BELOW non-numeric ones; two non-numeric
 // identifiers compare by ASCII.
@@ -511,7 +523,7 @@ const compareIdentifier = (left: string, right: string) => {
   const leftNumeric = /^\d+$/u.test(left);
   const rightNumeric = /^\d+$/u.test(right);
   if (leftNumeric && rightNumeric) {
-    return Number.parseInt(left, 10) - Number.parseInt(right, 10);
+    return compareDecimalStrings(left, right);
   }
   if (leftNumeric) return -1;
   if (rightNumeric) return 1;
@@ -523,9 +535,11 @@ const compareIdentifier = (left: string, right: string) => {
 export const compareSemver = (left: string, right: string): number => {
   const leftVersion = parseSemverPrecedence(left);
   const rightVersion = parseSemverPrecedence(right);
-  if (leftVersion.major !== rightVersion.major) return leftVersion.major - rightVersion.major;
-  if (leftVersion.minor !== rightVersion.minor) return leftVersion.minor - rightVersion.minor;
-  if (leftVersion.patch !== rightVersion.patch) return leftVersion.patch - rightVersion.patch;
+  const coreDiff =
+    compareDecimalStrings(leftVersion.major, rightVersion.major) ||
+    compareDecimalStrings(leftVersion.minor, rightVersion.minor) ||
+    compareDecimalStrings(leftVersion.patch, rightVersion.patch);
+  if (coreDiff !== 0) return coreDiff;
   const leftPre = leftVersion.prerelease;
   const rightPre = rightVersion.prerelease;
   // Equal core: a version WITH a prerelease has LOWER precedence than one
@@ -560,10 +574,23 @@ export function hostApiSatisfies(range: string, version: string): boolean {
   if (compared < 0) return false;
 
   if (operator === "^") {
-    if (target.major > 0) return actual.major === target.major;
-    if (target.minor > 0) return actual.major === 0 && actual.minor === target.minor;
-    return actual.major === 0 && actual.minor === 0 && actual.patch === target.patch;
+    if (compareDecimalStrings(target.major, "0") > 0) {
+      return equalDecimalStrings(actual.major, target.major);
+    }
+    if (compareDecimalStrings(target.minor, "0") > 0) {
+      return (
+        equalDecimalStrings(actual.major, "0") && equalDecimalStrings(actual.minor, target.minor)
+      );
+    }
+    return (
+      equalDecimalStrings(actual.major, "0") &&
+      equalDecimalStrings(actual.minor, "0") &&
+      equalDecimalStrings(actual.patch, target.patch)
+    );
   }
 
-  return actual.major === target.major && actual.minor === target.minor;
+  return (
+    equalDecimalStrings(actual.major, target.major) &&
+    equalDecimalStrings(actual.minor, target.minor)
+  );
 }

@@ -149,10 +149,8 @@ export const resolveAvailableEditorsForConfig = <A, E, R>(
  * (plugin-owned) threads are hidden from user-facing views, so drop the event
  * for them here — mirroring `AgentAwarenessRelay.publishThread`'s skip-check.
  *
- * A missing owner row (None) proceeds and emits: deleted/unknown threads keep
- * the same downstream not-found handling as before this guard existed. Any
- * lookup error fails closed (emits nothing), matching the prior
- * `getThreadShellById` error handling.
+ * A missing owner row (None) fails closed and emits nothing. Any lookup error
+ * also fails closed, matching the prior `getThreadShellById` error handling.
  */
 export const toThreadUpsertedShellStreamEvent = (
   projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
@@ -161,9 +159,8 @@ export const toThreadUpsertedShellStreamEvent = (
 ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
   projectionSnapshotQuery.getThreadOwnerById(threadId).pipe(
     Effect.flatMap((owner) =>
-      Option.isSome(owner) && owner.value !== DEFAULT_THREAD_OWNER
-        ? Effect.succeed(Option.none<OrchestrationShellStreamEvent>())
-        : projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+      Option.isSome(owner) && owner.value === DEFAULT_THREAD_OWNER
+        ? projectionSnapshotQuery.getThreadShellById(threadId).pipe(
             Effect.map((thread) =>
               Option.map(thread, (nextThread) => ({
                 kind: "thread-upserted" as const,
@@ -171,7 +168,8 @@ export const toThreadUpsertedShellStreamEvent = (
                 thread: nextThread,
               })),
             ),
-          ),
+          )
+        : Effect.succeed(Option.none<OrchestrationShellStreamEvent>()),
     ),
     Effect.orElseSucceed(() => Option.none()),
   );
@@ -699,9 +697,8 @@ const makeWsRpcLayer = (
       ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
         projectionSnapshotQuery.getThreadOwnerById(threadId).pipe(
           Effect.flatMap((owner) =>
-            Option.isSome(owner) && owner.value !== DEFAULT_THREAD_OWNER
-              ? Effect.succeed(Option.none<OrchestrationShellStreamEvent>())
-              : retryShellProjectionRead(
+            Option.isSome(owner) && owner.value === DEFAULT_THREAD_OWNER
+              ? retryShellProjectionRead(
                   "thread",
                   threadId,
                   projectionSnapshotQuery.getThreadShellById(threadId),
@@ -724,7 +721,8 @@ const makeWsRpcLayer = (
                       }),
                     ),
                   ),
-                ),
+                )
+              : Effect.succeed(Option.none<OrchestrationShellStreamEvent>()),
           ),
           Effect.orElseSucceed(() => Option.none()),
         );

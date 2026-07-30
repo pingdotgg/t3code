@@ -356,35 +356,40 @@ export const stripUndeclaredSettings = (
   });
 };
 
-const isEmptyObject = (value: unknown): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  Object.keys(value).length === 0;
-
-const canonicalizeJsonSchema = (value: unknown): unknown => {
+const canonicalizeJsonSchema = (value: unknown, parentKey?: string): unknown => {
   if (Array.isArray(value)) {
-    // Drop members that reduced to nothing: an annotation-only allOf member becomes
-    // `{}` once its presentation keys are stripped.
-    return value.map(canonicalizeJsonSchema).filter((member) => !isEmptyObject(member));
+    const members = value.map((member) => canonicalizeJsonSchema(member));
+    // Drop only annotation-only `allOf` members that reduced to `{}`. Other empty
+    // containers can still be semantic JSON Schema, so they stay in the fingerprint.
+    return parentKey === "allOf"
+      ? members.filter(
+          (member) =>
+            !(
+              typeof member === "object" &&
+              member !== null &&
+              !Array.isArray(member) &&
+              Object.keys(member).length === 0
+            ),
+        )
+      : members;
   }
   if (typeof value !== "object" || value === null) return value;
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([key]) => !PRESENTATION_KEYS.has(key))
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([key, nested]) => [key, canonicalizeJsonSchema(nested)] as const)
+    .map(([key, nested]) => [key, canonicalizeJsonSchema(nested, key)] as const)
     // Effect renders annotations as `allOf: [{ description }]`, so stripping the
     // inner keys leaves `allOf: []` — which would still differ from a field that
     // never carried an annotation. Drop containers that emptied out, so a
     // description-only edit is genuinely invisible.
-    .filter(([, nested]) => !(Array.isArray(nested) && nested.length === 0))
-    .filter(([, nested]) => !isEmptyObject(nested));
+    .filter(([key, nested]) => !(key === "allOf" && Array.isArray(nested) && nested.length === 0));
   return Object.fromEntries(entries);
 };
 
 export const fingerprintSettingsSchema = (schema: SettingsSchema): string => {
   try {
-    const root = Schema.toJsonSchemaDocument(schema).schema as Record<string, unknown>;
+    const document = Schema.toJsonSchemaDocument(schema);
+    const root = document.schema as Record<string, unknown>;
     const properties =
       typeof root["properties"] === "object" && root["properties"] !== null
         ? (root["properties"] as Record<string, unknown>)
@@ -418,7 +423,11 @@ export const fingerprintSettingsSchema = (schema: SettingsSchema): string => {
         schema: canonicalizeJsonSchema(properties[key]),
         required: required.has(key),
       }));
-    return JSON.stringify(canonical);
+    const definitions =
+      typeof document.definitions === "object" && document.definitions !== null
+        ? canonicalizeJsonSchema(document.definitions)
+        : {};
+    return JSON.stringify({ definitions, properties: canonical });
   } catch {
     // Unfingerprintable schemas are already rejected by
     // findPluginSettingsSchemaViolations; this keeps the function total.

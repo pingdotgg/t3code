@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
@@ -71,9 +72,9 @@ const gunzipCapped = (bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> 
       }
       chunks.push(chunk);
     });
-    stream.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
     stream.on("error", (cause) => reject(cause));
-    stream.end(Buffer.from(bytes));
+    stream.end(bytes);
   });
 const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
 const isPluginManagementError = Schema.is(PluginManagementError);
@@ -128,6 +129,47 @@ const managementError = (code: PluginManagementError["code"], message: string, d
     message,
     ...(data === undefined ? {} : { data }),
   });
+
+const readFileBytesCapped = (input: {
+  readonly fs: FileSystem.FileSystem;
+  readonly path: string;
+  readonly maxBytes: number;
+  readonly tooLarge: (actual: number) => PluginManagementError;
+  readonly readFailed: (cause: unknown) => PluginManagementError;
+}) =>
+  input.fs.stat(input.path).pipe(
+    Effect.mapError(input.readFailed),
+    Effect.flatMap((stat) => {
+      if (stat.size > BigInt(input.maxBytes)) {
+        return Effect.fail(input.tooLarge(Number(stat.size)));
+      }
+      return input.fs.stream(input.path).pipe(
+        Stream.runFoldEffect(
+          () => ({ chunks: [] as Array<Uint8Array>, total: 0 }),
+          (acc, chunk) => {
+            const total = acc.total + chunk.byteLength;
+            if (total > input.maxBytes) {
+              return Effect.fail(input.tooLarge(total));
+            }
+            acc.chunks.push(chunk);
+            return Effect.succeed({ chunks: acc.chunks, total });
+          },
+        ),
+        Effect.map(({ chunks, total }) => {
+          const bytes = new Uint8Array(total);
+          let offset = 0;
+          for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          return bytes;
+        }),
+        Effect.mapError((cause) =>
+          isPluginManagementError(cause) ? cause : input.readFailed(cause),
+        ),
+      );
+    }),
+  );
 
 export class PluginInstaller extends Context.Service<
   PluginInstaller,
@@ -533,14 +575,22 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
 
   const downloadBytes = (url: string) => {
     if (url.startsWith("file:")) {
-      return fs.readFile(NodeURL.fileURLToPath(url)).pipe(
-        Effect.mapError((cause) =>
+      return readFileBytesCapped({
+        fs,
+        path: NodeURL.fileURLToPath(url),
+        maxBytes: DOWNLOAD_MAX_BYTES,
+        tooLarge: (actual) =>
+          managementError("download-failed", "Plugin tarball is too large.", {
+            url,
+            limit: DOWNLOAD_MAX_BYTES,
+            actual,
+          }),
+        readFailed: (cause) =>
           managementError("download-failed", "Failed to read plugin tarball file.", {
             url,
             cause,
           }),
-        ),
-      );
+      });
     }
     // Tarball URLs come from untrusted marketplace.json data: fetch them
     // through the SSRF guard (per-hop URL validation + DNS-pinned transport,

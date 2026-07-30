@@ -14,7 +14,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
 
@@ -204,17 +203,40 @@ export const make = Effect.fn("PluginMarketplace.make")(function* () {
               cause,
             }),
       ),
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.mapError((cause) =>
-        isPluginManagementError(cause)
-          ? cause
-          : managementError(
-              "catalog-fetch-failed",
-              "Plugin marketplace returned a non-OK response.",
-              {
-                url,
-                cause,
-              },
+      Effect.flatMap((response) =>
+        response.status >= 200 && response.status < 300
+          ? Effect.succeed(response)
+          : readHttpResponseBytesCapped({
+              response,
+              maxBytes: MARKETPLACE_RESPONSE_MAX_BYTES,
+              tooLarge: (actual) =>
+                managementError("catalog-fetch-failed", "Plugin marketplace is too large.", {
+                  url,
+                  limit: MARKETPLACE_RESPONSE_MAX_BYTES,
+                  actual,
+                }),
+              readFailed: (cause) =>
+                managementError(
+                  "catalog-fetch-failed",
+                  "Failed to read plugin marketplace error body.",
+                  {
+                    url,
+                    cause,
+                  },
+                ),
+            }).pipe(
+              Effect.flatMap(() =>
+                Effect.fail(
+                  managementError(
+                    "catalog-fetch-failed",
+                    "Plugin marketplace returned a non-OK response.",
+                    {
+                      url,
+                      status: response.status,
+                    },
+                  ),
+                ),
+              ),
             ),
       ),
       Effect.flatMap((response) =>

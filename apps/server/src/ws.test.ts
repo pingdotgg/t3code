@@ -95,13 +95,14 @@ describe("toThreadUpsertedShellStreamEvent", () => {
     }),
   );
 
-  it.effect("emits for a missing owner row (deleted/unknown thread proceeds)", () =>
+  it.effect("fails closed for a missing owner row and skips the shell lookup", () =>
     Effect.gen(function* () {
-      const { stub } = makeSnapshotQuery(Option.none());
+      const { stub, shellLookups } = makeSnapshotQuery(Option.none());
 
       const result = yield* toThreadUpsertedShellStreamEvent(stub, threadId, 7);
 
-      expect(Option.isSome(result)).toBe(true);
+      expect(Option.isNone(result)).toBe(true);
+      expect(shellLookups()).toBe(0);
     }),
   );
 });

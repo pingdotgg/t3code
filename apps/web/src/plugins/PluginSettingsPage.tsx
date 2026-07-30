@@ -97,6 +97,14 @@ export async function performSettingsSave(input: {
   return { error: reloadError };
 }
 
+export function nextSettingsEditedValue(input: {
+  readonly current: Record<string, unknown> | null;
+  readonly next: Record<string, unknown> | undefined;
+  readonly busy: boolean;
+}): Record<string, unknown> | null {
+  return input.busy ? input.current : (input.next ?? {});
+}
+
 /**
  * Host-rendered settings page for a plugin that declares a settings schema.
  *
@@ -115,34 +123,40 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
   const [draft, setDraft] = useState<Draft | null>(null);
   const [edited, setEdited] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async (): Promise<string | null> => {
     setError(null);
-    const result = await getSettings({ pluginId });
-    if (result._tag !== "Success") {
-      const message = "Could not load settings.";
-      setError(message);
-      return message;
+    setLoading(true);
+    try {
+      const result = await getSettings({ pluginId });
+      if (result._tag !== "Success") {
+        const message = "Could not load settings.";
+        setError(message);
+        return message;
+      }
+      // `declared: false` means the plugin declares no schema, or is not installed —
+      // distinct from "declared but empty". It does NOT mean disabled: repair is
+      // deliberately reachable without a live runtime, which is the whole point of the
+      // declared-schema fallback, so saying "not currently enabled" sent the user to
+      // re-enable a plugin that was already enabled.
+      if (!result.value.declared) {
+        setDraft(null);
+        const message = "This plugin does not expose settings, or is not installed.";
+        setError(message);
+        return message;
+      }
+      setDraft({
+        values: { ...result.value.values },
+        revision: result.value.revision,
+        incompatible: result.value.incompatible,
+      });
+      setEdited({ ...result.value.values });
+      return null;
+    } finally {
+      setLoading(false);
     }
-    // `declared: false` means the plugin declares no schema, or is not installed —
-    // distinct from "declared but empty". It does NOT mean disabled: repair is
-    // deliberately reachable without a live runtime, which is the whole point of the
-    // declared-schema fallback, so saying "not currently enabled" sent the user to
-    // re-enable a plugin that was already enabled.
-    if (!result.value.declared) {
-      setDraft(null);
-      const message = "This plugin does not expose settings, or is not installed.";
-      setError(message);
-      return message;
-    }
-    setDraft({
-      values: { ...result.value.values },
-      revision: result.value.revision,
-      incompatible: result.value.incompatible,
-    });
-    setEdited({ ...result.value.values });
-    return null;
   }, [getSettings, pluginId]);
 
   useEffect(() => {
@@ -153,17 +167,22 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
     if (draft === null || edited === null) return;
     setSaving(true);
     setError(null);
-    const outcome = await performSettingsSave({
-      pluginId,
-      draft,
-      edited,
-      save: saveSettings,
-      applyDraft: setDraft,
-      reload: load,
-    });
-    setSaving(false);
-    setError(outcome.error);
+    try {
+      const outcome = await performSettingsSave({
+        pluginId,
+        draft,
+        edited,
+        save: saveSettings,
+        applyDraft: setDraft,
+        reload: load,
+      });
+      setError(outcome.error);
+    } finally {
+      setSaving(false);
+    }
   }, [draft, edited, load, pluginId, saveSettings]);
+
+  const busy = loading || saving;
 
   if (draft === null) {
     return error === null ? (
@@ -196,16 +215,20 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      <ProviderSettingsForm
-        settingsSchema={settingsSchema}
-        value={edited ?? draft.values}
-        idPrefix={`plugin-settings-${pluginId}`}
-        variant="card"
-        onChange={(next) => setEdited(next ?? {})}
-      />
+      <fieldset disabled={busy} className="contents" aria-busy={busy}>
+        <ProviderSettingsForm
+          settingsSchema={settingsSchema}
+          value={edited ?? draft.values}
+          idPrefix={`plugin-settings-${pluginId}`}
+          variant="card"
+          onChange={(next) =>
+            setEdited((current) => nextSettingsEditedValue({ current, next, busy }))
+          }
+        />
+      </fieldset>
       <div className="flex justify-end">
-        <Button onClick={() => void save()} disabled={saving}>
-          {saving ? "Saving…" : "Save"}
+        <Button onClick={() => void save()} disabled={busy}>
+          {saving ? "Saving…" : loading ? "Loading…" : "Save"}
         </Button>
       </div>
     </div>

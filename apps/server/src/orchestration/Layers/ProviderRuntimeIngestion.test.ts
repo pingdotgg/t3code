@@ -322,6 +322,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
     return {
       engine,
+      workspaceRoot,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
@@ -997,13 +998,16 @@ describe("ProviderRuntimeIngestion", () => {
   it("lets a plugin policy hook block an approval request before the user sees it", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
+    let receivedCwd: string | null | undefined;
 
     await Effect.runPromise(
       harness.policyRegistry.put("plugin-guard", [
         {
           name: "no-rm",
-          onApprovalRequest: () =>
-            Effect.succeed({ decision: "deny" as const, reason: "rm is never allowed" }),
+          onApprovalRequest: (request) => {
+            receivedCwd = request.cwd;
+            return Effect.succeed({ decision: "deny" as const, reason: "rm is never allowed" });
+          },
         },
       ]),
     );
@@ -1059,6 +1063,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(
       declined?.type === "thread.approval-response-requested" ? declined.payload.decision : null,
     ).toBe("decline");
+    expect(receivedCwd).toBe(harness.workspaceRoot);
   });
 
   it("preserves completed tool metadata on projected tool activities", async () => {

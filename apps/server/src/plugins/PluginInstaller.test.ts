@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
+import * as NodeURL from "node:url";
 import * as NodeZlib from "node:zlib";
 
 import * as ServerConfig from "../config.ts";
@@ -163,6 +164,8 @@ interface InstallerLayerInput {
   readonly hosts?: Record<string, string>;
   /** URL → response override, checked before the default marketplace/tarball routes. */
   readonly responses?: Record<string, () => Response>;
+  /** Tarball URL emitted by the mocked marketplace entry. */
+  readonly marketplaceTarballUrl?: string;
   /** Receives every URL the stub transport is asked to fetch. */
   readonly transportLog?: Array<string>;
 }
@@ -178,7 +181,19 @@ function installerDeps(
     input.marketplaceSha ?? sha256(input.tarball),
     input.marketplaceVersions,
   );
-  const marketplaceBody = encodeMarketplaceJson(marketplace);
+  const marketplaceWithTarball =
+    input.marketplaceTarballUrl === undefined
+      ? marketplace
+      : {
+          plugins: marketplace.plugins.map((plugin) => ({
+            ...plugin,
+            versions: plugin.versions.map((version) => ({
+              ...version,
+              tarball: input.marketplaceTarballUrl!,
+            })),
+          })),
+        };
+  const marketplaceBody = encodeMarketplaceJson(marketplaceWithTarball);
   const hosts = input.hosts ?? { "market.test": "93.184.216.34" };
   const lookup = Layer.succeed(OutboundUrlLookup, (host: string) => {
     const address = hosts[host];
@@ -274,6 +289,23 @@ const seedSource = Effect.gen(function* () {
     ]),
   );
 });
+
+const withPluginDev = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => process.env.T3_PLUGIN_DEV),
+    () =>
+      Effect.sync(() => {
+        process.env.T3_PLUGIN_DEV = "1";
+      }).pipe(Effect.andThen(effect)),
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) {
+          delete process.env.T3_PLUGIN_DEV;
+        } else {
+          process.env.T3_PLUGIN_DEV = previous;
+        }
+      }),
+  );
 
 it.effect("PluginInstaller rejects sha mismatches without staging", () =>
   Effect.scoped(
@@ -387,6 +419,43 @@ it.effect("PluginInstaller rejects oversize files and gzip compression bombs", (
         ),
       ),
     ),
+  ),
+);
+
+it.effect("PluginInstaller rejects oversize file tarballs before reading them", () =>
+  withPluginDev(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-installer-file-tarball-" });
+        const tarballPath = path.join(dir, "oversize.tgz");
+        yield* fs.writeFile(tarballPath, new Uint8Array());
+        yield* fs.truncate(tarballPath, 64 * 1024 * 1024 + 1);
+
+        yield* Effect.gen(function* () {
+          const installer = yield* PluginInstaller;
+          yield* seedSource;
+
+          const result = yield* Effect.result(
+            installer.beginInstall({ sourceId, pluginId, version: "1.0.0" }),
+          );
+
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) {
+            assert.equal(result.failure.code, "download-failed");
+            assert.include(result.failure.message, "too large");
+          }
+        }).pipe(
+          Effect.provide(
+            installerLayer({
+              tarball: tarballForManifest(),
+              marketplaceTarballUrl: NodeURL.pathToFileURL(tarballPath).href,
+            }),
+          ),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   ),
 );
 

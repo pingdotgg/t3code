@@ -296,6 +296,8 @@ describe("fingerprint distinguishes constraints", () => {
   // between them went undetected, which is the opposite of the bug the fingerprint
   // exists to catch.
   const str = Schema.Struct({ a: Schema.String }) as unknown as SettingsSchema;
+  const unknown = Schema.Struct({ a: Schema.Unknown }) as unknown as SettingsSchema;
+  const emptyLit = Schema.Struct({ a: Schema.Literals([]) }) as unknown as SettingsSchema;
   const litAB = Schema.Struct({ a: Schema.Literals(["a", "b"]) }) as unknown as SettingsSchema;
   const litAC = Schema.Struct({ a: Schema.Literals(["a", "c"]) }) as unknown as SettingsSchema;
 
@@ -303,8 +305,23 @@ describe("fingerprint distinguishes constraints", () => {
     expect(fingerprintSettingsSchema(litAB)).not.toBe(fingerprintSettingsSchema(str));
   });
 
+  it("preserves empty schemas that constrain decoding", () => {
+    expect(fingerprintSettingsSchema(emptyLit)).not.toBe(fingerprintSettingsSchema(unknown));
+  });
+
   it("distinguishes two Literals unions with different members", () => {
     expect(fingerprintSettingsSchema(litAC)).not.toBe(fingerprintSettingsSchema(litAB));
+  });
+
+  it("includes referenced definitions in the fingerprint", () => {
+    const stringInner = Schema.Struct({ value: Schema.String }).annotate({ identifier: "Inner" });
+    const booleanInner = Schema.Struct({ value: Schema.Boolean }).annotate({ identifier: "Inner" });
+    const stringSchema = Schema.Struct({ one: stringInner, two: stringInner });
+    const booleanSchema = Schema.Struct({ one: booleanInner, two: booleanInner });
+
+    expect(fingerprintSettingsSchema(stringSchema)).not.toBe(
+      fingerprintSettingsSchema(booleanSchema),
+    );
   });
 
   it("is stable for the same Literals union", () => {

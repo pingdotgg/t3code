@@ -125,12 +125,17 @@ const registrationTimeout = () => {
 
 export class PluginRegistrationError extends Schema.TaggedErrorClass<PluginRegistrationError>()(
   "PluginRegistrationError",
-  { pluginId: Schema.String, detail: Schema.String },
+  { pluginId: Schema.String, detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
     return `Plugin ${this.pluginId} returned an invalid registration: ${this.detail}`;
   }
 }
+
+export const pluginRegistrationDetailForRegisterFailure = (): string => "register() failed";
+
+export const pluginRegistrationDetailForToolCatalogError = (): string =>
+  "tool catalog reservation failed";
 
 // Internal control-flow sentinel: raised when an activation is intentionally
 // cancelled by a concurrent lifecycle change (see the pre-put state re-check in
@@ -234,7 +239,8 @@ const resolveRegistration = (
         : Effect.fail(
             new PluginRegistrationError({
               pluginId,
-              detail: Cause.pretty(cause),
+              detail: pluginRegistrationDetailForRegisterFailure(),
+              cause,
             }),
           ),
     ),
@@ -1115,7 +1121,11 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           .pipe(
             Effect.mapError(
               (error: PluginToolCatalogError) =>
-                new PluginRegistrationError({ pluginId, detail: error.detail }),
+                new PluginRegistrationError({
+                  pluginId,
+                  detail: pluginRegistrationDetailForToolCatalogError(),
+                  cause: error,
+                }),
             ),
           );
         yield* migrator.run(pluginId, registration.migrations ?? []);
@@ -1549,7 +1559,12 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           .updatePlugin(pluginId, ({ current }) =>
             Effect.succeed(current ? upgradeLockfileEntry(current, staged) : undefined),
           )
-          .pipe(Effect.tap(() => publishPluginStateChanged(pluginId, "active")));
+          .pipe(
+            Effect.flatMap((lockfile) => {
+              const state = getLockfilePlugin(lockfile, pluginId)?.state;
+              return state === undefined ? Effect.void : publishPluginStateChanged(pluginId, state);
+            }),
+          );
         return true;
       }
       if (entry.activation.activatingSince !== null) {

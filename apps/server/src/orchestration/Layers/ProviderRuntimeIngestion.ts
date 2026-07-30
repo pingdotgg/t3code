@@ -1781,11 +1781,17 @@ const make = Effect.gen(function* () {
       if (event.type === "request.opened" && event.requestId !== undefined) {
         const requestKind = requestKindFromCanonicalRequestType(event.payload.requestType);
         if (requestKind !== undefined) {
+          const checkpointContext = yield* projectionSnapshotQuery
+            .getThreadCheckpointContext(thread.id)
+            .pipe(
+              Effect.map(Option.getOrNull),
+              Effect.orElseSucceed(() => null),
+            );
           const outcome = yield* policyRegistry.evaluate({
             threadId: thread.id,
             kind: requestKind,
             detail: event.payload.detail ?? "",
-            cwd: null,
+            cwd: checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot ?? null,
           });
           if (outcome.decision === "deny") {
             yield* orchestrationEngine.dispatch({

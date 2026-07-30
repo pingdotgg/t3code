@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { Children, isValidElement, type ReactElement } from "react";
 import {
   PluginId,
   type MarketplaceVersion,
@@ -11,7 +12,11 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { InstalledPluginsSection } from "./PluginsSettings";
+import {
+  ConsentDialog,
+  InstalledPluginsSection,
+  shouldCancelConsentDialog,
+} from "./PluginsSettings";
 import {
   ALL_PLUGIN_SOURCES_VALUE,
   abortPluginInstallConsentFlow,
@@ -186,5 +191,45 @@ describe("InstalledPluginsSection", () => {
     expect(html).toContain("Pending removal");
     expect(html).toContain("Relaunch to apply");
     expect(html).toContain("Database");
+  });
+});
+
+describe("ConsentDialog", () => {
+  const staged: PluginInstallStaged = {
+    stageToken: "stage-1",
+    manifest: {
+      id: pluginId,
+      name: "Hello Board",
+      version: "1.0.0",
+      hostApi: "^1.0.0",
+      capabilities: ["database"],
+      entries: { server: "server/index.js", web: "web/index.js" },
+    },
+    capabilityDescriptions: {
+      database: "Read and write plugin tables in the local database.",
+    },
+  };
+
+  it("ignores close requests while consent confirmation is busy", () => {
+    expect(shouldCancelConsentDialog(false, true)).toBe(false);
+    expect(shouldCancelConsentDialog(false, false)).toBe(true);
+    expect(shouldCancelConsentDialog(true, false)).toBe(false);
+  });
+
+  it("hides the popup close affordance while busy", () => {
+    const element = ConsentDialog({
+      stagedAction: { intent: "install", staged, entryName: "Hello Board" },
+      busy: true,
+      error: null,
+      onConfirm: () => {},
+      onCancel: () => {},
+    });
+
+    expect(isValidElement(element)).toBe(true);
+    const popup = Children.only((element as ReactElement<{ children: unknown }>).props.children);
+    expect(isValidElement(popup)).toBe(true);
+    expect((popup as ReactElement<{ showCloseButton?: boolean }>).props.showCloseButton).toBe(
+      false,
+    );
   });
 });

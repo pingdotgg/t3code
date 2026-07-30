@@ -140,12 +140,10 @@ const probeStoreLayer = Layer.effect(
             .pipe(Effect.orElseSucceed(() => false));
           if (markerExists) {
             if (probe.readLockfileSeenAfterMarker >= probe.readLockfileSkipAfterMarker) {
-              return yield* Effect.fail(
-                new PluginLockfileStoreLayer.PluginLockfileReadError({
-                  path: real.lockfilePath,
-                  cause: new Error("injected readLockfile failure"),
-                }),
-              );
+              return yield* new PluginLockfileStoreLayer.PluginLockfileReadError({
+                path: real.lockfilePath,
+                cause: new Error("injected readLockfile failure"),
+              });
             }
             probe.readLockfileSeenAfterMarker += 1;
           }
@@ -1200,6 +1198,55 @@ layer("PluginHost", (it) => {
     }),
   );
 
+  it.effect("publishes the promoted lockfile state for a disabled pending upgrade", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("upgrade-disabled-plugin");
+      const host = yield* PluginHostModule.PluginHost;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+      const emptyEntry = "export default { register() { return {}; } };";
+
+      const eventFiber = yield* lifecycleEvents.stream.pipe(
+        Stream.filter((event) => event.type === "plugins" && event.payload.pluginId === pluginId),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runMigrations({ toMigrationInclusive: 36 });
+      yield* installPlugin({ pluginId, entrySource: emptyEntry, lockEntry: { version: "1.0.0" } });
+      yield* installPlugin({ pluginId, entrySource: emptyEntry, lockEntry: { version: "2.0.0" } });
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed(
+          makeLockEntry({
+            version: "1.0.0",
+            enabled: false,
+            state: "pending-upgrade",
+            staged: { version: "2.0.0", sha256: "sha2", stagedAt: now },
+          }),
+        ),
+      );
+
+      yield* host.start;
+
+      const lockfile = yield* store.readLockfile;
+      const entry = lockfile.plugins[pluginId];
+      assert.equal(entry?.version, "2.0.0");
+      assert.equal(entry?.state, "disabled");
+      assert.isTrue(
+        (yield* registry.list).every((runtime) => runtime.manifest.id !== pluginId),
+        "a disabled promoted upgrade must not activate a runtime",
+      );
+      const events = Array.from(yield* Fiber.join(eventFiber));
+      assert.deepEqual(events[0]?.payload, {
+        kind: "plugin-state-changed",
+        pluginId,
+        state: "disabled",
+      });
+    }),
+  );
+
   it.effect("deactivatePlugin publishes the persisted state, not a hardcoded disabled", () =>
     Effect.gen(function* () {
       const pluginId = PluginId.make("deactivate-state-plugin");
@@ -1612,6 +1659,30 @@ describe("PluginHost cause predicates", () => {
       PluginHostModule.causeContainsInterrupt(
         Cause.combine(Cause.fail(sentinel("x")), Cause.die(new Error("teardown"))),
       ),
+    );
+  });
+});
+
+describe("PluginHost registration error detail", () => {
+  it("keeps register failures as a cause with stable structural detail", () => {
+    const pluginId = PluginId.make("register-detail");
+    const cause = Cause.fail(new Error("register-secret-".repeat(200)));
+    const detail = PluginHostModule.pluginRegistrationDetailForRegisterFailure();
+    const preserved = new PluginHostModule.PluginRegistrationError({
+      pluginId,
+      detail,
+      cause,
+    });
+
+    assert.equal(detail, "register() failed");
+    assert.notInclude(detail, "register-secret-");
+    assert.strictEqual(preserved.cause, cause);
+  });
+
+  it("keeps plugin tool catalog details out of registration error messages", () => {
+    assert.equal(
+      PluginHostModule.pluginRegistrationDetailForToolCatalogError(),
+      "tool catalog reservation failed",
     );
   });
 });

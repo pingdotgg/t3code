@@ -653,7 +653,11 @@ function BrowseSection({
   );
 }
 
-function ConsentDialog({
+export function shouldCancelConsentDialog(open: boolean, busy: boolean): boolean {
+  return !open && !busy;
+}
+
+export function ConsentDialog({
   stagedAction,
   busy,
   error,
@@ -672,8 +676,15 @@ function ConsentDialog({
   const actionLabel = stagedAction?.intent === "upgrade" ? "Upgrade" : "Install";
 
   return (
-    <Dialog open={stagedAction !== null} onOpenChange={(open) => !open && onCancel()}>
-      <DialogPopup>
+    <Dialog
+      open={stagedAction !== null}
+      onOpenChange={(open) => {
+        if (shouldCancelConsentDialog(open, busy)) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogPopup showCloseButton={!busy}>
         <DialogHeader>
           <DialogTitle>
             {actionLabel} {stagedAction?.entryName ?? "plugin"}

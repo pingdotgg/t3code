@@ -187,6 +187,17 @@ describe("compareSemver", () => {
     expect(compareSemver("1.0.0-rc.2", "1.0.0-rc.10")).toBeLessThan(0);
     expect(compareSemver("1.0.0+build1", "1.0.0+build2")).toBe(0);
   });
+
+  it("compares huge core and prerelease numbers without numeric coercion", () => {
+    const huge = "9".repeat(400);
+    const hugePlusOneDigit = `1${"0".repeat(400)}`;
+
+    expect(compareSemver(`${hugePlusOneDigit}.0.0`, `${huge}.0.0`)).toBeGreaterThan(0);
+    expect(compareSemver(`1.0.0-rc.${huge}`, `1.0.0-rc.${hugePlusOneDigit}`)).toBeLessThan(0);
+    expect(compareSemver("1.0.0-rc.9007199254740993", "1.0.0-rc.9007199254740992")).toBeGreaterThan(
+      0,
+    );
+  });
 });
 
 describe("isPrereleaseVersion", () => {
@@ -209,6 +220,11 @@ describe("hostApiSatisfies", () => {
     expect(hostApiSatisfies("^1.0.0", "2.0.0")).toBe(false);
     expect(hostApiSatisfies("~1.0.0", "1.1.0")).toBe(false);
     expect(hostApiSatisfies("^1.2.0", "1.1.9")).toBe(false);
+  });
+
+  it("compares huge host API core numbers without losing precision", () => {
+    expect(hostApiSatisfies("^9007199254740993.0.0", "9007199254740992.999.999")).toBe(false);
+    expect(hostApiSatisfies("~1.9007199254740993.0", "1.9007199254740992.999")).toBe(false);
   });
 });
 

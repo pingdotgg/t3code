@@ -236,6 +236,12 @@ function reconcilePluginStyleLinks(activeWebPlugins: ReadonlyArray<PluginInfo>):
   }
 }
 
+export function clearPluginUiHostRegistrations(state: PluginUiHostState): PluginUiRegistrySnapshot {
+  state.loaded.clear();
+  reconcilePluginStyleLinks([]);
+  return EMPTY_PLUGIN_UI_REGISTRY_SNAPSHOT;
+}
+
 function makePluginLogger(pluginId: PluginId): PluginUiContext["logger"] {
   const prefix = `[plugin:${pluginId}]`;
   return {
@@ -545,6 +551,12 @@ export function PluginUiHost() {
   // run after the previous so they never interleave; the latest plugins list
   // always gets applied last.
   const syncChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  useEffect(() => {
+    return () => {
+      setRegistry(clearPluginUiHostRegistrations(stateRef.current));
+    };
+  }, [setRegistry]);
 
   useEffect(() => {
     let cancelled = false;

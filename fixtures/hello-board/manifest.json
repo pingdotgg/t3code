@@ -9,7 +9,7 @@
   "hostApi": "^1.0.0",
   "capabilities": ["database", "filesystem", "httpClient", "tools", "settings"],
   "entries": {
-    "server": "server/index.js",
+    "server": "server/index.mjs",
     "web": "web/index.js"
   }
 }
