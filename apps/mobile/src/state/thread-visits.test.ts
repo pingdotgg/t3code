@@ -2,7 +2,25 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { markThreadVisited, resolveOpenThreadVisitedAt } from "./thread-visits.logic";
+import {
+  markThreadVisited,
+  resolveOpenThreadVisitedAt,
+  shouldMarkThreadVisited,
+} from "./thread-visits.logic";
+
+describe("shouldMarkThreadVisited", () => {
+  const visibleThread = {
+    appState: "active",
+    isFocused: true,
+  } as const;
+
+  it("only marks a focused thread while the app is active", () => {
+    expect(shouldMarkThreadVisited(visibleThread)).toBe(true);
+    expect(shouldMarkThreadVisited({ ...visibleThread, appState: "background" })).toBe(false);
+    expect(shouldMarkThreadVisited({ ...visibleThread, appState: "inactive" })).toBe(false);
+    expect(shouldMarkThreadVisited({ ...visibleThread, isFocused: false })).toBe(false);
+  });
+});
 
 describe("markThreadVisited", () => {
   it("keeps the newest valid visit timestamp", () => {

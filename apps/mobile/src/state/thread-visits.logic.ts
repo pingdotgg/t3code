@@ -1,4 +1,12 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { AppStateStatus } from "react-native";
+
+export function shouldMarkThreadVisited(props: {
+  readonly appState: AppStateStatus;
+  readonly isFocused: boolean;
+}): boolean {
+  return props.appState === "active" && props.isFocused;
+}
 
 export function markThreadVisited(
   current: Readonly<Record<string, string>>,

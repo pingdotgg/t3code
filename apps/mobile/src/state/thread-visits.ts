@@ -6,7 +6,7 @@ import type { Preferences } from "../persistence/mobile-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
 import { markThreadVisited } from "./thread-visits.logic";
 
-export { resolveOpenThreadVisitedAt } from "./thread-visits.logic";
+export { resolveOpenThreadVisitedAt, shouldMarkThreadVisited } from "./thread-visits.logic";
 
 const EMPTY_VISITS: Readonly<Record<string, string>> = {};
 
