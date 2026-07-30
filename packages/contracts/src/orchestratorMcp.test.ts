@@ -43,10 +43,15 @@ describe("orchestrator MCP contracts", () => {
       childRunId: "run-child-1",
       childNodeId: "node-task-1",
       status: "completed",
+      hasPendingChildRuns: false,
       providerInstanceId: "claudeAgent",
       model: "claude-sonnet-4-6",
       summary: "Workspace inspected.",
       resultContextTransferId: "context-transfer-result-1",
+      latestTerminalRunId: "run-child-1",
+      latestTerminalStatus: "completed",
+      latestTerminalSummary: "Workspace inspected.",
+      latestTerminalResultContextTransferId: "context-transfer-result-1",
       waitTimedOut: false,
     });
 
