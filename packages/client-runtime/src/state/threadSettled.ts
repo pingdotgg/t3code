@@ -180,10 +180,10 @@ export function effectiveSnoozed(
 
 /**
  * When a previously-snoozed thread woke, or null if it never snoozed / is
- * still snoozed. Used for the "Woke" indicator: the thread reappears in its
- * original sort position (the inbox sort is deliberately static), so the
- * wake signal has to carry the weight. Compare against the client's
- * lastVisitedAt — visiting clears the indicator like it clears unread.
+ * still snoozed. Used for the "Woke" indicator and as the stable appearance
+ * timestamp that moves the thread to the top once. Compare against the
+ * client's lastVisitedAt — visiting clears the indicator like it clears
+ * unread without moving the row again.
  *
  * Timer wakes report the wake time itself; raised-hand wakes report the
  * triggering timestamp so a visit BEFORE the early wake doesn't suppress

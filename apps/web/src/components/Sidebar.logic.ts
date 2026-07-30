@@ -480,14 +480,6 @@ export function firstValidTimestamp(
   return null;
 }
 
-export type SidebarV2ThreadPriority = "woke" | "unsettled" | "default";
-
-const SIDEBAR_V2_THREAD_PRIORITY_RANK: Record<SidebarV2ThreadPriority, number> = {
-  woke: 0,
-  unsettled: 1,
-  default: 2,
-};
-
 /** A wake remains attention-bearing until the user visits it. Invalid local
     visit data must not silently clear a valid server-backed wake. */
 export function isSidebarV2ThreadWoke(input: {
@@ -502,19 +494,102 @@ export function isSidebarV2ThreadWoke(input: {
   return Number.isNaN(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs;
 }
 
-// v2 sort: attention transitions come first (woke, then manually
-// un-settled), with static creation order inside each group. Ordinary
-// activity never reorders the list.
+export interface SidebarV2ThreadOrderEntry {
+  readonly key: string;
+  readonly active: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  /** A server-backed transition that moves an already-active row to the top. */
+  readonly explicitAppearanceAt: string | null;
+}
+
+export interface SidebarV2ThreadOrderState {
+  readonly order: readonly string[];
+  readonly appearedAtById: Readonly<Record<string, string>>;
+}
+
+function latestValidTimestamp(...candidates: readonly (string | null | undefined)[]): string {
+  let latest = "";
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    const candidateMs = Date.parse(candidate);
+    if (!Number.isNaN(candidateMs) && candidateMs > latestMs) {
+      latest = candidate;
+      latestMs = candidateMs;
+    }
+  }
+  return latest;
+}
+
+/**
+ * Active rows use top insertion, not state buckets. A thread moves when it
+ * first appears, re-enters the active list, wakes, or is manually un-settled.
+ * Later visits and ordinary activity retain the stored order.
+ */
+export function reconcileSidebarV2ThreadOrder(
+  entries: readonly SidebarV2ThreadOrderEntry[],
+  previous: SidebarV2ThreadOrderState,
+): SidebarV2ThreadOrderState {
+  const entryByKey = new Map(entries.map((entry) => [entry.key, entry] as const));
+  const previousActiveKeys = new Set(previous.order);
+  const activeKeys = new Set(entries.filter((entry) => entry.active).map((entry) => entry.key));
+  const nextAppearedAtById: Record<string, string> = {};
+  const moved: Array<{ key: string; sortAt: string }> = [];
+
+  for (const entry of entries) {
+    const previousAppearedAt = previous.appearedAtById[entry.key];
+    if (!entry.active) {
+      if (previousAppearedAt !== undefined) {
+        nextAppearedAtById[entry.key] = previousAppearedAt;
+      }
+      continue;
+    }
+
+    const isNew = previousAppearedAt === undefined;
+    const isReappearing = !previousActiveKeys.has(entry.key) && !isNew;
+    const explicitAppearanceIsNewer =
+      entry.explicitAppearanceAt !== null &&
+      (previousAppearedAt === undefined ||
+        parseTimestampMs(entry.explicitAppearanceAt) > parseTimestampMs(previousAppearedAt));
+    const shouldMove = isNew || isReappearing || explicitAppearanceIsNewer;
+    const sortAt = isReappearing
+      ? latestValidTimestamp(entry.explicitAppearanceAt, entry.updatedAt, entry.createdAt)
+      : latestValidTimestamp(entry.explicitAppearanceAt, entry.createdAt);
+    const nextAppearedAt = latestValidTimestamp(previousAppearedAt, sortAt);
+    nextAppearedAtById[entry.key] = nextAppearedAt;
+    if (shouldMove) {
+      moved.push({ key: entry.key, sortAt });
+    }
+  }
+
+  const movedKeys = new Set(moved.map((entry) => entry.key));
+  const retained = previous.order.filter(
+    (key) => activeKeys.has(key) && !movedKeys.has(key) && entryByKey.has(key),
+  );
+  moved.sort(
+    (left, right) =>
+      parseTimestampMs(right.sortAt) - parseTimestampMs(left.sortAt) ||
+      left.key.localeCompare(right.key),
+  );
+  return {
+    order: [...moved.map((entry) => entry.key), ...retained],
+    appearedAtById: nextAppearedAtById,
+  };
+}
+
 export function sortThreadsForSidebarV2<
   T extends { readonly id: string; readonly createdAt: string },
 >(
   threads: readonly T[],
-  getPriority: (thread: T) => SidebarV2ThreadPriority = () => "default",
+  preferredOrder: readonly string[] = [],
+  getKey: (thread: T) => string = (thread) => thread.id,
 ): T[] {
+  const rankByKey = new Map(preferredOrder.map((key, index) => [key, index] as const));
   return [...threads].toSorted(
     (left, right) =>
-      SIDEBAR_V2_THREAD_PRIORITY_RANK[getPriority(left)] -
-        SIDEBAR_V2_THREAD_PRIORITY_RANK[getPriority(right)] ||
+      (rankByKey.get(getKey(left)) ?? Number.MAX_SAFE_INTEGER) -
+        (rankByKey.get(getKey(right)) ?? Number.MAX_SAFE_INTEGER) ||
       parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
       left.id.localeCompare(right.id),
   );

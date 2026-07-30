@@ -15,6 +15,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   isSidebarV2ThreadWoke,
+  reconcileSidebarV2ThreadOrder,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -738,30 +739,90 @@ describe("sortThreadsForSidebarV2", () => {
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
   });
 
-  it("puts woke threads first, then manually un-settled threads", () => {
-    const threads = [
-      sortable({ id: "ordinary-new", createdAt: "2026-03-09T12:00:00.000Z" }),
-      sortable({ id: "unsettled-old", createdAt: "2026-03-09T08:00:00.000Z" }),
-      sortable({ id: "woke-old", createdAt: "2026-03-09T07:00:00.000Z" }),
-      sortable({ id: "woke-new", createdAt: "2026-03-09T09:00:00.000Z" }),
-    ];
-    const priorities: ReadonlyMap<string, "unsettled" | "woke"> = new Map([
-      ["unsettled-old", "unsettled"],
-      ["woke-old", "woke"],
-      ["woke-new", "woke"],
-    ] as const);
-
+  it("uses persisted top-insertion order before creation time", () => {
     const sorted = sortThreadsForSidebarV2(
-      threads,
-      (thread) => priorities.get(thread.id) ?? "default",
+      [
+        sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
+        sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
+        sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+      ],
+      ["oldest", "newest", "middle"],
     );
 
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      "woke-new",
-      "woke-old",
-      "unsettled-old",
-      "ordinary-new",
-    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["oldest", "newest", "middle"]);
+  });
+});
+
+describe("reconcileSidebarV2ThreadOrder", () => {
+  const entry = (input: {
+    key: string;
+    active?: boolean;
+    createdAt: string;
+    updatedAt?: string;
+    explicitAppearanceAt?: string | null;
+  }) => ({
+    key: input.key,
+    active: input.active ?? true,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt ?? input.createdAt,
+    explicitAppearanceAt: input.explicitAppearanceAt ?? null,
+  });
+  const emptyState = { order: [], appearedAtById: {} };
+
+  it("moves a wake to the absolute top once, then keeps its position", () => {
+    const older = entry({ key: "older", createdAt: "2026-03-09T08:00:00.000Z" });
+    const newer = entry({ key: "newer", createdAt: "2026-03-09T10:00:00.000Z" });
+    const initial = reconcileSidebarV2ThreadOrder([older, newer], emptyState);
+    expect(initial.order).toEqual(["newer", "older"]);
+
+    const woke = reconcileSidebarV2ThreadOrder(
+      [{ ...older, explicitAppearanceAt: "2026-03-09T12:00:00.000Z" }, newer],
+      initial,
+    );
+    expect(woke.order).toEqual(["older", "newer"]);
+
+    const afterVisitAndActivity = reconcileSidebarV2ThreadOrder(
+      [
+        { ...older, updatedAt: "2026-03-09T13:00:00.000Z" },
+        { ...newer, updatedAt: "2026-03-09T14:00:00.000Z" },
+      ],
+      woke,
+    );
+    expect(afterVisitAndActivity.order).toEqual(["older", "newer"]);
+    expect(afterVisitAndActivity.appearedAtById.older).toBe("2026-03-09T12:00:00.000Z");
+  });
+
+  it("puts a thread at the top whenever it re-enters the active list", () => {
+    const older = entry({ key: "older", createdAt: "2026-03-09T08:00:00.000Z" });
+    const newer = entry({ key: "newer", createdAt: "2026-03-09T10:00:00.000Z" });
+    const initial = reconcileSidebarV2ThreadOrder([older, newer], emptyState);
+    const hidden = reconcileSidebarV2ThreadOrder([{ ...older, active: false }, newer], initial);
+    expect(hidden.order).toEqual(["newer"]);
+
+    const returned = reconcileSidebarV2ThreadOrder(
+      [{ ...older, updatedAt: "2026-03-09T13:00:00.000Z" }, newer],
+      hidden,
+    );
+    expect(returned.order).toEqual(["older", "newer"]);
+  });
+
+  it("lets only a later appearance displace the current top row", () => {
+    const first = entry({ key: "first", createdAt: "2026-03-09T08:00:00.000Z" });
+    const second = entry({ key: "second", createdAt: "2026-03-09T09:00:00.000Z" });
+    const initial = reconcileSidebarV2ThreadOrder([first, second], emptyState);
+    const firstWoke = reconcileSidebarV2ThreadOrder(
+      [{ ...first, explicitAppearanceAt: "2026-03-09T12:00:00.000Z" }, second],
+      initial,
+    );
+    const secondWokeLater = reconcileSidebarV2ThreadOrder(
+      [
+        { ...first, explicitAppearanceAt: "2026-03-09T12:00:00.000Z" },
+        { ...second, explicitAppearanceAt: "2026-03-09T13:00:00.000Z" },
+      ],
+      firstWoke,
+    );
+
+    expect(secondWokeLater.order).toEqual(["second", "first"]);
   });
 });
 

@@ -21,6 +21,8 @@ export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
+  threadSidebarOrder?: string[];
+  threadSidebarAppearedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
@@ -36,6 +38,8 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
+  threadSidebarOrder: string[];
+  threadSidebarAppearedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -49,6 +53,8 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   threadLastVisitedAtById: {},
+  threadSidebarOrder: [],
+  threadSidebarAppearedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
@@ -126,6 +132,8 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     projectExpandedById,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
+    threadSidebarOrder: sanitizeStringArray(parsed.threadSidebarOrder),
+    threadSidebarAppearedAtById: sanitizeTimestampRecord(parsed.threadSidebarAppearedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -204,6 +212,8 @@ export function persistState(state: UiState): void {
         projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
+        threadSidebarOrder: state.threadSidebarOrder,
+        threadSidebarAppearedAtById: state.threadSidebarAppearedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
@@ -267,6 +277,30 @@ export function markThreadUnread(
       ...state.threadLastVisitedAtById,
       [threadId]: unreadVisitedAt,
     },
+  };
+}
+
+export function setThreadSidebarOrder(
+  state: UiState,
+  order: readonly string[],
+  appearedAtById: Readonly<Record<string, string>>,
+): UiState {
+  const orderUnchanged =
+    state.threadSidebarOrder.length === order.length &&
+    state.threadSidebarOrder.every((threadId, index) => threadId === order[index]);
+  const previousAppearanceEntries = Object.entries(state.threadSidebarAppearedAtById);
+  const appearanceUnchanged =
+    previousAppearanceEntries.length === Object.keys(appearedAtById).length &&
+    previousAppearanceEntries.every(
+      ([threadId, appearedAt]) => appearedAtById[threadId] === appearedAt,
+    );
+  if (orderUnchanged && appearanceUnchanged) {
+    return state;
+  }
+  return {
+    ...state,
+    threadSidebarOrder: [...order],
+    threadSidebarAppearedAtById: { ...appearedAtById },
   };
 }
 
@@ -384,6 +418,10 @@ export function reorderProjects(
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
+  setThreadSidebarOrder: (
+    order: readonly string[],
+    appearedAtById: Readonly<Record<string, string>>,
+  ) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
@@ -400,6 +438,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
+  setThreadSidebarOrder: (order, appearedAtById) =>
+    set((state) => setThreadSidebarOrder(state, order, appearedAtById)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>

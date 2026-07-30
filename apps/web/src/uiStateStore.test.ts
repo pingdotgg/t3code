@@ -13,6 +13,7 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setThreadSidebarOrder,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -22,6 +23,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
+    threadSidebarOrder: [],
+    threadSidebarAppearedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
@@ -51,6 +54,27 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
     expect(markThreadUnread(next, threadId, null)).toBe(next);
+  });
+
+  it("stores sidebar order without rewriting identical state", () => {
+    const initialState = makeUiState();
+    const ordered = setThreadSidebarOrder(
+      initialState,
+      ["environment:thread-2", "environment:thread-1"],
+      {
+        "environment:thread-1": "2026-02-25T12:30:00.000Z",
+        "environment:thread-2": "2026-02-25T12:35:00.000Z",
+      },
+    );
+
+    expect(ordered.threadSidebarOrder).toEqual(["environment:thread-2", "environment:thread-1"]);
+    expect(
+      setThreadSidebarOrder(
+        ordered,
+        ["environment:thread-2", "environment:thread-1"],
+        ordered.threadSidebarAppearedAtById,
+      ),
+    ).toBe(ordered);
   });
 
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {
@@ -158,6 +182,11 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
       },
+      threadSidebarOrder: ["environment:thread-2", "", "environment:thread-1"],
+      threadSidebarAppearedAtById: {
+        "environment:thread-1": "2026-02-25T12:30:00.000Z",
+        invalid: "not-a-date",
+      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
@@ -175,6 +204,10 @@ describe("parsePersistedState", () => {
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
+      },
+      threadSidebarOrder: ["environment:thread-2", "environment:thread-1"],
+      threadSidebarAppearedAtById: {
+        "environment:thread-1": "2026-02-25T12:30:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpandedById: {
@@ -273,6 +306,10 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      threadSidebarOrder: ["environment:thread-1"],
+      threadSidebarAppearedAtById: {
+        "environment:thread-1": "2026-02-25T12:30:00.000Z",
+      },
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -294,6 +331,10 @@ describe("uiStateStore persistence", () => {
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
+      },
+      threadSidebarOrder: ["environment:thread-1"],
+      threadSidebarAppearedAtById: {
+        "environment:thread-1": "2026-02-25T12:30:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
