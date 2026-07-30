@@ -962,7 +962,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       if (promotedMessageItem.type !== "user_message") {
         assert.fail("promoted queue item must be a user message");
       }
-      assert.equal(promotedMessageItem.inputIntent, "turn_start");
+      assert.equal(promotedMessageItem.inputIntent, "queued_turn");
       assert.isTrue(
         promotedMessageItem.startedAt !== null &&
           DateTime.toEpochMillis(promotedMessageItem.startedAt) >=
