@@ -1453,26 +1453,20 @@ export default function GitActionsControl({
       return;
     }
     if (quickAction.kind === "run_pull") {
-      const toastId = toastManager.add({
-        type: "loading",
-        title: "Pulling...",
-        timeout: 0,
-        data: threadToastData,
-      });
       void (async () => {
         const result = await pullAction.run();
         if (result._tag === "Failure") {
           if (isAtomCommandInterrupted(result)) {
-            toastManager.close(toastId);
             return;
           }
           const error = squashAtomCommandFailure(result);
-          toastManager.update(
-            toastId,
+          const errorToastTiming = resolveGitActionResultToastTiming("error");
+          toastManager.add(
             stackedThreadToast({
               type: "error",
               title: "Pull failed",
               description: error instanceof Error ? error.message : "An error occurred.",
+              timeout: errorToastTiming.timeout,
               ...(threadToastData !== undefined ? { data: threadToastData } : {}),
             }),
           );
@@ -1480,14 +1474,21 @@ export default function GitActionsControl({
         }
 
         const pullResult = result.value;
-        toastManager.update(toastId, {
+        const successToastTiming = resolveGitActionResultToastTiming("success");
+        toastManager.add({
           type: "success",
           title: pullResult.status === "pulled" ? "Pulled" : "Already up to date",
           description:
             pullResult.status === "pulled"
               ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
               : `${pullResult.refName} is already synchronized.`,
-          data: threadToastData,
+          timeout: successToastTiming.timeout,
+          data: {
+            ...threadToastData,
+            ...(successToastTiming.dismissAfterVisibleMs !== null
+              ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
+              : {}),
+          },
         });
       })();
       return;
