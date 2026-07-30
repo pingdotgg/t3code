@@ -52,9 +52,10 @@ to the connection supervisor.
 
 `packages/client-runtime` holds every non-visual client concern: connection lifecycle,
 authentication, RPC, cached environment data, and domain state as Atom factories. Web and mobile
-compose it identically (`apps/web/src/connection/runtime.ts` and
-`apps/mobile/src/connection/runtime.ts` are byte-identical) and differ only in the platform layer
-they supply and the UI they build on top. React components never construct transports, retry loops,
+compose it the same way (`apps/web/src/connection/runtime.ts` and
+`apps/mobile/src/connection/runtime.ts` mirror each other, differing only in platform-specific
+background-activity layers) and differ beyond that only in the platform layer they supply and the
+UI they build on top. React components never construct transports, retry loops,
 or RPC clients. See [connection-runtime.md](./connection-runtime.md).
 
 ## Orchestration is event-sourced
