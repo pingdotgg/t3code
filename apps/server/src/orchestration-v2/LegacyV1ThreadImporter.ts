@@ -488,6 +488,13 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // Threads whose transcript import this process has already confirmed.
+  // `transcript_imported_at` is never reset to NULL, so a positive answer
+  // stays valid for the process lifetime; ensureTranscript runs on most
+  // thread reads and command dispatches, so skipping the lock + lookup here
+  // keeps that path off the database entirely after first confirmation.
+  const confirmedTranscriptThreadIds = new Set<ThreadId>();
+
   const ensureTranscriptBase = (threadId: ThreadId) =>
     transcriptImports.withLock(
       threadId,
@@ -500,6 +507,9 @@ const make = Effect.gen(function* () {
         `;
         const imported = imports[0];
         if (imported === undefined || imported.transcript_imported_at !== null) {
+          if (imported !== undefined) {
+            confirmedTranscriptThreadIds.add(threadId);
+          }
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         const messages = yield* listMessages(threadId);
@@ -546,6 +556,7 @@ const make = Effect.gen(function* () {
             last_error = NULL
           WHERE thread_id = ${threadId}
         `;
+        confirmedTranscriptThreadIds.add(threadId);
         return {
           importedThreadCount: 1,
           importedMessageCount: missing.length,
@@ -554,16 +565,18 @@ const make = Effect.gen(function* () {
     );
 
   const ensureTranscript = (threadId: ThreadId) =>
-    ensureTranscriptBase(threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyV1ThreadImportError({
-            operation: "hydrate transcript for",
-            threadId,
-            cause,
-          }),
-      ),
-    );
+    confirmedTranscriptThreadIds.has(threadId)
+      ? Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 })
+      : ensureTranscriptBase(threadId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyV1ThreadImportError({
+                operation: "hydrate transcript for",
+                threadId,
+                cause,
+              }),
+          ),
+        );
 
   const importPendingTranscripts = Effect.gen(function* () {
     const rows = yield* sql<LegacyImportRow>`

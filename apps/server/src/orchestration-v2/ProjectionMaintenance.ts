@@ -34,6 +34,14 @@ export class ProjectionMaintenanceError extends Schema.TaggedErrorClass<Projecti
 export interface ProjectionMaintenanceV2Shape {
   readonly verify: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
   readonly rebuild: Effect.Effect<ProjectionVerificationV2, ProjectionMaintenanceError>;
+  readonly compactEventStore: Effect.Effect<
+    {
+      readonly deletedEventCount: number;
+      readonly deletedReceiptCount: number;
+      readonly reclaimableBytes: number;
+    },
+    ProjectionMaintenanceError
+  >;
 }
 
 export class ProjectionMaintenanceV2 extends Context.Service<
@@ -210,9 +218,171 @@ export const layer: Layer.Layer<
           Effect.mapError((cause) => new ProjectionMaintenanceError({ operation, cause })),
         );
 
+    // Thread-state events whose payload is the complete thread: only the
+    // newest per thread can influence a replay or an afterSequence catch-up.
+    // thread.created stays out — verify derives the expected thread set from
+    // it, and it anchors replay ordering.
+    const SUPERSEDABLE_THREAD_EVENT_TYPES = [
+      "thread.archived",
+      "thread.unarchived",
+      "thread.deleted",
+      "thread.settled",
+      "thread.unsettled",
+      "thread.snoozed",
+      "thread.unsnoozed",
+      "thread.metadata-updated",
+      "thread.runtime-mode-updated",
+      "thread.interaction-mode-updated",
+      "thread.model-selection-updated",
+      "thread.provider-switched",
+      "thread.visited",
+      "thread.marked-unread",
+    ];
+
+    const chunksOf = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> => {
+      const out: Array<ReadonlyArray<A>> = [];
+      for (let index = 0; index < items.length; index += size) {
+        out.push(items.slice(index, index + size));
+      }
+      return out;
+    };
+
+    // The sqlite driver is synchronous: one statement over millions of rows
+    // would pin the event loop for its whole duration. Small auto-committed
+    // batches with a yield between them keep the server responsive and bound
+    // WAL growth; each batch is independently durable, so a crash mid-way
+    // just leaves less garbage for the next run.
+    const COMPACTION_DELETE_BATCH_SIZE = 2_000;
+    const deleteRowsBatched = (input: {
+      readonly table: "orchestration_events" | "orchestration_command_receipts";
+      readonly keys: ReadonlyArray<number | string>;
+    }) =>
+      Effect.gen(function* () {
+        let deleted = 0;
+        for (const batch of chunksOf(input.keys, COMPACTION_DELETE_BATCH_SIZE)) {
+          if (input.table === "orchestration_events") {
+            yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(batch)}`;
+          } else {
+            yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(batch)}`;
+          }
+          deleted += batch.length;
+          yield* Effect.yieldNow;
+        }
+        return deleted;
+      });
+
+    /**
+     * Full event-store compaction. Projections are the working state (startup
+     * verifies rather than replays), so events only serve afterSequence
+     * catch-up and disaster-recovery rebuild — and for full-payload "state of
+     * the entity" events, anything but the newest per entity is dead weight
+     * in both. Three passes:
+     *
+     * 1. Superseded thread-state events (visits alone accumulate at multiple
+     *    per minute while a thread is open).
+     * 2. Superseded message.updated / node.updated events per entity id —
+     *    streaming rewrites the same message many times. turn-item.updated is
+     *    deliberately NOT compacted: rebuild derives turn_item_positions from
+     *    those events with first-write-wins semantics, so keep-latest would
+     *    change replay outcomes for reordered items.
+     * 3. Legacy v1 thread events and their pre-migration command receipts for
+     *    threads whose v2 import completed — the v1 store is only read to
+     *    import from, and imports never re-run once transcript_imported_at is
+     *    set.
+     *
+     * VACUUM is deliberately not run here: on the synchronous driver it would
+     * block every query for minutes on a multi-GB file. The reclaimable page
+     * count is reported so the caller can surface a hint instead; freed pages
+     * are reused, so the file stops growing either way.
+     */
+    const compactEventStore = Effect.gen(function* () {
+      const supersededThreadStateRows = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence
+        FROM orchestration_events
+        WHERE application_event_version = 2
+          AND aggregate_kind = 'thread'
+          AND event_type IN ${sql.in(SUPERSEDABLE_THREAD_EVENT_TYPES)}
+          AND sequence NOT IN (
+            SELECT MAX(sequence)
+            FROM orchestration_events
+            WHERE application_event_version = 2
+              AND aggregate_kind = 'thread'
+              AND event_type IN ${sql.in(SUPERSEDABLE_THREAD_EVENT_TYPES)}
+            GROUP BY stream_id
+          )
+      `;
+
+      const supersededEntityRows = (eventType: "message.updated" | "node.updated") => sql<{
+        readonly sequence: number;
+      }>`
+        SELECT sequence
+        FROM orchestration_events
+        WHERE application_event_version = 2
+          AND event_type = ${eventType}
+          AND sequence NOT IN (
+            SELECT MAX(sequence)
+            FROM orchestration_events
+            WHERE application_event_version = 2
+              AND event_type = ${eventType}
+            GROUP BY stream_id, json_extract(payload_json, '$.id')
+          )
+      `;
+      const supersededMessageRows = yield* supersededEntityRows("message.updated");
+      const supersededNodeRows = yield* supersededEntityRows("node.updated");
+
+      const importedLegacyEventRows = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence
+        FROM orchestration_events
+        WHERE application_event_version = 1
+          AND aggregate_kind = 'thread'
+          AND stream_id IN (
+            SELECT thread_id
+            FROM orchestration_v2_legacy_imports
+            WHERE transcript_imported_at IS NOT NULL
+          )
+      `;
+
+      const deletedEventCount = yield* deleteRowsBatched({
+        table: "orchestration_events",
+        keys: [
+          ...supersededThreadStateRows,
+          ...supersededMessageRows,
+          ...supersededNodeRows,
+          ...importedLegacyEventRows,
+        ].map((row) => row.sequence),
+      });
+
+      // Receipts written before the command_type column existed default to
+      // 'legacy'; for fully imported v1 threads they guard idempotency of
+      // commands that can no longer be re-sent.
+      const legacyReceiptRows = yield* sql<{ readonly command_id: string }>`
+        SELECT command_id
+        FROM orchestration_command_receipts
+        WHERE command_type = 'legacy'
+          AND aggregate_kind = 'thread'
+          AND aggregate_id IN (
+            SELECT thread_id
+            FROM orchestration_v2_legacy_imports
+            WHERE transcript_imported_at IS NOT NULL
+          )
+      `;
+      const deletedReceiptCount = yield* deleteRowsBatched({
+        table: "orchestration_command_receipts",
+        keys: legacyReceiptRows.map((row) => row.command_id),
+      });
+
+      const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
+      const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
+      const reclaimableBytes =
+        (freelistRows[0]?.freelist_count ?? 0) * (pageSizeRows[0]?.page_size ?? 0);
+
+      return { deletedEventCount, deletedReceiptCount, reclaimableBytes };
+    });
+
     return ProjectionMaintenanceV2.of({
       verify: mapError("verify")(verify),
       rebuild: mapError("rebuild")(rebuild),
+      compactEventStore: mapError("compact event store")(compactEventStore),
     });
   }),
 );

@@ -107,6 +107,25 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
     }),
   ).toEqual([targetThreadId]);
 
+  // Read-state commands skip transcript hydration entirely: they fire on
+  // every activity bump while a thread is open and never touch messages.
+  expect(
+    existingThreadIdsForCommand({
+      type: "thread.visit",
+      commandId: CommandId.make("command:thread-management:visit"),
+      threadId: targetThreadId,
+      visitedAt: "2026-07-30T00:00:00.000Z",
+    }),
+  ).toEqual([]);
+
+  expect(
+    existingThreadIdsForCommand({
+      type: "thread.mark-unread",
+      commandId: CommandId.make("command:thread-management:mark-unread"),
+      threadId: targetThreadId,
+    }),
+  ).toEqual([]);
+
   expect(
     existingThreadIdsForCommand({
       type: "thread.fork",
