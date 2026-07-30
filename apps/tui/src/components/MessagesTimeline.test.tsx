@@ -263,7 +263,9 @@ describe("MessagesTimeline body", () => {
     expect(frame).toContain("diagram.png");
     const metadataRow = frame.split("\n").findIndex((line) => line.includes("diagram.png"));
     expect(metadataRow).toBeGreaterThanOrEqual(0);
-    await t.mockMouse.click(2, metadataRow + 1);
+    // The user bubble is right-aligned, so aim at the image below the label.
+    const metadataColumn = (frame.split("\n")[metadataRow] ?? "").indexOf("diagram.png");
+    await t.mockMouse.click(Math.max(0, metadataColumn - 2), metadataRow + 1);
     expect(openedImages).toEqual(["diagram.png"]);
     t.renderer.destroy();
   });
@@ -333,7 +335,9 @@ describe("MessagesTimeline body", () => {
 
     expect(manager.isScrollPaused).toBe(true);
     expect(writes.at(-1)).toContain("a=d");
-    expect(t.captureCharFrame()).toContain("[ image paused while scrolling ]");
+    // The web-parity preview size (~206px ≈ a dozen columns) is narrower than
+    // the full placeholder caption, which clips to the image width.
+    expect(t.captureCharFrame()).toContain("[ image");
 
     manager.resumeAfterScroll();
     await t.renderOnce();

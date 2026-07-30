@@ -180,6 +180,21 @@ function CollapsibleUserMessage({
   );
 }
 
+// The web bounds conversation previews to a grid cell of max-w-[420px]/2
+// columns with max-h-[220px] — scale down to that same pixel box here.
+const PREVIEW_MAX_WIDTH_PX = 206;
+const PREVIEW_MAX_HEIGHT_PX = 220;
+/** Room the metadata line reserves for its link/state tail. */
+const ATTACHMENT_TAIL_WIDTH = 28;
+
+function attachmentLabel(attachment: {
+  readonly name: string;
+  readonly sizeBytes: number;
+}): string {
+  const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
+  return `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
+}
+
 /**
  * An image attachment with a Kitty preview when supported. The metadata link
  * remains visible as a reliable fallback and copy target.
@@ -187,13 +202,15 @@ function CollapsibleUserMessage({
 function AttachmentPreview({
   attachment,
   ctx,
+  maxWidth,
 }: {
   readonly attachment: { readonly id: string; readonly name: string; readonly sizeBytes: number };
   readonly ctx: RowRenderContext;
+  /** Clip label and preview to this width instead of the full pane. */
+  readonly maxWidth?: number;
 }): React.ReactNode {
   const {
     palette,
-    width,
     getAttachmentUrl,
     getAttachmentImage,
     inlineImagesSupported,
@@ -201,6 +218,7 @@ function AttachmentPreview({
     onOpenUrl,
     onOpenImage,
   } = ctx;
+  const width = maxWidth ?? ctx.width;
   const [link, setLink] = React.useState<"pending" | "failed" | string>(
     getAttachmentUrl ? "pending" : "failed",
   );
@@ -227,8 +245,7 @@ function AttachmentPreview({
   }, [attachment.id, getAttachmentImage, getAttachmentUrl, inlineImagesSupported]);
 
   const url = link !== "pending" && link !== "failed" ? link : null;
-  const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
-  const label = `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
+  const label = attachmentLabel(attachment);
   const linkText = url ?? (link === "pending" ? "resolving link…" : "link unavailable");
   const tail = image && onOpenImage ? `click image to expand · ${linkText}` : linkText;
   const openUrl = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
@@ -242,15 +259,26 @@ function AttachmentPreview({
           }),
         )
       : undefined;
-  const naturalColumns = image ? Math.max(1, Math.ceil(image.imageWidth / imageCellWidth)) : 1;
-  const maxColumns = Math.max(1, Math.min(40, width - 2));
-  const constrainedColumns = naturalColumns > maxColumns ? maxColumns : undefined;
+  // Never upscale; fit within the web's preview box, then within the pane.
+  const scale = image
+    ? Math.min(
+        1,
+        PREVIEW_MAX_WIDTH_PX / image.imageWidth,
+        PREVIEW_MAX_HEIGHT_PX / image.imageHeight,
+      )
+    : 1;
+  const naturalColumns = image
+    ? Math.max(1, Math.round((image.imageWidth * scale) / imageCellWidth))
+    : 1;
+  const columns = Math.min(naturalColumns, Math.max(1, width - 2));
   return (
     <box flexDirection="column">
       <box {...(openUrl ? { onMouseDown: openUrl } : {})}>
         <text>
           <span fg={palette.accent}>{label}</span>
-          <span fg={palette.dim}>{`  ${clip(tail, Math.max(8, width - label.length - 4))}`}</span>
+          <span fg={palette.dim}>
+            {`  ${clip(tail, Math.max(8, width - Bun.stringWidth(label) - 2))}`}
+          </span>
         </text>
       </box>
       {image ? (
@@ -259,7 +287,7 @@ function AttachmentPreview({
             data={image.data}
             imageWidth={image.imageWidth}
             imageHeight={image.imageHeight}
-            {...(constrainedColumns !== undefined ? { columns: constrainedColumns } : {})}
+            columns={columns}
           />
         </box>
       ) : null}
@@ -303,7 +331,25 @@ function FoldableRowView({
     const longestLine = rawBody
       .split("\n")
       .reduce((max, line) => Math.max(max, Bun.stringWidth(line)), 1);
-    const bubbleWidth = Math.max(1, Math.min(width, maxBubble, longestLine + 4));
+    // Attachments live inside the bubble like the web — leave room for the
+    // web-parity preview (~206px) and one unwrapped metadata line, plus the
+    // bubble border and padding.
+    const attachmentMinWidth =
+      images.length > 0
+        ? Math.min(
+            maxBubble,
+            Math.max(
+              images.reduce(
+                (max, attachment) => Math.max(max, Bun.stringWidth(attachmentLabel(attachment))),
+                0,
+              ) +
+                2 +
+                ATTACHMENT_TAIL_WIDTH,
+              Math.round(PREVIEW_MAX_WIDTH_PX / ctx.imageCellWidth),
+            ) + 4,
+          )
+        : 1;
+    const bubbleWidth = Math.max(attachmentMinWidth, Math.min(width, maxBubble, longestLine + 4));
     // Right-align by putting the bubble in a row whose width is the DEFINITE
     // scrollbox content width (= the `width` prop). Inside a scrollbox the
     // cross-size is auto, so "100%"/alignSelf/marginLeft:auto all collapse —
@@ -329,6 +375,18 @@ function FoldableRowView({
             paddingLeft={1}
             paddingRight={1}
           >
+            {images.length > 0 ? (
+              <box flexDirection="column" marginBottom={1}>
+                {images.map((attachment) => (
+                  <AttachmentPreview
+                    key={attachment.id}
+                    attachment={attachment}
+                    ctx={ctx}
+                    maxWidth={Math.max(8, bubbleWidth - 4)}
+                  />
+                ))}
+              </box>
+            ) : null}
             <CollapsibleUserMessage
               rawBody={rawBody}
               body={body}
@@ -338,7 +396,6 @@ function FoldableRowView({
             />
           </box>
         </box>
-        {attachmentsNode}
       </box>
     );
   }
