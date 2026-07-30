@@ -510,6 +510,30 @@ export const make = Effect.gen(function* () {
         : importPendingTranscripts
     ).pipe(Effect.forkScoped);
 
+    // Off the startup path: the first run after an upgrade deletes the whole
+    // superseded-event and legacy-v1 backlog (potentially millions of rows,
+    // paced in small batches), and nothing at boot depends on it.
+    yield* projectionMaintenance.compactEventStore.pipe(
+      Effect.tap((summary) =>
+        summary.deletedEventCount === 0 && summary.deletedReceiptCount === 0
+          ? Effect.void
+          : Effect.logInfo("Compacted orchestration event store", summary),
+      ),
+      Effect.tap((summary) =>
+        // Freed pages are reused, so the file stops growing regardless; only
+        // an offline VACUUM shrinks it, which is not safe to run on the
+        // synchronous sqlite connection while serving.
+        summary.reclaimableBytes >= 512 * 1024 * 1024
+          ? Effect.logInfo(
+              "state.sqlite has substantial reclaimable free space; an offline VACUUM would shrink the file",
+              { reclaimableBytes: summary.reclaimableBytes },
+            )
+          : Effect.void,
+      ),
+      Effect.catch((cause) => Effect.logWarning("Unable to compact the event store", { cause })),
+      Effect.forkScoped,
+    );
+
     yield* Effect.logDebug("startup phase: publishing welcome event", {
       environmentId: environment.environmentId,
       cwd: welcomeBase.cwd,
